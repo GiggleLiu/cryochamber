@@ -75,8 +75,7 @@ You MUST write the following markers at the end of your response.
 
 pub fn run_agent(agent_command: &str, prompt: &str) -> Result<AgentResult> {
     let parts: Vec<&str> = agent_command.split_whitespace().collect();
-    let (program, args) = parts.split_first()
-        .context("Agent command is empty")?;
+    let (program, args) = parts.split_first().context("Agent command is empty")?;
 
     let output = Command::new(program)
         .args(args)

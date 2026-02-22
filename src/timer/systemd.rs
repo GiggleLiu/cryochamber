@@ -10,6 +10,12 @@ use std::process::Command;
 
 pub struct SystemdTimer;
 
+impl Default for SystemdTimer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemdTimer {
     pub fn new() -> Self {
         Self
@@ -77,7 +83,10 @@ impl CryoTimer for SystemdTimer {
         let service_path = unit_dir.join(format!("{wake_name}.service"));
 
         std::fs::write(&timer_path, self.generate_timer_unit(&wake_name, &time))?;
-        std::fs::write(&service_path, self.generate_service_unit(&wake_name, command, work_dir))?;
+        std::fs::write(
+            &service_path,
+            self.generate_service_unit(&wake_name, command, work_dir),
+        )?;
 
         Self::reload_daemon()?;
 
@@ -89,7 +98,12 @@ impl CryoTimer for SystemdTimer {
         Ok(TimerId(wake_name))
     }
 
-    fn schedule_fallback(&self, time: NaiveDateTime, action: &FallbackAction, work_dir: &str) -> Result<TimerId> {
+    fn schedule_fallback(
+        &self,
+        time: NaiveDateTime,
+        action: &FallbackAction,
+        work_dir: &str,
+    ) -> Result<TimerId> {
         let name = Self::make_unit_name(work_dir);
         let fb_name = format!("{name}-fallback");
         let unit_dir = Self::user_unit_dir();
@@ -104,7 +118,10 @@ impl CryoTimer for SystemdTimer {
         let service_path = unit_dir.join(format!("{fb_name}.service"));
 
         std::fs::write(&timer_path, self.generate_timer_unit(&fb_name, &time))?;
-        std::fs::write(&service_path, self.generate_service_unit(&fb_name, &command, work_dir))?;
+        std::fs::write(
+            &service_path,
+            self.generate_service_unit(&fb_name, &command, work_dir),
+        )?;
 
         Self::reload_daemon()?;
 

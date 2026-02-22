@@ -5,10 +5,16 @@ use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub struct LaunchdTimer;
+
+impl Default for LaunchdTimer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl LaunchdTimer {
     pub fn new() -> Self {
@@ -71,14 +77,30 @@ impl LaunchdTimer {
     <string>{work_dir}/cryo-launchd.err</string>
 </dict>
 </plist>"#,
-            time.format("%m").to_string().trim_start_matches('0').parse::<u32>().unwrap(),
-            time.format("%d").to_string().trim_start_matches('0').parse::<u32>().unwrap(),
-            time.format("%H").to_string().trim_start_matches('0').parse::<u32>().unwrap_or(0),
-            time.format("%M").to_string().trim_start_matches('0').parse::<u32>().unwrap_or(0),
+            time.format("%m")
+                .to_string()
+                .trim_start_matches('0')
+                .parse::<u32>()
+                .unwrap(),
+            time.format("%d")
+                .to_string()
+                .trim_start_matches('0')
+                .parse::<u32>()
+                .unwrap(),
+            time.format("%H")
+                .to_string()
+                .trim_start_matches('0')
+                .parse::<u32>()
+                .unwrap_or(0),
+            time.format("%M")
+                .to_string()
+                .trim_start_matches('0')
+                .parse::<u32>()
+                .unwrap_or(0),
         )
     }
 
-    fn load_plist(&self, path: &PathBuf) -> Result<()> {
+    fn load_plist(&self, path: &Path) -> Result<()> {
         let uid = Command::new("id").arg("-u").output()?.stdout;
         let uid = String::from_utf8_lossy(&uid).trim().to_string();
         Command::new("launchctl")
@@ -116,7 +138,12 @@ impl CryoTimer for LaunchdTimer {
         Ok(TimerId(wake_label))
     }
 
-    fn schedule_fallback(&self, time: NaiveDateTime, action: &FallbackAction, work_dir: &str) -> Result<TimerId> {
+    fn schedule_fallback(
+        &self,
+        time: NaiveDateTime,
+        action: &FallbackAction,
+        work_dir: &str,
+    ) -> Result<TimerId> {
         let label = Self::make_label(work_dir);
         let fb_label = format!("{label}.fallback");
         let command = format!(

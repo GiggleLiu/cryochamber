@@ -30,9 +30,7 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
 
 pub fn is_locked(state: &CryoState) -> bool {
     if let Some(pid) = state.pid {
-        unsafe {
-            libc::kill(pid as i32, 0) == 0
-        }
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     } else {
         false
     }

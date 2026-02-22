@@ -1,5 +1,5 @@
 // tests/state_tests.rs
-use cryochamber::state::{CryoState, load_state, save_state};
+use cryochamber::state::{load_state, save_state, CryoState};
 
 #[test]
 fn test_save_and_load_state() {

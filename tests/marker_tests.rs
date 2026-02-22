@@ -6,7 +6,10 @@ fn test_parse_exit_success() {
     let text = "[CRYO:EXIT 0] All tasks completed";
     let markers = parse_markers(text).unwrap();
     assert_eq!(markers.exit_code, Some(ExitCode::Success));
-    assert_eq!(markers.exit_summary, Some("All tasks completed".to_string()));
+    assert_eq!(
+        markers.exit_summary,
+        Some("All tasks completed".to_string())
+    );
 }
 
 #[test]
@@ -38,14 +41,20 @@ fn test_parse_wake() {
 fn test_parse_cmd() {
     let text = r#"[CRYO:CMD opencode "check PR #42"]"#;
     let markers = parse_markers(text).unwrap();
-    assert_eq!(markers.command, Some(r#"opencode "check PR #42""#.to_string()));
+    assert_eq!(
+        markers.command,
+        Some(r#"opencode "check PR #42""#.to_string())
+    );
 }
 
 #[test]
 fn test_parse_plan() {
     let text = "[CRYO:PLAN waiting on CI, check status first]";
     let markers = parse_markers(text).unwrap();
-    assert_eq!(markers.plan_note, Some("waiting on CI, check status first".to_string()));
+    assert_eq!(
+        markers.plan_note,
+        Some("waiting on CI, check status first".to_string())
+    );
 }
 
 #[test]

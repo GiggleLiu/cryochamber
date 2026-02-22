@@ -67,8 +67,16 @@ fn main() -> Result<()> {
         Commands::Cancel => cmd_cancel(),
         Commands::Validate => cmd_validate(),
         Commands::Log => cmd_log(),
-        Commands::FallbackExec { action, target, message } => {
-            let fb = cryochamber::fallback::FallbackAction { action, target, message };
+        Commands::FallbackExec {
+            action,
+            target,
+            message,
+        } => {
+            let fb = cryochamber::fallback::FallbackAction {
+                action,
+                target,
+                message,
+            };
             fb.execute()
         }
     }
@@ -79,8 +87,7 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str) -> Result<()> {
     let plan_dest = dir.join("plan.md");
 
     if plan_path != plan_dest {
-        std::fs::copy(plan_path, &plan_dest)
-            .context("Failed to copy plan file")?;
+        std::fs::copy(plan_path, &plan_dest).context("Failed to copy plan file")?;
     }
 
     let plan_content = std::fs::read_to_string(&plan_dest)?;
@@ -97,7 +104,13 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str) -> Result<()> {
 
     println!("Cryochamber initialized. Running first task...");
 
-    run_session(&dir, &mut cryo_state, agent_cmd, &plan_content, "Execute the first task from the plan")?;
+    run_session(
+        &dir,
+        &mut cryo_state,
+        agent_cmd,
+        &plan_content,
+        "Execute the first task from the plan",
+    )?;
 
     Ok(())
 }
@@ -108,7 +121,10 @@ fn cmd_wake() -> Result<()> {
         .context("No cryochamber state found. Run 'cryochamber start' first.")?;
 
     if state::is_locked(&cryo_state) && cryo_state.pid != Some(std::process::id()) {
-        anyhow::bail!("Another cryochamber session is running (PID: {:?})", cryo_state.pid);
+        anyhow::bail!(
+            "Another cryochamber session is running (PID: {:?})",
+            cryo_state.pid
+        );
     }
 
     cryo_state.pid = Some(std::process::id());
@@ -116,7 +132,9 @@ fn cmd_wake() -> Result<()> {
     state::save_state(&state_path(&dir), &cryo_state)?;
 
     let plan_content = std::fs::read_to_string(dir.join("plan.md"))?;
-    let agent_cmd = cryo_state.last_command.clone()
+    let agent_cmd = cryo_state
+        .last_command
+        .clone()
         .unwrap_or_else(|| "opencode".to_string());
 
     let task = get_task_from_log(&dir).unwrap_or_else(|| "Continue the plan".to_string());
@@ -132,7 +150,13 @@ fn cmd_wake() -> Result<()> {
     Ok(())
 }
 
-fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, plan_content: &str, task: &str) -> Result<()> {
+fn run_session(
+    dir: &Path,
+    cryo_state: &mut CryoState,
+    agent_cmd: &str,
+    plan_content: &str,
+    task: &str,
+) -> Result<()> {
     let log = log_path(dir);
 
     let log_content = cryochamber::log::read_latest_session(&log)?;
@@ -148,7 +172,10 @@ fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, plan_con
     let result = agent::run_agent(agent_cmd, &prompt)?;
 
     if result.exit_code != 0 {
-        eprintln!("Agent exited with code {}. Stderr:\n{}", result.exit_code, result.stderr);
+        eprintln!(
+            "Agent exited with code {}. Stderr:\n{}",
+            result.exit_code, result.stderr
+        );
     }
 
     let session = Session {
@@ -189,10 +216,7 @@ fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, plan_con
     let wake_time = markers.wake_time.unwrap().0;
     let dir_str = dir.to_string_lossy().to_string();
 
-    let wake_cmd = format!(
-        "{} wake",
-        std::env::current_exe()?.to_string_lossy()
-    );
+    let wake_cmd = format!("{} wake", std::env::current_exe()?.to_string_lossy());
 
     let wake_id = timer_impl.schedule_wake(wake_time, &wake_cmd, &dir_str)?;
     cryo_state.wake_timer_id = Some(wake_id.0.clone());
@@ -217,7 +241,10 @@ fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, plan_con
     let status = timer_impl.verify(&timer::TimerId(cryo_state.wake_timer_id.clone().unwrap()))?;
     match status {
         timer::TimerStatus::Scheduled { .. } => {
-            println!("Hibernating. Next wake: {}", wake_time.format("%Y-%m-%d %H:%M"));
+            println!(
+                "Hibernating. Next wake: {}",
+                wake_time.format("%Y-%m-%d %H:%M")
+            );
         }
         timer::TimerStatus::NotFound => {
             anyhow::bail!("Timer registration verification failed!");
@@ -246,9 +273,18 @@ fn cmd_status() -> Result<()> {
         Some(state) => {
             println!("Plan: {}", state.plan_path);
             println!("Session: {}", state.session_number);
-            println!("Wake timer: {}", state.wake_timer_id.as_deref().unwrap_or("none"));
-            println!("Fallback timer: {}", state.fallback_timer_id.as_deref().unwrap_or("none"));
-            println!("Locked by PID: {}", state.pid.map(|p| p.to_string()).unwrap_or("none".into()));
+            println!(
+                "Wake timer: {}",
+                state.wake_timer_id.as_deref().unwrap_or("none")
+            );
+            println!(
+                "Fallback timer: {}",
+                state.fallback_timer_id.as_deref().unwrap_or("none")
+            );
+            println!(
+                "Locked by PID: {}",
+                state.pid.map(|p| p.to_string()).unwrap_or("none".into())
+            );
 
             let log = log_path(&dir);
             if let Some(latest) = cryochamber::log::read_latest_session(&log)? {
@@ -266,8 +302,8 @@ fn cmd_status() -> Result<()> {
 
 fn cmd_cancel() -> Result<()> {
     let dir = work_dir()?;
-    let cryo_state = state::load_state(&state_path(&dir))?
-        .context("No cryochamber instance found.")?;
+    let cryo_state =
+        state::load_state(&state_path(&dir))?.context("No cryochamber instance found.")?;
 
     let timer_impl = timer::create_timer()?;
 
@@ -293,8 +329,8 @@ fn cmd_validate() -> Result<()> {
     let dir = work_dir()?;
     let log = log_path(&dir);
 
-    let latest = cryochamber::log::read_latest_session(&log)?
-        .context("No sessions found in log.")?;
+    let latest =
+        cryochamber::log::read_latest_session(&log)?.context("No sessions found in log.")?;
     let markers = marker::parse_markers(&latest)?;
     let result = validate::validate_markers(&markers);
 

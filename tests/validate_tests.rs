@@ -1,7 +1,7 @@
 // tests/validate_tests.rs
-use cryochamber::validate::{ValidationResult, validate_markers};
+use chrono::{Duration, Local, NaiveDateTime};
 use cryochamber::marker::{CryoMarkers, ExitCode, WakeTime};
-use chrono::{Local, NaiveDateTime, Duration};
+use cryochamber::validate::{validate_markers, ValidationResult};
 
 #[test]
 fn test_valid_markers() {

@@ -99,7 +99,8 @@ All caught up!
 
 #[test]
 fn test_agent_failure_cycle() {
-    let agent_output = "Something went wrong, couldn't connect.\n\n[CRYO:EXIT 2] Failed to connect to GitHub API";
+    let agent_output =
+        "Something went wrong, couldn't connect.\n\n[CRYO:EXIT 2] Failed to connect to GitHub API";
     let markers = parse_markers(agent_output).unwrap();
     let validation = validate_markers(&markers);
     // EXIT 2 + no WAKE = plan complete (agent gave up)

@@ -1,13 +1,14 @@
 // tests/systemd_tests.rs
 #[cfg(target_os = "linux")]
 mod tests {
-    use cryochamber::timer::systemd::SystemdTimer;
     use chrono::NaiveDateTime;
+    use cryochamber::timer::systemd::SystemdTimer;
 
     #[test]
     fn test_timer_unit_generation() {
         let timer = SystemdTimer::new();
-        let wake_time = NaiveDateTime::parse_from_str("2025-03-08T09:00", "%Y-%m-%dT%H:%M").unwrap();
+        let wake_time =
+            NaiveDateTime::parse_from_str("2025-03-08T09:00", "%Y-%m-%dT%H:%M").unwrap();
         let content = timer.generate_timer_unit("cryochamber-test", &wake_time);
         assert!(content.contains("OnCalendar=2025-03-08 09:00:00"));
         assert!(content.contains("Persistent=true"));

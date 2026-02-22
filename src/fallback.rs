@@ -41,7 +41,10 @@ impl FallbackAction {
             .wait_with_output()?;
 
         if !output.status.success() {
-            eprintln!("Warning: email fallback may have failed (exit {})", output.status);
+            eprintln!(
+                "Warning: email fallback may have failed (exit {})",
+                output.status
+            );
         }
         Ok(())
     }
@@ -53,9 +56,13 @@ impl FallbackAction {
 
         let output = std::process::Command::new("curl")
             .args([
-                "-s", "-X", "POST",
-                "-H", "Content-Type: application/json",
-                "-d", &body.to_string(),
+                "-s",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                &body.to_string(),
                 &self.target,
             ])
             .output()

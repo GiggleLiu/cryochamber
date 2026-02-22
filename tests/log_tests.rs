@@ -98,11 +98,19 @@ fn test_session_count() {
 
     assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 0);
 
-    let s1 = Session { number: 1, task: "T".into(), output: "O".into() };
+    let s1 = Session {
+        number: 1,
+        task: "T".into(),
+        output: "O".into(),
+    };
     append_session(&log_path, &s1).unwrap();
     assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 1);
 
-    let s2 = Session { number: 2, task: "T".into(), output: "O".into() };
+    let s2 = Session {
+        number: 2,
+        task: "T".into(),
+        output: "O".into(),
+    };
     append_session(&log_path, &s2).unwrap();
     assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 2);
 }

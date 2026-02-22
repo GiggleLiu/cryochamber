@@ -19,7 +19,12 @@ pub enum TimerStatus {
 
 pub trait CryoTimer {
     fn schedule_wake(&self, time: NaiveDateTime, command: &str, work_dir: &str) -> Result<TimerId>;
-    fn schedule_fallback(&self, time: NaiveDateTime, action: &FallbackAction, work_dir: &str) -> Result<TimerId>;
+    fn schedule_fallback(
+        &self,
+        time: NaiveDateTime,
+        action: &FallbackAction,
+        work_dir: &str,
+    ) -> Result<TimerId>;
     fn cancel(&self, id: &TimerId) -> Result<()>;
     fn verify(&self, id: &TimerId) -> Result<TimerStatus>;
 }
@@ -30,6 +35,8 @@ pub fn create_timer() -> Result<Box<dyn CryoTimer>> {
     } else if cfg!(target_os = "linux") {
         Ok(Box::new(systemd::SystemdTimer::new()))
     } else {
-        anyhow::bail!("Unsupported platform. Cryochamber supports macOS (launchd) and Linux (systemd).")
+        anyhow::bail!(
+            "Unsupported platform. Cryochamber supports macOS (launchd) and Linux (systemd)."
+        )
     }
 }
