@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time check-agent
+.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time check-agent cli
 
 # Default target
 help:
@@ -18,6 +18,7 @@ help:
 	@echo "  chess        - Run the chess-by-mail example"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Verify agent is installed and supports headless mode"
+	@echo "  cli          - Install the cryo CLI locally"
 
 # Build the project
 build:
@@ -85,6 +86,10 @@ run-plan:
 		--max-turns 500 \
 		-p "$$PROMPT" 2>&1 | tee "$(OUTPUT)"
 
+# Install the cryo CLI
+cli:
+	cargo install --path .
+
 # Run the chess-by-mail example
 chess: build
 	cargo run -- start examples/chess-by-mail
@@ -93,7 +98,7 @@ chess: build
 # Usage: make check-agent                    # check default (opencode)
 #        make check-agent AGENT="claude"     # check claude
 #        make check-agent AGENT="opencode run"  # check opencode in headless mode
-AGENT ?= opencode
+AGENT ?= opencode run
 
 check-agent:
 	@echo "=== Agent Health Check ==="
