@@ -18,23 +18,30 @@ pub fn validate_markers(markers: &CryoMarkers) -> ValidationResult {
         errors.push("No [CRYO:EXIT] marker found. Agent must report exit status.".to_string());
     }
 
-    // No WAKE = plan complete (only if we have an exit code)
+    // Explicit [CRYO:PLAN COMPLETE] takes priority over wake time
+    let explicit_complete = markers
+        .plan_note
+        .as_ref()
+        .is_some_and(|note| note.eq_ignore_ascii_case("COMPLETE"));
+
+    // Plan complete: explicit PLAN COMPLETE marker, or no WAKE with a valid exit code
+    if explicit_complete || (markers.wake_time.is_none() && markers.exit_code.is_some()) {
+        return ValidationResult {
+            can_hibernate: false,
+            plan_complete: true,
+            errors: vec![],
+            warnings: vec![],
+        };
+    }
+
+    // No WAKE and no exit code — can't determine state
     if markers.wake_time.is_none() {
-        if markers.exit_code.is_some() {
-            return ValidationResult {
-                can_hibernate: false,
-                plan_complete: true,
-                errors: vec![],
-                warnings: vec![],
-            };
-        } else {
-            return ValidationResult {
-                can_hibernate: false,
-                plan_complete: false,
-                errors,
-                warnings,
-            };
-        }
+        return ValidationResult {
+            can_hibernate: false,
+            plan_complete: false,
+            errors,
+            warnings,
+        };
     }
 
     // Check wake time is in the future

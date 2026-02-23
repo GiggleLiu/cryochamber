@@ -96,3 +96,22 @@ fn test_partial_exit_with_wake() {
     assert!(result.can_hibernate);
     assert!(!result.plan_complete);
 }
+
+#[test]
+fn test_plan_complete_marker_overrides_wake_time() {
+    // Agent emits both [CRYO:PLAN COMPLETE] and [CRYO:WAKE ...] —
+    // PLAN COMPLETE should take priority.
+    let future = Local::now().naive_local() + Duration::hours(24);
+    let markers = CryoMarkers {
+        exit_code: Some(ExitCode::Success),
+        exit_summary: Some("done".to_string()),
+        wake_time: Some(WakeTime(future)),
+        command: Some("opencode run".to_string()),
+        plan_note: Some("COMPLETE".to_string()),
+        fallbacks: vec![],
+        replies: vec![],
+    };
+    let result = validate_markers(&markers);
+    assert!(result.plan_complete);
+    assert!(!result.can_hibernate);
+}
