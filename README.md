@@ -39,24 +39,27 @@ See [`examples/`](examples/) for complete, runnable examples.
 
 **What happens next:**
 
-1. Cryochamber runs your agent with the plan and a task prompt
-2. The agent does its work and writes `[CRYO:*]` markers at the end
-3. Cryochamber parses the markers, schedules an OS timer for the next wake time, and exits
-4. When the timer fires, cryochamber wakes, gives the agent its plan + session history, and repeats
+1. Cryochamber spawns a persistent daemon in the background
+2. The daemon runs your agent with the plan and a task prompt
+3. The agent does its work and writes `[CRYO:*]` markers at the end
+4. The daemon parses markers, sleeps until the next wake time, and repeats
+5. New messages in `messages/inbox/` wake the daemon immediately
 
-Check the current state any time with `cryo status`.
+Monitor progress with `cryo watch`. Check state with `cryo status`.
 
 ## How It Works
 
 ```
-cryo start plan.md → run agent → parse markers → schedule timer → hibernate
-                                                                      ↓
-cryo wake  ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ (OS timer fires) ← ─ ─ ─ ─ ─ ─ ┘
-     ↓
-run agent → parse markers → ...
+cryo start plan.md → spawn daemon → run agent → parse markers → sleep
+                                                                   ↓
+                    inbox message → (immediate wake) ← ─ ─ ─ ─ ─ ─┤
+                                                                   ↓
+                                    (wake time reached) ← ─ ─ ─ ─ ┘
+                                         ↓
+                                    run agent → parse markers → ...
 ```
 
-**The daemon** (cryochamber) handles lifecycle: scheduling timers, managing state, passing context between sessions, and executing fallback alerts if something goes wrong.
+**The daemon** (cryochamber) handles lifecycle: sleeping until wake time, watching the inbox for reactive wake, enforcing session timeout, retrying on failure, and executing fallback alerts if something goes wrong.
 
 **The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates back to the daemon through structured markers in its output.
 
@@ -80,13 +83,19 @@ The agent writes these markers at the end of its output:
 ```bash
 cryo init [--agent <cmd>]           # Initialize working directory
 cryo start [<plan|dir>] [--agent <cmd>] # Start a plan (default: ./plan.md)
-cryo wake                           # Called by OS timer
+cryo start --foreground             # Run in foreground (block until session completes)
+cryo start --max-retries 3          # Retry agent spawn failures (default: 1)
+cryo start --max-session-duration 3600  # Session timeout in seconds (default: 1800)
+cryo start --no-watch               # Disable inbox file watching
 cryo status                         # Show current state
-cryo cancel                         # Cancel all timers
+cryo restart                        # Kill running session and restart daemon
+cryo cancel                         # Cancel all timers and stop the daemon
+cryo watch [--all]                  # Watch session log in real-time
 cryo validate                       # Check if ready to hibernate
 cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
+cryo wake                           # Called by OS timer (foreground mode)
 cryo gh init --repo owner/repo      # Create a GitHub Discussion for sync
 cryo gh pull                        # Pull Discussion comments into inbox
 cryo gh push                        # Push session summary to Discussion
