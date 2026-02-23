@@ -86,15 +86,14 @@ impl InboxWatcher {
     /// Start watching the inbox directory. Sends `DaemonEvent::InboxChanged`
     /// to `tx` when a new file is created.
     pub fn start(inbox_path: &Path, tx: mpsc::Sender<DaemonEvent>) -> Result<Self> {
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if let Ok(event) = res {
-                    if event.kind.is_create() {
-                        let _ = tx.send(DaemonEvent::InboxChanged);
-                    }
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if event.kind.is_create() {
+                    let _ = tx.send(DaemonEvent::InboxChanged);
                 }
-            })
-            .context("Failed to create file watcher")?;
+            }
+        })
+        .context("Failed to create file watcher")?;
 
         watcher
             .watch(inbox_path, RecursiveMode::NonRecursive)
@@ -139,8 +138,8 @@ impl Daemon {
         flag::register(SIGINT, Arc::clone(&self.shutdown))
             .context("Failed to register SIGINT handler")?;
 
-        let mut cryo_state = state::load_state(&self.state_path)?
-            .context("No cryochamber state found")?;
+        let mut cryo_state =
+            state::load_state(&self.state_path)?.context("No cryochamber state found")?;
 
         // Mark as daemon mode and save PID
         cryo_state.daemon_mode = true;
@@ -198,9 +197,7 @@ impl Daemon {
                                 );
                             }
                             SessionLoopOutcome::ValidationFailed => {
-                                eprintln!(
-                                    "Daemon: validation failed. Will retry on next event."
-                                );
+                                eprintln!("Daemon: validation failed. Will retry on next event.");
                                 next_wake = None;
                             }
                         }
@@ -370,8 +367,7 @@ impl Daemon {
         use std::io::BufRead;
         use std::process::{Command, Stdio};
 
-        let parts =
-            shell_words::split(agent_command).context("Failed to parse agent command")?;
+        let parts = shell_words::split(agent_command).context("Failed to parse agent command")?;
         let (program, args) = parts.split_first().context("Agent command is empty")?;
 
         let mut child = Command::new(program)
@@ -385,15 +381,18 @@ impl Daemon {
 
         let child_pid = child.id();
         let shutdown = Arc::clone(&self.shutdown);
+        let child_done = Arc::new(AtomicBool::new(false));
+        let child_done_clone = Arc::clone(&child_done);
 
         // Spawn timeout watchdog thread
         let timeout_handle = std::thread::spawn(move || {
             let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
             loop {
+                if child_done_clone.load(Ordering::Relaxed) {
+                    return false; // child exited normally
+                }
                 if std::time::Instant::now() >= deadline {
-                    eprintln!(
-                        "Daemon: session timeout ({timeout_secs}s) — killing agent"
-                    );
+                    eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
                     unsafe {
                         libc::kill(child_pid as i32, libc::SIGTERM);
                     }
@@ -445,6 +444,7 @@ impl Daemon {
         }
 
         let status = child.wait().context("Failed to wait for agent process")?;
+        child_done.store(true, Ordering::Relaxed);
         let stderr_buf = stderr_handle.join().unwrap_or_default();
         let timed_out = timeout_handle.join().unwrap_or(false);
 

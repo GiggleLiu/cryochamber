@@ -624,6 +624,127 @@ fn test_state_backward_compat_without_daemon_fields() {
         .stdout(predicate::str::contains("Session: 1"));
 }
 
+// --- Daemon tests ---
+
+#[test]
+fn test_daemon_plan_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan\nDo stuff").unwrap();
+
+    // Start with daemon mode (default, no --foreground)
+    cmd()
+        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] All done")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cryochamber started"));
+
+    // Wait for daemon to finish (it should exit after plan complete)
+    // Poll for up to 10 seconds
+    let mut daemon_exited = false;
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Ok(content) = fs::read_to_string(dir.path().join("timer.json")) {
+            if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
+                if state["pid"].is_null() {
+                    daemon_exited = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(daemon_exited, "Daemon should have exited within 10 seconds");
+
+    // Check state: PID should be cleared, daemon_mode false
+    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
+    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
+    assert!(state["pid"].is_null());
+    assert_eq!(state["daemon_mode"].as_bool(), Some(false));
+
+    // Check log
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("[CRYO:EXIT 0]"));
+}
+
+#[test]
+fn test_daemon_cancel() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+
+    // Use a slow agent that sleeps
+    let agent = "/bin/sh -c 'sleep 30 && echo [CRYO:EXIT 0] Done'";
+
+    cmd()
+        .args(["start", "plan.md", "--agent", agent])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for daemon to start
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Cancel should work
+    cmd()
+        .arg("cancel")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cryochamber cancelled"));
+}
+
+#[test]
+fn test_daemon_inbox_reactive_wake() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+
+    // Start with daemon mode, verify state has watch_inbox: true
+    cmd()
+        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // State should have watch_inbox: true
+    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
+    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
+    assert_eq!(state["watch_inbox"].as_bool(), Some(true));
+}
+
+#[test]
+fn test_daemon_status_shows_daemon_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = serde_json::json!({
+        "plan_path": "plan.md",
+        "session_number": 1,
+        "last_command": "opencode",
+        "wake_timer_id": null,
+        "fallback_timer_id": null,
+        "pid": null,
+        "max_retries": 1,
+        "retry_count": 0,
+        "max_session_duration": 1800,
+        "watch_inbox": true,
+        "daemon_mode": true
+    });
+    fs::write(
+        dir.path().join("timer.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    cmd()
+        .arg("status")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Daemon mode: yes"))
+        .stdout(predicate::str::contains("Session timeout: 1800s"));
+}
+
 // --- Full wake cycle (macOS only — requires real launchd) ---
 
 #[cfg(target_os = "macos")]
