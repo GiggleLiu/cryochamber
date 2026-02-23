@@ -18,36 +18,46 @@ pub fn validate_markers(markers: &CryoMarkers) -> ValidationResult {
         errors.push("No [CRYO:EXIT] marker found. Agent must report exit status.".to_string());
     }
 
-    // No WAKE = plan complete (only if we have an exit code)
-    if markers.wake_time.is_none() {
-        if markers.exit_code.is_some() {
-            return ValidationResult {
-                can_hibernate: false,
-                plan_complete: true,
-                errors: vec![],
-                warnings: vec![],
-            };
-        } else {
-            return ValidationResult {
-                can_hibernate: false,
-                plan_complete: false,
-                errors,
-                warnings,
-            };
-        }
+    // Explicit [CRYO:PLAN COMPLETE] takes priority over wake time
+    let explicit_complete = markers
+        .plan_note
+        .as_ref()
+        .is_some_and(|note| note.eq_ignore_ascii_case("COMPLETE"));
+
+    // Plan complete: explicit PLAN COMPLETE marker, or no WAKE with a valid exit code
+    if explicit_complete || (markers.wake_time.is_none() && markers.exit_code.is_some()) {
+        return ValidationResult {
+            can_hibernate: false,
+            plan_complete: true,
+            errors: vec![],
+            warnings: vec![],
+        };
     }
 
-    // Check wake time is in the future
+    // No WAKE and no exit code — can't determine state
+    if markers.wake_time.is_none() {
+        return ValidationResult {
+            can_hibernate: false,
+            plan_complete: false,
+            errors,
+            warnings,
+        };
+    }
+
+    // Check wake time is in the future (or recently past — treat as "wake now")
     if let Some(wake) = &markers.wake_time {
         let now = Local::now().naive_local();
         if *wake.inner() < now {
-            errors.push("Wake time is in the past. Please specify a future time.".to_string());
+            let age = now - *wake.inner();
+            if age > chrono::Duration::minutes(10) {
+                errors.push("Wake time is in the past. Please specify a future time.".to_string());
+            } else {
+                warnings.push(format!(
+                    "Wake time is {}m ago — treating as immediate wake.",
+                    age.num_minutes()
+                ));
+            }
         }
-    }
-
-    // Check command exists
-    if markers.command.is_none() {
-        warnings.push("No [CRYO:CMD] marker. Will re-use previous command.".to_string());
     }
 
     ValidationResult {

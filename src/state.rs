@@ -8,8 +8,6 @@ pub struct CryoState {
     pub plan_path: String,
     pub session_number: u32,
     pub last_command: Option<String>,
-    pub wake_timer_id: Option<String>,
-    pub fallback_timer_id: Option<String>,
     pub pid: Option<u32>,
     /// Maximum number of retry attempts on agent spawn failure.
     #[serde(default = "default_max_retries")]
@@ -17,10 +15,27 @@ pub struct CryoState {
     /// Current retry count for the active wake cycle. Reset to 0 on success.
     #[serde(default)]
     pub retry_count: u32,
+    /// Maximum session duration in seconds. 0 = no timeout.
+    #[serde(default = "default_max_session_duration")]
+    pub max_session_duration: u64,
+    /// Whether the daemon should watch messages/inbox/ for reactive wake.
+    #[serde(default = "default_watch_inbox")]
+    pub watch_inbox: bool,
+    /// Whether this instance is running as a daemon (vs one-shot wake).
+    #[serde(default)]
+    pub daemon_mode: bool,
 }
 
 fn default_max_retries() -> u32 {
     1
+}
+
+fn default_max_session_duration() -> u64 {
+    0 // no timeout
+}
+
+fn default_watch_inbox() -> bool {
+    true
 }
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {

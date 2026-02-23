@@ -49,7 +49,7 @@ Example: `[CRYO:WAKE 2026-03-08T09:00]`
 ### [CRYO:CMD <command>]
 Optional. What agent command to run on next wake. If omitted, re-uses the previous command.
 
-Example: `[CRYO:CMD opencode "check PR #42"]`
+Example: `[CRYO:CMD opencode run "check PR #42"]`
 
 ### [CRYO:PLAN <note>]
 Optional but recommended. Leave context for your future self. This is your memory across sessions.
@@ -97,7 +97,7 @@ Approved PR #42 and #43. Left comments on PR #41.
 [CRYO:EXIT 0] Reviewed 3 PRs: approved 2, commented on 1
 [CRYO:PLAN PR #41 needs author to fix lint issues]
 [CRYO:WAKE 2026-03-08T09:00]
-[CRYO:CMD opencode "Follow up on PR #41, check for new PRs"]
+[CRYO:CMD opencode run "Follow up on PR #41, check for new PRs"]
 [CRYO:FALLBACK email user@example.com "Monday PR review did not run"]
 ```
 "#;

@@ -16,7 +16,7 @@ After each session you will be hibernated and woken at a future time.
 2. Check your prompt for new messages (from humans or external systems).
 3. Execute the current task (provided in the prompt).
 4. Write structured markers (below) at the end of your response.
-5. Cryochamber parses your markers, schedules the next wake, and hibernates.
+5. Cryochamber parses your markers and sleeps until the next wake time (or until a new inbox message arrives).
 
 ## Message System
 
@@ -60,6 +60,13 @@ make time OFFSET="+2 hours"       # 2 hours from now
 make time OFFSET="+30 minutes"    # 30 minutes from now
 ```
 
+## Daemon Features
+
+- **Inbox watching**: New messages in `messages/inbox/` wake the daemon immediately — no need to wait for the scheduled wake time.
+- **Session timeout**: Sessions are limited to a maximum duration (default: 30 minutes). Plan your work to complete within that window.
+- **Retry on failure**: If the agent fails to start, the daemon retries with backoff (5s, 15s, 60s).
+- **Fallback execution**: If a session fails and the fallback deadline passes (wake time + 1 hour), `[CRYO:FALLBACK]` actions are executed automatically.
+
 ## Rules
 
 - **No WAKE marker = plan is complete.** No more wake-ups will be scheduled.
@@ -67,3 +74,4 @@ make time OFFSET="+30 minutes"    # 30 minutes from now
 - **PLAN markers are your memory.** Use them to leave notes for your future self.
 - **EXIT is mandatory.** Every session must report an exit code.
 - **Write all markers at the end** of your response, not inline.
+- **Session timeout matters.** If your session exceeds the timeout, it will be terminated. Plan accordingly.

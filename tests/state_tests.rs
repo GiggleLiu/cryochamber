@@ -10,11 +10,12 @@ fn test_save_and_load_state() {
         plan_path: "plan.md".to_string(),
         session_number: 3,
         last_command: Some("opencode test".to_string()),
-        wake_timer_id: Some("com.cryochamber.abc.wake".to_string()),
-        fallback_timer_id: Some("com.cryochamber.abc.fallback".to_string()),
         pid: Some(std::process::id()),
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -43,11 +44,12 @@ fn test_lock_mechanism() {
         plan_path: "plan.md".to_string(),
         session_number: 1,
         last_command: None,
-        wake_timer_id: None,
-        fallback_timer_id: None,
         pid: Some(std::process::id()),
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -64,11 +66,12 @@ fn test_is_locked_dead_process() {
         plan_path: "plan.md".to_string(),
         session_number: 1,
         last_command: None,
-        wake_timer_id: None,
-        fallback_timer_id: None,
         pid: Some(999999),
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     assert!(!is_locked(&state));
 }
@@ -80,11 +83,12 @@ fn test_is_locked_no_pid() {
         plan_path: "plan.md".to_string(),
         session_number: 1,
         last_command: None,
-        wake_timer_id: None,
-        fallback_timer_id: None,
         pid: None,
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     assert!(!is_locked(&state));
 }
@@ -107,8 +111,6 @@ fn test_load_legacy_state_without_retry_fields() {
         "plan_path": "plan.md",
         "session_number": 5,
         "last_command": "opencode",
-        "wake_timer_id": null,
-        "fallback_timer_id": null,
         "pid": null
     }"#;
     std::fs::write(&state_path, legacy_json).unwrap();
@@ -126,11 +128,12 @@ fn test_retry_fields_roundtrip() {
         plan_path: "plan.md".to_string(),
         session_number: 1,
         last_command: None,
-        wake_timer_id: None,
-        fallback_timer_id: None,
         pid: None,
         max_retries: 5,
         retry_count: 2,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();

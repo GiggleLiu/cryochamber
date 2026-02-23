@@ -59,11 +59,12 @@ Approved PR #42 and #43. Left comments on PR #41.
         plan_path: "plan.md".to_string(),
         session_number: 1,
         last_command: Some("opencode".to_string()),
-        wake_timer_id: Some("com.cryochamber.test.wake".to_string()),
-        fallback_timer_id: Some("com.cryochamber.test.fallback".to_string()),
         pid: None,
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     save_state(&state_path, &state).unwrap();
 
