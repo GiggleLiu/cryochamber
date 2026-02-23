@@ -94,6 +94,14 @@ cryo time "+3 months"      # 2026-05-24T09:00
 
 See [`examples/`](examples/) for complete, runnable examples.
 
+### Chess by Mail
+
+Play correspondence chess against an AI agent with adaptive scheduling.
+
+**Why not cron?** The agent adapts its polling interval — checking frequently when you're active, going to sleep when you're away. A new move wakes the agent on demand, not on a schedule. Board state persists across sessions that may be hours or days apart.
+
+[See the example](examples/chess-by-mail/)
+
 ### Conference Program Chair
 
 Manage a CS conference from CFP through author notification — a ~3 month workflow where every deadline depends on human behavior.
