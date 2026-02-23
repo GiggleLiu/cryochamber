@@ -41,6 +41,12 @@ enum Commands {
         /// Run in foreground (block until session completes instead of daemonizing)
         #[arg(long)]
         foreground: bool,
+        /// Maximum session duration in seconds (0 = no timeout, default: 1800)
+        #[arg(long, default_value = "1800")]
+        max_session_duration: u64,
+        /// Disable inbox file watching
+        #[arg(long)]
+        no_watch: bool,
     },
     /// Called by OS timer: execute the next scheduled task
     Wake {
@@ -83,6 +89,9 @@ enum Commands {
         target: String,
         message: String,
     },
+    /// Run the persistent daemon (internal — use `cryo start` instead)
+    #[command(hide = true)]
+    Daemon,
     /// GitHub Discussion sync utility (independent message sync service)
     Gh {
         #[command(subcommand)]
@@ -133,7 +142,16 @@ fn main() -> Result<()> {
             agent,
             max_retries,
             foreground,
-        } => cmd_start(plan.as_deref(), &agent, max_retries, foreground),
+            max_session_duration,
+            no_watch,
+        } => cmd_start(
+            plan.as_deref(),
+            &agent,
+            max_retries,
+            foreground,
+            max_session_duration,
+            no_watch,
+        ),
         Commands::Wake { now } => cmd_wake(now),
         Commands::Status => cmd_status(),
         Commands::Restart => cmd_restart(),
@@ -146,6 +164,7 @@ fn main() -> Result<()> {
             from,
             subject,
         } => cmd_send(&body, &from, subject.as_deref()),
+        Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
             action,
@@ -210,6 +229,8 @@ fn cmd_start(
     agent_cmd: &str,
     max_retries: u32,
     foreground: bool,
+    max_session_duration: u64,
+    no_watch: bool,
 ) -> Result<()> {
     // Resolve plan path: None => "plan.md" in cwd, Some(dir) => cd into dir, Some(file) => use file
     let plan_path = match plan_path {
@@ -265,8 +286,8 @@ fn cmd_start(
             pid: Some(std::process::id()),
             max_retries,
             retry_count: 0,
-            max_session_duration: 1800,
-            watch_inbox: true,
+            max_session_duration,
+            watch_inbox: !no_watch,
             daemon_mode: false,
         };
         state::save_state(&state_path(&dir), &cryo_state)?;
@@ -280,19 +301,19 @@ fn cmd_start(
             "Execute the first task from the plan",
         )?;
     } else {
-        // Daemon mode: save state and spawn `cryo wake --now` in background
+        // Daemon mode: save state and spawn `cryo daemon` in background
         let cryo_state = CryoState {
             plan_path: "plan.md".to_string(),
-            session_number: 0, // wake will increment to 1
+            session_number: 0, // daemon will increment to 1
             last_command: Some(agent_cmd.to_string()),
             wake_timer_id: None,
             fallback_timer_id: None,
-            pid: None, // no PID lock — wake will set its own
+            pid: None, // no PID lock — daemon will set its own
             max_retries,
             retry_count: 0,
-            max_session_duration: 1800,
-            watch_inbox: true,
-            daemon_mode: false,
+            max_session_duration,
+            watch_inbox: !no_watch,
+            daemon_mode: true,
         };
         state::save_state(&state_path(&dir), &cryo_state)?;
 
@@ -306,16 +327,15 @@ fn cmd_start(
             .try_clone()
             .context("Failed to clone log handle")?;
         std::process::Command::new(&exe)
-            .arg("wake")
-            .arg("--now")
+            .arg("daemon")
             .current_dir(&dir)
             .stdin(std::process::Stdio::null())
             .stdout(daemon_out)
             .stderr(daemon_err)
             .spawn()
-            .context("Failed to spawn background cryo wake process")?;
+            .context("Failed to spawn daemon process")?;
 
-        println!("Cryochamber started (session running in background).");
+        println!("Cryochamber started (daemon running in background).");
         println!("Use `cryo watch` to follow progress.");
         println!("Use `cryo status` to check state.");
     }
@@ -563,6 +583,12 @@ fn get_task_from_log(dir: &Path) -> Option<String> {
     session::derive_task_from_output(&latest)
 }
 
+fn cmd_daemon() -> Result<()> {
+    let dir = work_dir()?;
+    let daemon = cryochamber::daemon::Daemon::new(dir);
+    daemon.run()
+}
+
 fn cmd_status() -> Result<()> {
     let dir = work_dir()?;
     let cryo_state = state::load_state(&state_path(&dir))?;
@@ -584,6 +610,13 @@ fn cmd_status() -> Result<()> {
                 "Locked by PID: {}",
                 state.pid.map(|p| p.to_string()).unwrap_or("none".into())
             );
+            println!(
+                "Daemon mode: {}",
+                if state.daemon_mode { "yes" } else { "no" }
+            );
+            if state.max_session_duration > 0 {
+                println!("Session timeout: {}s", state.max_session_duration);
+            }
 
             let log = log_path(&dir);
             if let Some(latest) = cryochamber::log::read_latest_session(&log)? {
@@ -604,19 +637,18 @@ fn cmd_restart() -> Result<()> {
     let cryo_state =
         state::load_state(&state_path(&dir))?.context("No cryochamber instance found.")?;
 
-    // Kill stuck session process if running
+    // Kill existing process (daemon or one-shot session)
     if let Some(pid) = cryo_state.pid {
         if state::is_locked(&cryo_state) {
-            println!("Killing stuck session (PID: {pid})...");
+            println!("Killing process (PID: {pid})...");
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
-            // Give it a moment to exit
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
 
-    // Cancel existing timers
+    // Cancel existing OS timers (non-daemon mode)
     let timer_impl = timer::create_timer()?;
     if let Some(wake_id) = &cryo_state.wake_timer_id {
         let _ = timer_impl.cancel(&timer::TimerId(wake_id.clone()));
@@ -630,11 +662,12 @@ fn cmd_restart() -> Result<()> {
         wake_timer_id: None,
         fallback_timer_id: None,
         pid: None,
+        daemon_mode: false,
         ..cryo_state
     };
     state::save_state(&state_path(&dir), &updated)?;
 
-    // Spawn wake --now in background
+    // Spawn daemon in background
     let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
     let log_file = std::fs::OpenOptions::new()
         .create(true)
@@ -643,16 +676,15 @@ fn cmd_restart() -> Result<()> {
         .context("Failed to open cryo.log")?;
     let err_file = log_file.try_clone().context("Failed to clone log handle")?;
     std::process::Command::new(&exe)
-        .arg("wake")
-        .arg("--now")
+        .arg("daemon")
         .current_dir(&dir)
         .stdin(std::process::Stdio::null())
         .stdout(log_file)
         .stderr(err_file)
         .spawn()
-        .context("Failed to spawn background cryo wake process")?;
+        .context("Failed to spawn daemon")?;
 
-    println!("Restarted. New session running in background.");
+    println!("Restarted. Daemon running in background.");
     println!("Use `cryo watch` to follow progress.");
     Ok(())
 }
@@ -662,14 +694,26 @@ fn cmd_cancel() -> Result<()> {
     let cryo_state =
         state::load_state(&state_path(&dir))?.context("No cryochamber instance found.")?;
 
-    let timer_impl = timer::create_timer()?;
+    // Kill daemon/session process if running
+    if let Some(pid) = cryo_state.pid {
+        if state::is_locked(&cryo_state) {
+            println!("Sending SIGTERM to process {pid}...");
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            // Wait for clean exit
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
 
+    // Cancel OS timers (for non-daemon mode)
+    let timer_impl = timer::create_timer()?;
     if let Some(wake_id) = &cryo_state.wake_timer_id {
-        timer_impl.cancel(&timer::TimerId(wake_id.clone()))?;
+        let _ = timer_impl.cancel(&timer::TimerId(wake_id.clone()));
         println!("Cancelled wake timer: {wake_id}");
     }
     if let Some(fb_id) = &cryo_state.fallback_timer_id {
-        timer_impl.cancel(&timer::TimerId(fb_id.clone()))?;
+        let _ = timer_impl.cancel(&timer::TimerId(fb_id.clone()));
         println!("Cancelled fallback timer: {fb_id}");
     }
 
