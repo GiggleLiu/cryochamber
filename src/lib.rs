@@ -1,11 +1,13 @@
 pub mod agent;
 pub mod channel;
+pub mod daemon;
 pub mod fallback;
 pub mod gh_sync;
 pub mod log;
 pub mod marker;
 pub mod message;
 pub mod protocol;
+pub mod session;
 pub mod state;
 pub mod timer;
 pub mod validate;
