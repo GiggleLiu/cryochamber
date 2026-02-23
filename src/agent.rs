@@ -59,6 +59,14 @@ fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
             if full_args.first().map(|s| s.as_str()) != Some("exec") {
                 full_args.insert(0, "exec".to_string());
             }
+            // codex exec requires --full-auto for non-interactive use
+            if !full_args.iter().any(|a| a == "--full-auto") {
+                full_args.push("--full-auto".to_string());
+            }
+            // Skip git repo check — cryo projects aren't always inside git repos
+            if !full_args.iter().any(|a| a == "--skip-git-repo-check") {
+                full_args.push("--skip-git-repo-check".to_string());
+            }
             Ok((AgentKind::Codex, program.clone(), full_args))
         }
         _ => Ok((AgentKind::Custom, program.clone(), args)),
