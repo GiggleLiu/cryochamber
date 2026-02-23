@@ -131,7 +131,7 @@ fn test_decide_validation_failed_wake_in_past() {
 }
 
 #[test]
-fn test_decide_hibernate_warns_no_command() {
+fn test_decide_hibernate_no_command_no_warning() {
     let wake = future_time();
     let markers = CryoMarkers {
         exit_code: Some(ExitCode::Success),
@@ -139,7 +139,8 @@ fn test_decide_hibernate_warns_no_command() {
         ..Default::default()
     };
     let (_, warnings) = session::decide_session_outcome(&markers);
-    assert!(warnings.iter().any(|w| w.contains("CMD")));
+    // No CMD marker is normal — most agents don't change the command
+    assert!(warnings.is_empty());
 }
 
 // --- format_session_summary ---

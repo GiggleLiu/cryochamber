@@ -77,6 +77,7 @@ pub fn session_count(log_path: &Path) -> Result<u32> {
 /// A handle for streaming session output to the log file line-by-line.
 pub struct SessionWriter {
     file: fs::File,
+    finished: bool,
 }
 
 impl SessionWriter {
@@ -102,7 +103,7 @@ impl SessionWriter {
         writeln!(file)?;
         file.flush()?;
 
-        Ok(Self { file })
+        Ok(Self { file, finished: false })
     }
 
     /// Append a line of agent output to the log.
@@ -114,6 +115,7 @@ impl SessionWriter {
 
     /// Write the stderr section and session footer, finalizing the session.
     pub fn finish(mut self, stderr: Option<&str>) -> Result<()> {
+        self.finished = true;
         if let Some(stderr) = stderr {
             if !stderr.trim().is_empty() {
                 writeln!(self.file)?;
@@ -125,5 +127,16 @@ impl SessionWriter {
         writeln!(self.file)?;
         self.file.flush()?;
         Ok(())
+    }
+}
+
+impl Drop for SessionWriter {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = writeln!(self.file, "\n--- CRYO INTERRUPTED ---");
+            let _ = writeln!(self.file, "{SESSION_END}");
+            let _ = writeln!(self.file);
+            let _ = self.file.flush();
+        }
     }
 }

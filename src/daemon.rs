@@ -208,10 +208,11 @@ impl Daemon {
             if run_now {
                 run_now = false;
                 cryo_state.session_number += 1;
-                state::save_state(&self.state_path, &cryo_state)?;
 
                 match self.run_one_session(&mut cryo_state) {
                     Ok(outcome) => {
+                        // Persist session number only after successful completion
+                        state::save_state(&self.state_path, &cryo_state)?;
                         retry.reset();
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
@@ -239,6 +240,8 @@ impl Daemon {
                         }
                     }
                     Err(e) => {
+                        // Roll back session number — no session was logged
+                        cryo_state.session_number -= 1;
                         eprintln!("Daemon: session failed: {e}");
                         let backoff = retry.next_backoff();
                         retry.record_failure();
@@ -256,16 +259,18 @@ impl Daemon {
                             continue;
                         } else {
                             eprintln!(
-                                "Daemon: exhausted {} retries. Waiting for next event.",
+                                "Daemon: exhausted {} retries. Cooling down 60s before accepting new events.",
                                 retry.max_retries
                             );
                             self.check_fallback(&mut pending_fallback);
                             retry.reset();
+                            // Cooldown: prevent immediate re-failure from inbox events
+                            if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                                break;
+                            }
                         }
                     }
                 }
-
-                state::save_state(&self.state_path, &cryo_state)?;
             }
 
             // Wait for next event

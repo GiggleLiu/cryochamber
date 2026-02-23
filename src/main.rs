@@ -154,12 +154,19 @@ fn spawn_daemon(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Send a signal to a process, logging a warning on failure.
+fn send_signal(pid: u32, signal: i32) {
+    let ret = unsafe { libc::kill(pid as i32, signal) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
+    }
+}
+
 /// Send SIGTERM to a process, wait for it to exit, escalate to SIGKILL if needed.
 fn terminate_pid(pid: u32) -> Result<()> {
     println!("Sending SIGTERM to process {pid}...");
-    unsafe {
-        libc::kill(pid as i32, libc::SIGTERM);
-    }
+    send_signal(pid, libc::SIGTERM);
 
     // Poll for up to 5 seconds
     for _ in 0..50 {
@@ -175,9 +182,7 @@ fn terminate_pid(pid: u32) -> Result<()> {
 
     // Escalate to SIGKILL
     println!("Process {pid} did not exit, sending SIGKILL...");
-    unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-    }
+    send_signal(pid, libc::SIGKILL);
     std::thread::sleep(std::time::Duration::from_millis(200));
     Ok(())
 }
@@ -524,10 +529,7 @@ fn cmd_ps(kill_all: bool) -> Result<()> {
         println!("PID {:>6}  {}", entry.pid, entry.dir);
 
         if kill_all {
-            println!("  → sending SIGTERM to PID {}", entry.pid);
-            unsafe {
-                libc::kill(entry.pid as i32, libc::SIGTERM);
-            }
+            terminate_pid(entry.pid)?;
         }
     }
 

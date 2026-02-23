@@ -10,6 +10,15 @@ use std::time::Duration;
 use crate::log::SessionWriter;
 use crate::message::Message;
 
+/// Send a signal to a process, logging a warning on failure.
+fn send_signal(pid: u32, signal: i32) {
+    let ret = unsafe { libc::kill(pid as i32, signal) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
+    }
+}
+
 /// Supported agent types.
 enum AgentKind {
     /// Claude Code: `claude [flags] -p <prompt>`
@@ -191,7 +200,9 @@ pub fn run_agent_streaming(
         match line {
             Ok(l) => {
                 if let Some(ref mut w) = writer {
-                    let _ = w.write_line(&l);
+                    if let Err(e) = w.write_line(&l) {
+                        eprintln!("Warning: failed to write to session log: {e}");
+                    }
                 }
                 stdout_buf.push_str(&l);
                 stdout_buf.push('\n');
@@ -244,26 +255,18 @@ pub fn run_agent_with_timeout(
             if let Some(d) = deadline {
                 if std::time::Instant::now() >= d {
                     eprintln!("Session timeout ({timeout_secs}s) — killing agent");
-                    unsafe {
-                        libc::kill(child_pid as i32, libc::SIGTERM);
-                    }
+                    send_signal(child_pid, libc::SIGTERM);
                     std::thread::sleep(Duration::from_secs(5));
-                    unsafe {
-                        libc::kill(child_pid as i32, libc::SIGKILL);
-                    }
+                    send_signal(child_pid, libc::SIGKILL);
                     return true; // timed out
                 }
             }
             if let Some(ref s) = shutdown {
                 if s.load(Ordering::Relaxed) {
-                    unsafe {
-                        libc::kill(child_pid as i32, libc::SIGTERM);
-                    }
+                    send_signal(child_pid, libc::SIGTERM);
                     std::thread::sleep(Duration::from_secs(5));
                     if !child_done_clone.load(Ordering::Relaxed) {
-                        unsafe {
-                            libc::kill(child_pid as i32, libc::SIGKILL);
-                        }
+                        send_signal(child_pid, libc::SIGKILL);
                     }
                     return false;
                 }
@@ -295,7 +298,9 @@ pub fn run_agent_with_timeout(
     for line in reader.lines() {
         match line {
             Ok(l) => {
-                let _ = writer.write_line(&l);
+                if let Err(e) = writer.write_line(&l) {
+                    eprintln!("Warning: failed to write to session log: {e}");
+                }
                 stdout_buf.push_str(&l);
                 stdout_buf.push('\n');
             }

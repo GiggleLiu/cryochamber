@@ -60,11 +60,6 @@ pub fn validate_markers(markers: &CryoMarkers) -> ValidationResult {
         }
     }
 
-    // Check command exists
-    if markers.command.is_none() {
-        warnings.push("No [CRYO:CMD] marker. Will re-use previous command.".to_string());
-    }
-
     ValidationResult {
         can_hibernate: errors.is_empty(),
         plan_complete: false,
