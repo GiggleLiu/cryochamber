@@ -70,6 +70,8 @@ enum Commands {
         #[arg(long)]
         subject: Option<String>,
     },
+    /// Read messages from the agent's outbox
+    Receive,
     /// Execute a fallback action (used internally by timers)
     FallbackExec {
         action: String,
@@ -111,6 +113,7 @@ fn main() -> Result<()> {
             from,
             subject,
         } => cmd_send(&body, &from, subject.as_deref()),
+        Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
             action,
             target,
@@ -533,6 +536,28 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
         "Message sent to {}",
         path.strip_prefix(&dir).unwrap_or(&path).display()
     );
+    Ok(())
+}
+
+fn cmd_receive() -> Result<()> {
+    let dir = work_dir()?;
+    let messages = message::read_outbox(&dir)?;
+
+    if messages.is_empty() {
+        println!("No messages in outbox.");
+        return Ok(());
+    }
+
+    for (filename, msg) in &messages {
+        println!("--- {} ---", filename);
+        println!("From: {}", msg.from);
+        println!("Subject: {}", msg.subject);
+        println!("Time: {}", msg.timestamp.format("%Y-%m-%dT%H:%M:%S"));
+        println!();
+        println!("{}", msg.body);
+        println!();
+    }
+
     Ok(())
 }
 

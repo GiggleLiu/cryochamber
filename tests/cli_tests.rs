@@ -608,6 +608,46 @@ fn test_send_no_body_fails() {
         .failure();
 }
 
+// --- Receive ---
+
+#[test]
+fn test_receive_empty_outbox() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["receive"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No messages"));
+}
+
+#[test]
+fn test_receive_shows_outbox_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    // Write a message to outbox manually
+    cryochamber::message::ensure_dirs(dir.path()).unwrap();
+    let msg = cryochamber::message::Message {
+        from: "cryochamber".to_string(),
+        subject: "Board update".to_string(),
+        body: "AI played Nf3".to_string(),
+        timestamp: chrono::NaiveDateTime::parse_from_str(
+            "2026-02-23T10:00:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .unwrap(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+    cryochamber::message::write_message(dir.path(), "outbox", &msg).unwrap();
+
+    cmd()
+        .args(["receive"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Board update"))
+        .stdout(predicates::str::contains("AI played Nf3"));
+}
+
 // --- Full wake cycle (macOS only — requires real launchd) ---
 
 #[cfg(target_os = "macos")]
