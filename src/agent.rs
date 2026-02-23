@@ -259,6 +259,12 @@ pub fn run_agent_with_timeout(
                     unsafe {
                         libc::kill(child_pid as i32, libc::SIGTERM);
                     }
+                    std::thread::sleep(Duration::from_secs(5));
+                    if !child_done_clone.load(Ordering::Relaxed) {
+                        unsafe {
+                            libc::kill(child_pid as i32, libc::SIGKILL);
+                        }
+                    }
                     return false;
                 }
             }

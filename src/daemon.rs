@@ -25,8 +25,6 @@ use crate::state::{self, CryoState};
 /// Events the daemon responds to.
 #[derive(Debug, PartialEq)]
 pub enum DaemonEvent {
-    /// Scheduled wake time arrived.
-    ScheduledWake,
     /// New file appeared in messages/inbox/.
     InboxChanged,
     /// SIGTERM or SIGINT received.
@@ -286,9 +284,6 @@ impl Daemon {
                     run_now = true;
                 }
                 Ok(DaemonEvent::Shutdown) => break,
-                Ok(DaemonEvent::ScheduledWake) => {
-                    run_now = true;
-                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if next_wake.is_some() {
                         eprintln!("Daemon: scheduled wake time reached");

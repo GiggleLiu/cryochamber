@@ -134,6 +134,54 @@ fn log_path(dir: &Path) -> PathBuf {
     dir.join("cryo.log")
 }
 
+/// Spawn the daemon subprocess in the background.
+fn spawn_daemon(dir: &Path) -> Result<()> {
+    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("cryo.log"))
+        .context("Failed to open cryo.log")?;
+    let err_file = log_file.try_clone().context("Failed to clone log handle")?;
+    std::process::Command::new(&exe)
+        .arg("daemon")
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(log_file)
+        .stderr(err_file)
+        .spawn()
+        .context("Failed to spawn daemon process")?;
+    Ok(())
+}
+
+/// Send SIGTERM to a process, wait for it to exit, escalate to SIGKILL if needed.
+fn terminate_pid(pid: u32) -> Result<()> {
+    println!("Sending SIGTERM to process {pid}...");
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+
+    // Poll for up to 5 seconds
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let ret = unsafe { libc::kill(pid as i32, 0) };
+        if ret != 0 {
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if errno != libc::EPERM {
+                return Ok(()); // process is gone
+            }
+        }
+    }
+
+    // Escalate to SIGKILL
+    println!("Process {pid} did not exit, sending SIGKILL...");
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -304,23 +352,7 @@ fn cmd_start(
     };
     state::save_state(&state_path(&dir), &cryo_state)?;
 
-    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
-    let daemon_out = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("cryo.log"))
-        .context("Failed to open cryo.log for daemon output")?;
-    let daemon_err = daemon_out
-        .try_clone()
-        .context("Failed to clone log handle")?;
-    std::process::Command::new(&exe)
-        .arg("daemon")
-        .current_dir(&dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(daemon_out)
-        .stderr(daemon_err)
-        .spawn()
-        .context("Failed to spawn daemon process")?;
+    spawn_daemon(&dir)?;
 
     println!("Cryochamber started (daemon running in background).");
     println!("Use `cryo watch` to follow progress.");
@@ -460,11 +492,7 @@ fn cmd_restart() -> Result<()> {
     // Kill existing daemon process if running
     if let Some(pid) = cryo_state.pid {
         if state::is_locked(&cryo_state) {
-            println!("Killing process (PID: {pid})...");
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            terminate_pid(pid)?;
         }
     }
 
@@ -476,22 +504,7 @@ fn cmd_restart() -> Result<()> {
     };
     state::save_state(&state_path(&dir), &updated)?;
 
-    // Spawn daemon in background
-    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("cryo.log"))
-        .context("Failed to open cryo.log")?;
-    let err_file = log_file.try_clone().context("Failed to clone log handle")?;
-    std::process::Command::new(&exe)
-        .arg("daemon")
-        .current_dir(&dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(log_file)
-        .stderr(err_file)
-        .spawn()
-        .context("Failed to spawn daemon")?;
+    spawn_daemon(&dir)?;
 
     println!("Restarted. Daemon running in background.");
     println!("Use `cryo watch` to follow progress.");
@@ -529,12 +542,7 @@ fn cmd_cancel() -> Result<()> {
     // Kill daemon process if running
     if let Some(pid) = cryo_state.pid {
         if state::is_locked(&cryo_state) {
-            println!("Sending SIGTERM to process {pid}...");
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            // Wait for clean exit
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            terminate_pid(pid)?;
         }
     }
 
