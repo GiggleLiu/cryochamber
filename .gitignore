@@ -12,3 +12,8 @@ docs/logo/logo.png
 
 # Git worktrees
 .worktrees/
+
+messages/
+examples/*/messages
+examples/*/*.log
+examples/*/*.json

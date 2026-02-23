@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time
+.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time check-agent
 
 # Default target
 help:
@@ -17,6 +17,7 @@ help:
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
 	@echo "  chess        - Run the chess-by-mail example"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
+	@echo "  check-agent  - Verify agent is installed and supports headless mode"
 
 # Build the project
 build:
@@ -87,3 +88,48 @@ run-plan:
 # Run the chess-by-mail example
 chess: build
 	cargo run -- start examples/chess-by-mail
+
+# Verify agent is installed and can run headlessly
+# Usage: make check-agent                    # check default (opencode)
+#        make check-agent AGENT="claude"     # check claude
+#        make check-agent AGENT="opencode run"  # check opencode in headless mode
+AGENT ?= opencode
+
+check-agent:
+	@echo "=== Agent Health Check ==="
+	@PROG=$$(echo "$(AGENT)" | awk '{print $$1}'); \
+	echo "Agent command: $(AGENT)"; \
+	echo "Executable:    $$PROG"; \
+	echo ""; \
+	echo "1. Checking if $$PROG is in PATH..."; \
+	if command -v "$$PROG" >/dev/null 2>&1; then \
+		echo "   OK: $$(command -v $$PROG)"; \
+	else \
+		echo "   FAIL: '$$PROG' not found in PATH"; exit 1; \
+	fi; \
+	echo ""; \
+	echo "2. Checking --prompt flag support..."; \
+	if "$$PROG" --help 2>&1 | grep -q '\-\-prompt'; then \
+		echo "   OK: --prompt flag supported"; \
+	else \
+		echo "   WARN: --prompt flag not found in help output"; \
+	fi; \
+	echo ""; \
+	echo "3. Checking headless (non-interactive) mode..."; \
+	case "$$PROG" in \
+		opencode) \
+			if echo "$(AGENT)" | grep -q "run"; then \
+				echo "   OK: 'opencode run' is headless"; \
+			else \
+				echo "   FAIL: bare 'opencode' starts an interactive TUI"; \
+				echo "   FIX:  use --agent \"opencode run\" with cryo"; \
+				exit 1; \
+			fi ;; \
+		claude) \
+			echo "   OK: claude supports headless via -p/--prompt" ;; \
+		*) \
+			echo "   INFO: unknown agent, cannot verify headless support"; \
+			echo "   Make sure '$(AGENT) --prompt <text>' runs non-interactively" ;; \
+	esac; \
+	echo ""; \
+	echo "=== Health check passed ==="

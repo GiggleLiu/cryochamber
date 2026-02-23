@@ -1,8 +1,10 @@
 // src/agent.rs
 use anyhow::{Context, Result};
 use chrono::Local;
-use std::process::Command;
+use std::io::BufRead;
+use std::process::{Command, Stdio};
 
+use crate::log::SessionWriter;
 use crate::message::Message;
 
 pub struct AgentConfig {
@@ -72,19 +74,69 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 }
 
 pub fn run_agent(agent_command: &str, prompt: &str) -> Result<AgentResult> {
+    run_agent_streaming(agent_command, prompt, None)
+}
+
+/// Run the agent, streaming stdout lines to a `SessionWriter` in real-time.
+/// If `writer` is None, output is only captured (no streaming to log).
+pub fn run_agent_streaming(
+    agent_command: &str,
+    prompt: &str,
+    mut writer: Option<&mut SessionWriter>,
+) -> Result<AgentResult> {
     let parts = shell_words::split(agent_command).context("Failed to parse agent command")?;
     let (program, args) = parts.split_first().context("Agent command is empty")?;
 
-    let output = Command::new(program)
+    let mut child = Command::new(program)
         .args(args)
         .arg("--prompt")
         .arg(prompt)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .context(format!("Failed to spawn agent: {agent_command}"))?;
 
+    let child_stdout = child.stdout.take().unwrap();
+    let child_stderr = child.stderr.take().unwrap();
+
+    // Read stderr in a background thread so it doesn't block stdout reading.
+    let stderr_handle = std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(child_stderr);
+        let mut buf = String::new();
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    buf.push_str(&l);
+                    buf.push('\n');
+                }
+                Err(_) => break,
+            }
+        }
+        buf
+    });
+
+    // Stream stdout line-by-line, writing to log in real-time.
+    let mut stdout_buf = String::new();
+    let reader = std::io::BufReader::new(child_stdout);
+    for line in reader.lines() {
+        match line {
+            Ok(l) => {
+                if let Some(ref mut w) = writer {
+                    let _ = w.write_line(&l);
+                }
+                stdout_buf.push_str(&l);
+                stdout_buf.push('\n');
+            }
+            Err(_) => break,
+        }
+    }
+
+    let status = child.wait().context("Failed to wait for agent process")?;
+    let stderr_buf = stderr_handle.join().unwrap_or_default();
+
     Ok(AgentResult {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        exit_code: output.status.code().unwrap_or(-1),
+        stdout: stdout_buf,
+        stderr: stderr_buf,
+        exit_code: status.code().unwrap_or(-1),
     })
 }

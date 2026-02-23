@@ -169,7 +169,10 @@ fn test_empty_subject_uses_hash_disambiguator() {
     let path1 = write_message(dir.path(), "inbox", &msg1).unwrap();
     let path2 = write_message(dir.path(), "inbox", &msg2).unwrap();
 
-    assert_ne!(path1, path2, "Different messages should produce different filenames");
+    assert_ne!(
+        path1, path2,
+        "Different messages should produce different filenames"
+    );
 
     let inbox = read_inbox(dir.path()).unwrap();
     assert_eq!(inbox.len(), 2);
@@ -185,7 +188,10 @@ fn test_empty_subject_same_content_same_hash() {
     let path1 = write_message(dir.path(), "inbox", &msg1).unwrap();
     let path2 = write_message(dir.path(), "inbox", &msg2).unwrap();
 
-    assert_eq!(path1, path2, "Identical messages should produce same filename");
+    assert_eq!(
+        path1, path2,
+        "Identical messages should produce same filename"
+    );
 }
 
 #[test]

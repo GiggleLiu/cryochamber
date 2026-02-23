@@ -73,3 +73,57 @@ pub fn session_count(log_path: &Path) -> Result<u32> {
     let contents = fs::read_to_string(log_path)?;
     Ok(contents.matches(SESSION_START).count() as u32)
 }
+
+/// A handle for streaming session output to the log file line-by-line.
+pub struct SessionWriter {
+    file: fs::File,
+}
+
+impl SessionWriter {
+    /// Open the log file and write the session header. Returns a writer for streaming lines.
+    pub fn begin(
+        log_path: &Path,
+        session_number: u32,
+        task: &str,
+        inbox_filenames: &[String],
+    ) -> Result<Self> {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)?;
+
+        let timestamp = Local::now().format("%Y-%m-%dT%H:%M:%S");
+        writeln!(file, "{SESSION_START} {timestamp} ---")?;
+        writeln!(file, "Session: {session_number}")?;
+        writeln!(file, "Task: {task}")?;
+        for filename in inbox_filenames {
+            writeln!(file, "[inbox] {filename}")?;
+        }
+        writeln!(file)?;
+        file.flush()?;
+
+        Ok(Self { file })
+    }
+
+    /// Append a line of agent output to the log.
+    pub fn write_line(&mut self, line: &str) -> Result<()> {
+        writeln!(self.file, "{line}")?;
+        self.file.flush()?;
+        Ok(())
+    }
+
+    /// Write the stderr section and session footer, finalizing the session.
+    pub fn finish(mut self, stderr: Option<&str>) -> Result<()> {
+        if let Some(stderr) = stderr {
+            if !stderr.trim().is_empty() {
+                writeln!(self.file)?;
+                writeln!(self.file, "--- STDERR ---")?;
+                writeln!(self.file, "{stderr}")?;
+            }
+        }
+        writeln!(self.file, "{SESSION_END}")?;
+        writeln!(self.file)?;
+        self.file.flush()?;
+        Ok(())
+    }
+}
