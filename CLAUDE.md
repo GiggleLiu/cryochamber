@@ -60,7 +60,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 - **Agent never calls `cryo`**: The agent communicates via stdout markers only. Time utilities are exposed through `make time` in a per-project Makefile.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: Validation failures prevent hibernation rather than risking silent failures. Session writer is always finalized even on error.
-- **Default agent**: The CLI defaults to `opencode` as the agent command (not `claude`).
+- **Default agent**: The CLI defaults to `opencode run` as the agent command (headless mode, not the TUI).
 
 ### Files Created at Runtime (per project directory)
 

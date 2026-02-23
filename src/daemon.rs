@@ -291,7 +291,7 @@ impl Daemon {
         let agent_cmd = cryo_state
             .last_command
             .clone()
-            .unwrap_or_else(|| "opencode".to_string());
+            .unwrap_or_else(|| "opencode run".to_string());
 
         let task = self
             .get_task()

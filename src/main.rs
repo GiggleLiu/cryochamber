@@ -30,8 +30,8 @@ enum Commands {
     Start {
         /// Path to plan file or directory containing plan.md (default: current directory)
         plan: Option<PathBuf>,
-        /// Agent command to use (default: opencode)
-        #[arg(long, default_value = "opencode")]
+        /// Agent command to use (default: "opencode run" for headless mode)
+        #[arg(long, default_value = "opencode run")]
         agent: String,
         /// Max retry attempts on agent spawn failure (default: 1 = no retry)
         #[arg(long, default_value = "1")]
@@ -408,7 +408,7 @@ fn cmd_wake(force: bool) -> Result<()> {
     let agent_cmd = cryo_state
         .last_command
         .clone()
-        .unwrap_or_else(|| "opencode".to_string());
+        .unwrap_or_else(|| "opencode run".to_string());
 
     let task = get_task_from_log(&dir).unwrap_or_else(|| "Continue the plan".to_string());
 
