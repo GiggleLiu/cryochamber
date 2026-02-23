@@ -29,7 +29,18 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
 
     let slug = slugify(&msg.subject);
     let ts = msg.timestamp.format("%Y-%m-%dT%H-%M-%S");
-    let filename = format!("{ts}_{slug}.md");
+    // When slug is empty (e.g. GitHub comments with no subject), use a short
+    // hash of the body to avoid filename collisions within the same second.
+    let disambig = if slug.is_empty() {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        msg.body.hash(&mut hasher);
+        msg.from.hash(&mut hasher);
+        format!("{:08x}", hasher.finish() as u32)
+    } else {
+        slug
+    };
+    let filename = format!("{ts}_{disambig}.md");
     let path = box_dir.join(&filename);
 
     // Atomic write: write to tmp, then rename

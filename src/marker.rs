@@ -65,6 +65,7 @@ pub struct CryoMarkers {
     pub command: Option<String>,
     pub plan_note: Option<String>,
     pub fallbacks: Vec<FallbackAction>,
+    pub replies: Vec<String>,
 }
 
 pub fn parse_markers(text: &str) -> Result<CryoMarkers> {
@@ -75,6 +76,7 @@ pub fn parse_markers(text: &str) -> Result<CryoMarkers> {
     let cmd_re = Regex::new(r"\[CRYO:CMD\s+(.*)\]")?;
     let plan_re = Regex::new(r"\[CRYO:PLAN\s+(.*)")?;
     let fallback_re = Regex::new(r#"\[CRYO:FALLBACK\s+(\S+)\s+(\S+)\s+"([^"]+)"\]"#)?;
+    let reply_re = Regex::new(r#"\[CRYO:REPLY\s+"([^"]+)"\]"#)?;
 
     for line in text.lines() {
         if let Some(cap) = exit_re.captures(line) {
@@ -107,6 +109,9 @@ pub fn parse_markers(text: &str) -> Result<CryoMarkers> {
                 target: cap[2].to_string(),
                 message: cap[3].to_string(),
             });
+        }
+        if let Some(cap) = reply_re.captures(line) {
+            markers.replies.push(cap[1].to_string());
         }
     }
 
