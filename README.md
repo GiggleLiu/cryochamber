@@ -77,6 +77,8 @@ cryo cancel                         # Cancel all timers
 cryo validate                       # Check if ready to hibernate
 cryo log                            # Print session log
 cryo time ["+N unit"]               # Show current time or compute offset
+cryo send "<message>"               # Send a message to the agent's inbox
+cryo receive                        # Read messages from the agent's outbox
 ```
 
 The `time` command helps agents calculate accurate wake times:

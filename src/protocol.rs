@@ -76,6 +76,14 @@ cryo time "+3 months"    # ~3 months from now
 
 Use this to calculate accurate WAKE times.
 
+## Messaging
+
+Humans interact with you through the file-based message system:
+
+- **Inbox** (`messages/inbox/`): Human sends messages via `cryo send "message"`. New messages appear in your prompt automatically.
+- **Outbox** (`messages/outbox/`): Fallback alerts are written here. Humans read them via `cryo receive`.
+- Processed inbox messages are archived to `messages/inbox/archive/`.
+
 ## Rules
 
 - **No WAKE marker = plan is complete.** No more wake-ups will be scheduled.
