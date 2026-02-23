@@ -160,6 +160,35 @@ fn test_parse_message_missing_frontmatter() {
 }
 
 #[test]
+fn test_empty_subject_uses_hash_disambiguator() {
+    let dir = tempfile::tempdir().unwrap();
+    // Two messages with empty subject in the same second — should NOT collide
+    let msg1 = make_message("alice", "", "First message", "2026-02-23T10:00:00");
+    let msg2 = make_message("bob", "", "Second message", "2026-02-23T10:00:00");
+
+    let path1 = write_message(dir.path(), "inbox", &msg1).unwrap();
+    let path2 = write_message(dir.path(), "inbox", &msg2).unwrap();
+
+    assert_ne!(path1, path2, "Different messages should produce different filenames");
+
+    let inbox = read_inbox(dir.path()).unwrap();
+    assert_eq!(inbox.len(), 2);
+}
+
+#[test]
+fn test_empty_subject_same_content_same_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    // Same body and author at same timestamp — should produce same filename (overwrite is expected)
+    let msg1 = make_message("alice", "", "Same content", "2026-02-23T10:00:00");
+    let msg2 = make_message("alice", "", "Same content", "2026-02-23T10:00:00");
+
+    let path1 = write_message(dir.path(), "inbox", &msg1).unwrap();
+    let path2 = write_message(dir.path(), "inbox", &msg2).unwrap();
+
+    assert_eq!(path1, path2, "Identical messages should produce same filename");
+}
+
+#[test]
 fn test_filename_no_colons() {
     let dir = tempfile::tempdir().unwrap();
     let msg = make_message("human", "Test", "Body", "2026-02-23T10:30:00");
