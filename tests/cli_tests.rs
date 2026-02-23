@@ -283,7 +283,7 @@ fn test_start_no_markers_agent() {
     // Use true as a fake agent — produces no output, no markers.
     // Validation will fail, but the session mechanics still execute.
     cmd()
-        .args(["start", "plan.md", "--agent", "true"])
+        .args(["start", "plan.md", "--agent", "true", "--foreground"])
         .current_dir(dir.path())
         .assert()
         .failure()
@@ -307,6 +307,7 @@ fn test_start_plan_complete_agent() {
             "plan.md",
             "--agent",
             "/bin/sh -c 'echo [CRYO:EXIT 0] All done'",
+            "--foreground",
         ])
         .current_dir(dir.path())
         .assert()
@@ -330,6 +331,7 @@ fn test_start_copies_plan_to_workdir() {
             &subdir.join("my-plan.md").to_string_lossy(),
             "--agent",
             "/bin/sh -c 'echo [CRYO:EXIT 0] Done'",
+            "--foreground",
         ])
         .current_dir(dir.path())
         .assert()
@@ -388,7 +390,13 @@ fn test_start_mock_agent_plan_complete() {
     fs::write(dir.path().join("plan.md"), "# Plan\nDo it").unwrap();
 
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args([
+            "start",
+            "plan.md",
+            "--agent",
+            &mock_agent_cmd(),
+            "--foreground",
+        ])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] All tasks done")
         .current_dir(dir.path())
         .assert()
@@ -403,7 +411,13 @@ fn test_start_mock_agent_partial_exit() {
 
     // EXIT 1 (partial) with no WAKE → plan complete
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args([
+            "start",
+            "plan.md",
+            "--agent",
+            &mock_agent_cmd(),
+            "--foreground",
+        ])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 1] Partial progress")
         .current_dir(dir.path())
         .assert()
@@ -562,7 +576,13 @@ fn test_session_logs_inbox_filenames() {
 
     // Run a session with mock agent (will read the inbox message)
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args([
+            "start",
+            "plan.md",
+            "--agent",
+            &mock_agent_cmd(),
+            "--foreground",
+        ])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
         .current_dir(dir.path())
         .assert()
@@ -571,6 +591,37 @@ fn test_session_logs_inbox_filenames() {
     // Check cryo.log contains [inbox] line
     let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert!(log_content.contains("[inbox]"));
+}
+
+// --- Backward compat ---
+
+#[test]
+fn test_state_backward_compat_without_daemon_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    // Old-format state without daemon fields
+    let state = serde_json::json!({
+        "plan_path": "plan.md",
+        "session_number": 1,
+        "last_command": "opencode",
+        "wake_timer_id": null,
+        "fallback_timer_id": null,
+        "pid": null,
+        "max_retries": 1,
+        "retry_count": 0
+    });
+    fs::write(
+        dir.path().join("timer.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    // Should load without error, daemon fields get defaults
+    cmd()
+        .arg("status")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Session: 1"));
 }
 
 // --- Full wake cycle (macOS only — requires real launchd) ---
@@ -585,7 +636,13 @@ fn test_start_wake_cycle_with_timer() {
     let output =
         "[CRYO:EXIT 0] Session done\n[CRYO:WAKE 2099-12-31T23:59]\n[CRYO:CMD echo continue]";
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args([
+            "start",
+            "plan.md",
+            "--agent",
+            &mock_agent_cmd(),
+            "--foreground",
+        ])
         .env("MOCK_AGENT_OUTPUT", output)
         .current_dir(dir.path())
         .assert()
@@ -616,7 +673,13 @@ fn test_start_with_fallback_timer() {
 
     let output = "[CRYO:EXIT 0] Done\n[CRYO:WAKE 2099-06-15T10:00]\n[CRYO:FALLBACK email admin@co.com \"agent stuck\"]";
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args([
+            "start",
+            "plan.md",
+            "--agent",
+            &mock_agent_cmd(),
+            "--foreground",
+        ])
         .env("MOCK_AGENT_OUTPUT", output)
         .current_dir(dir.path())
         .assert()

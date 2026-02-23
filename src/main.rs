@@ -8,6 +8,7 @@ use cryochamber::log::{self, Session};
 use cryochamber::marker;
 use cryochamber::message;
 use cryochamber::protocol;
+use cryochamber::session::{self, SessionOutcome};
 use cryochamber::state::{self, CryoState};
 use cryochamber::timer;
 use cryochamber::validate;
@@ -37,6 +38,9 @@ enum Commands {
         /// Max retry attempts on agent spawn failure (default: 1 = no retry)
         #[arg(long, default_value = "1")]
         max_retries: u32,
+        /// Run in foreground (block until session completes instead of daemonizing)
+        #[arg(long)]
+        foreground: bool,
     },
     /// Called by OS timer: execute the next scheduled task
     Wake {
@@ -46,12 +50,20 @@ enum Commands {
     },
     /// Show current status: next wake time, last result
     Status,
+    /// Cancel current timers and immediately run the next session
+    Restart,
     /// Cancel all timers and stop the schedule
     Cancel,
     /// Run pre-hibernate validation checks
     Validate,
     /// Print the session log
     Log,
+    /// Watch the session log in real-time
+    Watch {
+        /// Show full log from the beginning (default: start from current position)
+        #[arg(long)]
+        all: bool,
+    },
     /// Send a message to the agent's inbox
     Send {
         /// Message body
@@ -120,12 +132,15 @@ fn main() -> Result<()> {
             plan,
             agent,
             max_retries,
-        } => cmd_start(plan.as_deref(), &agent, max_retries),
+            foreground,
+        } => cmd_start(plan.as_deref(), &agent, max_retries, foreground),
         Commands::Wake { now } => cmd_wake(now),
         Commands::Status => cmd_status(),
+        Commands::Restart => cmd_restart(),
         Commands::Cancel => cmd_cancel(),
         Commands::Validate => cmd_validate(),
         Commands::Log => cmd_log(),
+        Commands::Watch { all } => cmd_watch(all),
         Commands::Send {
             body,
             from,
@@ -190,7 +205,12 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_start(plan_path: Option<&Path>, agent_cmd: &str, max_retries: u32) -> Result<()> {
+fn cmd_start(
+    plan_path: Option<&Path>,
+    agent_cmd: &str,
+    max_retries: u32,
+    foreground: bool,
+) -> Result<()> {
     // Resolve plan path: None => "plan.md" in cwd, Some(dir) => cd into dir, Some(file) => use file
     let plan_path = match plan_path {
         None => PathBuf::from("plan.md"),
@@ -205,6 +225,21 @@ fn cmd_start(plan_path: Option<&Path>, agent_cmd: &str, max_retries: u32) -> Res
 
     let dir = work_dir()?;
 
+    // Guard: refuse to start if an instance is already active
+    if let Some(existing) = state::load_state(&state_path(&dir))? {
+        if state::is_locked(&existing) {
+            anyhow::bail!(
+                "A cryochamber session is already running (PID: {:?}). Use `cryo cancel` to stop it first.",
+                existing.pid
+            );
+        }
+        if existing.wake_timer_id.is_some() {
+            anyhow::bail!(
+                "A cryochamber instance already exists with a pending wake timer. Use `cryo cancel` to stop it first."
+            );
+        }
+    }
+
     // Auto-init: ensure the agent-specific protocol file and message dirs exist
     let filename = protocol::protocol_filename(agent_cmd);
     if protocol::write_protocol_file(&dir, filename)? {
@@ -215,37 +250,75 @@ fn cmd_start(plan_path: Option<&Path>, agent_cmd: &str, max_retries: u32) -> Res
 
     let plan_dest = dir.join("plan.md");
 
-    let should_copy = match (
-        std::fs::canonicalize(plan_path),
-        std::fs::canonicalize(&plan_dest),
-    ) {
-        (Ok(src), Ok(dst)) => src != dst,
-        _ => true,
-    };
-    if should_copy {
+    if session::should_copy_plan(plan_path, &plan_dest) {
         std::fs::copy(plan_path, &plan_dest).context("Failed to copy plan file")?;
     }
 
-    let mut cryo_state = CryoState {
-        plan_path: "plan.md".to_string(),
-        session_number: 1,
-        last_command: Some(agent_cmd.to_string()),
-        wake_timer_id: None,
-        fallback_timer_id: None,
-        pid: Some(std::process::id()),
-        max_retries,
-        retry_count: 0,
-    };
-    state::save_state(&state_path(&dir), &cryo_state)?;
+    if foreground {
+        // Legacy blocking mode: run session in the foreground
+        let mut cryo_state = CryoState {
+            plan_path: "plan.md".to_string(),
+            session_number: 1,
+            last_command: Some(agent_cmd.to_string()),
+            wake_timer_id: None,
+            fallback_timer_id: None,
+            pid: Some(std::process::id()),
+            max_retries,
+            retry_count: 0,
+            max_session_duration: 1800,
+            watch_inbox: true,
+            daemon_mode: false,
+        };
+        state::save_state(&state_path(&dir), &cryo_state)?;
 
-    println!("Cryochamber initialized. Running first task...");
+        println!("Cryochamber initialized. Running first task (foreground)...");
 
-    run_session(
-        &dir,
-        &mut cryo_state,
-        agent_cmd,
-        "Execute the first task from the plan",
-    )?;
+        run_session(
+            &dir,
+            &mut cryo_state,
+            agent_cmd,
+            "Execute the first task from the plan",
+        )?;
+    } else {
+        // Daemon mode: save state and spawn `cryo wake --now` in background
+        let cryo_state = CryoState {
+            plan_path: "plan.md".to_string(),
+            session_number: 0, // wake will increment to 1
+            last_command: Some(agent_cmd.to_string()),
+            wake_timer_id: None,
+            fallback_timer_id: None,
+            pid: None, // no PID lock — wake will set its own
+            max_retries,
+            retry_count: 0,
+            max_session_duration: 1800,
+            watch_inbox: true,
+            daemon_mode: false,
+        };
+        state::save_state(&state_path(&dir), &cryo_state)?;
+
+        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
+        let daemon_out = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("cryo.log"))
+            .context("Failed to open cryo.log for daemon output")?;
+        let daemon_err = daemon_out
+            .try_clone()
+            .context("Failed to clone log handle")?;
+        std::process::Command::new(&exe)
+            .arg("wake")
+            .arg("--now")
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(daemon_out)
+            .stderr(daemon_err)
+            .spawn()
+            .context("Failed to spawn background cryo wake process")?;
+
+        println!("Cryochamber started (session running in background).");
+        println!("Use `cryo watch` to follow progress.");
+        println!("Use `cryo status` to check state.");
+    }
 
     Ok(())
 }
@@ -345,8 +418,15 @@ fn run_session_inner(
 
     println!("Session #{}: Running agent...", cryo_state.session_number);
 
-    // Run agent with retry on spawn failure
-    let result = run_agent_with_retry(cryo_state, agent_cmd, &prompt, log, task)?;
+    // Open streaming log writer — session header is written immediately
+    let mut writer =
+        log::SessionWriter::begin(log, cryo_state.session_number, task, &inbox_filenames)?;
+
+    // Run agent with retry on spawn failure (streams stdout to log in real-time)
+    let result = run_agent_with_retry(cryo_state, agent_cmd, &prompt, log, task, &mut writer)?;
+
+    // Finalize the session log (stderr + footer)
+    writer.finish(Some(&result.stderr))?;
 
     // Agent ran successfully — reset retry counter
     cryo_state.retry_count = 0;
@@ -358,73 +438,63 @@ fn run_session_inner(
         );
     }
 
-    let session = Session {
-        number: cryo_state.session_number,
-        task: task.to_string(),
-        output: result.stdout.clone(),
-        stderr: Some(result.stderr.clone()),
-        inbox_filenames: inbox_filenames.clone(),
-    };
-    log::append_session(log, &session)?;
-
     // Archive processed inbox messages
     if !inbox_filenames.is_empty() {
         message::archive_messages(dir, &inbox_filenames)?;
     }
 
     let markers = marker::parse_markers(&result.stdout)?;
+    let (outcome, warnings) = session::decide_session_outcome(&markers);
 
-    let validation = validate::validate_markers(&markers);
-
-    for warning in &validation.warnings {
+    for warning in &warnings {
         eprintln!("Warning: {warning}");
     }
 
-    if validation.plan_complete {
-        println!("Plan complete! No more wake-ups scheduled.");
-        return Ok(());
-    }
-
-    for error in &validation.errors {
-        eprintln!("Error: {error}");
-    }
-
-    if !validation.can_hibernate {
-        anyhow::bail!("Pre-hibernate validation failed. Not hibernating.");
-    }
-
-    // Schedule next wake
-    let timer_impl = timer::create_timer()?;
-    // wake_time is Option<WakeTime> — extract the inner NaiveDateTime
-    let wake_time = markers.wake_time.unwrap().0;
-    let dir_str = dir.to_string_lossy().to_string();
-
-    let wake_cmd = format!("{} wake", std::env::current_exe()?.to_string_lossy());
-
-    let wake_id = timer_impl.schedule_wake(wake_time, &wake_cmd, &dir_str)?;
-    cryo_state.wake_timer_id = Some(wake_id.0.clone());
-
-    if let Some(cmd) = &markers.command {
-        cryo_state.last_command = Some(cmd.clone());
-    }
-
-    if let Some(fb) = markers.fallbacks.first() {
-        let fallback_time = wake_time + chrono::Duration::hours(1);
-        let fb_id = timer_impl.schedule_fallback(fallback_time, fb, &dir_str)?;
-        cryo_state.fallback_timer_id = Some(fb_id.0.clone());
-    }
-
-    // Verify timer
-    let status = timer_impl.verify(&timer::TimerId(cryo_state.wake_timer_id.clone().unwrap()))?;
-    match status {
-        timer::TimerStatus::Scheduled { .. } => {
-            println!(
-                "Hibernating. Next wake: {}",
-                wake_time.format("%Y-%m-%d %H:%M")
-            );
+    match outcome {
+        SessionOutcome::PlanComplete => {
+            println!("Plan complete! No more wake-ups scheduled.");
         }
-        timer::TimerStatus::NotFound => {
-            anyhow::bail!("Timer registration verification failed!");
+        SessionOutcome::ValidationFailed { errors, .. } => {
+            for error in &errors {
+                eprintln!("Error: {error}");
+            }
+            anyhow::bail!("Pre-hibernate validation failed. Not hibernating.");
+        }
+        SessionOutcome::Hibernate {
+            wake_time,
+            fallback,
+            command,
+        } => {
+            let timer_impl = timer::create_timer()?;
+            let dir_str = dir.to_string_lossy().to_string();
+            let wake_cmd = format!("{} wake", std::env::current_exe()?.to_string_lossy());
+
+            let wake_id = timer_impl.schedule_wake(wake_time, &wake_cmd, &dir_str)?;
+            cryo_state.wake_timer_id = Some(wake_id.0.clone());
+
+            if let Some(cmd) = &command {
+                cryo_state.last_command = Some(cmd.clone());
+            }
+
+            if let Some(fb) = &fallback {
+                let fallback_time = wake_time + chrono::Duration::hours(1);
+                let fb_id = timer_impl.schedule_fallback(fallback_time, fb, &dir_str)?;
+                cryo_state.fallback_timer_id = Some(fb_id.0.clone());
+            }
+
+            let status =
+                timer_impl.verify(&timer::TimerId(cryo_state.wake_timer_id.clone().unwrap()))?;
+            match status {
+                timer::TimerStatus::Scheduled { .. } => {
+                    println!(
+                        "Hibernating. Next wake: {}",
+                        wake_time.format("%Y-%m-%d %H:%M")
+                    );
+                }
+                timer::TimerStatus::NotFound => {
+                    anyhow::bail!("Timer registration verification failed!");
+                }
+            }
         }
     }
 
@@ -439,12 +509,13 @@ fn run_agent_with_retry(
     prompt: &str,
     log: &Path,
     task: &str,
+    writer: &mut log::SessionWriter,
 ) -> Result<agent::AgentResult> {
     let max_attempts = cryo_state.max_retries;
     let mut last_err = String::new();
 
     for attempt in 1..=max_attempts {
-        match agent::run_agent(agent_cmd, prompt) {
+        match agent::run_agent_streaming(agent_cmd, prompt, Some(writer)) {
             Ok(r) => return Ok(r),
             Err(e) => {
                 cryo_state.retry_count = attempt;
@@ -475,8 +546,7 @@ fn run_agent_with_retry(
 fn get_task_from_log(dir: &Path) -> Option<String> {
     let log = log_path(dir);
     let latest = cryochamber::log::read_latest_session(&log).ok()??;
-    let markers = marker::parse_markers(&latest).ok()?;
-    markers.command.or(markers.plan_note)
+    session::derive_task_from_output(&latest)
 }
 
 fn cmd_status() -> Result<()> {
@@ -512,6 +582,64 @@ fn cmd_status() -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn cmd_restart() -> Result<()> {
+    let dir = work_dir()?;
+    let cryo_state =
+        state::load_state(&state_path(&dir))?.context("No cryochamber instance found.")?;
+
+    // Kill stuck session process if running
+    if let Some(pid) = cryo_state.pid {
+        if state::is_locked(&cryo_state) {
+            println!("Killing stuck session (PID: {pid})...");
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            // Give it a moment to exit
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+
+    // Cancel existing timers
+    let timer_impl = timer::create_timer()?;
+    if let Some(wake_id) = &cryo_state.wake_timer_id {
+        let _ = timer_impl.cancel(&timer::TimerId(wake_id.clone()));
+    }
+    if let Some(fb_id) = &cryo_state.fallback_timer_id {
+        let _ = timer_impl.cancel(&timer::TimerId(fb_id.clone()));
+    }
+
+    // Clear timers and PID, keep session_number and last_command
+    let updated = CryoState {
+        wake_timer_id: None,
+        fallback_timer_id: None,
+        pid: None,
+        ..cryo_state
+    };
+    state::save_state(&state_path(&dir), &updated)?;
+
+    // Spawn wake --now in background
+    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("cryo.log"))
+        .context("Failed to open cryo.log")?;
+    let err_file = log_file.try_clone().context("Failed to clone log handle")?;
+    std::process::Command::new(&exe)
+        .arg("wake")
+        .arg("--now")
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(log_file)
+        .stderr(err_file)
+        .spawn()
+        .context("Failed to spawn background cryo wake process")?;
+
+    println!("Restarted. New session running in background.");
+    println!("Use `cryo watch` to follow progress.");
     Ok(())
 }
 
@@ -627,6 +755,65 @@ fn cmd_receive() -> Result<()> {
     Ok(())
 }
 
+fn cmd_watch(show_all: bool) -> Result<()> {
+    use std::io::Read;
+
+    let dir = work_dir()?;
+    let log = log_path(&dir);
+    let state_file = state_path(&dir);
+
+    if !log.exists() {
+        println!("Waiting for first session output...");
+    }
+
+    // Start from end of file unless --all
+    let mut pos = if show_all {
+        0
+    } else {
+        log.metadata().map(|m| m.len()).unwrap_or(0)
+    };
+
+    loop {
+        // Read new content from the log file
+        if log.exists() {
+            let file_len = log.metadata().map(|m| m.len()).unwrap_or(0);
+            if file_len > pos {
+                let mut f = std::fs::File::open(&log)?;
+                std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(pos))?;
+                let mut buf = String::new();
+                f.read_to_string(&mut buf)?;
+                print!("{buf}");
+                pos = file_len;
+            }
+        }
+
+        // Check if a session is currently active
+        if let Some(st) = state::load_state(&state_file)? {
+            if state::is_locked(&st) {
+                // Session is running, keep polling
+            } else if st.wake_timer_id.is_none() {
+                // Final drain
+                if log.exists() {
+                    let file_len = log.metadata().map(|m| m.len()).unwrap_or(0);
+                    if file_len > pos {
+                        let mut f = std::fs::File::open(&log)?;
+                        std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(pos))?;
+                        let mut buf = String::new();
+                        f.read_to_string(&mut buf)?;
+                        print!("{buf}");
+                    }
+                }
+                println!("\n(No active session or pending timer. Exiting watch.)");
+                break;
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Ok(())
+}
+
 fn gh_sync_path(dir: &Path) -> PathBuf {
     dir.join("gh-sync.json")
 }
@@ -730,23 +917,7 @@ fn cmd_gh_push() -> Result<()> {
         return Ok(());
     }
 
-    // Build session summary
-    let exit_str = markers
-        .exit_code
-        .as_ref()
-        .map(|c| format!("{}", c.as_code()))
-        .unwrap_or_else(|| "?".to_string());
-    let summary = markers.exit_summary.as_deref().unwrap_or("");
-    let plan_note = markers.plan_note.as_deref().unwrap_or("(none)");
-    let wake_str = markers
-        .wake_time
-        .as_ref()
-        .map(|w| w.0.format("%Y-%m-%dT%H:%M").to_string())
-        .unwrap_or_else(|| "plan complete".to_string());
-
-    let auto_summary = format!(
-        "## Session {session_num} Summary\n- Exit: {exit_str} {summary}\n- Plan: {plan_note}\n- Next wake: {wake_str}"
-    );
+    let auto_summary = session::format_session_summary(session_num, &markers);
 
     println!(
         "Posting session summary to Discussion #{}...",
@@ -786,4 +957,3 @@ fn cmd_gh_status() -> Result<()> {
     }
     Ok(())
 }
-

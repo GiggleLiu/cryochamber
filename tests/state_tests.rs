@@ -15,6 +15,9 @@ fn test_save_and_load_state() {
         pid: Some(std::process::id()),
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -48,6 +51,9 @@ fn test_lock_mechanism() {
         pid: Some(std::process::id()),
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -69,6 +75,9 @@ fn test_is_locked_dead_process() {
         pid: Some(999999),
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     assert!(!is_locked(&state));
 }
@@ -85,6 +94,9 @@ fn test_is_locked_no_pid() {
         pid: None,
         max_retries: 1,
         retry_count: 0,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     assert!(!is_locked(&state));
 }
@@ -131,6 +143,9 @@ fn test_retry_fields_roundtrip() {
         pid: None,
         max_retries: 5,
         retry_count: 2,
+        max_session_duration: 1800,
+        watch_inbox: true,
+        daemon_mode: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();

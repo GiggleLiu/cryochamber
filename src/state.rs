@@ -17,10 +17,27 @@ pub struct CryoState {
     /// Current retry count for the active wake cycle. Reset to 0 on success.
     #[serde(default)]
     pub retry_count: u32,
+    /// Maximum session duration in seconds. 0 = no timeout.
+    #[serde(default = "default_max_session_duration")]
+    pub max_session_duration: u64,
+    /// Whether the daemon should watch messages/inbox/ for reactive wake.
+    #[serde(default = "default_watch_inbox")]
+    pub watch_inbox: bool,
+    /// Whether this instance is running as a daemon (vs one-shot wake).
+    #[serde(default)]
+    pub daemon_mode: bool,
 }
 
 fn default_max_retries() -> u32 {
     1
+}
+
+fn default_max_session_duration() -> u64 {
+    1800 // 30 minutes
+}
+
+fn default_watch_inbox() -> bool {
+    true
 }
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {
