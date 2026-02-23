@@ -159,3 +159,31 @@ fn test_parse_exit_invalid_code() {
     let markers = parse_markers(text).unwrap();
     assert!(markers.exit_code.is_none());
 }
+
+#[test]
+fn test_parse_reply() {
+    let text = r#"[CRYO:EXIT 0] Done
+[CRYO:REPLY "Updated the API endpoint as requested."]
+[CRYO:WAKE 2026-03-08T09:00]"#;
+    let markers = parse_markers(text).unwrap();
+    assert_eq!(markers.replies.len(), 1);
+    assert_eq!(markers.replies[0], "Updated the API endpoint as requested.");
+}
+
+#[test]
+fn test_parse_multiple_replies() {
+    let text = r#"[CRYO:REPLY "First reply"]
+[CRYO:REPLY "Second reply"]
+[CRYO:EXIT 0]"#;
+    let markers = parse_markers(text).unwrap();
+    assert_eq!(markers.replies.len(), 2);
+    assert_eq!(markers.replies[0], "First reply");
+    assert_eq!(markers.replies[1], "Second reply");
+}
+
+#[test]
+fn test_parse_no_replies() {
+    let text = "[CRYO:EXIT 0] Done";
+    let markers = parse_markers(text).unwrap();
+    assert!(markers.replies.is_empty());
+}
