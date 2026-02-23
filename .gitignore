@@ -9,3 +9,6 @@ PR_REVIEW.md
 
 # Compiled logo raster (regenerate with `make logo`)
 docs/logo/logo.png
+
+# Git worktrees
+.worktrees/
