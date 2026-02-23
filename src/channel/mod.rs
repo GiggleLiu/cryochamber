@@ -1,4 +1,5 @@
 pub mod file;
+pub mod github;
 
 use anyhow::Result;
 
