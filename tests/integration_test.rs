@@ -14,13 +14,13 @@ fn test_full_cycle_simulation() {
 
     // Session 1: Start
     let config = cryochamber::agent::AgentConfig {
-        plan_content: "Review PRs every Monday morning".to_string(),
         log_content: None,
         session_number: 1,
         task: "Start the PR review plan".to_string(),
+        inbox_messages: vec![],
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("cryochamber"));
+    assert!(prompt.contains("Session number: 1"));
 
     // Simulate agent output
     let agent_output = r#"Reviewed all open PRs. Found 3 PRs ready for review.
@@ -48,6 +48,7 @@ Approved PR #42 and #43. Left comments on PR #41.
         number: 1,
         task: "Start the PR review plan".to_string(),
         output: agent_output.to_string(),
+        stderr: None,
     };
     append_session(&log_path, &session).unwrap();
     assert_eq!(session_count(&log_path).unwrap(), 1);
@@ -60,6 +61,8 @@ Approved PR #42 and #43. Left comments on PR #41.
         wake_timer_id: Some("com.cryochamber.test.wake".to_string()),
         fallback_timer_id: Some("com.cryochamber.test.fallback".to_string()),
         pid: None,
+        max_retries: 1,
+        retry_count: 0,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -68,10 +71,10 @@ Approved PR #42 and #43. Left comments on PR #41.
     assert!(latest.contains("Reviewed 3 PRs"));
 
     let config2 = cryochamber::agent::AgentConfig {
-        plan_content: "Review PRs every Monday morning".to_string(),
         log_content: Some(latest),
         session_number: 2,
         task: "Follow up on PR #41, check for new PRs".to_string(),
+        inbox_messages: vec![],
     };
     let prompt2 = build_prompt(&config2);
     assert!(prompt2.contains("Session number: 2"));
@@ -92,6 +95,7 @@ All caught up!
         number: 2,
         task: "Follow up on PR #41".to_string(),
         output: agent_output2.to_string(),
+        stderr: None,
     };
     append_session(&log_path, &session2).unwrap();
     assert_eq!(session_count(&log_path).unwrap(), 2);

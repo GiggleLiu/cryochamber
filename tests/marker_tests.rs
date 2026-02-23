@@ -1,5 +1,5 @@
 // tests/marker_tests.rs
-use cryochamber::marker::{parse_markers, CryoMarkers, ExitCode, FallbackAction};
+use cryochamber::marker::{parse_markers, ExitCode};
 
 #[test]
 fn test_parse_exit_success() {
@@ -110,4 +110,52 @@ Even more text"#;
     let markers = parse_markers(text).unwrap();
     assert_eq!(markers.exit_code, Some(ExitCode::Success));
     assert!(markers.wake_time.is_some());
+}
+
+#[test]
+fn test_exit_code_as_code() {
+    assert_eq!(ExitCode::Success.as_code(), 0);
+    assert_eq!(ExitCode::Partial.as_code(), 1);
+    assert_eq!(ExitCode::Failure.as_code(), 2);
+
+    // Roundtrip
+    for code in 0..=2u8 {
+        let ec = ExitCode::from_code(code).unwrap();
+        assert_eq!(ec.as_code(), code);
+    }
+}
+
+#[test]
+fn test_exit_code_from_invalid() {
+    assert!(ExitCode::from_code(3).is_none());
+    assert!(ExitCode::from_code(255).is_none());
+}
+
+#[test]
+fn test_wake_time_accessors() {
+    use chrono::NaiveDateTime;
+    use cryochamber::marker::WakeTime;
+    let dt = NaiveDateTime::parse_from_str("2026-07-15T14:30", "%Y-%m-%dT%H:%M").unwrap();
+    let wt = WakeTime(dt);
+    assert_eq!(wt.month(), 7);
+    assert_eq!(wt.day(), 15);
+    assert_eq!(wt.hour(), 14);
+    assert_eq!(wt.minute(), 30);
+    assert_eq!(*wt.inner(), dt);
+}
+
+#[test]
+fn test_parse_invalid_wake_time() {
+    let text = "[CRYO:WAKE not-a-date]";
+    let markers = parse_markers(text).unwrap();
+    assert!(markers.wake_time.is_none());
+}
+
+#[test]
+fn test_parse_exit_invalid_code() {
+    // Code 3 is out of range — parse_markers will error on parse (u8 parse succeeds
+    // but from_code returns None), so exit_code is None
+    let text = "[CRYO:EXIT 3] invalid code";
+    let markers = parse_markers(text).unwrap();
+    assert!(markers.exit_code.is_none());
 }

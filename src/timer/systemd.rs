@@ -1,7 +1,7 @@
 // src/timer/systemd.rs
-use super::{CryoTimer, TimerId, TimerStatus};
+use super::{run_checked, CryoTimer, TimerId, TimerStatus};
 use crate::fallback::FallbackAction;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::NaiveDateTime;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -64,38 +64,55 @@ ExecStart={command}
     }
 
     fn reload_daemon() -> Result<()> {
-        Command::new("systemctl")
-            .args(["--user", "daemon-reload"])
-            .output()
-            .context("Failed to reload systemd daemon")?;
+        run_checked(
+            Command::new("systemctl").args(["--user", "daemon-reload"]),
+            "Failed to reload systemd daemon",
+        )?;
         Ok(())
+    }
+}
+
+impl SystemdTimer {
+    fn schedule_job(
+        &self,
+        suffix: &str,
+        time: NaiveDateTime,
+        command: &str,
+        work_dir: &str,
+    ) -> Result<TimerId> {
+        let name = Self::make_unit_name(work_dir);
+        let job_name = format!("{name}-{suffix}");
+        let unit_dir = Self::user_unit_dir();
+        std::fs::create_dir_all(&unit_dir)?;
+
+        let timer_path = unit_dir.join(format!("{job_name}.timer"));
+        let service_path = unit_dir.join(format!("{job_name}.service"));
+
+        std::fs::write(&timer_path, self.generate_timer_unit(&job_name, &time))?;
+        std::fs::write(
+            &service_path,
+            self.generate_service_unit(&job_name, command, work_dir),
+        )?;
+
+        Self::reload_daemon()?;
+
+        run_checked(
+            Command::new("systemctl").args([
+                "--user",
+                "enable",
+                "--now",
+                &format!("{job_name}.timer"),
+            ]),
+            &format!("Failed to enable {suffix} timer"),
+        )?;
+
+        Ok(TimerId(job_name))
     }
 }
 
 impl CryoTimer for SystemdTimer {
     fn schedule_wake(&self, time: NaiveDateTime, command: &str, work_dir: &str) -> Result<TimerId> {
-        let name = Self::make_unit_name(work_dir);
-        let wake_name = format!("{name}-wake");
-        let unit_dir = Self::user_unit_dir();
-        std::fs::create_dir_all(&unit_dir)?;
-
-        let timer_path = unit_dir.join(format!("{wake_name}.timer"));
-        let service_path = unit_dir.join(format!("{wake_name}.service"));
-
-        std::fs::write(&timer_path, self.generate_timer_unit(&wake_name, &time))?;
-        std::fs::write(
-            &service_path,
-            self.generate_service_unit(&wake_name, command, work_dir),
-        )?;
-
-        Self::reload_daemon()?;
-
-        Command::new("systemctl")
-            .args(["--user", "enable", "--now", &format!("{wake_name}.timer")])
-            .output()
-            .context("Failed to enable systemd timer")?;
-
-        Ok(TimerId(wake_name))
+        self.schedule_job("wake", time, command, work_dir)
     }
 
     fn schedule_fallback(
@@ -104,33 +121,11 @@ impl CryoTimer for SystemdTimer {
         action: &FallbackAction,
         work_dir: &str,
     ) -> Result<TimerId> {
-        let name = Self::make_unit_name(work_dir);
-        let fb_name = format!("{name}-fallback");
-        let unit_dir = Self::user_unit_dir();
-        std::fs::create_dir_all(&unit_dir)?;
-
         let command = format!(
             "cryochamber fallback-exec {} {} \"{}\"",
             action.action, action.target, action.message
         );
-
-        let timer_path = unit_dir.join(format!("{fb_name}.timer"));
-        let service_path = unit_dir.join(format!("{fb_name}.service"));
-
-        std::fs::write(&timer_path, self.generate_timer_unit(&fb_name, &time))?;
-        std::fs::write(
-            &service_path,
-            self.generate_service_unit(&fb_name, &command, work_dir),
-        )?;
-
-        Self::reload_daemon()?;
-
-        Command::new("systemctl")
-            .args(["--user", "enable", "--now", &format!("{fb_name}.timer")])
-            .output()
-            .context("Failed to enable fallback timer")?;
-
-        Ok(TimerId(fb_name))
+        self.schedule_job("fallback", time, &command, work_dir)
     }
 
     fn cancel(&self, id: &TimerId) -> Result<()> {

@@ -3,6 +3,8 @@ use anyhow::Result;
 use chrono::{Datelike, NaiveDateTime, Timelike};
 use regex::Regex;
 
+use crate::fallback::FallbackAction;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExitCode {
     Success, // 0
@@ -27,13 +29,6 @@ impl ExitCode {
             Self::Failure => 2,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct FallbackAction {
-    pub action: String,
-    pub target: String,
-    pub message: String,
 }
 
 /// Wrapper around NaiveDateTime that provides inherent accessor methods.

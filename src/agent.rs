@@ -3,11 +3,13 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use std::process::Command;
 
+use crate::message::Message;
+
 pub struct AgentConfig {
-    pub plan_content: String,
     pub log_content: Option<String>,
     pub session_number: u32,
     pub task: String,
+    pub inbox_messages: Vec<Message>,
 }
 
 pub struct AgentResult {
@@ -24,57 +26,53 @@ pub fn build_prompt(config: &AgentConfig) -> String {
         None => "\n## Previous Session Log\n\nNo previous sessions.\n".to_string(),
     };
 
+    let messages_section = if config.inbox_messages.is_empty() {
+        String::new()
+    } else {
+        let count = config.inbox_messages.len();
+        let mut text = format!("\n## New Messages ({count} unread)\n\n");
+        for msg in &config.inbox_messages {
+            let ts = msg.timestamp.format("%Y-%m-%dT%H:%M");
+            text.push_str(&format!("### From: {} ({})\n", msg.from, ts));
+            if !msg.subject.is_empty() {
+                text.push_str(&format!("Subject: {}\n", msg.subject));
+            }
+            text.push_str(&format!("\n{}\n\n---\n\n", msg.body));
+        }
+        text
+    };
+
     format!(
-        r#"# Cryochamber Protocol
-
-You are running inside cryochamber, a long-term task scheduler.
-You will be hibernated after this session and woken up later.
-
-## Your Context
+        r#"# Cryochamber Session
 
 Current time: {current_time}
 Session number: {session_number}
 
-## Your Plan
+## Instructions
 
-{plan}
-{history}
+Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the full plan.
+
 ## Your Task
 
 {task}
+{history}{messages}
+## Reminders
 
-## After Completing Your Task
-
-You MUST write the following markers at the end of your response.
-
-### Required:
-[CRYO:EXIT <code>] <one-line summary>
-  - 0 = success
-  - 1 = partial success
-  - 2 = failure
-
-### Optional (write these if the plan has more work):
-[CRYO:WAKE <ISO8601 datetime>]       — when to wake up next
-[CRYO:CMD <command to run on wake>]   — what to execute (default: re-run same command)
-[CRYO:PLAN <note for future self>]    — context you want to remember next session
-[CRYO:FALLBACK <action> <target> "<message>"]  — dead man's switch
-  - action: email, webhook
-  - example: [CRYO:FALLBACK email user@example.com "weekly review did not run"]
-
-### Rules:
-- No WAKE marker = plan is complete, no more wake-ups
-- Always read the plan and previous session log above before starting
-- PLAN markers are your memory — use them to leave notes for yourself
+- Write markers at the end of your response:
+  - `[CRYO:EXIT 0] summary` (0=success, 1=partial, 2=failure)
+  - `[CRYO:WAKE 2026-03-08T09:00]` (omit only if plan is complete)
+  - `[CRYO:PLAN note]` to leave notes for your future self
+- Read plan.md before starting work
 "#,
         session_number = config.session_number,
-        plan = config.plan_content,
-        history = history_section,
         task = config.task,
+        history = history_section,
+        messages = messages_section,
     )
 }
 
 pub fn run_agent(agent_command: &str, prompt: &str) -> Result<AgentResult> {
-    let parts: Vec<&str> = agent_command.split_whitespace().collect();
+    let parts = shell_words::split(agent_command).context("Failed to parse agent command")?;
     let (program, args) = parts.split_first().context("Agent command is empty")?;
 
     let output = Command::new(program)

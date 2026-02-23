@@ -1,0 +1,28 @@
+# Conference Program Chair Example
+
+Manage a CS conference from call-for-papers through author notification — a ~3 month workflow where every deadline depends on human behavior.
+
+## Why Cryochamber
+
+A cron job cannot handle this workflow because:
+
+- If submissions are low at the soft deadline, the agent extends it, shifting all downstream dates
+- Reviewer reminder escalation (gentle -> urgent -> backup) depends on how many reviews are missing
+- Wake intervals shrink as deadlines approach
+
+The agent reasons about its past sessions to determine when to wake and what to do next.
+
+## Running
+
+```bash
+cd examples/conference-chair
+cryochamber start plan.md
+```
+
+Or initialize first, then customize:
+
+```bash
+cd examples/conference-chair
+cryochamber init         # already done — CLAUDE.md and plan.md exist
+cryochamber start plan.md
+```

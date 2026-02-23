@@ -38,17 +38,18 @@ Agent and daemon communicate through `[CRYO:*]` markers embedded in the agent's 
 
 | Module | Purpose |
 |--------|---------|
-| `marker` | Regex-based parser for `[CRYO:*]` markers. Has its own `FallbackAction` type (separate from `fallback::FallbackAction`). |
+| `marker` | Regex-based parser for `[CRYO:*]` markers. Uses `fallback::FallbackAction` for parsed fallback data. |
 | `state` | JSON persistence to `timer.json` with PID-based locking via `libc::kill(pid, 0)`. |
 | `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. |
-| `agent` | Builds prompt from plan + last session log, spawns agent subprocess. |
+| `protocol` | Static protocol text for agent `CLAUDE.md`/`AGENTS.md`. Contains `PROTOCOL_CONTENT` constant and helpers for `init`/`start`. |
+| `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess. Agent reads `plan.md` and protocol file directly. |
 | `validate` | Pre-hibernate checks: requires EXIT marker + WAKE time (unless plan complete). Refuses to hibernate on failure. |
 | `timer` | `CryoTimer` trait with `launchd` (plist + `launchctl`) and `systemd` (unit files + `systemctl --user`) implementations. Platform selected at compile time via `cfg!(target_os)`. |
-| `fallback` | Email (via `lettre`) and webhook execution for dead-man switch alerts. |
+| `message` | File-based inbox/outbox message system. Inbox messages are read on wake and included in agent prompt; fallback alerts are written to outbox. |
+| `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external runners to deliver. |
 
 ### Key Design Decisions
 
-- **Two `FallbackAction` types**: `marker::FallbackAction` (parsed from output) and `fallback::FallbackAction` (execution). They are structurally identical but not the same type — fields are manually copied in `main.rs`.
 - **Graceful degradation**: Validation failures prevent hibernation rather than risking silent failures.
 - **Default agent**: The CLI defaults to `opencode` as the agent command (not `claude`).
 
@@ -57,6 +58,10 @@ Agent and daemon communicate through `[CRYO:*]` markers embedded in the agent's 
 - `timer.json` — serialized `CryoState` (plan path, session number, timer IDs, PID lock)
 - `cryo.log` — append-only session log
 - `plan.md` — copy of the plan file in the working directory
+- `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent (written by `init` or auto-created by `start`)
+- `messages/inbox/` — incoming messages for the agent (from humans, bots, webhooks)
+- `messages/outbox/` — outgoing messages (fallback alerts, status updates)
+- `messages/inbox/archive/` — processed inbox messages
 
 ## Commit Convention
 

@@ -1,5 +1,5 @@
 // src/timer/launchd.rs
-use super::{CryoTimer, TimerId, TimerStatus};
+use super::{run_checked, CryoTimer, TimerId, TimerStatus};
 use crate::fallback::FallbackAction;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -41,14 +41,15 @@ impl LaunchdTimer {
         time: &NaiveDateTime,
         command: &str,
         work_dir: &str,
-    ) -> String {
-        let parts: Vec<&str> = command.split_whitespace().collect();
+    ) -> Result<String> {
+        let parts =
+            shell_words::split(command).context("Failed to parse command for plist generation")?;
         let mut program_args = String::new();
         for part in &parts {
             program_args.push_str(&format!("      <string>{part}</string>\n"));
         }
 
-        format!(
+        Ok(format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -97,16 +98,20 @@ impl LaunchdTimer {
                 .trim_start_matches('0')
                 .parse::<u32>()
                 .unwrap_or(0),
-        )
+        ))
     }
 
     fn load_plist(&self, path: &Path) -> Result<()> {
         let uid = Command::new("id").arg("-u").output()?.stdout;
         let uid = String::from_utf8_lossy(&uid).trim().to_string();
-        Command::new("launchctl")
-            .args(["bootstrap", &format!("gui/{uid}"), &path.to_string_lossy()])
-            .output()
-            .context("Failed to load launchd plist")?;
+        run_checked(
+            Command::new("launchctl").args([
+                "bootstrap",
+                &format!("gui/{uid}"),
+                &path.to_string_lossy(),
+            ]),
+            "Failed to load launchd plist",
+        )?;
         Ok(())
     }
 
@@ -120,22 +125,34 @@ impl LaunchdTimer {
     }
 }
 
-impl CryoTimer for LaunchdTimer {
-    fn schedule_wake(&self, time: NaiveDateTime, command: &str, work_dir: &str) -> Result<TimerId> {
+impl LaunchdTimer {
+    fn schedule_job(
+        &self,
+        suffix: &str,
+        time: NaiveDateTime,
+        command: &str,
+        work_dir: &str,
+    ) -> Result<TimerId> {
         let label = Self::make_label(work_dir);
-        let wake_label = format!("{label}.wake");
-        let plist = self.generate_plist(&wake_label, &time, command, work_dir);
-        let path = self.plist_path(&wake_label);
+        let job_label = format!("{label}.{suffix}");
+        let plist = self.generate_plist(&job_label, &time, command, work_dir)?;
+        let path = self.plist_path(&job_label);
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        self.unload_plist(&wake_label)?;
+        self.unload_plist(&job_label)?;
         std::fs::write(&path, plist)?;
         self.load_plist(&path)?;
 
-        Ok(TimerId(wake_label))
+        Ok(TimerId(job_label))
+    }
+}
+
+impl CryoTimer for LaunchdTimer {
+    fn schedule_wake(&self, time: NaiveDateTime, command: &str, work_dir: &str) -> Result<TimerId> {
+        self.schedule_job("wake", time, command, work_dir)
     }
 
     fn schedule_fallback(
@@ -144,24 +161,11 @@ impl CryoTimer for LaunchdTimer {
         action: &FallbackAction,
         work_dir: &str,
     ) -> Result<TimerId> {
-        let label = Self::make_label(work_dir);
-        let fb_label = format!("{label}.fallback");
         let command = format!(
             "cryochamber fallback-exec {} {} \"{}\"",
             action.action, action.target, action.message
         );
-        let plist = self.generate_plist(&fb_label, &time, &command, work_dir);
-        let path = self.plist_path(&fb_label);
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        self.unload_plist(&fb_label)?;
-        std::fs::write(&path, plist)?;
-        self.load_plist(&path)?;
-
-        Ok(TimerId(fb_label))
+        self.schedule_job("fallback", time, &command, work_dir)
     }
 
     fn cancel(&self, id: &TimerId) -> Result<()> {

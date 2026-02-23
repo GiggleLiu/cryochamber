@@ -1,6 +1,11 @@
 // src/fallback.rs
-use anyhow::{Context, Result};
+use anyhow::Result;
+use chrono::Local;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
+
+use crate::message::{self, Message};
 
 #[derive(Debug, Clone)]
 pub struct FallbackAction {
@@ -24,53 +29,27 @@ impl FallbackAction {
         self.action == "webhook"
     }
 
-    pub fn execute(&self) -> Result<()> {
-        match self.action.as_str() {
-            "email" => self.send_email(),
-            "webhook" => self.send_webhook(),
-            _ => anyhow::bail!("Unknown fallback action: {}", self.action),
-        }
-    }
+    /// Write the fallback alert to messages/outbox/ as a markdown file.
+    /// External runners watch the outbox and deliver via email, webhook, etc.
+    pub fn execute(&self, work_dir: &Path) -> Result<()> {
+        message::ensure_dirs(work_dir)?;
 
-    fn send_email(&self) -> Result<()> {
-        let output = std::process::Command::new("mail")
-            .args(["-s", "Cryochamber Alert", &self.target])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .context("Failed to spawn mail command")?
-            .wait_with_output()?;
+        let msg = Message {
+            from: "cryochamber".to_string(),
+            subject: format!("Fallback Alert: {}", self.action),
+            body: self.message.clone(),
+            timestamp: Local::now().naive_local(),
+            metadata: BTreeMap::from([
+                ("fallback_action".to_string(), self.action.clone()),
+                ("fallback_target".to_string(), self.target.clone()),
+            ]),
+        };
 
-        if !output.status.success() {
-            eprintln!(
-                "Warning: email fallback may have failed (exit {})",
-                output.status
-            );
-        }
-        Ok(())
-    }
-
-    fn send_webhook(&self) -> Result<()> {
-        let body = serde_json::json!({
-            "text": format!("Cryochamber Alert: {}", self.message)
-        });
-
-        let output = std::process::Command::new("curl")
-            .args([
-                "-s",
-                "-X",
-                "POST",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                &body.to_string(),
-                &self.target,
-            ])
-            .output()
-            .context("Failed to send webhook")?;
-
-        if !output.status.success() {
-            eprintln!("Warning: webhook fallback may have failed");
-        }
+        let path = message::write_message(work_dir, "outbox", &msg)?;
+        println!(
+            "Fallback alert written to {}",
+            path.strip_prefix(work_dir).unwrap_or(&path).display()
+        );
         Ok(())
     }
 }

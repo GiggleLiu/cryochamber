@@ -12,6 +12,7 @@ pub struct Session {
     pub number: u32,
     pub task: String,
     pub output: String,
+    pub stderr: Option<String>,
 }
 
 pub fn append_session(log_path: &Path, session: &Session) -> Result<()> {
@@ -26,6 +27,13 @@ pub fn append_session(log_path: &Path, session: &Session) -> Result<()> {
     writeln!(file, "Task: {}", session.task)?;
     writeln!(file)?;
     writeln!(file, "{}", session.output)?;
+    if let Some(stderr) = &session.stderr {
+        if !stderr.trim().is_empty() {
+            writeln!(file)?;
+            writeln!(file, "--- STDERR ---")?;
+            writeln!(file, "{stderr}")?;
+        }
+    }
     writeln!(file, "{SESSION_END}")?;
     writeln!(file)?;
 

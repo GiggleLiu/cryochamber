@@ -11,6 +11,16 @@ pub struct CryoState {
     pub wake_timer_id: Option<String>,
     pub fallback_timer_id: Option<String>,
     pub pid: Option<u32>,
+    /// Maximum number of retry attempts on agent spawn failure.
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// Current retry count for the active wake cycle. Reset to 0 on success.
+    #[serde(default)]
+    pub retry_count: u32,
+}
+
+fn default_max_retries() -> u32 {
+    1
 }
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {
@@ -30,7 +40,13 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
 
 pub fn is_locked(state: &CryoState) -> bool {
     if let Some(pid) = state.pid {
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        let ret = unsafe { libc::kill(pid as i32, 0) };
+        if ret == 0 {
+            return true;
+        }
+        // EPERM means process exists but we lack permission — still locked
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        errno == libc::EPERM
     } else {
         false
     }

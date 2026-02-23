@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use cryochamber::agent::{self, AgentConfig};
 use cryochamber::log::{self, Session};
 use cryochamber::marker;
+use cryochamber::message;
+use cryochamber::protocol;
 use cryochamber::state::{self, CryoState};
 use cryochamber::timer;
 use cryochamber::validate;
@@ -19,6 +21,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a working directory with protocol file and template plan
+    Init {
+        /// Agent command to target (determines CLAUDE.md vs AGENTS.md)
+        #[arg(long, default_value = "opencode")]
+        agent: String,
+    },
     /// Begin a new plan: initialize and run the first task
     Start {
         /// Path to the natural language plan file
@@ -26,6 +34,9 @@ enum Commands {
         /// Agent command to use (default: opencode)
         #[arg(long, default_value = "opencode")]
         agent: String,
+        /// Max retry attempts on agent spawn failure (default: 1 = no retry)
+        #[arg(long, default_value = "1")]
+        max_retries: u32,
     },
     /// Called by OS timer: execute the next scheduled task
     Wake,
@@ -61,7 +72,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Start { plan, agent } => cmd_start(&plan, &agent),
+        Commands::Init { agent } => cmd_init(&agent),
+        Commands::Start {
+            plan,
+            agent,
+            max_retries,
+        } => cmd_start(&plan, &agent, max_retries),
         Commands::Wake => cmd_wake(),
         Commands::Status => cmd_status(),
         Commands::Cancel => cmd_cancel(),
@@ -72,25 +88,65 @@ fn main() -> Result<()> {
             target,
             message,
         } => {
+            let dir = work_dir()?;
             let fb = cryochamber::fallback::FallbackAction {
                 action,
                 target,
                 message,
             };
-            fb.execute()
+            fb.execute(&dir)
         }
     }
 }
 
-fn cmd_start(plan_path: &Path, agent_cmd: &str) -> Result<()> {
+fn cmd_init(agent_cmd: &str) -> Result<()> {
     let dir = work_dir()?;
-    let plan_dest = dir.join("plan.md");
 
-    if plan_path != plan_dest {
-        std::fs::copy(plan_path, &plan_dest).context("Failed to copy plan file")?;
+    let filename = protocol::protocol_filename(agent_cmd);
+    if protocol::write_protocol_file(&dir, filename)? {
+        println!("Wrote {filename} (cryochamber protocol)");
+    } else {
+        println!("{filename} already exists, skipping");
     }
 
-    let plan_content = std::fs::read_to_string(&plan_dest)?;
+    if protocol::write_template_plan(&dir)? {
+        println!("Wrote template plan.md");
+    } else {
+        println!("plan.md already exists, skipping");
+    }
+
+    message::ensure_dirs(&dir)?;
+    println!("Created messages/ directory");
+
+    println!("\nCryochamber initialized. Next steps:");
+    println!("  1. Edit plan.md with your task plan");
+    println!("  2. Run: cryochamber start plan.md");
+
+    Ok(())
+}
+
+fn cmd_start(plan_path: &Path, agent_cmd: &str, max_retries: u32) -> Result<()> {
+    let dir = work_dir()?;
+
+    // Auto-init: ensure the agent-specific protocol file and message dirs exist
+    let filename = protocol::protocol_filename(agent_cmd);
+    if protocol::write_protocol_file(&dir, filename)? {
+        println!("Wrote {filename} (cryochamber protocol)");
+    }
+    message::ensure_dirs(&dir)?;
+
+    let plan_dest = dir.join("plan.md");
+
+    let should_copy = match (
+        std::fs::canonicalize(plan_path),
+        std::fs::canonicalize(&plan_dest),
+    ) {
+        (Ok(src), Ok(dst)) => src != dst,
+        _ => true,
+    };
+    if should_copy {
+        std::fs::copy(plan_path, &plan_dest).context("Failed to copy plan file")?;
+    }
 
     let mut cryo_state = CryoState {
         plan_path: "plan.md".to_string(),
@@ -99,6 +155,8 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str) -> Result<()> {
         wake_timer_id: None,
         fallback_timer_id: None,
         pid: Some(std::process::id()),
+        max_retries,
+        retry_count: 0,
     };
     state::save_state(&state_path(&dir), &cryo_state)?;
 
@@ -108,7 +166,6 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str) -> Result<()> {
         &dir,
         &mut cryo_state,
         agent_cmd,
-        &plan_content,
         "Execute the first task from the plan",
     )?;
 
@@ -127,11 +184,19 @@ fn cmd_wake() -> Result<()> {
         );
     }
 
+    // Validate workspace: plan.md must exist
+    let plan_path = dir.join("plan.md");
+    if !plan_path.exists() {
+        anyhow::bail!(
+            "plan.md not found in {}. Cannot wake without a plan file.",
+            dir.display()
+        );
+    }
+
     cryo_state.pid = Some(std::process::id());
     cryo_state.session_number += 1;
     state::save_state(&state_path(&dir), &cryo_state)?;
 
-    let plan_content = std::fs::read_to_string(dir.join("plan.md"))?;
     let agent_cmd = cryo_state
         .last_command
         .clone()
@@ -145,31 +210,51 @@ fn cmd_wake() -> Result<()> {
         cryo_state.fallback_timer_id = None;
     }
 
-    run_session(&dir, &mut cryo_state, &agent_cmd, &plan_content, &task)?;
+    run_session(&dir, &mut cryo_state, &agent_cmd, &task)?;
 
     Ok(())
 }
 
-fn run_session(
+fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, task: &str) -> Result<()> {
+    let log = log_path(dir);
+
+    // Inner function so we can guarantee PID cleanup on all exit paths.
+    let result = run_session_inner(dir, cryo_state, agent_cmd, task, &log);
+
+    // Always clear PID and save state, even on error.
+    cryo_state.pid = None;
+    state::save_state(&state_path(dir), cryo_state)?;
+
+    result
+}
+
+fn run_session_inner(
     dir: &Path,
     cryo_state: &mut CryoState,
     agent_cmd: &str,
-    plan_content: &str,
     task: &str,
+    log: &Path,
 ) -> Result<()> {
-    let log = log_path(dir);
+    let log_content = cryochamber::log::read_latest_session(log)?;
+    let inbox = message::read_inbox(dir)?;
+    let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
+    let inbox_filenames: Vec<_> = inbox.into_iter().map(|(f, _)| f).collect();
 
-    let log_content = cryochamber::log::read_latest_session(&log)?;
     let config = AgentConfig {
-        plan_content: plan_content.to_string(),
         log_content,
         session_number: cryo_state.session_number,
         task: task.to_string(),
+        inbox_messages,
     };
     let prompt = agent::build_prompt(&config);
 
     println!("Session #{}: Running agent...", cryo_state.session_number);
-    let result = agent::run_agent(agent_cmd, &prompt)?;
+
+    // Run agent with retry on spawn failure
+    let result = run_agent_with_retry(cryo_state, agent_cmd, &prompt, log, task)?;
+
+    // Agent ran successfully — reset retry counter
+    cryo_state.retry_count = 0;
 
     if result.exit_code != 0 {
         eprintln!(
@@ -182,8 +267,14 @@ fn run_session(
         number: cryo_state.session_number,
         task: task.to_string(),
         output: result.stdout.clone(),
+        stderr: Some(result.stderr.clone()),
     };
-    log::append_session(&log, &session)?;
+    log::append_session(log, &session)?;
+
+    // Archive processed inbox messages
+    if !inbox_filenames.is_empty() {
+        message::archive_messages(dir, &inbox_filenames)?;
+    }
 
     let markers = marker::parse_markers(&result.stdout)?;
 
@@ -195,8 +286,6 @@ fn run_session(
 
     if validation.plan_complete {
         println!("Plan complete! No more wake-ups scheduled.");
-        cryo_state.pid = None;
-        state::save_state(&state_path(dir), cryo_state)?;
         return Ok(());
     }
 
@@ -205,8 +294,6 @@ fn run_session(
     }
 
     if !validation.can_hibernate {
-        cryo_state.pid = None;
-        state::save_state(&state_path(dir), cryo_state)?;
         anyhow::bail!("Pre-hibernate validation failed. Not hibernating.");
     }
 
@@ -225,15 +312,9 @@ fn run_session(
         cryo_state.last_command = Some(cmd.clone());
     }
 
-    // Schedule fallback if specified - need to convert marker::FallbackAction to fallback::FallbackAction
     if let Some(fb) = markers.fallbacks.first() {
-        let fallback_action = cryochamber::fallback::FallbackAction {
-            action: fb.action.clone(),
-            target: fb.target.clone(),
-            message: fb.message.clone(),
-        };
         let fallback_time = wake_time + chrono::Duration::hours(1);
-        let fb_id = timer_impl.schedule_fallback(fallback_time, &fallback_action, &dir_str)?;
+        let fb_id = timer_impl.schedule_fallback(fallback_time, fb, &dir_str)?;
         cryo_state.fallback_timer_id = Some(fb_id.0.clone());
     }
 
@@ -251,10 +332,47 @@ fn run_session(
         }
     }
 
-    cryo_state.pid = None;
-    state::save_state(&state_path(dir), cryo_state)?;
-
     Ok(())
+}
+
+/// Attempt to run the agent, retrying on spawn failure up to `max_retries` times.
+/// Each failed attempt is logged. Returns the successful `AgentResult` or bails after exhausting retries.
+fn run_agent_with_retry(
+    cryo_state: &mut CryoState,
+    agent_cmd: &str,
+    prompt: &str,
+    log: &Path,
+    task: &str,
+) -> Result<agent::AgentResult> {
+    let max_attempts = cryo_state.max_retries;
+    let mut last_err = String::new();
+
+    for attempt in 1..=max_attempts {
+        match agent::run_agent(agent_cmd, prompt) {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                cryo_state.retry_count = attempt;
+                last_err = format!("Agent failed to run (attempt {attempt}/{max_attempts}): {e}");
+                eprintln!("{last_err}");
+
+                let session = Session {
+                    number: cryo_state.session_number,
+                    task: task.to_string(),
+                    output: last_err.clone(),
+                    stderr: None,
+                };
+                log::append_session(log, &session)?;
+
+                if attempt < max_attempts {
+                    let delay = std::time::Duration::from_secs(5 * u64::from(attempt));
+                    eprintln!("Retrying in {}s...", delay.as_secs());
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+
+    anyhow::bail!("{last_err}")
 }
 
 fn get_task_from_log(dir: &Path) -> Option<String> {

@@ -1,1 +1,11 @@
 /target
+Cargo.lock
+*.log
+
+# Generated docs
+docs/reports/
+docs/plans/
+PR_REVIEW.md
+
+# Compiled logo raster (regenerate with `make logo`)
+docs/logo/logo.png
