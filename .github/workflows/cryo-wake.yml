@@ -6,7 +6,12 @@ on:
 
 jobs:
   force-wake:
-    if: contains(github.event.comment.body, '[WAKE]')
+    if: >-
+      contains(github.event.comment.body, '[WAKE]') &&
+      (
+        github.event.comment.author.login == github.repository_owner ||
+        contains(vars.CRYO_WAKE_ACTORS || '', github.event.comment.author.login)
+      )
     runs-on: self-hosted
     steps:
       - name: Sync and force wake

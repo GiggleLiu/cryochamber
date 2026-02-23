@@ -1,6 +1,6 @@
 use cryochamber::channel::github::{
-    build_fetch_comments_query, build_post_comment_mutation, parse_create_discussion_response,
-    parse_discussion_comments,
+    build_create_discussion_mutation, build_fetch_comments_query, build_post_comment_mutation,
+    parse_create_discussion_response, parse_discussion_comments,
 };
 
 #[test]
@@ -48,6 +48,10 @@ fn test_parse_discussion_comments() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].from, "alice");
     assert!(messages[0].body.contains("update the config"));
+    assert_eq!(
+        messages[0].metadata.get("github_comment_id"),
+        Some(&"DC_1".to_string())
+    );
     assert_eq!(cursor, "cursor_abc");
     assert!(!has_next);
 }
@@ -86,6 +90,32 @@ fn test_build_post_comment_mutation() {
 fn test_build_post_comment_escapes_special_chars() {
     let mutation = build_post_comment_mutation("D_test", "Line 1\nLine 2 with \"quotes\"");
     assert!(mutation.contains("\\n"));
+    assert!(mutation.contains("\\\"quotes\\\""));
+}
+
+#[test]
+fn test_build_post_comment_escapes_crlf() {
+    let mutation = build_post_comment_mutation("D_test", "Line 1\r\nLine 2\ttab");
+    assert!(mutation.contains("\\r"));
+    assert!(mutation.contains("\\n"));
+    assert!(mutation.contains("\\t"));
+}
+
+#[test]
+fn test_build_create_discussion_mutation() {
+    let mutation =
+        build_create_discussion_mutation("R_abc", "DC_xyz", "My Title", "Line 1\nLine 2");
+    assert!(mutation.contains("R_abc"));
+    assert!(mutation.contains("DC_xyz"));
+    assert!(mutation.contains("My Title"));
+    assert!(mutation.contains("\\n")); // newline escaped
+    assert!(mutation.contains("createDiscussion"));
+}
+
+#[test]
+fn test_build_create_discussion_mutation_escapes_title() {
+    let mutation =
+        build_create_discussion_mutation("R_abc", "DC_xyz", "Title with \"quotes\"", "body");
     assert!(mutation.contains("\\\"quotes\\\""));
 }
 

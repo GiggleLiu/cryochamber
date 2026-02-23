@@ -5,6 +5,21 @@ use std::process::Command;
 
 use crate::message::Message;
 
+/// Get the login of the currently authenticated `gh` user.
+pub fn whoami() -> Result<String> {
+    let output = Command::new("gh")
+        .args(["api", "user", "-q", ".login"])
+        .output()
+        .context("Failed to run `gh`. Is it installed and authenticated?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh api user failed: {stderr}");
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Call `gh api graphql` with a query string. Returns parsed JSON.
 pub fn gh_graphql(query_body: &str) -> Result<serde_json::Value> {
     let output = Command::new("gh")
@@ -22,6 +37,17 @@ pub fn gh_graphql(query_body: &str) -> Result<serde_json::Value> {
     Ok(json)
 }
 
+// --- Helpers ---
+
+/// Escape a string for embedding in a GraphQL JSON string literal.
+fn escape_graphql(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 // --- Query Builders ---
 
 pub fn build_fetch_comments_query(
@@ -30,8 +56,10 @@ pub fn build_fetch_comments_query(
     discussion_number: u64,
     after_cursor: Option<&str>,
 ) -> String {
+    let owner = escape_graphql(owner);
+    let repo = escape_graphql(repo);
     let after = match after_cursor {
-        Some(c) => format!(", after: \"{c}\""),
+        Some(c) => format!(", after: \"{}\"", escape_graphql(c)),
         None => String::new(),
     };
     format!(
@@ -40,10 +68,7 @@ pub fn build_fetch_comments_query(
 }
 
 pub fn build_post_comment_mutation(discussion_node_id: &str, body: &str) -> String {
-    let escaped = body
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
+    let escaped = escape_graphql(body);
     format!(
         r#"mutation {{ addDiscussionComment(input: {{discussionId: "{discussion_node_id}", body: "{escaped}"}}) {{ comment {{ id }} }} }}"#
     )
@@ -55,11 +80,8 @@ pub fn build_create_discussion_mutation(
     title: &str,
     body: &str,
 ) -> String {
-    let escaped_body = body
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
-    let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped_body = escape_graphql(body);
+    let escaped_title = escape_graphql(title);
     format!(
         r#"mutation {{ createDiscussion(input: {{repositoryId: "{repo_node_id}", categoryId: "{category_id}", title: "{escaped_title}", body: "{escaped_body}"}}) {{ discussion {{ id number }} }} }}"#
     )
@@ -79,6 +101,7 @@ pub fn parse_discussion_comments(json: &serde_json::Value) -> Result<(Vec<Messag
 
     let mut messages = Vec::new();
     for node in nodes {
+        let comment_id = node["id"].as_str().unwrap_or("").to_string();
         let author = node["author"]["login"]
             .as_str()
             .unwrap_or("unknown")
@@ -90,12 +113,17 @@ pub fn parse_discussion_comments(json: &serde_json::Value) -> Result<(Vec<Messag
             .or_else(|_| NaiveDateTime::parse_from_str(created_at, "%Y-%m-%dT%H:%M:%S%.fZ"))
             .unwrap_or_else(|_| chrono::Local::now().naive_local());
 
+        let mut metadata = BTreeMap::from([("source".to_string(), "github".to_string())]);
+        if !comment_id.is_empty() {
+            metadata.insert("github_comment_id".to_string(), comment_id);
+        }
+
         messages.push(Message {
             from: author,
             subject: String::new(),
             body,
             timestamp,
-            metadata: BTreeMap::from([("source".to_string(), "github".to_string())]),
+            metadata,
         });
     }
 
@@ -148,12 +176,15 @@ pub fn create_discussion(
 }
 
 /// Fetch new Discussion comments since cursor. Writes them as inbox files.
+/// Comments authored by `skip_author` (if provided) are silently dropped
+/// to prevent the bot from ingesting its own posts.
 /// Returns the new cursor.
 pub fn pull_comments(
     owner: &str,
     repo: &str,
     discussion_number: u64,
     last_cursor: Option<&str>,
+    skip_author: Option<&str>,
     work_dir: &std::path::Path,
 ) -> Result<Option<String>> {
     crate::message::ensure_dirs(work_dir)?;
@@ -165,6 +196,11 @@ pub fn pull_comments(
         let (messages, new_cursor, has_next) = parse_discussion_comments(&json)?;
 
         for msg in &messages {
+            if let Some(skip) = skip_author {
+                if msg.from == skip {
+                    continue;
+                }
+            }
             crate::message::write_message(work_dir, "inbox", msg)?;
         }
 

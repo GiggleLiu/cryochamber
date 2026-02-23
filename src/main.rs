@@ -232,9 +232,17 @@ fn cmd_wake(force: bool) -> Result<()> {
     if force {
         if let Some(wake_id) = &cryo_state.wake_timer_id {
             let timer_impl = timer::create_timer()?;
-            let _ = timer_impl.cancel(&timer::TimerId(wake_id.clone()));
-            cryo_state.wake_timer_id = None;
-            println!("Cancelled existing wake timer. Running session now.");
+            match timer_impl.cancel(&timer::TimerId(wake_id.clone())) {
+                Ok(()) => {
+                    cryo_state.wake_timer_id = None;
+                    println!("Cancelled existing wake timer. Running session now.");
+                }
+                Err(e) => {
+                    eprintln!("Warning: failed to cancel wake timer: {e}");
+                    eprintln!("The old timer may still fire. Proceeding anyway.");
+                    cryo_state.wake_timer_id = None;
+                }
+            }
         }
     }
 
@@ -575,11 +583,15 @@ fn cmd_gh_init(repo: &str, title: Option<&str>) -> Result<()> {
         cryochamber::channel::github::create_discussion(owner, repo_name, title, &body)?;
     println!("Created Discussion #{number}");
 
+    let self_login = cryochamber::channel::github::whoami().ok();
+
     let sync_state = cryochamber::gh_sync::GhSyncState {
         repo: repo.to_string(),
         discussion_number: number,
         discussion_node_id: node_id,
         last_read_cursor: None,
+        self_login,
+        last_pushed_session: None,
     };
     cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
     println!("Saved gh-sync.json");
@@ -603,6 +615,7 @@ fn cmd_gh_pull() -> Result<()> {
         repo,
         sync_state.discussion_number,
         sync_state.last_read_cursor.as_deref(),
+        sync_state.self_login.as_deref(),
         &dir,
     )?;
 
@@ -619,7 +632,7 @@ fn cmd_gh_pull() -> Result<()> {
 
 fn cmd_gh_push() -> Result<()> {
     let dir = work_dir()?;
-    let sync_state = cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))?
+    let mut sync_state = cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))?
         .context("gh-sync.json not found. Run 'cryochamber gh init' first.")?;
 
     let log = log_path(&dir);
@@ -631,6 +644,17 @@ fn cmd_gh_push() -> Result<()> {
     };
 
     let markers = cryochamber::marker::parse_markers(&session_output)?;
+
+    // Read session number from state if available
+    let session_num = state::load_state(&state_path(&dir))?
+        .map(|s| s.session_number)
+        .unwrap_or(0);
+
+    // Skip if this session was already pushed
+    if sync_state.last_pushed_session == Some(session_num) {
+        println!("Session {session_num} already pushed. Skipping.");
+        return Ok(());
+    }
 
     // Build session summary
     let exit_str = markers
@@ -645,11 +669,6 @@ fn cmd_gh_push() -> Result<()> {
         .as_ref()
         .map(|w| w.0.format("%Y-%m-%dT%H:%M").to_string())
         .unwrap_or_else(|| "plan complete".to_string());
-
-    // Read session number from state if available
-    let session_num = state::load_state(&state_path(&dir))?
-        .map(|s| s.session_number)
-        .unwrap_or(0);
 
     let auto_summary = format!(
         "## Session {session_num} Summary\n- Exit: {exit_str} {summary}\n- Plan: {plan_note}\n- Next wake: {wake_str}"
@@ -666,6 +685,10 @@ fn cmd_gh_push() -> Result<()> {
         println!("Posting reply...");
         cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, reply)?;
     }
+
+    // Record that this session was pushed
+    sync_state.last_pushed_session = Some(session_num);
+    cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
 
     println!("Push complete.");
     Ok(())

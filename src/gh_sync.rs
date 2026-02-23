@@ -15,6 +15,12 @@ pub struct GhSyncState {
     /// Pagination cursor for fetching new Discussion comments
     #[serde(default)]
     pub last_read_cursor: Option<String>,
+    /// Login of the authenticated GitHub user (used to filter own comments on pull)
+    #[serde(default)]
+    pub self_login: Option<String>,
+    /// Last session number that was pushed (to prevent duplicate posts)
+    #[serde(default)]
+    pub last_pushed_session: Option<u32>,
 }
 
 impl GhSyncState {
