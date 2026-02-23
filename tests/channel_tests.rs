@@ -27,7 +27,12 @@ fn test_file_channel_read_inbox_empty() {
 fn test_file_channel_read_inbox_with_messages() {
     let dir = tempfile::tempdir().unwrap();
     message::ensure_dirs(dir.path()).unwrap();
-    let msg = make_message("human", "Question", "What about PR #42?", "2026-02-23T10:30:00");
+    let msg = make_message(
+        "human",
+        "Question",
+        "What about PR #42?",
+        "2026-02-23T10:30:00",
+    );
     message::write_message(dir.path(), "inbox", &msg).unwrap();
 
     let channel = FileChannel::new(dir.path().to_path_buf());

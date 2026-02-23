@@ -1,4 +1,4 @@
-use cryochamber::gh_sync::{GhSyncState, load_sync_state, save_sync_state};
+use cryochamber::gh_sync::{load_sync_state, save_sync_state, GhSyncState};
 
 #[test]
 fn test_sync_state_roundtrip() {

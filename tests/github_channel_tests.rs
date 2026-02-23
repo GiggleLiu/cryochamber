@@ -1,6 +1,6 @@
 use cryochamber::channel::github::{
-    build_fetch_comments_query, build_post_comment_mutation,
-    parse_create_discussion_response, parse_discussion_comments,
+    build_fetch_comments_query, build_post_comment_mutation, parse_create_discussion_response,
+    parse_discussion_comments,
 };
 
 #[test]

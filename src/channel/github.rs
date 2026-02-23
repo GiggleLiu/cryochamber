@@ -67,19 +67,14 @@ pub fn build_create_discussion_mutation(
 
 // --- Response Parsers ---
 
-pub fn parse_discussion_comments(
-    json: &serde_json::Value,
-) -> Result<(Vec<Message>, String, bool)> {
+pub fn parse_discussion_comments(json: &serde_json::Value) -> Result<(Vec<Message>, String, bool)> {
     let comments = &json["data"]["repository"]["discussion"]["comments"];
     let nodes = comments["nodes"]
         .as_array()
         .context("Missing comments.nodes")?;
     let page_info = &comments["pageInfo"];
 
-    let end_cursor = page_info["endCursor"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let end_cursor = page_info["endCursor"].as_str().unwrap_or("").to_string();
     let has_next = page_info["hasNextPage"].as_bool().unwrap_or(false);
 
     let mut messages = Vec::new();
@@ -165,8 +160,7 @@ pub fn pull_comments(
     let mut cursor = last_cursor.map(|s| s.to_string());
 
     loop {
-        let query =
-            build_fetch_comments_query(owner, repo, discussion_number, cursor.as_deref());
+        let query = build_fetch_comments_query(owner, repo, discussion_number, cursor.as_deref());
         let json = gh_graphql(&query)?;
         let (messages, new_cursor, has_next) = parse_discussion_comments(&json)?;
 

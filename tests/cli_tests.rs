@@ -359,7 +359,9 @@ fn test_help() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Long-term AI agent task scheduler"));
+        .stdout(predicate::str::contains(
+            "Long-term AI agent task scheduler",
+        ));
 }
 
 #[test]
@@ -396,52 +398,34 @@ fn test_time_plus_1_day() {
 
 #[test]
 fn test_time_plus_hours() {
-    cmd()
-        .args(["time", "+2 hours"])
-        .assert()
-        .success();
+    cmd().args(["time", "+2 hours"]).assert().success();
 }
 
 #[test]
 fn test_time_plus_minutes() {
-    cmd()
-        .args(["time", "+30 minutes"])
-        .assert()
-        .success();
+    cmd().args(["time", "+30 minutes"]).assert().success();
 }
 
 #[test]
 fn test_time_plus_week() {
-    cmd()
-        .args(["time", "+1 week"])
-        .assert()
-        .success();
+    cmd().args(["time", "+1 week"]).assert().success();
 }
 
 #[test]
 fn test_time_plus_months() {
-    cmd()
-        .args(["time", "+3 months"])
-        .assert()
-        .success();
+    cmd().args(["time", "+3 months"]).assert().success();
 }
 
 #[test]
 fn test_time_plus_year() {
-    cmd()
-        .args(["time", "+1 year"])
-        .assert()
-        .success();
+    cmd().args(["time", "+1 year"]).assert().success();
 }
 
 #[test]
 fn test_time_short_units() {
     // Short aliases: m, h, d, w, y
     for unit in &["1 m", "2 h", "3 d", "1 w", "1 y"] {
-        cmd()
-            .args(["time", &format!("+{unit}")])
-            .assert()
-            .success();
+        cmd().args(["time", &format!("+{unit}")]).assert().success();
     }
 }
 
@@ -466,10 +450,7 @@ fn test_time_invalid_number() {
 #[test]
 fn test_time_no_plus_prefix() {
     // Should also work without the "+" prefix
-    cmd()
-        .args(["time", "1 day"])
-        .assert()
-        .success();
+    cmd().args(["time", "1 day"]).assert().success();
 }
 
 #[test]
@@ -572,7 +553,8 @@ fn test_start_wake_cycle_with_timer() {
     fs::write(dir.path().join("plan.md"), "# Plan\nMulti-session").unwrap();
 
     // Agent outputs EXIT + WAKE (far future) + CMD
-    let output = "[CRYO:EXIT 0] Session done\n[CRYO:WAKE 2099-12-31T23:59]\n[CRYO:CMD echo continue]";
+    let output =
+        "[CRYO:EXIT 0] Session done\n[CRYO:WAKE 2099-12-31T23:59]\n[CRYO:CMD echo continue]";
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
         .env("MOCK_AGENT_OUTPUT", output)
