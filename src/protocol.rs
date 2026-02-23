@@ -61,6 +61,21 @@ Optional. Dead man's switch — triggered if the next session fails to run.
 
 Example: `[CRYO:FALLBACK email user@example.com "weekly review did not run"]`
 
+## Utilities
+
+You can call `cryochamber time` to get the current time, or compute a future time:
+
+```
+cryochamber time                # current time
+cryochamber time "+1 day"       # 1 day from now
+cryochamber time "+2 hours"     # 2 hours from now
+cryochamber time "+30 minutes"  # 30 minutes from now
+cryochamber time "+1 week"      # 1 week from now
+cryochamber time "+3 months"    # ~3 months from now
+```
+
+Use this to calculate accurate WAKE times.
+
 ## Rules
 
 - **No WAKE marker = plan is complete.** No more wake-ups will be scheduled.

@@ -65,6 +65,16 @@ cryochamber status                   # Show current state
 cryochamber cancel                   # Cancel all timers
 cryochamber validate                 # Check if ready to hibernate
 cryochamber log                      # Print session log
+cryochamber time ["+N unit"]         # Show current time or compute offset
+```
+
+The `time` command helps agents calculate accurate wake times:
+
+```bash
+cryochamber time                  # 2026-02-23T09:00
+cryochamber time "+1 day"         # 2026-02-24T09:00
+cryochamber time "+2 hours"       # 2026-02-23T11:00
+cryochamber time "+3 months"      # 2026-05-24T09:00
 ```
 
 ## Examples

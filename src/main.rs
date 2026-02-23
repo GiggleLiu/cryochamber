@@ -48,6 +48,17 @@ enum Commands {
     Validate,
     /// Print the session log
     Log,
+    /// Show current time, or compute a future time from an offset
+    ///
+    /// Examples:
+    ///   cryochamber time              # prints current time
+    ///   cryochamber time "+1 day"     # 1 day from now
+    ///   cryochamber time "+2 hours"   # 2 hours from now
+    ///   cryochamber time "+30 minutes" # 30 minutes from now
+    Time {
+        /// Optional offset: "+N unit" where unit is minutes/hours/days/weeks
+        offset: Option<String>,
+    },
     /// Execute a fallback action (used internally by timers)
     FallbackExec {
         action: String,
@@ -78,6 +89,7 @@ fn main() -> Result<()> {
             agent,
             max_retries,
         } => cmd_start(&plan, &agent, max_retries),
+        Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Wake => cmd_wake(),
         Commands::Status => cmd_status(),
         Commands::Cancel => cmd_cancel(),
@@ -482,4 +494,63 @@ fn cmd_log() -> Result<()> {
         println!("No log file found.");
     }
     Ok(())
+}
+
+fn cmd_time(offset: Option<&str>) -> Result<()> {
+    let now = chrono::Local::now();
+
+    match offset {
+        None => {
+            println!("{}", now.format("%Y-%m-%dT%H:%M"));
+        }
+        Some(s) => {
+            let duration = parse_offset(s)?;
+            let future = now + duration;
+            println!("{}", future.format("%Y-%m-%dT%H:%M"));
+        }
+    }
+    Ok(())
+}
+
+/// Parse a relative time offset like "+1 day", "+2 hours", "+30 minutes".
+/// Accepts singular and plural forms, with or without the "+" prefix.
+fn parse_offset(s: &str) -> Result<chrono::Duration> {
+    let s = s.trim().strip_prefix('+').unwrap_or(s).trim();
+
+    let (num_str, unit) = s
+        .split_once(char::is_whitespace)
+        .context("Expected format: \"+N unit\" (e.g. \"+1 day\", \"+2 hours\")")?;
+
+    let n: i64 = num_str
+        .trim()
+        .parse()
+        .context(format!("Invalid number: {num_str}"))?;
+
+    let unit = unit.trim().to_lowercase();
+    let days = |factor: i64| -> Result<chrono::Duration> {
+        n.checked_mul(factor)
+            .and_then(chrono::Duration::try_days)
+            .context(format!("Offset too large: {n} {unit}"))
+    };
+    let duration = match unit.as_str() {
+        "minute" | "minutes" | "min" | "mins" | "m" => {
+            chrono::Duration::try_minutes(n).context(format!("Offset too large: {n} {unit}"))?
+        }
+        "hour" | "hours" | "hr" | "hrs" | "h" => {
+            chrono::Duration::try_hours(n).context(format!("Offset too large: {n} {unit}"))?
+        }
+        "day" | "days" | "d" => {
+            chrono::Duration::try_days(n).context(format!("Offset too large: {n} {unit}"))?
+        }
+        "week" | "weeks" | "w" => {
+            chrono::Duration::try_weeks(n).context(format!("Offset too large: {n} {unit}"))?
+        }
+        "month" | "months" => days(30)?,
+        "year" | "years" | "y" => days(365)?,
+        _ => anyhow::bail!(
+            "Unknown time unit: {unit}. Use minutes, hours, days, weeks, months, or years."
+        ),
+    };
+
+    Ok(duration)
 }

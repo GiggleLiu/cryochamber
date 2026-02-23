@@ -25,7 +25,7 @@
 
   // Wordmark — single line, right side, vertically centered
   content((3.0, 0),
-          text(size: 36pt, weight: "bold", fill: navy)[cryochamber],
+          text(size: 66pt, weight: "bold", fill: navy)[cryochamber],
           anchor: "west")
 
   // Spacer to widen canvas
