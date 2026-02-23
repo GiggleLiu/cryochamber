@@ -172,7 +172,9 @@ mod tests {
         guard.id = None; // already cancelled
 
         // Verify it's gone
-        let status = timer.verify(&id).expect("verify after cancel should succeed");
+        let status = timer
+            .verify(&id)
+            .expect("verify after cancel should succeed");
         assert!(
             matches!(status, TimerStatus::NotFound),
             "Expected NotFound after cancel"
