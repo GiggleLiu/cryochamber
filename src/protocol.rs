@@ -27,6 +27,7 @@ Cryochamber uses a file-based message inbox/outbox:
 - Processed inbox messages are archived to `messages/inbox/archive/`.
 
 You do not need to read the inbox directory yourself — new messages are included in your prompt.
+- You can reply to messages using `[CRYO:REPLY "your reply here"]` markers.
 
 ## Required Markers
 
@@ -60,6 +61,11 @@ Optional. Dead man's switch — triggered if the next session fails to run.
 - `action`: `email` or `webhook`
 
 Example: `[CRYO:FALLBACK email user@example.com "weekly review did not run"]`
+
+### [CRYO:REPLY "<message>"]
+Optional. Post a reply to the human (synced to Discussion if gh sync is configured).
+
+Example: `[CRYO:REPLY "Updated the API endpoint as requested."]`
 
 ## Utilities
 

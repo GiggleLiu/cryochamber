@@ -13,6 +13,7 @@ fn test_valid_markers() {
         command: Some("opencode test".to_string()),
         plan_note: None,
         fallbacks: vec![],
+        replies: vec![],
     };
     let result = validate_markers(&markers);
     assert!(result.can_hibernate);
@@ -29,6 +30,7 @@ fn test_wake_time_in_past() {
         command: Some("opencode test".to_string()),
         plan_note: None,
         fallbacks: vec![],
+        replies: vec![],
     };
     let result = validate_markers(&markers);
     assert!(!result.can_hibernate);
@@ -52,6 +54,7 @@ fn test_no_wake_means_plan_complete() {
         command: None,
         plan_note: None,
         fallbacks: vec![],
+        replies: vec![],
     };
     let result = validate_markers(&markers);
     // No wake = plan complete, this is valid (no hibernate needed)
@@ -69,6 +72,7 @@ fn test_exit_failure_with_wake_can_hibernate() {
         command: Some("opencode test".to_string()),
         plan_note: None,
         fallbacks: vec![],
+        replies: vec![],
     };
     let result = validate_markers(&markers);
     // Failure with WAKE still allows hibernate (current behavior)
@@ -86,6 +90,7 @@ fn test_partial_exit_with_wake() {
         command: Some("opencode test".to_string()),
         plan_note: None,
         fallbacks: vec![],
+        replies: vec![],
     };
     let result = validate_markers(&markers);
     assert!(result.can_hibernate);

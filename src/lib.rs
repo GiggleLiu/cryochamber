@@ -1,5 +1,7 @@
 pub mod agent;
+pub mod channel;
 pub mod fallback;
+pub mod gh_sync;
 pub mod log;
 pub mod marker;
 pub mod message;

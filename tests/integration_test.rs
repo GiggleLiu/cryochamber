@@ -121,3 +121,40 @@ fn test_no_markers_output() {
     assert!(!validation.can_hibernate);
     assert!(validation.errors.iter().any(|e| e.contains("EXIT")));
 }
+
+#[test]
+fn test_file_channel_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    cryochamber::message::ensure_dirs(dir.path()).unwrap();
+
+    // Write a message to inbox
+    let msg = cryochamber::message::Message {
+        from: "human".to_string(),
+        subject: "Test".to_string(),
+        body: "Hello agent".to_string(),
+        timestamp: chrono::NaiveDateTime::parse_from_str(
+            "2026-02-23T10:00:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .unwrap(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+    cryochamber::message::write_message(dir.path(), "inbox", &msg).unwrap();
+
+    // Use FileChannel to read
+    use cryochamber::channel::MessageChannel;
+    let channel = cryochamber::channel::file::FileChannel::new(dir.path().to_path_buf());
+    let messages = channel.read_inbox().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].from, "human");
+
+    // Post reply via channel
+    channel.post_reply("Got it, thanks!").unwrap();
+
+    // Verify outbox has the reply
+    let outbox_entries: Vec<_> = std::fs::read_dir(dir.path().join("messages/outbox"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert_eq!(outbox_entries.len(), 1);
+}

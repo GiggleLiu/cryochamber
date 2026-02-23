@@ -39,7 +39,11 @@ enum Commands {
         max_retries: u32,
     },
     /// Called by OS timer: execute the next scheduled task
-    Wake,
+    Wake {
+        /// Force wake immediately (cancel existing timer)
+        #[arg(long)]
+        now: bool,
+    },
     /// Show current status: next wake time, last result
     Status,
     /// Cancel all timers and stop the schedule
@@ -78,6 +82,32 @@ enum Commands {
         target: String,
         message: String,
     },
+    /// GitHub Discussion sync utility (independent message sync service)
+    Gh {
+        #[command(subcommand)]
+        action: GhCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum GhCommands {
+    /// Initialize: create a Discussion and write gh-sync.json
+    Init {
+        /// GitHub repo in "owner/repo" format
+        #[arg(long)]
+        repo: String,
+        /// Discussion title (default: derived from plan.md)
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// Pull new Discussion comments into messages/inbox/
+    Pull,
+    /// Push session summary + CRYO:REPLY markers to Discussion
+    Push,
+    /// Pull then push (full sync)
+    Sync,
+    /// Show sync status
+    Status,
 }
 
 fn work_dir() -> Result<PathBuf> {
@@ -103,7 +133,7 @@ fn main() -> Result<()> {
             max_retries,
         } => cmd_start(&plan, &agent, max_retries),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
-        Commands::Wake => cmd_wake(),
+        Commands::Wake { now } => cmd_wake(now),
         Commands::Status => cmd_status(),
         Commands::Cancel => cmd_cancel(),
         Commands::Validate => cmd_validate(),
@@ -127,6 +157,16 @@ fn main() -> Result<()> {
             };
             fb.execute(&dir)
         }
+        Commands::Gh { action } => match action {
+            GhCommands::Init { repo, title } => cmd_gh_init(&repo, title.as_deref()),
+            GhCommands::Pull => cmd_gh_pull(),
+            GhCommands::Push => cmd_gh_push(),
+            GhCommands::Sync => {
+                cmd_gh_pull()?;
+                cmd_gh_push()
+            }
+            GhCommands::Status => cmd_gh_status(),
+        },
     }
 }
 
@@ -203,10 +243,27 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str, max_retries: u32) -> Result<()> 
     Ok(())
 }
 
-fn cmd_wake() -> Result<()> {
+fn cmd_wake(force: bool) -> Result<()> {
     let dir = work_dir()?;
     let mut cryo_state = state::load_state(&state_path(&dir))?
         .context("No cryochamber state found. Run 'cryo start' first.")?;
+
+    if force {
+        if let Some(wake_id) = &cryo_state.wake_timer_id {
+            let timer_impl = timer::create_timer()?;
+            match timer_impl.cancel(&timer::TimerId(wake_id.clone())) {
+                Ok(()) => {
+                    cryo_state.wake_timer_id = None;
+                    println!("Cancelled existing wake timer. Running session now.");
+                }
+                Err(e) => {
+                    eprintln!("Warning: failed to cancel wake timer: {e}");
+                    eprintln!("The old timer may still fire. Proceeding anyway.");
+                    cryo_state.wake_timer_id = None;
+                }
+            }
+        }
+    }
 
     if state::is_locked(&cryo_state) && cryo_state.pid != Some(std::process::id()) {
         anyhow::bail!(
@@ -560,6 +617,166 @@ fn cmd_receive() -> Result<()> {
         println!();
     }
 
+    Ok(())
+}
+
+fn gh_sync_path(dir: &Path) -> PathBuf {
+    dir.join("gh-sync.json")
+}
+
+fn cmd_gh_init(repo: &str, title: Option<&str>) -> Result<()> {
+    let dir = work_dir()?;
+
+    let (owner, repo_name) = repo
+        .split_once('/')
+        .context("--repo must be in 'owner/repo' format")?;
+
+    let default_title = format!(
+        "[Cryo] {}",
+        dir.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let title = title.unwrap_or(&default_title);
+
+    // Read plan.md for the Discussion body if it exists
+    let plan_content = std::fs::read_to_string(dir.join("plan.md")).unwrap_or_default();
+    let body = if plan_content.is_empty() {
+        "Cryochamber sync Discussion.".to_string()
+    } else {
+        format!("## Cryochamber Plan\n\n{plan_content}")
+    };
+
+    println!("Creating GitHub Discussion in {repo}...");
+    let (node_id, number) =
+        cryochamber::channel::github::create_discussion(owner, repo_name, title, &body)?;
+    println!("Created Discussion #{number}");
+
+    let self_login = cryochamber::channel::github::whoami().ok();
+
+    let sync_state = cryochamber::gh_sync::GhSyncState {
+        repo: repo.to_string(),
+        discussion_number: number,
+        discussion_node_id: node_id,
+        last_read_cursor: None,
+        self_login,
+        last_pushed_session: None,
+    };
+    cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
+    println!("Saved gh-sync.json");
+
+    Ok(())
+}
+
+fn cmd_gh_pull() -> Result<()> {
+    let dir = work_dir()?;
+    let mut sync_state = cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))?
+        .context("gh-sync.json not found. Run 'cryochamber gh init' first.")?;
+
+    let (owner, repo) = sync_state.owner_repo()?;
+
+    println!(
+        "Pulling comments from Discussion #{}...",
+        sync_state.discussion_number
+    );
+    let new_cursor = cryochamber::channel::github::pull_comments(
+        owner,
+        repo,
+        sync_state.discussion_number,
+        sync_state.last_read_cursor.as_deref(),
+        sync_state.self_login.as_deref(),
+        &dir,
+    )?;
+
+    if let Some(cursor) = new_cursor {
+        sync_state.last_read_cursor = Some(cursor);
+        cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
+    }
+
+    let inbox = cryochamber::message::read_inbox(&dir)?;
+    println!("Inbox: {} message(s)", inbox.len());
+
+    Ok(())
+}
+
+fn cmd_gh_push() -> Result<()> {
+    let dir = work_dir()?;
+    let mut sync_state = cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))?
+        .context("gh-sync.json not found. Run 'cryochamber gh init' first.")?;
+
+    let log = log_path(&dir);
+    let latest = cryochamber::log::read_latest_session(&log)?;
+
+    let Some(session_output) = latest else {
+        println!("No session log found. Nothing to push.");
+        return Ok(());
+    };
+
+    let markers = cryochamber::marker::parse_markers(&session_output)?;
+
+    // Read session number from state if available
+    let session_num = state::load_state(&state_path(&dir))?
+        .map(|s| s.session_number)
+        .unwrap_or(0);
+
+    // Skip if this session was already pushed
+    if sync_state.last_pushed_session == Some(session_num) {
+        println!("Session {session_num} already pushed. Skipping.");
+        return Ok(());
+    }
+
+    // Build session summary
+    let exit_str = markers
+        .exit_code
+        .as_ref()
+        .map(|c| format!("{}", c.as_code()))
+        .unwrap_or_else(|| "?".to_string());
+    let summary = markers.exit_summary.as_deref().unwrap_or("");
+    let plan_note = markers.plan_note.as_deref().unwrap_or("(none)");
+    let wake_str = markers
+        .wake_time
+        .as_ref()
+        .map(|w| w.0.format("%Y-%m-%dT%H:%M").to_string())
+        .unwrap_or_else(|| "plan complete".to_string());
+
+    let auto_summary = format!(
+        "## Session {session_num} Summary\n- Exit: {exit_str} {summary}\n- Plan: {plan_note}\n- Next wake: {wake_str}"
+    );
+
+    println!(
+        "Posting session summary to Discussion #{}...",
+        sync_state.discussion_number
+    );
+    cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &auto_summary)?;
+
+    // Post each CRYO:REPLY marker as a separate comment
+    for reply in &markers.replies {
+        println!("Posting reply...");
+        cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, reply)?;
+    }
+
+    // Record that this session was pushed
+    sync_state.last_pushed_session = Some(session_num);
+    cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
+
+    println!("Push complete.");
+    Ok(())
+}
+
+fn cmd_gh_status() -> Result<()> {
+    let dir = work_dir()?;
+    match cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))? {
+        None => println!("GitHub sync not configured. Run 'cryochamber gh init' first."),
+        Some(state) => {
+            println!("Repo: {}", state.repo);
+            println!("Discussion: #{}", state.discussion_number);
+            println!(
+                "Last read cursor: {}",
+                state
+                    .last_read_cursor
+                    .as_deref()
+                    .unwrap_or("(none — will read all)")
+            );
+        }
+    }
     Ok(())
 }
 
