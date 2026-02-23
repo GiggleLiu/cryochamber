@@ -70,6 +70,54 @@ cryo start plan.md → spawn daemon → run agent → parse markers → sleep
 
 **Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's output as context. The agent's `[CRYO:PLAN]` markers serve as memory across sessions.
 
+## Example: Mr. Lazy
+
+The [`examples/mr-lazy`](examples/mr-lazy/) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
+
+```bash
+make check-round-trip   # run it yourself (Ctrl-C to stop)
+```
+
+Here's a real run:
+
+```
+Daemon: Session #1: Running agent...
+--- CRYO SESSION 2026-02-24T00:03:10 ---
+Session: 1
+Task: Continue the plan
+
+*Groggily opens eyes* Ugh... checking the time...
+
+Two. Of course I rolled a two. The universe conspires against me even in
+my dreams. It's 00:03 — three minutes past midnight! Even vampires are
+hitting snooze.
+
+[CRYO:EXIT 0] Refused to wake up (rolled 2/4)
+[CRYO:PLAN Session 1 complete. Complaint #1 delivered.]
+[CRYO:WAKE 2026-02-24T00:05]
+--- CRYO END ---
+
+Daemon: next wake at 2026-02-24 00:05
+Daemon: scheduled wake time reached
+Daemon: Session #2: Running agent...
+--- CRYO SESSION 2026-02-24T00:05:00 ---
+Session: 2
+Task: Session 1 complete. Complaint #1 delivered.
+
+I rolled a FOUR? Oh, cruel fate! After only two attempts, the 25% chance
+has betrayed me. Fine. I'm up. Grudgingly, dramatically, philosophically
+opposed to this entire situation... but up.
+
+[CRYO:EXIT 0] Rolled 4/4 - grudgingly woke up after 2 sessions
+[CRYO:PLAN COMPLETE]
+--- CRYO END ---
+
+Daemon: plan complete. Shutting down.
+Daemon: exited cleanly
+```
+
+The daemon ran two sessions, sleeping 2 minutes between them, then stopped when the agent declared the plan complete. All output is in `cryo.log`.
+
 ## Markers (for AI agents)
 
 The agent writes these markers at the end of its output:
