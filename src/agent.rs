@@ -231,23 +231,28 @@ pub fn run_agent_with_timeout(
     let child_done = Arc::new(AtomicBool::new(false));
     let child_done_clone = Arc::clone(&child_done);
 
-    // Spawn timeout watchdog thread
+    // Spawn watchdog thread: enforces timeout and/or external shutdown signal.
+    // timeout_secs == 0 means no timeout, but shutdown is still monitored.
+    let has_timeout = timeout_secs > 0;
     let timeout_handle = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+        let deadline = has_timeout
+            .then(|| std::time::Instant::now() + Duration::from_secs(timeout_secs));
         loop {
             if child_done_clone.load(Ordering::Relaxed) {
                 return false; // child exited normally
             }
-            if std::time::Instant::now() >= deadline {
-                eprintln!("Session timeout ({timeout_secs}s) — killing agent");
-                unsafe {
-                    libc::kill(child_pid as i32, libc::SIGTERM);
+            if let Some(d) = deadline {
+                if std::time::Instant::now() >= d {
+                    eprintln!("Session timeout ({timeout_secs}s) — killing agent");
+                    unsafe {
+                        libc::kill(child_pid as i32, libc::SIGTERM);
+                    }
+                    std::thread::sleep(Duration::from_secs(5));
+                    unsafe {
+                        libc::kill(child_pid as i32, libc::SIGKILL);
+                    }
+                    return true; // timed out
                 }
-                std::thread::sleep(Duration::from_secs(5));
-                unsafe {
-                    libc::kill(child_pid as i32, libc::SIGKILL);
-                }
-                return true; // timed out
             }
             if let Some(ref s) = shutdown {
                 if s.load(Ordering::Relaxed) {

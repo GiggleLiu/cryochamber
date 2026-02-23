@@ -179,6 +179,18 @@ impl Daemon {
             None
         };
 
+        // Spawn a thread that forwards shutdown signals to the event channel,
+        // so recv_timeout() unblocks immediately on SIGTERM/SIGINT.
+        let shutdown_flag = Arc::clone(&self.shutdown);
+        let shutdown_tx = tx.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(250));
+            if shutdown_flag.load(Ordering::Relaxed) {
+                let _ = shutdown_tx.send(DaemonEvent::Shutdown);
+                break;
+            }
+        });
+
         let mut retry = RetryState::new(cryo_state.max_retries);
         let mut next_wake: Option<NaiveDateTime> = None;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
@@ -291,10 +303,12 @@ impl Daemon {
             }
         }
 
-        // Cleanup: clear PID, daemon_mode, and registry
+        // Cleanup: always unregister, even if state save fails (e.g. dir removed)
         cryo_state.pid = None;
         cryo_state.daemon_mode = false;
-        state::save_state(&self.state_path, &cryo_state)?;
+        if let Err(e) = state::save_state(&self.state_path, &cryo_state) {
+            eprintln!("Daemon: failed to save final state: {e}");
+        }
         crate::registry::unregister(&self.dir);
         eprintln!("Daemon: exited cleanly");
 
@@ -324,11 +338,7 @@ impl Daemon {
             &task,
             &self.log_path,
             |prompt, writer| {
-                if timeout_secs > 0 {
-                    self.run_agent_with_timeout(&agent_cmd, prompt, writer, timeout_secs)
-                } else {
-                    crate::agent::run_agent_streaming(&agent_cmd, prompt, Some(writer))
-                }
+                self.run_agent_with_timeout(&agent_cmd, prompt, writer, timeout_secs)
             },
         )?;
 
