@@ -44,11 +44,19 @@ pub fn validate_markers(markers: &CryoMarkers) -> ValidationResult {
         };
     }
 
-    // Check wake time is in the future
+    // Check wake time is in the future (or recently past — treat as "wake now")
     if let Some(wake) = &markers.wake_time {
         let now = Local::now().naive_local();
         if *wake.inner() < now {
-            errors.push("Wake time is in the past. Please specify a future time.".to_string());
+            let age = now - *wake.inner();
+            if age > chrono::Duration::minutes(10) {
+                errors.push("Wake time is in the past. Please specify a future time.".to_string());
+            } else {
+                warnings.push(format!(
+                    "Wake time is {}m ago — treating as immediate wake.",
+                    age.num_minutes()
+                ));
+            }
         }
     }
 

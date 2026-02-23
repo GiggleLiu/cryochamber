@@ -115,3 +115,21 @@ fn test_plan_complete_marker_overrides_wake_time() {
     assert!(result.plan_complete);
     assert!(!result.can_hibernate);
 }
+
+#[test]
+fn test_wake_time_recently_past_is_allowed() {
+    // A wake time just a few minutes ago should be treated as "wake now"
+    let recent = Local::now().naive_local() - Duration::minutes(2);
+    let markers = CryoMarkers {
+        exit_code: Some(ExitCode::Success),
+        exit_summary: Some("done".to_string()),
+        wake_time: Some(WakeTime(recent)),
+        command: Some("opencode run".to_string()),
+        plan_note: None,
+        fallbacks: vec![],
+        replies: vec![],
+    };
+    let result = validate_markers(&markers);
+    assert!(result.can_hibernate); // allowed, not an error
+    assert!(result.warnings.iter().any(|w| w.contains("immediate")));
+}
