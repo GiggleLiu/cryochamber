@@ -1,11 +1,15 @@
 // src/session.rs
 //! Pure business logic extracted from command handlers for testability.
 
+use anyhow::Result;
 use chrono::NaiveDateTime;
 use std::path::Path;
 
+use crate::agent::{self, AgentConfig};
 use crate::fallback::FallbackAction;
+use crate::log;
 use crate::marker::{self, CryoMarkers};
+use crate::message;
 use crate::validate;
 
 /// The outcome of processing agent output after a session completes.
@@ -24,6 +28,78 @@ pub enum SessionOutcome {
         errors: Vec<String>,
         warnings: Vec<String>,
     },
+}
+
+/// Result of executing a complete session.
+pub struct ExecuteResult {
+    pub outcome: SessionOutcome,
+    pub warnings: Vec<String>,
+    /// CRYO:CMD marker value, if present.
+    pub command: Option<String>,
+}
+
+/// Run a complete session: read inbox, build prompt, run agent, parse markers.
+///
+/// The `run_agent` closure receives the prompt and a session writer and must
+/// return an `AgentResult`. The session writer is always finalized — even on
+/// error — preventing unterminated session blocks in the log.
+pub fn execute_session<F>(
+    dir: &Path,
+    session_number: u32,
+    task: &str,
+    log_path: &Path,
+    run_agent: F,
+) -> Result<ExecuteResult>
+where
+    F: FnOnce(&str, &mut log::SessionWriter) -> Result<agent::AgentResult>,
+{
+    let log_content = log::read_latest_session(log_path)?;
+    let inbox = message::read_inbox(dir)?;
+    let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
+    let inbox_filenames: Vec<_> = inbox.into_iter().map(|(f, _)| f).collect();
+
+    let config = AgentConfig {
+        log_content,
+        session_number,
+        task: task.to_string(),
+        inbox_messages,
+    };
+    let prompt = agent::build_prompt(&config);
+
+    let mut writer = log::SessionWriter::begin(log_path, session_number, task, &inbox_filenames)?;
+
+    let agent_result = match run_agent(&prompt, &mut writer) {
+        Ok(r) => {
+            writer.finish(Some(&r.stderr))?;
+            r
+        }
+        Err(e) => {
+            // Always finalize the session block, even on error.
+            let _ = writer.finish(Some(&format!("Error: {e}")));
+            return Err(e);
+        }
+    };
+
+    if agent_result.exit_code != 0 {
+        eprintln!(
+            "Agent exited with code {}. Stderr:\n{}",
+            agent_result.exit_code, agent_result.stderr
+        );
+    }
+
+    if !inbox_filenames.is_empty() {
+        message::archive_messages(dir, &inbox_filenames)?;
+    }
+
+    let markers = marker::parse_markers(&agent_result.stdout)?;
+    let command = markers.command.clone();
+    let (outcome, warnings) = decide_session_outcome(&markers);
+
+    Ok(ExecuteResult {
+        outcome,
+        warnings,
+        command,
+    })
 }
 
 /// Decide what should happen after a session, given parsed markers.

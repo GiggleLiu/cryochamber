@@ -18,8 +18,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::log::SessionWriter;
-use crate::message;
+use crate::fallback::FallbackAction;
 use crate::session::{self, SessionOutcome};
 use crate::state::{self, CryoState};
 
@@ -106,7 +105,10 @@ impl InboxWatcher {
 /// What the daemon should do after a session completes.
 pub enum SessionLoopOutcome {
     PlanComplete,
-    Hibernate { wake_time: NaiveDateTime },
+    Hibernate {
+        wake_time: NaiveDateTime,
+        fallback: Option<FallbackAction>,
+    },
     ValidationFailed,
 }
 
@@ -166,6 +168,7 @@ impl Daemon {
 
         let mut retry = RetryState::new(cryo_state.max_retries);
         let mut next_wake: Option<NaiveDateTime> = None;
+        let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 
         // First session: run immediately
         let mut run_now = true;
@@ -175,6 +178,9 @@ impl Daemon {
                 eprintln!("Daemon: received shutdown signal");
                 break;
             }
+
+            // Check if a pending fallback deadline has passed
+            self.check_fallback(&mut pending_fallback);
 
             if run_now {
                 run_now = false;
@@ -186,11 +192,18 @@ impl Daemon {
                         retry.reset();
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
+                                drop(pending_fallback);
                                 eprintln!("Daemon: plan complete. Shutting down.");
                                 break;
                             }
-                            SessionLoopOutcome::Hibernate { wake_time } => {
+                            SessionLoopOutcome::Hibernate {
+                                wake_time,
+                                fallback,
+                            } => {
                                 next_wake = Some(wake_time);
+                                pending_fallback = fallback.map(|fb| {
+                                    (wake_time + chrono::Duration::hours(1), fb)
+                                });
                                 eprintln!(
                                     "Daemon: next wake at {}",
                                     wake_time.format("%Y-%m-%d %H:%M")
@@ -204,8 +217,9 @@ impl Daemon {
                     }
                     Err(e) => {
                         eprintln!("Daemon: session failed: {e}");
+                        let backoff = retry.next_backoff();
                         retry.record_failure();
-                        if let Some(backoff) = retry.next_backoff() {
+                        if let Some(backoff) = backoff {
                             eprintln!(
                                 "Daemon: retry {}/{} in {}s",
                                 retry.attempt,
@@ -222,6 +236,7 @@ impl Daemon {
                                 "Daemon: exhausted {} retries. Waiting for next event.",
                                 retry.max_retries
                             );
+                            self.check_fallback(&mut pending_fallback);
                             retry.reset();
                         }
                     }
@@ -282,62 +297,36 @@ impl Daemon {
             .get_task()
             .unwrap_or_else(|| "Continue the plan".to_string());
 
-        let log_content = crate::log::read_latest_session(&self.log_path)?;
-        let inbox = message::read_inbox(&self.dir)?;
-        let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
-        let inbox_filenames: Vec<_> = inbox.into_iter().map(|(f, _)| f).collect();
-
-        let config = crate::agent::AgentConfig {
-            log_content,
-            session_number: cryo_state.session_number,
-            task: task.clone(),
-            inbox_messages,
-        };
-        let prompt = crate::agent::build_prompt(&config);
+        let timeout_secs = cryo_state.max_session_duration;
 
         eprintln!(
             "Daemon: Session #{}: Running agent...",
             cryo_state.session_number
         );
 
-        let mut writer = SessionWriter::begin(
-            &self.log_path,
+        let result = session::execute_session(
+            &self.dir,
             cryo_state.session_number,
             &task,
-            &inbox_filenames,
+            &self.log_path,
+            |prompt, writer| {
+                if timeout_secs > 0 {
+                    self.run_agent_with_timeout(&agent_cmd, prompt, writer, timeout_secs)
+                } else {
+                    crate::agent::run_agent_streaming(&agent_cmd, prompt, Some(writer))
+                }
+            },
         )?;
 
-        // Run agent with timeout
-        let timeout_secs = cryo_state.max_session_duration;
-        let result = if timeout_secs > 0 {
-            self.run_agent_with_timeout(&agent_cmd, &prompt, &mut writer, timeout_secs)?
-        } else {
-            crate::agent::run_agent_streaming(&agent_cmd, &prompt, Some(&mut writer))?
-        };
-
-        writer.finish(Some(&result.stderr))?;
-
-        if result.exit_code != 0 {
-            eprintln!("Daemon: agent exited with code {}", result.exit_code);
-        }
-
-        // Archive processed inbox messages
-        if !inbox_filenames.is_empty() {
-            message::archive_messages(&self.dir, &inbox_filenames)?;
-        }
-
-        let markers = crate::marker::parse_markers(&result.stdout)?;
-        let (outcome, warnings) = session::decide_session_outcome(&markers);
-
-        for warning in &warnings {
+        for warning in &result.warnings {
             eprintln!("Daemon: Warning: {warning}");
         }
 
-        if let Some(cmd) = &markers.command {
+        if let Some(cmd) = &result.command {
             cryo_state.last_command = Some(cmd.clone());
         }
 
-        match outcome {
+        match result.outcome {
             SessionOutcome::PlanComplete => Ok(SessionLoopOutcome::PlanComplete),
             SessionOutcome::ValidationFailed { errors, .. } => {
                 for error in &errors {
@@ -345,8 +334,29 @@ impl Daemon {
                 }
                 Ok(SessionLoopOutcome::ValidationFailed)
             }
-            SessionOutcome::Hibernate { wake_time, .. } => {
-                Ok(SessionLoopOutcome::Hibernate { wake_time })
+            SessionOutcome::Hibernate {
+                wake_time,
+                fallback,
+                ..
+            } => Ok(SessionLoopOutcome::Hibernate {
+                wake_time,
+                fallback,
+            }),
+        }
+    }
+
+    /// Execute a pending fallback if its deadline has passed.
+    fn check_fallback(
+        &self,
+        pending: &mut Option<(NaiveDateTime, FallbackAction)>,
+    ) {
+        if let Some((deadline, _)) = pending.as_ref() {
+            if Local::now().naive_local() > *deadline {
+                let (_, fb) = pending.take().unwrap();
+                eprintln!("Daemon: fallback deadline passed, executing fallback action");
+                if let Err(e) = fb.execute(&self.dir) {
+                    eprintln!("Daemon: fallback execution failed: {e}");
+                }
             }
         }
     }
@@ -361,7 +371,7 @@ impl Daemon {
         &self,
         agent_command: &str,
         prompt: &str,
-        writer: &mut SessionWriter,
+        writer: &mut crate::log::SessionWriter,
         timeout_secs: u64,
     ) -> Result<crate::agent::AgentResult> {
         use std::io::BufRead;

@@ -3,15 +3,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
-use cryochamber::agent::{self, AgentConfig};
-use cryochamber::log::{self, Session};
-use cryochamber::marker;
+use cryochamber::agent;
+use cryochamber::log;
 use cryochamber::message;
 use cryochamber::protocol;
 use cryochamber::session::{self, SessionOutcome};
 use cryochamber::state::{self, CryoState};
 use cryochamber::timer;
-use cryochamber::validate;
 
 #[derive(Parser)]
 #[command(name = "cryo", about = "Long-term AI agent task scheduler")]
@@ -224,6 +222,25 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check that the agent command binary exists on PATH before spawning.
+fn validate_agent_command(agent_cmd: &str) -> Result<()> {
+    let parts =
+        shell_words::split(agent_cmd).context("Failed to parse agent command")?;
+    let program = parts.first().context("Agent command is empty")?;
+    let status = std::process::Command::new("which")
+        .arg(program)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        _ => anyhow::bail!(
+            "Agent command '{}' not found. Verify it is installed and on your PATH.",
+            program
+        ),
+    }
+}
+
 fn cmd_start(
     plan_path: Option<&Path>,
     agent_cmd: &str,
@@ -232,6 +249,9 @@ fn cmd_start(
     max_session_duration: u64,
     no_watch: bool,
 ) -> Result<()> {
+    // Validate agent command exists before doing anything else
+    validate_agent_command(agent_cmd)?;
+
     // Resolve plan path: None => "plan.md" in cwd, Some(dir) => cd into dir, Some(file) => use file
     let plan_path = match plan_path {
         None => PathBuf::from("plan.md"),
@@ -416,61 +436,6 @@ fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, task: &s
     result
 }
 
-/// Result of executing a session (agent run + marker parsing).
-/// Does NOT schedule timers — the caller decides what to do with the outcome.
-struct ExecuteResult {
-    outcome: SessionOutcome,
-    warnings: Vec<String>,
-}
-
-fn execute_session(
-    dir: &Path,
-    cryo_state: &mut CryoState,
-    agent_cmd: &str,
-    task: &str,
-    log: &Path,
-) -> Result<ExecuteResult> {
-    let log_content = cryochamber::log::read_latest_session(log)?;
-    let inbox = message::read_inbox(dir)?;
-    let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
-    let inbox_filenames: Vec<_> = inbox.into_iter().map(|(f, _)| f).collect();
-
-    let config = AgentConfig {
-        log_content,
-        session_number: cryo_state.session_number,
-        task: task.to_string(),
-        inbox_messages,
-    };
-    let prompt = agent::build_prompt(&config);
-
-    println!("Session #{}: Running agent...", cryo_state.session_number);
-
-    let mut writer =
-        log::SessionWriter::begin(log, cryo_state.session_number, task, &inbox_filenames)?;
-
-    let result = run_agent_with_retry(cryo_state, agent_cmd, &prompt, log, task, &mut writer)?;
-
-    writer.finish(Some(&result.stderr))?;
-
-    cryo_state.retry_count = 0;
-
-    if result.exit_code != 0 {
-        eprintln!(
-            "Agent exited with code {}. Stderr:\n{}",
-            result.exit_code, result.stderr
-        );
-    }
-
-    if !inbox_filenames.is_empty() {
-        message::archive_messages(dir, &inbox_filenames)?;
-    }
-
-    let markers = marker::parse_markers(&result.stdout)?;
-    let (outcome, warnings) = session::decide_session_outcome(&markers);
-
-    Ok(ExecuteResult { outcome, warnings })
-}
-
 fn run_session_inner(
     dir: &Path,
     cryo_state: &mut CryoState,
@@ -478,7 +443,19 @@ fn run_session_inner(
     task: &str,
     log: &Path,
 ) -> Result<()> {
-    let result = execute_session(dir, cryo_state, agent_cmd, task, log)?;
+    println!("Session #{}: Running agent...", cryo_state.session_number);
+
+    let max_retries = cryo_state.max_retries;
+    let agent_cmd_owned = agent_cmd.to_string();
+    let result = session::execute_session(
+        dir,
+        cryo_state.session_number,
+        task,
+        log,
+        |prompt, writer| run_agent_with_retry(max_retries, &agent_cmd_owned, prompt, writer),
+    )?;
+
+    cryo_state.retry_count = 0;
 
     for warning in &result.warnings {
         eprintln!("Warning: {warning}");
@@ -536,36 +513,26 @@ fn run_session_inner(
 }
 
 /// Attempt to run the agent, retrying on spawn failure up to `max_retries` times.
-/// Each failed attempt is logged. Returns the successful `AgentResult` or bails after exhausting retries.
+/// Retry failures are written through the session writer (not as separate sessions)
+/// to keep one contiguous session block in the log.
 fn run_agent_with_retry(
-    cryo_state: &mut CryoState,
+    max_retries: u32,
     agent_cmd: &str,
     prompt: &str,
-    log: &Path,
-    task: &str,
     writer: &mut log::SessionWriter,
 ) -> Result<agent::AgentResult> {
-    let max_attempts = cryo_state.max_retries;
     let mut last_err = String::new();
 
-    for attempt in 1..=max_attempts {
+    for attempt in 1..=max_retries {
         match agent::run_agent_streaming(agent_cmd, prompt, Some(writer)) {
             Ok(r) => return Ok(r),
             Err(e) => {
-                cryo_state.retry_count = attempt;
-                last_err = format!("Agent failed to run (attempt {attempt}/{max_attempts}): {e}");
+                last_err =
+                    format!("Agent failed to run (attempt {attempt}/{max_retries}): {e}");
                 eprintln!("{last_err}");
+                let _ = writer.write_line(&format!("[retry] {last_err}"));
 
-                let session = Session {
-                    number: cryo_state.session_number,
-                    task: task.to_string(),
-                    output: last_err.clone(),
-                    stderr: None,
-                    inbox_filenames: vec![],
-                };
-                log::append_session(log, &session)?;
-
-                if attempt < max_attempts {
+                if attempt < max_retries {
                     let delay = std::time::Duration::from_secs(5 * u64::from(attempt));
                     eprintln!("Retrying in {}s...", delay.as_secs());
                     std::thread::sleep(delay);
@@ -732,8 +699,8 @@ fn cmd_validate() -> Result<()> {
 
     let latest =
         cryochamber::log::read_latest_session(&log)?.context("No sessions found in log.")?;
-    let markers = marker::parse_markers(&latest)?;
-    let result = validate::validate_markers(&markers);
+    let markers = cryochamber::marker::parse_markers(&latest)?;
+    let result = cryochamber::validate::validate_markers(&markers);
 
     if result.plan_complete {
         println!("Plan is complete. No validation needed.");
@@ -831,6 +798,8 @@ fn cmd_watch(show_all: bool) -> Result<()> {
         log.metadata().map(|m| m.len()).unwrap_or(0)
     };
 
+    let mut no_state_ticks: u32 = 0;
+
     loop {
         // Read new content from the log file
         if log.exists() {
@@ -842,14 +811,16 @@ fn cmd_watch(show_all: bool) -> Result<()> {
                 f.read_to_string(&mut buf)?;
                 print!("{buf}");
                 pos = file_len;
+                no_state_ticks = 0; // reset grace period on new output
             }
         }
 
         // Check if a session is currently active
         if let Some(st) = state::load_state(&state_file)? {
+            no_state_ticks = 0;
             if state::is_locked(&st) {
                 // Session is running, keep polling
-            } else if st.wake_timer_id.is_none() {
+            } else if st.wake_timer_id.is_none() && !st.daemon_mode {
                 // Final drain
                 if log.exists() {
                     let file_len = log.metadata().map(|m| m.len()).unwrap_or(0);
@@ -862,6 +833,13 @@ fn cmd_watch(show_all: bool) -> Result<()> {
                     }
                 }
                 println!("\n(No active session or pending timer. Exiting watch.)");
+                break;
+            }
+        } else {
+            no_state_ticks += 1;
+            // 500ms * 20 = 10s grace period
+            if no_state_ticks >= 20 {
+                println!("\n(No cryochamber instance found. Exiting watch.)");
                 break;
             }
         }
