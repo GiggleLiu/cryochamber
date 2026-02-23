@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan
+.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo
 
 # Default target
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  check        - Quick check (fmt + clippy + test)"
 	@echo "  coverage     - Generate coverage report (requires cargo-llvm-cov)"
 	@echo "  clean        - Clean build artifacts"
+	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
 
 # Build the project
@@ -43,6 +44,11 @@ check: fmt-check clippy test
 coverage:
 	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Installing cargo-llvm-cov..."; cargo install cargo-llvm-cov; }
 	cargo llvm-cov --workspace --html --open
+
+# Compile logo (requires typst)
+logo:
+	typst compile docs/logo/logo.typ docs/logo/logo.svg
+	typst compile docs/logo/logo.typ docs/logo/logo.png --ppi 300
 
 # Clean build artifacts
 clean:
