@@ -648,6 +648,31 @@ fn test_receive_shows_outbox_messages() {
         .stdout(predicates::str::contains("AI played Nf3"));
 }
 
+#[test]
+fn test_session_logs_inbox_filenames() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan\nPlay chess").unwrap();
+
+    // Send a message before starting
+    cmd()
+        .args(["send", "e2e4"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Run a session with mock agent (will read the inbox message)
+    cmd()
+        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Check cryo.log contains [inbox] line
+    let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log_content.contains("[inbox]"));
+}
+
 // --- Full wake cycle (macOS only — requires real launchd) ---
 
 #[cfg(target_os = "macos")]

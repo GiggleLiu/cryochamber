@@ -12,6 +12,7 @@ fn test_append_session_to_new_file() {
         task: "Review PRs".to_string(),
         output: "Reviewed 3 PRs.\n[CRYO:EXIT 0] Done".to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
 
     append_session(&log_path, &session).unwrap();
@@ -34,12 +35,14 @@ fn test_append_multiple_sessions() {
         task: "Task one".to_string(),
         output: "[CRYO:EXIT 0] Done".to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
     let s2 = Session {
         number: 2,
         task: "Task two".to_string(),
         output: "[CRYO:EXIT 0] Also done".to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
 
     append_session(&log_path, &s1).unwrap();
@@ -60,12 +63,14 @@ fn test_read_latest_session() {
         task: "Task one".to_string(),
         output: "[CRYO:EXIT 0] First".to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
     let s2 = Session {
         number: 2,
         task: "Task two".to_string(),
         output: "[CRYO:EXIT 0] Second".to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
 
     append_session(&log_path, &s1).unwrap();
@@ -107,6 +112,7 @@ fn test_session_count() {
         task: "T".into(),
         output: "O".into(),
         stderr: None,
+        inbox_filenames: vec![],
     };
     append_session(&log_path, &s1).unwrap();
     assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 1);
@@ -116,6 +122,7 @@ fn test_session_count() {
         task: "T".into(),
         output: "O".into(),
         stderr: None,
+        inbox_filenames: vec![],
     };
     append_session(&log_path, &s2).unwrap();
     assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 2);
@@ -131,6 +138,7 @@ fn test_append_and_read_latest_with_markers() {
         task: "Review PRs".to_string(),
         output: "Did work.\n[CRYO:EXIT 0] All done\n[CRYO:WAKE 2026-03-08T09:00]\n[CRYO:CMD opencode test]\n[CRYO:PLAN check status]".to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
 
     append_session(&log_path, &session).unwrap();
@@ -151,6 +159,7 @@ fn test_session_with_stderr() {
         task: "Run agent".to_string(),
         output: "[CRYO:EXIT 1] Partial".to_string(),
         stderr: Some("Warning: rate limited\nError: timeout".to_string()),
+        inbox_filenames: vec![],
     };
     append_session(&log_path, &session).unwrap();
 
@@ -170,6 +179,7 @@ fn test_session_empty_stderr_not_logged() {
         task: "Run agent".to_string(),
         output: "[CRYO:EXIT 0] Done".to_string(),
         stderr: Some("  \n  ".to_string()),
+        inbox_filenames: vec![],
     };
     append_session(&log_path, &session).unwrap();
 

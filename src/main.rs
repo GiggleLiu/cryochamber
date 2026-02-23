@@ -299,6 +299,7 @@ fn run_session_inner(
         task: task.to_string(),
         output: result.stdout.clone(),
         stderr: Some(result.stderr.clone()),
+        inbox_filenames: inbox_filenames.clone(),
     };
     log::append_session(log, &session)?;
 
@@ -391,6 +392,7 @@ fn run_agent_with_retry(
                     task: task.to_string(),
                     output: last_err.clone(),
                     stderr: None,
+                    inbox_filenames: vec![],
                 };
                 log::append_session(log, &session)?;
 
