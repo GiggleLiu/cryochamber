@@ -91,6 +91,44 @@ pub fn read_inbox(dir: &Path) -> Result<Vec<(String, Message)>> {
     Ok(messages)
 }
 
+/// Read all messages from outbox/, sorted by filename (timestamp order).
+pub fn read_outbox(dir: &Path) -> Result<Vec<(String, Message)>> {
+    let outbox = dir.join("messages").join("outbox");
+    if !outbox.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&outbox)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().extension().is_some_and(|ext| ext == "md")
+                && e.file_type().is_ok_and(|ft| ft.is_file())
+        })
+        .collect();
+
+    entries.sort_by_key(|e| e.file_name());
+
+    let mut messages = Vec::new();
+    for entry in entries {
+        let content = std::fs::read_to_string(entry.path())
+            .with_context(|| format!("Failed to read {}", entry.path().display()))?;
+        match parse_message(&content) {
+            Ok(msg) => {
+                let filename = entry.file_name().to_string_lossy().to_string();
+                messages.push((filename, msg));
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: skipping malformed message {}: {e}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
+
+    Ok(messages)
+}
+
 /// Move processed messages from inbox/ to inbox/archive/.
 pub fn archive_messages(dir: &Path, filenames: &[String]) -> Result<()> {
     let inbox = dir.join("messages").join("inbox");

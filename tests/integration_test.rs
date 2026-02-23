@@ -49,6 +49,7 @@ Approved PR #42 and #43. Left comments on PR #41.
         task: "Start the PR review plan".to_string(),
         output: agent_output.to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
     append_session(&log_path, &session).unwrap();
     assert_eq!(session_count(&log_path).unwrap(), 1);
@@ -96,6 +97,7 @@ All caught up!
         task: "Follow up on PR #41".to_string(),
         output: agent_output2.to_string(),
         stderr: None,
+        inbox_filenames: vec![],
     };
     append_session(&log_path, &session2).unwrap();
     assert_eq!(session_count(&log_path).unwrap(), 2);

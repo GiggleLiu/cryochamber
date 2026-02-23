@@ -372,106 +372,6 @@ fn test_no_subcommand() {
         .stderr(predicate::str::contains("Usage"));
 }
 
-// --- Time ---
-
-#[test]
-fn test_time_current() {
-    let now = chrono::Local::now();
-    let expected_prefix = now.format("%Y-%m-%d").to_string();
-    cmd()
-        .arg("time")
-        .assert()
-        .success()
-        .stdout(predicate::str::starts_with(&expected_prefix));
-}
-
-#[test]
-fn test_time_plus_1_day() {
-    let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
-    let expected = tomorrow.format("%Y-%m-%dT%H:%M").to_string();
-    cmd()
-        .args(["time", "+1 day"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(&expected));
-}
-
-#[test]
-fn test_time_plus_hours() {
-    cmd().args(["time", "+2 hours"]).assert().success();
-}
-
-#[test]
-fn test_time_plus_minutes() {
-    cmd().args(["time", "+30 minutes"]).assert().success();
-}
-
-#[test]
-fn test_time_plus_week() {
-    cmd().args(["time", "+1 week"]).assert().success();
-}
-
-#[test]
-fn test_time_plus_months() {
-    cmd().args(["time", "+3 months"]).assert().success();
-}
-
-#[test]
-fn test_time_plus_year() {
-    cmd().args(["time", "+1 year"]).assert().success();
-}
-
-#[test]
-fn test_time_short_units() {
-    // Short aliases: m, h, d, w, y
-    for unit in &["1 m", "2 h", "3 d", "1 w", "1 y"] {
-        cmd().args(["time", &format!("+{unit}")]).assert().success();
-    }
-}
-
-#[test]
-fn test_time_invalid_unit() {
-    cmd()
-        .args(["time", "+1 fortnight"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Unknown time unit"));
-}
-
-#[test]
-fn test_time_invalid_number() {
-    cmd()
-        .args(["time", "+abc hours"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Invalid number"));
-}
-
-#[test]
-fn test_time_no_plus_prefix() {
-    // Should also work without the "+" prefix
-    cmd().args(["time", "1 day"]).assert().success();
-}
-
-#[test]
-fn test_time_overflow_years() {
-    // Large input should return an error, not panic with overflow
-    cmd()
-        .args(["time", "+30000000000000000 years"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("Offset too large"));
-}
-
-#[test]
-fn test_time_overflow_months() {
-    cmd()
-        .args(["time", "+30000000000000000 months"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("Offset too large"));
-}
-
 // --- Mock agent helpers ---
 
 /// Path to the mock agent script relative to the project root.
@@ -542,6 +442,135 @@ fn test_fallback_exec_writes_outbox() {
     let content = fs::read_to_string(files[0].as_ref().unwrap().path()).unwrap();
     assert!(content.contains("Task failed after 3 retries"));
     assert!(content.contains("email"));
+}
+
+// --- Send ---
+
+#[test]
+fn test_send_creates_inbox_message() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["send", "e2e4"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Check that a file was created in messages/inbox/
+    let inbox = dir.path().join("messages").join("inbox");
+    let entries: Vec<_> = std::fs::read_dir(&inbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+
+    let content = std::fs::read_to_string(entries[0].path()).unwrap();
+    assert!(content.contains("from: human"));
+    assert!(content.contains("e2e4"));
+}
+
+#[test]
+fn test_send_with_subject_and_from() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args([
+            "send",
+            "--subject",
+            "chess move",
+            "--from",
+            "player1",
+            "e2e4",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let inbox = dir.path().join("messages").join("inbox");
+    let entries: Vec<_> = std::fs::read_dir(&inbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+
+    let content = std::fs::read_to_string(entries[0].path()).unwrap();
+    assert!(content.contains("from: player1"));
+    assert!(content.contains("subject: chess move"));
+}
+
+#[test]
+fn test_send_no_body_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["send"])
+        .current_dir(dir.path())
+        .assert()
+        .failure();
+}
+
+// --- Receive ---
+
+#[test]
+fn test_receive_empty_outbox() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["receive"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No messages"));
+}
+
+#[test]
+fn test_receive_shows_outbox_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    // Write a message to outbox manually
+    cryochamber::message::ensure_dirs(dir.path()).unwrap();
+    let msg = cryochamber::message::Message {
+        from: "cryochamber".to_string(),
+        subject: "Board update".to_string(),
+        body: "AI played Nf3".to_string(),
+        timestamp: chrono::NaiveDateTime::parse_from_str(
+            "2026-02-23T10:00:00",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        .unwrap(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+    cryochamber::message::write_message(dir.path(), "outbox", &msg).unwrap();
+
+    cmd()
+        .args(["receive"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Board update"))
+        .stdout(predicates::str::contains("AI played Nf3"));
+}
+
+#[test]
+fn test_session_logs_inbox_filenames() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan\nPlay chess").unwrap();
+
+    // Send a message before starting
+    cmd()
+        .args(["send", "e2e4"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Run a session with mock agent (will read the inbox message)
+    cmd()
+        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Check cryo.log contains [inbox] line
+    let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log_content.contains("[inbox]"));
 }
 
 // --- Full wake cycle (macOS only — requires real launchd) ---

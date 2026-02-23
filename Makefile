@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo
+.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time
 
 # Default target
 help:
@@ -15,6 +15,8 @@ help:
 	@echo "  clean        - Clean build artifacts"
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
+	@echo "  chess        - Run the chess-by-mail example"
+	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 
 # Build the project
 build:
@@ -81,3 +83,7 @@ run-plan:
 		--verbose \
 		--max-turns 500 \
 		-p "$$PROMPT" 2>&1 | tee "$(OUTPUT)"
+
+# Run the chess-by-mail example
+chess: build
+	cargo run -- start examples/chess-by-mail

@@ -13,6 +13,7 @@ pub struct Session {
     pub task: String,
     pub output: String,
     pub stderr: Option<String>,
+    pub inbox_filenames: Vec<String>,
 }
 
 pub fn append_session(log_path: &Path, session: &Session) -> Result<()> {
@@ -25,6 +26,9 @@ pub fn append_session(log_path: &Path, session: &Session) -> Result<()> {
     writeln!(file, "{SESSION_START} {timestamp} ---")?;
     writeln!(file, "Session: {}", session.number)?;
     writeln!(file, "Task: {}", session.task)?;
+    for filename in &session.inbox_filenames {
+        writeln!(file, "[inbox] {filename}")?;
+    }
     writeln!(file)?;
     writeln!(file, "{}", session.output)?;
     if let Some(stderr) = &session.stderr {

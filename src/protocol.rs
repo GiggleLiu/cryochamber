@@ -69,18 +69,16 @@ Example: `[CRYO:REPLY "Updated the API endpoint as requested."]`
 
 ## Utilities
 
-You can call `cryo time` to get the current time, or compute a future time:
+Use `make` targets to compute accurate WAKE times:
 
 ```
-cryo time                # current time
-cryo time "+1 day"       # 1 day from now
-cryo time "+2 hours"     # 2 hours from now
-cryo time "+30 minutes"  # 30 minutes from now
-cryo time "+1 week"      # 1 week from now
-cryo time "+3 months"    # ~3 months from now
+make time                # current time in ISO8601
+make time OFFSET="+1 day"       # 1 day from now
+make time OFFSET="+2 hours"     # 2 hours from now
+make time OFFSET="+30 minutes"  # 30 minutes from now
 ```
 
-Use this to calculate accurate WAKE times.
+Or use `date` directly: `date -u +%Y-%m-%dT%H:%M`
 
 ## Rules
 
@@ -120,6 +118,42 @@ Describe the high-level objective here.
 ## Notes
 
 - Add any constraints, configuration, or context here.
+"#;
+
+/// Makefile written to the agent's working directory.
+/// Provides utility targets the agent can call (e.g., `make time`).
+pub const MAKEFILE_CONTENT: &str = r#"# Cryochamber agent utilities
+# These targets are available for the AI agent to call during sessions.
+
+.PHONY: time
+
+# Show current time or compute a future time
+# Usage: make time                     # current time
+#        make time OFFSET="+1 day"     # 1 day from now
+#        make time OFFSET="+2 hours"   # 2 hours from now
+#        make time OFFSET="+30 minutes"
+OFFSET ?=
+
+time:
+ifeq ($(OFFSET),)
+	@date +%Y-%m-%dT%H:%M
+else
+	@if date --version >/dev/null 2>&1; then \
+		date -d "$(OFFSET)" +%Y-%m-%dT%H:%M; \
+	else \
+		N=$$(echo "$(OFFSET)" | sed 's/+//;s/[^0-9].*//');\
+		U=$$(echo "$(OFFSET)" | sed 's/.*[0-9] *//;s/s$$//'); \
+		case "$$U" in \
+			minute) date -v+$${N}M +%Y-%m-%dT%H:%M ;; \
+			hour)   date -v+$${N}H +%Y-%m-%dT%H:%M ;; \
+			day)    date -v+$${N}d +%Y-%m-%dT%H:%M ;; \
+			week)   date -v+$${N}w +%Y-%m-%dT%H:%M ;; \
+			month)  date -v+$${N}m +%Y-%m-%dT%H:%M ;; \
+			year)   date -v+$${N}y +%Y-%m-%dT%H:%M ;; \
+			*) echo "Unknown unit: $$U" >&2; exit 1 ;; \
+		esac; \
+	fi
+endif
 "#;
 
 /// Determine the protocol filename based on the agent command.
@@ -170,5 +204,15 @@ pub fn write_template_plan(dir: &Path) -> Result<bool> {
         return Ok(false);
     }
     std::fs::write(path, TEMPLATE_PLAN)?;
+    Ok(true)
+}
+
+/// Write the agent Makefile if none exists. Returns true if written.
+pub fn write_makefile(dir: &Path) -> Result<bool> {
+    let path = dir.join("Makefile");
+    if path.exists() {
+        return Ok(false);
+    }
+    std::fs::write(path, MAKEFILE_CONTENT)?;
     Ok(true)
 }
