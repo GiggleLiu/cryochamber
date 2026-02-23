@@ -24,5 +24,5 @@ Play a correspondence chess game against a human opponent. Maintain the board st
 - Store the board as a FEN string in your PLAN marker so you can reconstruct it on wake.
 - Store the full move history (e.g., `1. e4 e5 2. Nf3`) in PLAN as well.
 - If the human sends multiple moves at once, process them in order and respond to each.
-- Use `cryo time "+10 minutes"` to compute your next WAKE time.
+- Use `make time OFFSET="+10 minutes"` to compute your next WAKE time.
 - When going to deep sleep, do NOT emit a WAKE marker. The human will run `cryo wake` manually.

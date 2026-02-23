@@ -15,8 +15,11 @@ A cron job can't do this because:
 ## Quick Start
 
 ```bash
-cd examples/chess-by-mail
-cryo start plan.md
+# From the repo root:
+cryo start examples/chess-by-mail
+
+# Or with make:
+make chess
 ```
 
 ## Playing

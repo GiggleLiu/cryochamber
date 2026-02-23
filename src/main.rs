@@ -29,8 +29,8 @@ enum Commands {
     },
     /// Begin a new plan: initialize and run the first task
     Start {
-        /// Path to the natural language plan file
-        plan: PathBuf,
+        /// Path to plan file or directory containing plan.md (default: current directory)
+        plan: Option<PathBuf>,
         /// Agent command to use (default: opencode)
         #[arg(long, default_value = "opencode")]
         agent: String,
@@ -52,17 +52,6 @@ enum Commands {
     Validate,
     /// Print the session log
     Log,
-    /// Show current time, or compute a future time from an offset
-    ///
-    /// Examples:
-    ///   cryo time              # prints current time
-    ///   cryo time "+1 day"     # 1 day from now
-    ///   cryo time "+2 hours"   # 2 hours from now
-    ///   cryo time "+30 minutes" # 30 minutes from now
-    Time {
-        /// Optional offset: "+N unit" where unit is minutes/hours/days/weeks
-        offset: Option<String>,
-    },
     /// Send a message to the agent's inbox
     Send {
         /// Message body
@@ -131,8 +120,7 @@ fn main() -> Result<()> {
             plan,
             agent,
             max_retries,
-        } => cmd_start(&plan, &agent, max_retries),
-        Commands::Time { offset } => cmd_time(offset.as_deref()),
+        } => cmd_start(plan.as_deref(), &agent, max_retries),
         Commands::Wake { now } => cmd_wake(now),
         Commands::Status => cmd_status(),
         Commands::Cancel => cmd_cancel(),
@@ -186,17 +174,35 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         println!("plan.md already exists, skipping");
     }
 
+    if protocol::write_makefile(&dir)? {
+        println!("Wrote Makefile (agent utilities)");
+    } else {
+        println!("Makefile already exists, skipping");
+    }
+
     message::ensure_dirs(&dir)?;
     println!("Created messages/ directory");
 
     println!("\nCryochamber initialized. Next steps:");
     println!("  1. Edit plan.md with your task plan");
-    println!("  2. Run: cryo start plan.md");
+    println!("  2. Run: cryo start");
 
     Ok(())
 }
 
-fn cmd_start(plan_path: &Path, agent_cmd: &str, max_retries: u32) -> Result<()> {
+fn cmd_start(plan_path: Option<&Path>, agent_cmd: &str, max_retries: u32) -> Result<()> {
+    // Resolve plan path: None => "plan.md" in cwd, Some(dir) => cd into dir, Some(file) => use file
+    let plan_path = match plan_path {
+        None => PathBuf::from("plan.md"),
+        Some(p) if p.is_dir() => {
+            std::env::set_current_dir(p)
+                .with_context(|| format!("Failed to cd into {}", p.display()))?;
+            PathBuf::from("plan.md")
+        }
+        Some(p) => p.to_path_buf(),
+    };
+    let plan_path = plan_path.as_path();
+
     let dir = work_dir()?;
 
     // Auto-init: ensure the agent-specific protocol file and message dirs exist
@@ -204,6 +210,7 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str, max_retries: u32) -> Result<()> 
     if protocol::write_protocol_file(&dir, filename)? {
         println!("Wrote {filename} (cryochamber protocol)");
     }
+    protocol::write_makefile(&dir)?;
     message::ensure_dirs(&dir)?;
 
     let plan_dest = dir.join("plan.md");
@@ -780,61 +787,3 @@ fn cmd_gh_status() -> Result<()> {
     Ok(())
 }
 
-fn cmd_time(offset: Option<&str>) -> Result<()> {
-    let now = chrono::Local::now();
-
-    match offset {
-        None => {
-            println!("{}", now.format("%Y-%m-%dT%H:%M"));
-        }
-        Some(s) => {
-            let duration = parse_offset(s)?;
-            let future = now + duration;
-            println!("{}", future.format("%Y-%m-%dT%H:%M"));
-        }
-    }
-    Ok(())
-}
-
-/// Parse a relative time offset like "+1 day", "+2 hours", "+30 minutes".
-/// Accepts singular and plural forms, with or without the "+" prefix.
-fn parse_offset(s: &str) -> Result<chrono::Duration> {
-    let s = s.trim().strip_prefix('+').unwrap_or(s).trim();
-
-    let (num_str, unit) = s
-        .split_once(char::is_whitespace)
-        .context("Expected format: \"+N unit\" (e.g. \"+1 day\", \"+2 hours\")")?;
-
-    let n: i64 = num_str
-        .trim()
-        .parse()
-        .context(format!("Invalid number: {num_str}"))?;
-
-    let unit = unit.trim().to_lowercase();
-    let days = |factor: i64| -> Result<chrono::Duration> {
-        n.checked_mul(factor)
-            .and_then(chrono::Duration::try_days)
-            .context(format!("Offset too large: {n} {unit}"))
-    };
-    let duration = match unit.as_str() {
-        "minute" | "minutes" | "min" | "mins" | "m" => {
-            chrono::Duration::try_minutes(n).context(format!("Offset too large: {n} {unit}"))?
-        }
-        "hour" | "hours" | "hr" | "hrs" | "h" => {
-            chrono::Duration::try_hours(n).context(format!("Offset too large: {n} {unit}"))?
-        }
-        "day" | "days" | "d" => {
-            chrono::Duration::try_days(n).context(format!("Offset too large: {n} {unit}"))?
-        }
-        "week" | "weeks" | "w" => {
-            chrono::Duration::try_weeks(n).context(format!("Offset too large: {n} {unit}"))?
-        }
-        "month" | "months" => days(30)?,
-        "year" | "years" | "y" => days(365)?,
-        _ => anyhow::bail!(
-            "Unknown time unit: {unit}. Use minutes, hours, days, weeks, months, or years."
-        ),
-    };
-
-    Ok(duration)
-}

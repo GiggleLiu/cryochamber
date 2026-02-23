@@ -21,6 +21,7 @@ Cryochamber uses a file-based message inbox/outbox:
 - Processed inbox messages are archived to `messages/inbox/archive/`.
 
 You do not need to read the inbox directory yourself — new messages are included in your prompt.
+- You can reply to messages using `[CRYO:REPLY "your reply here"]` markers.
 
 ## Required Markers
 
@@ -55,28 +56,23 @@ Optional. Dead man's switch — triggered if the next session fails to run.
 
 Example: `[CRYO:FALLBACK email user@example.com "weekly review did not run"]`
 
+### [CRYO:REPLY "<message>"]
+Optional. Post a reply to the human (synced to Discussion if gh sync is configured).
+
+Example: `[CRYO:REPLY "Updated the API endpoint as requested."]`
+
 ## Utilities
 
-You can call `cryo time` to get the current time, or compute a future time:
+Use `make` targets to compute accurate WAKE times:
 
 ```
-cryo time                # current time
-cryo time "+1 day"       # 1 day from now
-cryo time "+2 hours"     # 2 hours from now
-cryo time "+30 minutes"  # 30 minutes from now
-cryo time "+1 week"      # 1 week from now
-cryo time "+3 months"    # ~3 months from now
+make time                          # current time in ISO8601
+make time OFFSET="+1 day"         # 1 day from now
+make time OFFSET="+2 hours"       # 2 hours from now
+make time OFFSET="+30 minutes"    # 30 minutes from now
 ```
 
-Use this to calculate accurate WAKE times.
-
-## Messaging
-
-Humans interact with you through the file-based message system:
-
-- **Inbox** (`messages/inbox/`): Human sends messages via `cryo send "message"`. New messages appear in your prompt automatically.
-- **Outbox** (`messages/outbox/`): Fallback alerts are written here. Humans read them via `cryo receive`.
-- Processed inbox messages are archived to `messages/inbox/archive/`.
+Or use `date` directly: `date -u +%Y-%m-%dT%H:%M`
 
 ## Rules
 
