@@ -1,0 +1,19 @@
+name: Cryo Force Wake
+
+on:
+  discussion_comment:
+    types: [created]
+
+jobs:
+  force-wake:
+    if: contains(github.event.comment.body, '[WAKE]')
+    runs-on: self-hosted
+    steps:
+      - name: Sync and force wake
+        env:
+          CRYO_WORK_DIR: ${{ vars.CRYO_WORK_DIR || '.' }}
+        run: |
+          echo "Force wake triggered by @${{ github.event.comment.author.login }}"
+          cd "$CRYO_WORK_DIR"
+          cryochamber gh sync || echo "Sync failed, continuing with wake"
+          cryochamber wake --now
