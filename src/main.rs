@@ -396,13 +396,20 @@ fn run_session(dir: &Path, cryo_state: &mut CryoState, agent_cmd: &str, task: &s
     result
 }
 
-fn run_session_inner(
+/// Result of executing a session (agent run + marker parsing).
+/// Does NOT schedule timers — the caller decides what to do with the outcome.
+struct ExecuteResult {
+    outcome: SessionOutcome,
+    warnings: Vec<String>,
+}
+
+fn execute_session(
     dir: &Path,
     cryo_state: &mut CryoState,
     agent_cmd: &str,
     task: &str,
     log: &Path,
-) -> Result<()> {
+) -> Result<ExecuteResult> {
     let log_content = cryochamber::log::read_latest_session(log)?;
     let inbox = message::read_inbox(dir)?;
     let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
@@ -418,17 +425,13 @@ fn run_session_inner(
 
     println!("Session #{}: Running agent...", cryo_state.session_number);
 
-    // Open streaming log writer — session header is written immediately
     let mut writer =
         log::SessionWriter::begin(log, cryo_state.session_number, task, &inbox_filenames)?;
 
-    // Run agent with retry on spawn failure (streams stdout to log in real-time)
     let result = run_agent_with_retry(cryo_state, agent_cmd, &prompt, log, task, &mut writer)?;
 
-    // Finalize the session log (stderr + footer)
     writer.finish(Some(&result.stderr))?;
 
-    // Agent ran successfully — reset retry counter
     cryo_state.retry_count = 0;
 
     if result.exit_code != 0 {
@@ -438,7 +441,6 @@ fn run_session_inner(
         );
     }
 
-    // Archive processed inbox messages
     if !inbox_filenames.is_empty() {
         message::archive_messages(dir, &inbox_filenames)?;
     }
@@ -446,11 +448,23 @@ fn run_session_inner(
     let markers = marker::parse_markers(&result.stdout)?;
     let (outcome, warnings) = session::decide_session_outcome(&markers);
 
-    for warning in &warnings {
+    Ok(ExecuteResult { outcome, warnings })
+}
+
+fn run_session_inner(
+    dir: &Path,
+    cryo_state: &mut CryoState,
+    agent_cmd: &str,
+    task: &str,
+    log: &Path,
+) -> Result<()> {
+    let result = execute_session(dir, cryo_state, agent_cmd, task, log)?;
+
+    for warning in &result.warnings {
         eprintln!("Warning: {warning}");
     }
 
-    match outcome {
+    match result.outcome {
         SessionOutcome::PlanComplete => {
             println!("Plan complete! No more wake-ups scheduled.");
         }
