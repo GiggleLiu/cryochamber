@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod channel;
 pub mod fallback;
 pub mod log;
 pub mod marker;
