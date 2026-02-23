@@ -16,13 +16,13 @@ The agent adapts the entire mission plan based on events encountered in each ses
 
 ```bash
 cd examples/mars-mission
-cryochamber start plan.md
+cryo start plan.md
 ```
 
 Or initialize first, then customize:
 
 ```bash
 cd examples/mars-mission
-cryochamber init         # already done — CLAUDE.md and plan.md exist
-cryochamber start plan.md
+cryo init         # already done — CLAUDE.md and plan.md exist
+cryo start plan.md
 ```

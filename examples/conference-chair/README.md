@@ -16,13 +16,13 @@ The agent reasons about its past sessions to determine when to wake and what to 
 
 ```bash
 cd examples/conference-chair
-cryochamber start plan.md
+cryo start plan.md
 ```
 
 Or initialize first, then customize:
 
 ```bash
 cd examples/conference-chair
-cryochamber init         # already done — CLAUDE.md and plan.md exist
-cryochamber start plan.md
+cryo init         # already done — CLAUDE.md and plan.md exist
+cryo start plan.md
 ```
