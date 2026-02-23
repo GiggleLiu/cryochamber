@@ -122,7 +122,7 @@ impl CryoTimer for SystemdTimer {
         work_dir: &str,
     ) -> Result<TimerId> {
         let command = format!(
-            "cryochamber fallback-exec {} {} \"{}\"",
+            "cryo fallback-exec {} {} \"{}\"",
             action.action, action.target, action.message
         );
         self.schedule_job("fallback", time, &command, work_dir)

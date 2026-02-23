@@ -63,15 +63,15 @@ Example: `[CRYO:FALLBACK email user@example.com "weekly review did not run"]`
 
 ## Utilities
 
-You can call `cryochamber time` to get the current time, or compute a future time:
+You can call `cryo time` to get the current time, or compute a future time:
 
 ```
-cryochamber time                # current time
-cryochamber time "+1 day"       # 1 day from now
-cryochamber time "+2 hours"     # 2 hours from now
-cryochamber time "+30 minutes"  # 30 minutes from now
-cryochamber time "+1 week"      # 1 week from now
-cryochamber time "+3 months"    # ~3 months from now
+cryo time                # current time
+cryo time "+1 day"       # 1 day from now
+cryo time "+2 hours"     # 2 hours from now
+cryo time "+30 minutes"  # 30 minutes from now
+cryo time "+1 week"      # 1 week from now
+cryo time "+3 months"    # ~3 months from now
 ```
 
 Use this to calculate accurate WAKE times.

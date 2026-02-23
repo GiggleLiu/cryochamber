@@ -13,7 +13,7 @@ use cryochamber::timer;
 use cryochamber::validate;
 
 #[derive(Parser)]
-#[command(name = "cryochamber", about = "Long-term AI agent task scheduler")]
+#[command(name = "cryo", about = "Long-term AI agent task scheduler")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -51,10 +51,10 @@ enum Commands {
     /// Show current time, or compute a future time from an offset
     ///
     /// Examples:
-    ///   cryochamber time              # prints current time
-    ///   cryochamber time "+1 day"     # 1 day from now
-    ///   cryochamber time "+2 hours"   # 2 hours from now
-    ///   cryochamber time "+30 minutes" # 30 minutes from now
+    ///   cryo time              # prints current time
+    ///   cryo time "+1 day"     # 1 day from now
+    ///   cryo time "+2 hours"   # 2 hours from now
+    ///   cryo time "+30 minutes" # 30 minutes from now
     Time {
         /// Optional offset: "+N unit" where unit is minutes/hours/days/weeks
         offset: Option<String>,
@@ -132,7 +132,7 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
 
     println!("\nCryochamber initialized. Next steps:");
     println!("  1. Edit plan.md with your task plan");
-    println!("  2. Run: cryochamber start plan.md");
+    println!("  2. Run: cryo start plan.md");
 
     Ok(())
 }
@@ -187,7 +187,7 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str, max_retries: u32) -> Result<()> 
 fn cmd_wake() -> Result<()> {
     let dir = work_dir()?;
     let mut cryo_state = state::load_state(&state_path(&dir))?
-        .context("No cryochamber state found. Run 'cryochamber start' first.")?;
+        .context("No cryochamber state found. Run 'cryo start' first.")?;
 
     if state::is_locked(&cryo_state) && cryo_state.pid != Some(std::process::id()) {
         anyhow::bail!(

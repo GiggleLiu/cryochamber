@@ -7,7 +7,7 @@ use std::fs;
 
 fn cmd() -> Command {
     #[allow(deprecated)]
-    Command::cargo_bin("cryochamber").unwrap()
+    Command::cargo_bin("cryo").unwrap()
 }
 
 // --- Init ---

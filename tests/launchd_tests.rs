@@ -13,7 +13,7 @@ mod tests {
             .generate_plist(
                 "com.cryochamber.test",
                 &wake_time,
-                "/usr/local/bin/cryochamber wake",
+                "/usr/local/bin/cryo wake",
                 "/tmp/test",
             )
             .unwrap();
@@ -47,7 +47,7 @@ mod tests {
             .generate_plist(
                 "com.cryochamber.test",
                 &wake_time,
-                r#"cryochamber fallback-exec email user@ex.com "task failed""#,
+                r#"cryo fallback-exec email user@ex.com "task failed""#,
                 "/tmp/test",
             )
             .unwrap();
@@ -73,7 +73,7 @@ mod tests {
             .generate_plist(
                 "com.cryochamber.midnight",
                 &wake_time,
-                "cryochamber wake",
+                "cryo wake",
                 "/tmp/test",
             )
             .unwrap();
@@ -88,12 +88,7 @@ mod tests {
         let wake_time =
             NaiveDateTime::parse_from_str("2025-12-31T23:59", "%Y-%m-%dT%H:%M").unwrap();
         let plist_content = timer
-            .generate_plist(
-                "com.cryochamber.eoy",
-                &wake_time,
-                "cryochamber wake",
-                "/tmp/test",
-            )
+            .generate_plist("com.cryochamber.eoy", &wake_time, "cryo wake", "/tmp/test")
             .unwrap();
         assert!(plist_content.contains("<integer>12</integer>")); // Month
         assert!(plist_content.contains("<integer>31</integer>")); // Day
@@ -109,7 +104,7 @@ mod tests {
         let result = timer.generate_plist(
             "com.cryochamber.test",
             &wake_time,
-            r#"cryochamber "unclosed"#,
+            r#"cryo "unclosed"#,
             "/tmp/test",
         );
         assert!(result.is_err());

@@ -22,11 +22,11 @@ fn test_service_unit_format() {
     let timer = SystemdTimer::new();
     let content = timer.generate_service_unit(
         "cryochamber-test",
-        "cryochamber wake",
+        "cryo wake",
         "/home/user/plans/myproject",
     );
     assert!(content.contains("Type=oneshot"));
-    assert!(content.contains("ExecStart=cryochamber wake"));
+    assert!(content.contains("ExecStart=cryo wake"));
     assert!(content.contains("WorkingDirectory=/home/user/plans/myproject"));
     assert!(content.contains("Description=Cryochamber task: cryochamber-test"));
 }
