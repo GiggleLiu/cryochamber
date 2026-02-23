@@ -544,6 +544,70 @@ fn test_fallback_exec_writes_outbox() {
     assert!(content.contains("email"));
 }
 
+// --- Send ---
+
+#[test]
+fn test_send_creates_inbox_message() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["send", "e2e4"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Check that a file was created in messages/inbox/
+    let inbox = dir.path().join("messages").join("inbox");
+    let entries: Vec<_> = std::fs::read_dir(&inbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+
+    let content = std::fs::read_to_string(entries[0].path()).unwrap();
+    assert!(content.contains("from: human"));
+    assert!(content.contains("e2e4"));
+}
+
+#[test]
+fn test_send_with_subject_and_from() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args([
+            "send",
+            "--subject",
+            "chess move",
+            "--from",
+            "player1",
+            "e2e4",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let inbox = dir.path().join("messages").join("inbox");
+    let entries: Vec<_> = std::fs::read_dir(&inbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+
+    let content = std::fs::read_to_string(entries[0].path()).unwrap();
+    assert!(content.contains("from: player1"));
+    assert!(content.contains("subject: chess move"));
+}
+
+#[test]
+fn test_send_no_body_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["send"])
+        .current_dir(dir.path())
+        .assert()
+        .failure();
+}
+
 // --- Full wake cycle (macOS only — requires real launchd) ---
 
 #[cfg(target_os = "macos")]

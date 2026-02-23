@@ -59,6 +59,17 @@ enum Commands {
         /// Optional offset: "+N unit" where unit is minutes/hours/days/weeks
         offset: Option<String>,
     },
+    /// Send a message to the agent's inbox
+    Send {
+        /// Message body
+        body: String,
+        /// Sender name (default: "human")
+        #[arg(long, default_value = "human")]
+        from: String,
+        /// Message subject (default: derived from body)
+        #[arg(long)]
+        subject: Option<String>,
+    },
     /// Execute a fallback action (used internally by timers)
     FallbackExec {
         action: String,
@@ -95,6 +106,11 @@ fn main() -> Result<()> {
         Commands::Cancel => cmd_cancel(),
         Commands::Validate => cmd_validate(),
         Commands::Log => cmd_log(),
+        Commands::Send {
+            body,
+            from,
+            subject,
+        } => cmd_send(&body, &from, subject.as_deref()),
         Commands::FallbackExec {
             action,
             target,
@@ -493,6 +509,30 @@ fn cmd_log() -> Result<()> {
     } else {
         println!("No log file found.");
     }
+    Ok(())
+}
+
+fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
+    let dir = work_dir()?;
+    message::ensure_dirs(&dir)?;
+
+    let subject = subject
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| body.chars().take(50).collect::<String>());
+
+    let msg = message::Message {
+        from: from.to_string(),
+        subject,
+        body: body.to_string(),
+        timestamp: chrono::Local::now().naive_local(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    let path = message::write_message(&dir, "inbox", &msg)?;
+    println!(
+        "Message sent to {}",
+        path.strip_prefix(&dir).unwrap_or(&path).display()
+    );
     Ok(())
 }
 
