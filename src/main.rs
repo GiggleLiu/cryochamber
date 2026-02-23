@@ -39,7 +39,11 @@ enum Commands {
         max_retries: u32,
     },
     /// Called by OS timer: execute the next scheduled task
-    Wake,
+    Wake {
+        /// Force wake immediately (cancel existing timer)
+        #[arg(long)]
+        now: bool,
+    },
     /// Show current status: next wake time, last result
     Status,
     /// Cancel all timers and stop the schedule
@@ -116,7 +120,7 @@ fn main() -> Result<()> {
             max_retries,
         } => cmd_start(&plan, &agent, max_retries),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
-        Commands::Wake => cmd_wake(),
+        Commands::Wake { now } => cmd_wake(now),
         Commands::Status => cmd_status(),
         Commands::Cancel => cmd_cancel(),
         Commands::Validate => cmd_validate(),
@@ -220,10 +224,19 @@ fn cmd_start(plan_path: &Path, agent_cmd: &str, max_retries: u32) -> Result<()> 
     Ok(())
 }
 
-fn cmd_wake() -> Result<()> {
+fn cmd_wake(force: bool) -> Result<()> {
     let dir = work_dir()?;
     let mut cryo_state = state::load_state(&state_path(&dir))?
         .context("No cryochamber state found. Run 'cryochamber start' first.")?;
+
+    if force {
+        if let Some(wake_id) = &cryo_state.wake_timer_id {
+            let timer_impl = timer::create_timer()?;
+            let _ = timer_impl.cancel(&timer::TimerId(wake_id.clone()));
+            cryo_state.wake_timer_id = None;
+            println!("Cancelled existing wake timer. Running session now.");
+        }
+    }
 
     if state::is_locked(&cryo_state) && cryo_state.pid != Some(std::process::id()) {
         anyhow::bail!(
