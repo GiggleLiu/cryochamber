@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time check-agent cli
+.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time check-agent check-round-trip check-gh cli
 
 # Default target
 help:
@@ -17,7 +17,9 @@ help:
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
 	@echo "  chess        - Run the chess-by-mail example"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
-	@echo "  check-agent  - Verify agent is installed and supports headless mode"
+	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
+	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
+	@echo "  check-gh     - Verify GitHub Discussion sync (requires gh auth)"
 	@echo "  cli          - Install the cryo CLI locally"
 
 # Build the project
@@ -94,17 +96,35 @@ cli:
 chess: build
 	cargo run -- start examples/chess-by-mail
 
-# Verify agent is installed and can run headlessly
-# Usage: make check-agent                    # check default (opencode)
-#        make check-agent AGENT="claude"     # check claude
-#        make check-agent AGENT="opencode run"  # check opencode in headless mode
-AGENT ?= opencode run
+# Quick smoke test: force one agent wakeup cycle
+# Usage: make check-agent                 # check default (opencode)
+#        make check-agent AGENT=claude    # check claude
+AGENT ?= opencode
+CHECK_TIMEOUT ?= 3000
 
-check-agent:
-	@echo "=== Agent Health Check ==="
+check-agent: build
+	@TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
+	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	echo "=== Agent Health Check ==="; \
+	echo "Agent: $(AGENT)"; \
+	echo ""; \
+	./target/debug/cryo force-wakeup "$$TMPDIR" --agent "$(AGENT)"; \
+	RC=$$?; \
+	echo ""; \
+	echo "=== Session Log ==="; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo watch --all; \
+	rm -rf "$$TMPDIR"; \
+	exit $$RC
+
+# Full round-trip test with mr-lazy example (daemon mode)
+# Runs until plan completes or Ctrl-C, then cleans up.
+# Usage: make check-round-trip                 # check default (opencode)
+#        make check-round-trip AGENT=claude    # check claude
+check-round-trip: build
+	@echo "=== Round-Trip Test (mr-lazy) ==="
 	@PROG=$$(echo "$(AGENT)" | awk '{print $$1}'); \
-	echo "Agent command: $(AGENT)"; \
-	echo "Executable:    $$PROG"; \
+	echo "Agent:   $(AGENT)"; \
+	echo "Timeout: $(CHECK_TIMEOUT)s"; \
 	echo ""; \
 	echo "1. Checking if $$PROG is in PATH..."; \
 	if command -v "$$PROG" >/dev/null 2>&1; then \
@@ -113,28 +133,75 @@ check-agent:
 		echo "   FAIL: '$$PROG' not found in PATH"; exit 1; \
 	fi; \
 	echo ""; \
-	echo "2. Checking --prompt flag support..."; \
-	if "$$PROG" --help 2>&1 | grep -q '\-\-prompt'; then \
-		echo "   OK: --prompt flag supported"; \
+	echo "2. Starting mr-lazy daemon..."; \
+	TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
+	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	./target/debug/cryo start "$$TMPDIR" \
+		--agent "$(AGENT)" \
+		--max-session-duration $(CHECK_TIMEOUT) 2>&1; \
+	RC=$$?; \
+	echo ""; \
+	if [ $$RC -ne 0 ]; then \
+		echo "   FAIL: cryo daemon failed to start (exit code $$RC)"; \
+		echo "   Last 10 lines of log:"; \
+		tail -10 "$$TMPDIR/cryo.log" 2>/dev/null | sed 's/^/   | /' || echo "   (no log)"; \
+		rm -rf "$$TMPDIR"; \
+		exit 1; \
+	fi; \
+	echo "   OK: Daemon started. Watching log (Ctrl-C to stop)..."; \
+	echo ""; \
+	trap 'echo ""; echo "Stopping daemon..."; cd "'"$$TMPDIR"'" && '"$(CURDIR)"'/target/debug/cryo cancel 2>/dev/null; rm -rf "'"$$TMPDIR"'"; echo "=== Done ==="; exit 0' INT TERM; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo watch --all; \
+	echo ""; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
+	rm -rf "$$TMPDIR"; \
+	echo "=== Round-trip test done ==="
+
+# Verify GitHub Discussion sync (requires: gh auth login)
+# Usage: make check-gh REPO="owner/repo"
+REPO ?= GiggleLiu/cryochamber
+
+check-gh: build
+	@echo "=== GitHub Sync Check ==="
+	@echo "1. Checking gh CLI..."; \
+	if command -v gh >/dev/null 2>&1; then \
+		echo "   OK: $$(command -v gh)"; \
 	else \
-		echo "   WARN: --prompt flag not found in help output"; \
+		echo "   FAIL: 'gh' not found. Install: https://cli.github.com"; exit 1; \
 	fi; \
 	echo ""; \
-	echo "3. Checking headless (non-interactive) mode..."; \
-	case "$$PROG" in \
-		opencode) \
-			if echo "$(AGENT)" | grep -q "run"; then \
-				echo "   OK: 'opencode run' is headless"; \
-			else \
-				echo "   FAIL: bare 'opencode' starts an interactive TUI"; \
-				echo "   FIX:  use --agent \"opencode run\" with cryo"; \
-				exit 1; \
-			fi ;; \
-		claude) \
-			echo "   OK: claude supports headless via -p/--prompt" ;; \
-		*) \
-			echo "   INFO: unknown agent, cannot verify headless support"; \
-			echo "   Make sure '$(AGENT) --prompt <text>' runs non-interactively" ;; \
-	esac; \
+	echo "2. Checking gh authentication..."; \
+	if gh auth status >/dev/null 2>&1; then \
+		echo "   OK: authenticated as $$(gh api user -q .login)"; \
+	else \
+		echo "   FAIL: not authenticated. Run: gh auth login"; exit 1; \
+	fi; \
 	echo ""; \
-	echo "=== Health check passed ==="
+	echo "3. Creating test Discussion in $(REPO)..."; \
+	TMPDIR=$$(mktemp -d /tmp/cryo-check-gh-XXXXXX); \
+	printf '# Health Check\n\nThis is an automated test.\n' > "$$TMPDIR/plan.md"; \
+	cd "$$TMPDIR" && \
+	$(CURDIR)/target/debug/cryo gh init --repo "$(REPO)" --title "[Cryo] Health Check $$(date +%Y%m%d-%H%M%S)"; \
+	RC=$$?; \
+	if [ $$RC -ne 0 ]; then \
+		echo "   FAIL: could not create Discussion"; \
+		rm -rf "$$TMPDIR"; \
+		exit 1; \
+	fi; \
+	echo "   OK: Discussion created"; \
+	echo ""; \
+	echo "4. Posting test comment..."; \
+	mkdir -p "$$TMPDIR/messages/inbox"; \
+	printf '--- CRYO SESSION 1 ---\nSession: 1\nTask: health check\nHello from cryo health check.\n[CRYO:EXIT 0] Health check passed\n--- CRYO END ---\n' > "$$TMPDIR/cryo.log"; \
+	printf '{"plan_path":"plan.md","session_number":1,"last_command":null,"pid":null,"max_retries":1,"retry_count":0,"max_session_duration":300,"watch_inbox":false,"daemon_mode":false}' > "$$TMPDIR/timer.json"; \
+	$(CURDIR)/target/debug/cryo gh push; \
+	RC=$$?; \
+	if [ $$RC -ne 0 ]; then \
+		echo "   FAIL: could not post comment"; \
+		rm -rf "$$TMPDIR"; \
+		exit 1; \
+	fi; \
+	echo "   OK: comment posted"; \
+	rm -rf "$$TMPDIR"; \
+	echo ""; \
+	echo "=== GitHub sync check passed ==="

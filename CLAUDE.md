@@ -33,9 +33,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 ### Core Loop
 
-**Daemon mode (default):** `cmd_start()` → spawn `cryo daemon` → event loop: run session → parse markers → sleep until wake time or inbox event → run session → ...
-
-**Foreground mode (`--foreground`):** `cmd_start()` → `run_session()` → parse markers → validate → schedule OS timer → exit → (OS timer fires) → `cmd_wake()` → `run_session()` → ...
+`cmd_start()` → spawn `cryo daemon` → event loop: run session → parse markers → sleep until wake time or inbox event → run session → ...
 
 ### Modules
 
@@ -46,18 +44,18 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `SessionWriter` streams output line-by-line. |
 | `protocol` | Static protocol text, agent Makefile template, and template plan. Written by `init`/`start`. |
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess. |
-| `session` | Pure business logic: `execute_session()` orchestrates inbox→prompt→agent→markers (shared by foreground and daemon). `decide_session_outcome()` maps markers to `SessionOutcome`. |
+| `session` | Pure business logic: `execute_session()` orchestrates inbox→prompt→agent→markers. `decide_session_outcome()` maps markers to `SessionOutcome`. |
 | `daemon` | Persistent event loop: watches `messages/inbox/` via `notify`, enforces session timeout, retries with backoff (5s/15s/60s), and executes fallback actions on deadline. |
 | `validate` | Pre-hibernate checks: requires EXIT marker + WAKE time (unless plan complete). |
-| `timer` | `CryoTimer` trait with `launchd` and `systemd` implementations. Platform selected via `cfg!(target_os)`. Used by foreground mode only. |
 | `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL). |
+| `registry` | PID file registry for tracking running daemons. Uses `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
 
 ### Key Design Decisions
 
-- **Daemon by default**: `cryo start` launches a persistent background process. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout. Use `--foreground` for legacy one-shot mode.
+- **Daemon mode**: `cryo start` launches a persistent background process. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout.
 - **Agent never calls `cryo`**: The agent communicates via stdout markers only. Time utilities are exposed through `make time` in a per-project Makefile.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: Validation failures prevent hibernation rather than risking silent failures. Session writer is always finalized even on error.
@@ -65,7 +63,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 ### Files Created at Runtime (per project directory)
 
-- `timer.json` — serialized `CryoState` (plan path, session number, timer IDs, PID lock, daemon mode, session timeout, retry config)
+- `timer.json` — serialized `CryoState` (plan path, session number, PID lock, daemon mode, session timeout, retry config)
 - `cryo.log` — append-only session log
 - `plan.md` — copy of the plan file in the working directory
 - `Makefile` — agent utility targets (`make time`, etc.)

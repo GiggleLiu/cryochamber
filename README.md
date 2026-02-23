@@ -9,7 +9,7 @@
 
 **Cryochamber** is a long-term AI agent task scheduler. It hibernates an AI agent between sessions and wakes it at the right time — not on a fixed schedule. AI agent checks the log and decide the next move, just like an intersteller travelers.
 
-Our goal is full automation of human activities. Many real world tasks span hours, days, or months and are too irregular for cron. A conference deadline slips because submissions are low. A space probe's next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about *when* to wake and *what* to do next, then uses OS-level timers (launchd on macOS, systemd on Linux) to make it happen.
+Our goal is full automation of human activities. Many real world tasks span hours, days, or months and are too irregular for cron. A conference deadline slips because submissions are low. A space probe's next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about *when* to wake and *what* to do next, with a persistent daemon that manages the lifecycle.
 
 ## Quick Start
 
@@ -50,7 +50,7 @@ See [`examples/`](examples/) for complete, runnable examples.
 4. The daemon parses markers, sleeps until the next wake time, and repeats
 5. New messages in `messages/inbox/` wake the daemon immediately
 
-Monitor progress with `cryo watch`. Check state with `cryo status`.
+All agent output is appended to `cryo.log`. Monitor progress with `cryo watch`. Check state with `cryo status`.
 
 ## How It Works
 
@@ -88,19 +88,19 @@ The agent writes these markers at the end of its output:
 ```bash
 cryo init [--agent <cmd>]           # Initialize working directory
 cryo start [<plan|dir>] [--agent <cmd>] # Start a plan (default: ./plan.md)
-cryo start --foreground             # Run in foreground (block until session completes)
 cryo start --max-retries 3          # Retry agent spawn failures (default: 1)
-cryo start --max-session-duration 3600  # Session timeout in seconds (default: 1800)
+cryo start --max-session-duration 3600  # Session timeout in seconds (default: no timeout)
 cryo start --no-watch               # Disable inbox file watching
 cryo status                         # Show current state
-cryo restart                        # Kill running session and restart daemon
-cryo cancel                         # Cancel all timers and stop the daemon
+cryo ps [--kill-all]                # List (or kill) all running daemons
+cryo restart                        # Kill running daemon and restart
+cryo cancel                         # Stop the daemon and remove state
 cryo watch [--all]                  # Watch session log in real-time
 cryo validate                       # Check if ready to hibernate
 cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
-cryo wake                           # Called by OS timer (foreground mode)
+cryo force-wakeup [<plan|dir>] [--agent <cmd>]  # Run single session (testing)
 cryo gh init --repo owner/repo      # Create a GitHub Discussion for sync
 cryo gh pull                        # Pull Discussion comments into inbox
 cryo gh push                        # Push session summary to Discussion

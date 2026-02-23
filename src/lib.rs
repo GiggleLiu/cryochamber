@@ -7,7 +7,7 @@ pub mod log;
 pub mod marker;
 pub mod message;
 pub mod protocol;
+pub mod registry;
 pub mod session;
 pub mod state;
-pub mod timer;
 pub mod validate;

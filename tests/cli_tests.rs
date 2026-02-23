@@ -83,8 +83,6 @@ fn test_status_with_state() {
         "plan_path": "plan.md",
         "session_number": 3,
         "last_command": "opencode",
-        "wake_timer_id": "com.cryochamber.abc.wake",
-        "fallback_timer_id": null,
         "pid": null,
         "max_retries": 1,
         "retry_count": 0
@@ -101,8 +99,7 @@ fn test_status_with_state() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Plan: plan.md"))
-        .stdout(predicate::str::contains("Session: 3"))
-        .stdout(predicate::str::contains("com.cryochamber.abc.wake"));
+        .stdout(predicate::str::contains("Session: 3"));
 }
 
 #[test]
@@ -112,8 +109,6 @@ fn test_status_shows_latest_session_tail() {
         "plan_path": "plan.md",
         "session_number": 1,
         "last_command": "opencode",
-        "wake_timer_id": null,
-        "fallback_timer_id": null,
         "pid": null,
         "max_retries": 1,
         "retry_count": 0
@@ -233,115 +228,7 @@ fn test_cancel_no_instance() {
         .stderr(predicate::str::contains("No cryochamber instance"));
 }
 
-// --- Wake ---
-
-#[test]
-fn test_wake_no_state() {
-    let dir = tempfile::tempdir().unwrap();
-    cmd()
-        .arg("wake")
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("No cryochamber state found"));
-}
-
-#[test]
-fn test_wake_no_plan() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = serde_json::json!({
-        "plan_path": "plan.md",
-        "session_number": 1,
-        "last_command": "echo",
-        "wake_timer_id": null,
-        "fallback_timer_id": null,
-        "pid": null,
-        "max_retries": 1,
-        "retry_count": 0
-    });
-    fs::write(
-        dir.path().join("timer.json"),
-        serde_json::to_string_pretty(&state).unwrap(),
-    )
-    .unwrap();
-
-    cmd()
-        .arg("wake")
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("plan.md not found"));
-}
-
 // --- Start ---
-
-#[test]
-fn test_start_no_markers_agent() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Test Plan\nDo stuff").unwrap();
-
-    // Use true as a fake agent — produces no output, no markers.
-    // Validation will fail, but the session mechanics still execute.
-    cmd()
-        .args(["start", "plan.md", "--agent", "true", "--foreground"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Pre-hibernate validation failed"));
-
-    // State and log should have been created
-    assert!(dir.path().join("timer.json").exists());
-    assert!(dir.path().join("cryo.log").exists());
-}
-
-#[test]
-fn test_start_plan_complete_agent() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Test Plan\nDo stuff").unwrap();
-
-    // Use /bin/sh -c to simulate an agent that emits EXIT without WAKE (= plan complete).
-    // sh -c takes the next arg as the script; the --prompt arg becomes $0 and is ignored.
-    cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            "/bin/sh -c 'echo [CRYO:EXIT 0] All done'",
-            "--foreground",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Plan complete"));
-
-    assert!(dir.path().join("timer.json").exists());
-    assert!(dir.path().join("cryo.log").exists());
-}
-
-#[test]
-fn test_start_copies_plan_to_workdir() {
-    let dir = tempfile::tempdir().unwrap();
-    let subdir = dir.path().join("plans");
-    fs::create_dir_all(&subdir).unwrap();
-    fs::write(subdir.join("my-plan.md"), "# My Plan").unwrap();
-
-    cmd()
-        .args([
-            "start",
-            &subdir.join("my-plan.md").to_string_lossy(),
-            "--agent",
-            "/bin/sh -c 'echo [CRYO:EXIT 0] Done'",
-            "--foreground",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // plan.md should be a copy in the working directory
-    assert!(dir.path().join("plan.md").exists());
-    let content = fs::read_to_string(dir.path().join("plan.md")).unwrap();
-    assert_eq!(content, "# My Plan");
-}
 
 #[test]
 fn test_start_nonexistent_plan() {
@@ -383,51 +270,6 @@ fn mock_agent_cmd() -> String {
 }
 
 // --- Tests using mock agent ---
-
-#[test]
-fn test_start_mock_agent_plan_complete() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan\nDo it").unwrap();
-
-    cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            &mock_agent_cmd(),
-            "--foreground",
-        ])
-        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] All tasks done")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Plan complete"));
-}
-
-#[test]
-fn test_start_mock_agent_partial_exit() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
-
-    // EXIT 1 (partial) with no WAKE → plan complete
-    cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            &mock_agent_cmd(),
-            "--foreground",
-        ])
-        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 1] Partial progress")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Plan complete"));
-
-    // Verify the log captured the agent output
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(log.contains("Partial progress"));
-}
 
 #[test]
 fn test_fallback_exec_writes_outbox() {
@@ -562,37 +404,6 @@ fn test_receive_shows_outbox_messages() {
         .stdout(predicates::str::contains("AI played Nf3"));
 }
 
-#[test]
-fn test_session_logs_inbox_filenames() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan\nPlay chess").unwrap();
-
-    // Send a message before starting
-    cmd()
-        .args(["send", "e2e4"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Run a session with mock agent (will read the inbox message)
-    cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            &mock_agent_cmd(),
-            "--foreground",
-        ])
-        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Check cryo.log contains [inbox] line
-    let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(log_content.contains("[inbox]"));
-}
-
 // --- Backward compat ---
 
 #[test]
@@ -603,8 +414,6 @@ fn test_state_backward_compat_without_daemon_fields() {
         "plan_path": "plan.md",
         "session_number": 1,
         "last_command": "opencode",
-        "wake_timer_id": null,
-        "fallback_timer_id": null,
         "pid": null,
         "max_retries": 1,
         "retry_count": 0
@@ -631,7 +440,7 @@ fn test_daemon_plan_complete() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan\nDo stuff").unwrap();
 
-    // Start with daemon mode (default, no --foreground)
+    // Start with daemon mode (default)
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] All done")
@@ -721,8 +530,6 @@ fn test_daemon_status_shows_daemon_mode() {
         "plan_path": "plan.md",
         "session_number": 1,
         "last_command": "opencode",
-        "wake_timer_id": null,
-        "fallback_timer_id": null,
         "pid": null,
         "max_retries": 1,
         "retry_count": 0,
@@ -745,78 +552,47 @@ fn test_daemon_status_shows_daemon_mode() {
         .stdout(predicate::str::contains("Session timeout: 1800s"));
 }
 
-// --- Full wake cycle (macOS only — requires real launchd) ---
-
-#[cfg(target_os = "macos")]
 #[test]
-fn test_start_wake_cycle_with_timer() {
+fn test_session_logs_inbox_filenames() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan\nMulti-session").unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan\nPlay chess").unwrap();
 
-    // Agent outputs EXIT + WAKE (far future) + CMD
-    let output =
-        "[CRYO:EXIT 0] Session done\n[CRYO:WAKE 2099-12-31T23:59]\n[CRYO:CMD echo continue]";
+    // Send a message before starting
     cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            &mock_agent_cmd(),
-            "--foreground",
-        ])
-        .env("MOCK_AGENT_OUTPUT", output)
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Hibernating"))
-        .stdout(predicate::str::contains("2099-12-31"));
-
-    // Verify state has timer IDs
-    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
-    assert!(state["wake_timer_id"].is_string());
-
-    // Clean up: cancel the timer we just registered
-    let wake_id = state["wake_timer_id"].as_str().unwrap();
-    cmd()
-        .arg("cancel")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(wake_id));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn test_start_with_fallback_timer() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
-
-    let output = "[CRYO:EXIT 0] Done\n[CRYO:WAKE 2099-06-15T10:00]\n[CRYO:FALLBACK email admin@co.com \"agent stuck\"]";
-    cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            &mock_agent_cmd(),
-            "--foreground",
-        ])
-        .env("MOCK_AGENT_OUTPUT", output)
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Hibernating"));
-
-    // State should have both wake and fallback timer IDs
-    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
-    assert!(state["wake_timer_id"].is_string());
-    assert!(state["fallback_timer_id"].is_string());
-
-    // Clean up both timers
-    cmd()
-        .arg("cancel")
+        .args(["send", "e2e4"])
         .current_dir(dir.path())
         .assert()
         .success();
+
+    // Run a session with mock agent via daemon
+    cmd()
+        .args([
+            "start",
+            "plan.md",
+            "--agent",
+            &mock_agent_cmd(),
+        ])
+        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for daemon to finish
+    let mut daemon_exited = false;
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Ok(content) = fs::read_to_string(dir.path().join("timer.json")) {
+            if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
+                if state["pid"].is_null() {
+                    daemon_exited = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(daemon_exited, "Daemon should have exited within 10 seconds");
+
+    // Check cryo.log contains [inbox] line
+    let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log_content.contains("[inbox]"));
 }

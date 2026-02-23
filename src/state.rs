@@ -8,8 +8,6 @@ pub struct CryoState {
     pub plan_path: String,
     pub session_number: u32,
     pub last_command: Option<String>,
-    pub wake_timer_id: Option<String>,
-    pub fallback_timer_id: Option<String>,
     pub pid: Option<u32>,
     /// Maximum number of retry attempts on agent spawn failure.
     #[serde(default = "default_max_retries")]
@@ -33,7 +31,7 @@ fn default_max_retries() -> u32 {
 }
 
 fn default_max_session_duration() -> u64 {
-    1800 // 30 minutes
+    0 // no timeout
 }
 
 fn default_watch_inbox() -> bool {

@@ -1,7 +1,7 @@
 // src/daemon.rs
 //! Persistent daemon that owns the session lifecycle.
 //!
-//! Replaces one-shot `cryo wake` with a long-running process that:
+//! Long-running process that:
 //! - Sleeps until scheduled wake time
 //! - Watches messages/inbox/ for reactive wake
 //! - Enforces session timeout
@@ -143,10 +143,23 @@ impl Daemon {
         let mut cryo_state =
             state::load_state(&self.state_path)?.context("No cryochamber state found")?;
 
+        // Guard: refuse to start if another daemon is already running
+        if state::is_locked(&cryo_state) {
+            anyhow::bail!(
+                "Another daemon is already running (PID: {:?}). Use `cryo cancel` first.",
+                cryo_state.pid
+            );
+        }
+
         // Mark as daemon mode and save PID
         cryo_state.daemon_mode = true;
         cryo_state.pid = Some(std::process::id());
         state::save_state(&self.state_path, &cryo_state)?;
+
+        // Register in global daemon registry
+        if let Err(e) = crate::registry::register(&self.dir) {
+            eprintln!("Daemon: failed to register in ~/.cryo/daemons: {e}");
+        }
 
         // Set up inbox watcher
         let (tx, rx) = mpsc::channel();
@@ -278,10 +291,11 @@ impl Daemon {
             }
         }
 
-        // Cleanup: clear PID and daemon_mode
+        // Cleanup: clear PID, daemon_mode, and registry
         cryo_state.pid = None;
         cryo_state.daemon_mode = false;
         state::save_state(&self.state_path, &cryo_state)?;
+        crate::registry::unregister(&self.dir);
         eprintln!("Daemon: exited cleanly");
 
         Ok(())
@@ -291,7 +305,7 @@ impl Daemon {
         let agent_cmd = cryo_state
             .last_command
             .clone()
-            .unwrap_or_else(|| "opencode run".to_string());
+            .unwrap_or_else(|| "opencode".to_string());
 
         let task = self
             .get_task()
@@ -366,7 +380,7 @@ impl Daemon {
         session::derive_task_from_output(&latest)
     }
 
-    /// Run agent with a timeout. Sends SIGTERM then SIGKILL if exceeded.
+    /// Run agent with a timeout, forwarding the daemon's shutdown signal.
     fn run_agent_with_timeout(
         &self,
         agent_command: &str,
@@ -374,99 +388,13 @@ impl Daemon {
         writer: &mut crate::log::SessionWriter,
         timeout_secs: u64,
     ) -> Result<crate::agent::AgentResult> {
-        use std::io::BufRead;
-        use std::process::{Command, Stdio};
-
-        let parts = shell_words::split(agent_command).context("Failed to parse agent command")?;
-        let (program, args) = parts.split_first().context("Agent command is empty")?;
-
-        let mut child = Command::new(program)
-            .args(args)
-            .arg("--prompt")
-            .arg(prompt)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context(format!("Failed to spawn agent: {agent_command}"))?;
-
-        let child_pid = child.id();
-        let shutdown = Arc::clone(&self.shutdown);
-        let child_done = Arc::new(AtomicBool::new(false));
-        let child_done_clone = Arc::clone(&child_done);
-
-        // Spawn timeout watchdog thread
-        let timeout_handle = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-            loop {
-                if child_done_clone.load(Ordering::Relaxed) {
-                    return false; // child exited normally
-                }
-                if std::time::Instant::now() >= deadline {
-                    eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
-                    unsafe {
-                        libc::kill(child_pid as i32, libc::SIGTERM);
-                    }
-                    std::thread::sleep(Duration::from_secs(5));
-                    unsafe {
-                        libc::kill(child_pid as i32, libc::SIGKILL);
-                    }
-                    return true; // timed out
-                }
-                if shutdown.load(Ordering::Relaxed) {
-                    unsafe {
-                        libc::kill(child_pid as i32, libc::SIGTERM);
-                    }
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
-        });
-
-        let child_stdout = child.stdout.take().unwrap();
-        let child_stderr = child.stderr.take().unwrap();
-
-        let stderr_handle = std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(child_stderr);
-            let mut buf = String::new();
-            for line in reader.lines() {
-                match line {
-                    Ok(l) => {
-                        buf.push_str(&l);
-                        buf.push('\n');
-                    }
-                    Err(_) => break,
-                }
-            }
-            buf
-        });
-
-        let mut stdout_buf = String::new();
-        let reader = std::io::BufReader::new(child_stdout);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    let _ = writer.write_line(&l);
-                    stdout_buf.push_str(&l);
-                    stdout_buf.push('\n');
-                }
-                Err(_) => break,
-            }
-        }
-
-        let status = child.wait().context("Failed to wait for agent process")?;
-        child_done.store(true, Ordering::Relaxed);
-        let stderr_buf = stderr_handle.join().unwrap_or_default();
-        let timed_out = timeout_handle.join().unwrap_or(false);
-
-        if timed_out {
-            anyhow::bail!("Agent killed after {timeout_secs}s timeout");
-        }
-
-        Ok(crate::agent::AgentResult {
-            stdout: stdout_buf,
-            stderr: stderr_buf,
-            exit_code: status.code().unwrap_or(-1),
-        })
+        crate::agent::run_agent_with_timeout(
+            agent_command,
+            prompt,
+            writer,
+            timeout_secs,
+            Some(Arc::clone(&self.shutdown)),
+        )
     }
 
     /// Sleep for `duration`, but return early if shutdown is signaled.
