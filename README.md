@@ -26,13 +26,18 @@ cryo init --agent claude       # for Claude Code (writes CLAUDE.md)
 # Edit the generated plan with your tasks
 vim plan.md
 
-# Start the plan (defaults to plan.md in current directory)
-cryo start                           # uses ./plan.md
+# Start the daemon and watch output
+cryo start && cryo watch
+
+# While the agent runs, you can interact from another terminal:
+cryo send "Please also check issue #12"   # message appears in next session
+cryo status                                # check current state
+cryo cancel                                # stop the daemon
 ```
 
-To run a chess playing examples:
+To run a chess playing example:
 ```bash
-cd examples/chess-by-mail && cryo start
+cd examples/chess-by-mail && cryo start && cryo watch
 ```
 
 See [`examples/`](examples/) for complete, runnable examples.
@@ -73,7 +78,7 @@ The agent writes these markers at the end of its output:
 |--------|---------|---------|
 | `[CRYO:EXIT <code>]` | Session result (0=success, 1=partial, 2=failure) | `[CRYO:EXIT 0] Reviewed 3 PRs` |
 | `[CRYO:WAKE <time>]` | Next wake time (omit = plan complete) | `[CRYO:WAKE 2026-03-08T09:00]` |
-| `[CRYO:CMD <cmd>]` | Task for next session | `[CRYO:CMD opencode "check PRs"]` |
+| `[CRYO:CMD <cmd>]` | Task for next session | `[CRYO:CMD opencode run "check PRs"]` |
 | `[CRYO:PLAN <note>]` | Memory for future sessions | `[CRYO:PLAN PR #41 needs fixes]` |
 | `[CRYO:FALLBACK <action> <target> "<msg>"]` | Dead man's switch | `[CRYO:FALLBACK email user@ex.com "task failed"]` |
 | `[CRYO:REPLY "<msg>"]` | Reply to human (synced to Discussion) | `[CRYO:REPLY "Done, API updated."]` |
