@@ -17,3 +17,6 @@ messages/
 examples/*/messages
 examples/*/*.log
 examples/*/*.json
+examples/*/CLAUDE.md
+examples/*/AGENTS.md
+examples/*/Makefile

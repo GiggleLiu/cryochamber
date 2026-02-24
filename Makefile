@@ -56,9 +56,12 @@ logo:
 	typst compile docs/logo/logo.typ docs/logo/logo.svg
 	typst compile docs/logo/logo.typ docs/logo/logo.png --ppi 300
 
-# Clean build artifacts
+# Clean build artifacts and auto-generated example files
 clean:
 	cargo clean
+	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md examples/*/Makefile
+	rm -f examples/*/*.log examples/*/*.json
+	rm -rf examples/*/messages
 
 # Run a plan with Claude in headless mode
 # Usage: make run-plan [INSTRUCTIONS="..."] [OUTPUT=output.log] [AGENT_TYPE=claude]

@@ -15,12 +15,11 @@ A cron job can't do this because:
 ## Quick Start
 
 ```bash
-# From the repo root:
-cryo start examples/chess-by-mail
-
-# Or with make:
-make chess
+cd examples/chess-by-mail
+cryo start && cryo watch
 ```
+
+`cryo start` auto-generates the protocol file (CLAUDE.md or AGENTS.md) and Makefile.
 
 ## Playing
 
