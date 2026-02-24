@@ -3,6 +3,7 @@
 #import "@preview/cetz:0.4.2": canvas, draw
 
 #set page(width: auto, height: auto, margin: 0.8cm)
+#set text(font: "Avenir Next")
 
 #canvas(length: 1cm, {
   import draw: *
