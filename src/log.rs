@@ -2,7 +2,11 @@
 use anyhow::Result;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub fn log_path(dir: &Path) -> PathBuf {
+    dir.join("cryo.log")
+}
 
 pub const SESSION_START: &str = "--- CRYO SESSION";
 pub const SESSION_END: &str = "--- CRYO END ---";

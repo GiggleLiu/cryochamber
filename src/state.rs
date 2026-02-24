@@ -1,7 +1,7 @@
 // src/state.rs
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoState {
@@ -36,6 +36,10 @@ fn default_max_session_duration() -> u64 {
 
 fn default_watch_inbox() -> bool {
     true
+}
+
+pub fn state_path(dir: &Path) -> PathBuf {
+    dir.join("timer.json")
 }
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {
