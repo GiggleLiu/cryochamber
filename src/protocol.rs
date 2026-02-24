@@ -6,100 +6,67 @@ use std::path::Path;
 /// This file is loaded as system-level context by the agent and survives context compression.
 pub const PROTOCOL_CONTENT: &str = r#"# Cryochamber Protocol
 
-You are running inside **cryochamber**, a long-term AI task scheduler.
-After each session you will be hibernated and woken at a future time.
-Your instructions persist in this file across sessions.
+You are running inside a **cryochamber** — a long-running task scheduler that manages your sleep/wake cycles. You control your chamber using CLI commands.
 
-## How It Works
+## Commands
 
-1. Read `plan.md` for the full plan and objectives.
-2. Check your prompt for new messages (from humans or external systems).
-3. Execute the current task (provided in the prompt).
-4. Write structured markers (below) at the end of your response.
-5. Cryochamber parses your markers, schedules the next wake, and hibernates.
+### End Session
+```
+cryo hibernate --wake <ISO8601> [--exit <0|1|2>] [--summary "..."]
+cryo hibernate --complete [--summary "..."]
+```
+- `--wake`: When to wake up next (required unless --complete)
+- `--complete`: Plan is done, no more sessions needed
+- `--exit`: 0=success (default), 1=partial progress, 2=failure
+- `--summary`: Human-readable summary of what you did
 
-## Message System
+### Leave Notes
+```
+cryo note "text"
+```
+Leave a note for your future self. Notes are logged and visible in the next session.
 
-Cryochamber uses a file-based message inbox/outbox:
+### Reply to Human
+```
+cryo reply "message"
+```
+Send a message to the human operator (written to outbox).
 
-- **Inbox** (`messages/inbox/`): Messages from humans or external systems appear in your prompt automatically.
-- **Outbox** (`messages/outbox/`): Fallback alerts are written here. External runners deliver them via email, webhook, etc.
-- Processed inbox messages are archived to `messages/inbox/archive/`.
+### Set Fallback Alert
+```
+cryo alert <action> <target> "message"
+```
+Dead-man switch. If you don't wake up on time, this alert fires.
+- action: `email` or `webhook`
+- target: email address or URL
 
-You do not need to read the inbox directory yourself — new messages are included in your prompt.
-- You can reply to messages using `[CRYO:REPLY "your reply here"]` markers.
+### Check Status
+```
+cryo status
+```
+See current session info, time remaining, and plan details.
 
-## Required Markers
-
-You MUST write these markers at the end of every response:
-
-### [CRYO:EXIT <code>] <summary>
-Report your session result. Codes:
-- `0` = success
-- `1` = partial success
-- `2` = failure
-
-Example: `[CRYO:EXIT 0] Reviewed 3 PRs, approved 2, commented on 1`
-
-### [CRYO:WAKE <ISO8601 datetime>]
-When to wake up next. Omit this marker ONLY if the plan is complete.
-
-Example: `[CRYO:WAKE 2026-03-08T09:00]`
-
-### [CRYO:CMD <command>]
-Optional. What agent command to run on next wake. If omitted, re-uses the previous command.
-
-Example: `[CRYO:CMD opencode run "check PR #42"]`
-
-### [CRYO:PLAN <note>]
-Optional but recommended. Leave context for your future self. This is your memory across sessions.
-
-Example: `[CRYO:PLAN PR #41 needs author to fix lint issues before re-review]`
-
-### [CRYO:FALLBACK <action> <target> "<message>"]
-Optional. Dead man's switch — triggered if the next session fails to run.
-- `action`: `email` or `webhook`
-
-Example: `[CRYO:FALLBACK email user@example.com "weekly review did not run"]`
-
-### [CRYO:REPLY "<message>"]
-Optional. Post a reply to the human (synced to Discussion if gh sync is configured).
-
-Example: `[CRYO:REPLY "Updated the API endpoint as requested."]`
+### Check Inbox
+```
+cryo inbox
+```
+List pending messages from the human operator.
 
 ## Utilities
 
-Use `make` targets to compute accurate WAKE times:
-
+Use the project Makefile for time calculations:
 ```
-make time                # current time in ISO8601
-make time OFFSET="+1 day"       # 1 day from now
-make time OFFSET="+2 hours"     # 2 hours from now
-make time OFFSET="+30 minutes"  # 30 minutes from now
+make time                    # current time in ISO8601
+make time OFFSET="+1 day"   # compute future times
 ```
-
-Or use `date` directly: `date -u +%Y-%m-%dT%H:%M`
 
 ## Rules
 
-- **No WAKE marker = plan is complete.** No more wake-ups will be scheduled.
-- **Always read `plan.md`** and the previous session log before starting work.
-- **PLAN markers are your memory.** Use them to leave notes for your future self.
-- **EXIT is mandatory.** Every session must report an exit code.
-- **Write all markers at the end** of your response, not inline.
-
-## Example Session Output
-
-```
-Checked all open PRs. Found 3 ready for review.
-Approved PR #42 and #43. Left comments on PR #41.
-
-[CRYO:EXIT 0] Reviewed 3 PRs: approved 2, commented on 1
-[CRYO:PLAN PR #41 needs author to fix lint issues]
-[CRYO:WAKE 2026-03-08T09:00]
-[CRYO:CMD opencode run "Follow up on PR #41, check for new PRs"]
-[CRYO:FALLBACK email user@example.com "Monday PR review did not run"]
-```
+1. Always call `cryo hibernate` or `cryo hibernate --complete` before you finish
+2. Read `plan.md` for your objectives at the start of each session
+3. Use `cryo note` to leave context for your next session
+4. Check `cryo inbox` for messages from the human
+5. Set `cryo alert` if your task is critical and failure should be noticed
 "#;
 
 /// Template plan written by `cryo init` if no plan.md exists.

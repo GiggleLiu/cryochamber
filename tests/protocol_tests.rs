@@ -2,19 +2,19 @@
 use cryochamber::protocol;
 
 #[test]
-fn test_protocol_content_contains_markers() {
+fn test_protocol_content_contains_commands() {
     let content = protocol::PROTOCOL_CONTENT;
-    assert!(content.contains("[CRYO:EXIT"));
-    assert!(content.contains("[CRYO:WAKE"));
-    assert!(content.contains("[CRYO:CMD"));
-    assert!(content.contains("[CRYO:PLAN"));
-    assert!(content.contains("[CRYO:FALLBACK"));
+    assert!(content.contains("cryo hibernate"));
+    assert!(content.contains("cryo note"));
+    assert!(content.contains("cryo reply"));
+    assert!(content.contains("cryo alert"));
+    assert!(content.contains("cryo status"));
 }
 
 #[test]
 fn test_protocol_content_contains_rules() {
     let content = protocol::PROTOCOL_CONTENT;
-    assert!(content.contains("No WAKE marker = plan is complete"));
+    assert!(content.contains("Always call `cryo hibernate`"));
     assert!(content.contains("plan.md"));
 }
 
@@ -57,7 +57,7 @@ fn test_write_protocol_file() {
     let path = dir.path().join("CLAUDE.md");
     assert!(path.exists());
     let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.contains("[CRYO:EXIT"));
+    assert!(content.contains("cryo hibernate"));
 }
 
 #[test]
@@ -111,4 +111,19 @@ fn test_write_template_plan_skips_existing() {
     assert!(!wrote);
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content, "existing plan");
+}
+
+#[test]
+fn test_protocol_mentions_hibernate() {
+    let content = cryochamber::protocol::PROTOCOL_CONTENT;
+    assert!(content.contains("cryo hibernate"));
+    assert!(content.contains("cryo note"));
+    assert!(content.contains("cryo status"));
+}
+
+#[test]
+fn test_protocol_no_old_markers() {
+    let content = cryochamber::protocol::PROTOCOL_CONTENT;
+    assert!(!content.contains("[CRYO:EXIT"));
+    assert!(!content.contains("[CRYO:WAKE"));
 }
