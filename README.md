@@ -36,7 +36,7 @@ cryo status                                # check current state
 cryo cancel                                # stop the daemon
 ```
 
-The [`examples/mr-lazy`](examples/mr-lazy/) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
+The [`examples/mr-lazy/plan.md`](examples/mr-lazy/plan.md) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
 ```bash
 cd examples/mr-lazy && cryo init && cryo start && cryo watch
 ```
@@ -72,29 +72,43 @@ cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate �
 Here's a real run (from `cryo.log`):
 
 ```
---- CRYO SESSION 1 | 2026-02-24T00:03:10Z ---
+(base) ➜  mr-lazy git:(main) ✗ cat cryo.log
+Daemon: socket listening at /Users/liujinguo/rcode/cryochamber/examples/mr-lazy/.cryo/cryo.sock
+Daemon: watching messages/inbox/ for new messages
+Daemon: Session #1: Running agent...
+--- CRYO SESSION 1 | 2026-02-25T01:13:12Z ---
 task: Continue the plan
 agent: opencode
 inbox: 0 messages
-[00:03:12] agent started (pid 54321)
-[00:03:18] note: "Rolled 2/4. Complaint #1 delivered."
-[00:03:19] hibernate: wake=2026-02-24T00:05, exit=0, summary="Refused to wake up"
-[00:03:19] agent exited (code 0)
+[01:13:12] agent started (pid 75159)
+[01:13:50] hibernate: wake=2026-02-25T01:16, exit=0, summary="Woke at 1:13 AM, rolled 2, complained about the indecency of early hours"
+[01:13:55] note: "Session 1: Woke at 1:13 AM, rolled 2 (not 4), complained about the indecency of early hours, hibernated for 3 minutes until 1:16 AM"
+[01:14:00] agent exited (code 0)
+[01:14:00] session complete
 --- CRYO END ---
-
---- CRYO SESSION 2 | 2026-02-24T00:05:00Z ---
+Daemon: next wake at 2026-02-25 01:16
+Daemon: scheduled wake time reached
+Daemon: Session #2: Running agent...
+--- CRYO SESSION 2 | 2026-02-25T01:16:00Z ---
 task: Continue the plan
 agent: opencode
 inbox: 0 messages
-[00:05:02] agent started (pid 54400)
-[00:05:08] note: "Rolled 4/4 - grudgingly woke up after 2 sessions"
-[00:05:09] hibernate: complete, exit=0, summary="Finally got out of bed"
-[00:05:09] agent exited (code 0)
+[01:16:00] agent started (pid 79470)
+[01:16:50] note: "Session 2: Rolled 3 (not 4), complained about the moon having better things to do at 1:16 AM, hibernating until 1:17 AM"
+[01:16:53] hibernate: wake=2026-02-25T01:17, exit=0, summary="Rolled 3, complained about the moon having better things to do, going back to sleep"
+[01:16:57] agent exited (code 0)
+[01:16:57] session complete
 --- CRYO END ---
+Daemon: next wake at 2026-02-25 01:17
+Daemon: scheduled wake time reached
+Daemon: Session #3: Running agent...
+--- CRYO SESSION 3 | 2026-02-25T01:17:00Z ---
+task: Continue the plan
+agent: opencode
+inbox: 0 messages
+[01:17:00] agent started (pid 80880)
+[01:17:32] note: "Session 3: Rolled 1 (not 4), complained about 1:17 AM being an uncivilized hour, hibernating until 1:19 AM"
 ```
-
-The daemon ran two sessions, sleeping 2 minutes between them, then stopped when the agent called `cryo-agent hibernate --complete`. All output is in `cryo.log`.
-
 
 ## Configuration
 
