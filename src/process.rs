@@ -2,12 +2,15 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
-/// Send a signal to a process, logging a warning on failure.
-pub fn send_signal(pid: u32, signal: i32) {
+/// Send a signal to a process. Returns true if delivered, false on failure.
+pub fn send_signal(pid: u32, signal: i32) -> bool {
     let ret = unsafe { libc::kill(pid as i32, signal) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
         eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
+        false
+    } else {
+        true
     }
 }
 

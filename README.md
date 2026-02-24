@@ -137,6 +137,7 @@ cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
 cryo wake ["message"]               # Send a wake message to the daemon's inbox
+cryo clean [--force]                # Remove runtime files (logs, state, messages)
 ```
 
 ### Agent IPC (`cryo-agent`)
@@ -145,7 +146,9 @@ cryo wake ["message"]               # Send a wake message to the daemon's inbox
 cryo-agent hibernate --wake <ISO8601>  # Schedule next wake
 cryo-agent hibernate --complete        # Mark plan as complete
 cryo-agent note "text"                 # Leave a note for next session
-cryo-agent reply "message"             # Reply to human (writes to outbox)
+cryo-agent send "message"              # Send message to human (writes to outbox)
+cryo-agent receive                     # Read inbox messages from human
+cryo-agent time "+30 minutes"          # Compute a future timestamp
 cryo-agent alert <action> <target> "msg"  # Set dead-man switch
 ```
 
@@ -167,7 +170,7 @@ The daemon process is suspended along with everything else. When your machine wa
 
 **How do I manually wake a sleeping daemon?**
 
-Use `cryo wake` to send a message to the daemon's inbox. You can include a message: `cryo wake "Please check the latest PR"`. If inbox watching is enabled (the default), the daemon wakes immediately. You can also use `cryo send` for the same effect. If no daemon is running, the message is queued for the next `cryo start`.
+Use `cryo wake` to send a message to the daemon's inbox. You can include a message: `cryo wake "Please check the latest PR"`. If inbox watching is enabled (the default), the daemon wakes immediately. You can also use `cryo send --wake` for the same effect. If inbox watching is disabled, `cryo wake` sends a SIGUSR1 signal to force the daemon awake. If no daemon is running, the message is queued for the next `cryo start`.
 
 ## License
 

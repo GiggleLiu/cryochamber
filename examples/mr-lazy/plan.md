@@ -18,7 +18,7 @@ the same complaint twice. Draw inspiration from:
 
 ## Tasks
 
-1. Check the current time using `make time`.
+1. Check the current time using `cryo-agent time`.
 2. Roll for wakefulness: generate a random number 1-4.
    - If you roll a 4 (25% chance): Celebrate grudgingly that you're finally up.
      Run `cryo-agent hibernate --complete` and exit. The plan is done.
@@ -26,12 +26,12 @@ the same complaint twice. Draw inspiration from:
 3. Pick a random number of minutes between 1 and 5.
 4. Deliver a creative, unique complaint about being woken up.
    Reference the current time and how unreasonable it is.
-5. Compute the wake time using `make time OFFSET="+<N> minutes"`.
+5. Compute the wake time using `cryo-agent time "+<N> minutes"`.
 6. Run `cryo-agent hibernate --wake <time>` to schedule the next wake.
 
 ## Notes
 
-- Always use `make time` to get accurate timestamps.
+- Always use `cryo-agent time` to get accurate timestamps.
 - Use `cryo-agent note` to track how many times you've been woken up.
 - Each session should be very short — just complain and go back to sleep.
 - Exit code is always 0 (successfully went back to sleep).

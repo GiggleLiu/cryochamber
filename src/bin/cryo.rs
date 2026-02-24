@@ -47,6 +47,12 @@ enum Commands {
     Restart,
     /// Stop the daemon and remove state
     Cancel,
+    /// Stop the daemon and remove all runtime files (confirms first)
+    Clean {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
     /// Print the session log
     Log,
     /// Watch the session log in real-time
@@ -105,6 +111,7 @@ fn main() -> Result<()> {
         Commands::Ps { kill_all } => cmd_ps(kill_all),
         Commands::Restart => cmd_restart(),
         Commands::Cancel => cmd_cancel(),
+        Commands::Clean { force } => cmd_clean(force),
         Commands::Log => cmd_log(),
         Commands::Watch { all, viewpoint } => cmd_watch(all, &viewpoint),
         Commands::Send {
@@ -175,12 +182,6 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         println!("Wrote plan.md");
     } else {
         eprintln!("Warning: plan.md already exists, not replaced");
-    }
-
-    if protocol::write_makefile(&dir)? {
-        println!("Wrote Makefile");
-    } else {
-        eprintln!("Warning: Makefile already exists, not replaced");
     }
 
     message::ensure_dirs(&dir)?;
@@ -398,6 +399,65 @@ fn cmd_cancel() -> Result<()> {
     Ok(())
 }
 
+/// Prompt the user for y/n confirmation. Returns true if confirmed.
+fn confirm(prompt: &str) -> bool {
+    eprint!("{prompt} [y/N] ");
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim(), "y" | "Y" | "yes" | "Yes")
+}
+
+fn cmd_clean(force: bool) -> Result<()> {
+    let dir = cryochamber::work_dir()?;
+    require_valid_project(&dir)?;
+
+    if !force && !confirm("Stop daemon and remove all runtime files?") {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // Cancel daemon if running
+    let sp = state::state_path(&dir);
+    if let Some(cryo_state) = state::load_state(&sp)? {
+        if state::is_locked(&cryo_state) {
+            if let Some(pid) = cryo_state.pid {
+                cryochamber::process::terminate_pid(pid)?;
+                println!("Killed daemon (PID {pid}).");
+            }
+        }
+    }
+
+    // Remove runtime files
+    let runtime_files = [
+        "timer.json",
+        "cryo.log",
+        "cryo-agent.log",
+        "gh-sync.json",
+    ];
+    for name in &runtime_files {
+        let path = dir.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+            println!("Removed {name}");
+        }
+    }
+
+    // Remove runtime directories
+    let runtime_dirs = ["messages", ".cryo"];
+    for name in &runtime_dirs {
+        let path = dir.join(name);
+        if path.exists() {
+            std::fs::remove_dir_all(&path)?;
+            println!("Removed {name}/");
+        }
+    }
+
+    println!("Clean.");
+    Ok(())
+}
+
 fn cmd_log() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let log = cryochamber::log::log_path(&dir);
@@ -420,39 +480,57 @@ fn build_inbox_message(from: &str, subject: &str, body: &str) -> message::Messag
     }
 }
 
+/// Check if a daemon is running in the given directory.
+fn is_daemon_running(dir: &std::path::Path) -> bool {
+    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
+        return state::is_locked(&st);
+    }
+    false
+}
+
+/// Send SIGUSR1 to the daemon to force an immediate wake.
+/// Returns true if the signal was delivered successfully.
+fn signal_daemon_wake(dir: &std::path::Path) -> bool {
+    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
+        if let Some(pid) = st.pid {
+            if state::is_locked(&st) {
+                return cryochamber::process::send_signal(pid, libc::SIGUSR1);
+            }
+        }
+    }
+    false
+}
+
+/// After writing an inbox message, notify the daemon and print status.
+/// When watch_inbox is true, the inotify watcher handles wake — no signal needed.
+/// When watch_inbox is false, send SIGUSR1.
+fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
+    let watch_inbox = config::load_config(&config::config_path(dir))?
+        .map(|c| c.watch_inbox)
+        .unwrap_or(true);
+
+    if !is_daemon_running(dir) {
+        eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
+    } else if watch_inbox {
+        println!("Daemon will pick it up shortly.");
+    } else if signal_daemon_wake(dir) {
+        println!("Wake signal sent. Daemon waking now.");
+    } else {
+        eprintln!("Warning: failed to signal daemon. Message queued for the next session.");
+    }
+    Ok(())
+}
+
 fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
 
-    // Warn if no daemon is running
-    let daemon_alive =
-        state::load_state(&state::state_path(&dir))?.is_some_and(|st| state::is_locked(&st));
-    if !daemon_alive {
-        eprintln!(
-            "Warning: no daemon is running. Message will be queued for the next `cryo start`."
-        );
-    }
-
-    // Warn if watch_inbox is disabled in config
-    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
-    if daemon_alive && !cfg.watch_inbox {
-        eprintln!(
-            "Warning: inbox watching is disabled in cryo.toml. \
-             Message will be delivered at the next scheduled wake, not immediately."
-        );
-    }
-
     let body = wake_message.unwrap_or("Manual wake requested by operator.");
     let msg = build_inbox_message("operator", "Wake", body);
     message::write_message(&dir, "inbox", &msg)?;
 
-    if daemon_alive {
-        println!("Wake message sent. Daemon will wake on next inbox check.");
-    } else {
-        println!("Message queued in inbox.");
-    }
-    Ok(())
+    notify_daemon_wake(&dir)
 }
 
 fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result<()> {
@@ -460,7 +538,14 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
     require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
 
-    let subject = subject.unwrap_or_else(|| &body[..body.len().min(50)]);
+    let subject = subject.unwrap_or_else(|| {
+        // Truncate at a char boundary to avoid panic on non-ASCII input
+        let mut end = body.len().min(50);
+        while end > 0 && !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        &body[..end]
+    });
     let msg = build_inbox_message(from, subject, body);
     let path = message::write_message(&dir, "inbox", &msg)?;
     println!(
@@ -469,9 +554,7 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
     );
 
     if wake {
-        let wake_msg = build_inbox_message("operator", "Wake", "Wake requested via cryo send --wake.");
-        message::write_message(&dir, "inbox", &wake_msg)?;
-        println!("Wake message sent.");
+        notify_daemon_wake(&dir)?;
     }
 
     Ok(())

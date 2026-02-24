@@ -69,7 +69,7 @@ example-clean:
 			cd "$(CURDIR)/$$dir" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
 		fi; \
 	done; true
-	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md examples/*/Makefile
+	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md
 	rm -f examples/*/*.log examples/*/*.json
 	rm -rf examples/*/messages examples/*/.cryo
 
@@ -113,7 +113,7 @@ DIR ?= examples/mr-lazy
 WATCH ?= true
 example: build
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
-	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md Makefile && \
+	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
 	if [ "$(WATCH)" = "true" ]; then \
 		$(CURDIR)/target/debug/cryo watch --all; \

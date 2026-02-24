@@ -40,7 +40,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | Binary | Purpose |
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
-| `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `reply`, `alert` (sends commands to daemon via socket) |
+| `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `send`, `receive`, `alert`, `time` (sends commands to daemon via socket; `receive` and `time` are local) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `status` (manages Discussion-based messaging) |
 
 ### Modules
@@ -51,11 +51,11 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | `config` | TOML persistence for project config (`cryo.toml`). `CryoConfig` struct, load/save, `apply_overrides` merges CLI overrides from state. |
 | `state` | JSON persistence to `timer.json` — runtime-only state (session number, PID lock, CLI overrides). PID-based locking via `libc::kill(pid, 0)`. |
 | `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, notes, hibernate, exit). |
-| `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, Makefile, cryo.toml). Written by `init`/`start`. |
-| `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (fire-and-forget, no stdout capture). |
+| `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, cryo.toml). Written by `init`/`start`. |
+| `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (stdout/stderr redirected to `cryo-agent.log`). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
-| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend). |
+| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend). |
 | `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL). |
@@ -65,8 +65,9 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 ### Key Design Decisions
 
 - **Daemon mode**: `cryo start` launches a persistent background process. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout.
-- **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `reply`, `alert`), which send JSON messages over a Unix domain socket. This replaces the old stdout marker-parsing approach.
-- **Fire-and-forget agent**: The daemon spawns the agent without capturing stdout/stderr. All structured communication flows through the socket.
+- **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `send`, `alert`), which send JSON messages over a Unix domain socket. `receive` and `time` are local (no daemon needed).
+- **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. All structured communication flows through the socket.
+- **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
 - **Config/state split**: `cryo.toml` is the project config (agent, retries, timeout, watch_inbox) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, retry count, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
@@ -77,12 +78,12 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 - `cryo.toml` — project configuration (agent, max_retries, max_session_duration, watch_inbox)
 - `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `plan.md` — template plan file
-- `Makefile` — agent utility targets (`make time`, etc.)
 
 ### Files Created at Runtime (per project directory)
 
 - `timer.json` — runtime state only (session number, PID lock, retry count, CLI overrides)
-- `cryo.log` — append-only session log
+- `cryo.log` — append-only structured event log
+- `cryo-agent.log` — agent stdout/stderr (raw tool-call output)
 - `messages/inbox/` — incoming messages for the agent
 - `messages/outbox/` — outgoing messages (fallback alerts)
 - `messages/inbox/archive/` — processed inbox messages
@@ -93,7 +94,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 - `README.md` — Project overview, quickstart, CLI commands, and admin CLI
 - `Makefile` — Dev targets (`check`, `build`, `test`, `run-plan`, `check-round-trip`, etc.)
-- `templates/` — Single source of truth for agent protocol, template plan, agent Makefile, and cryo.toml config template
+- `templates/` — Single source of truth for agent protocol, template plan, and cryo.toml config template
 - `docs/plans/` — Design documents and implementation plans
 - `docs/reports/` — Code review reports
 - `examples/` — Showcase examples (chess-by-mail, conference-chair, mars-mission)

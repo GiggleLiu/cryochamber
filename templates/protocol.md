@@ -21,7 +21,7 @@ You MUST call one of these before your session ends. If you don't, the daemon tr
 
 ```
 # 1. Compute a future time
-make time OFFSET="+30 minutes"    # prints e.g. 2026-02-24T15:30
+cryo-agent time "+30 minutes"    # prints e.g. 2026-02-24T15:30
 
 # 2. Hibernate with that time
 cryo-agent hibernate --wake 2026-02-24T15:30 --summary "Finished task 2, task 3 next"
@@ -47,26 +47,27 @@ cryo-agent hibernate --wake 2026-02-25T09:00 --exit 2 --summary "Build broken, n
 
 - **Waiting on external event** (CI, review, deploy): wake in 15-30 minutes to check.
 - **Multi-step plan, next step ready**: wake in 1-2 minutes (just long enough to save context).
-- **Time-sensitive deadline**: compute exact time with `make time OFFSET="+2 hours"`.
-- **Nothing to do until tomorrow**: `make time OFFSET="+1 day"`.
+- **Time-sensitive deadline**: compute exact time with `cryo-agent time "+2 hours"`.
+- **Nothing to do until tomorrow**: `cryo-agent time "+1 day"`.
 
 ## Other Commands
 
 ```
 cryo-agent note "text"                        # Leave a note for next session
-cryo-agent reply "message"                    # Send message to human (outbox)
+cryo-agent send "message"                     # Send message to human (outbox)
+cryo-agent receive                            # Read inbox messages from human
 cryo-agent alert <action> <target> "message"  # Dead-man switch (fires if you don't wake on time)
 ```
 
 ## Time Utility
 
-Always use `make time` for timestamps — never guess or hardcode times:
+Always use `cryo-agent time` for timestamps — never guess or hardcode times:
 
 ```
-make time                          # current time in ISO8601
-make time OFFSET="+1 day"         # 1 day from now
-make time OFFSET="+2 hours"       # 2 hours from now
-make time OFFSET="+30 minutes"    # 30 minutes from now
+cryo-agent time                   # current time in ISO8601
+cryo-agent time "+1 day"          # 1 day from now
+cryo-agent time "+2 hours"        # 2 hours from now
+cryo-agent time "+30 minutes"     # 30 minutes from now
 ```
 
 ## Key Facts

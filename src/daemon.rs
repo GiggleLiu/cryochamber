@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDateTime};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::consts::{SIGINT, SIGTERM, SIGUSR1};
 use signal_hook::flag;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,6 +128,7 @@ pub struct Daemon {
     state_path: PathBuf,
     log_path: PathBuf,
     shutdown: Arc<AtomicBool>,
+    wake_requested: Arc<AtomicBool>,
 }
 
 impl Daemon {
@@ -139,6 +140,7 @@ impl Daemon {
             state_path,
             log_path,
             shutdown: Arc::new(AtomicBool::new(false)),
+            wake_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -149,6 +151,8 @@ impl Daemon {
             .context("Failed to register SIGTERM handler")?;
         flag::register(SIGINT, Arc::clone(&self.shutdown))
             .context("Failed to register SIGINT handler")?;
+        flag::register(SIGUSR1, Arc::clone(&self.wake_requested))
+            .context("Failed to register SIGUSR1 handler")?;
 
         let mut cryo_state =
             state::load_state(&self.state_path)?.context("No cryochamber state found")?;
@@ -202,15 +206,19 @@ impl Daemon {
             None
         };
 
-        // Spawn a thread that forwards shutdown signals to the event channel,
-        // so recv_timeout() unblocks immediately on SIGTERM/SIGINT.
+        // Spawn a thread that forwards signals to the event channel,
+        // so recv_timeout() unblocks immediately on SIGTERM/SIGINT/SIGUSR1.
         let shutdown_flag = Arc::clone(&self.shutdown);
-        let shutdown_tx = tx;
+        let wake_flag = Arc::clone(&self.wake_requested);
+        let signal_tx = tx;
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(250));
             if shutdown_flag.load(Ordering::Relaxed) {
-                let _ = shutdown_tx.send(DaemonEvent::Shutdown);
+                let _ = signal_tx.send(DaemonEvent::Shutdown);
                 break;
+            }
+            if wake_flag.swap(false, Ordering::Relaxed) {
+                let _ = signal_tx.send(DaemonEvent::InboxChanged);
             }
         });
 

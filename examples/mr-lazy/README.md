@@ -6,7 +6,7 @@ Every time cryochamber wakes Mr. Lazy, he rolls a die — 25% chance he
 actually gets up. Otherwise, he delivers a dramatic, unique complaint
 and hits snooze for a few more minutes. Repeat until he finally rolls a 4.
 
-Demonstrates: repeated wake cycles, `make time` for scheduling, `cryo-agent note`
+Demonstrates: repeated wake cycles, `cryo-agent time` for scheduling, `cryo-agent note`
 for cross-session memory, probabilistic plan completion.
 
 ## Quick Start

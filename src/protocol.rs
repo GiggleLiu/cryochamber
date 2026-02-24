@@ -10,10 +10,6 @@ pub const PROTOCOL_CONTENT: &str = include_str!("../templates/protocol.md");
 /// Source: templates/plan.md
 pub const TEMPLATE_PLAN: &str = include_str!("../templates/plan.md");
 
-/// Makefile written to the agent's working directory.
-/// Source: templates/Makefile
-pub const MAKEFILE_CONTENT: &str = include_str!("../templates/Makefile");
-
 /// Config template written by `cryo init`.
 /// Source: templates/cryo.toml
 pub const CONFIG_TEMPLATE: &str = include_str!("../templates/cryo.toml");
@@ -66,16 +62,6 @@ pub fn write_template_plan(dir: &Path) -> Result<bool> {
         return Ok(false);
     }
     std::fs::write(path, TEMPLATE_PLAN)?;
-    Ok(true)
-}
-
-/// Write the agent Makefile if none exists. Returns true if written.
-pub fn write_makefile(dir: &Path) -> Result<bool> {
-    let path = dir.join("Makefile");
-    if path.exists() {
-        return Ok(false);
-    }
-    std::fs::write(path, MAKEFILE_CONTENT)?;
     Ok(true)
 }
 

@@ -6,7 +6,8 @@ fn test_protocol_content_contains_commands() {
     let content = protocol::PROTOCOL_CONTENT;
     assert!(content.contains("cryo-agent hibernate"));
     assert!(content.contains("cryo-agent note"));
-    assert!(content.contains("cryo-agent reply"));
+    assert!(content.contains("cryo-agent send"));
+    assert!(content.contains("cryo-agent receive"));
     assert!(content.contains("cryo-agent alert"));
     // Phantom commands removed (code review #3)
     assert!(!content.contains("cryo-agent status"));

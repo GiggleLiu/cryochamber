@@ -3,6 +3,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
+use cryochamber::message;
 use cryochamber::socket::{self, Request};
 
 #[derive(Parser)]
@@ -34,7 +35,12 @@ enum Commands {
         /// Note text
         text: String,
     },
-    /// Reply to human (writes to outbox)
+    /// Send message to human (writes to outbox)
+    Send {
+        /// Message text
+        text: String,
+    },
+    /// Reply to human (alias for send, writes to outbox)
     Reply {
         /// Reply message text
         text: String,
@@ -47,6 +53,13 @@ enum Commands {
         target: String,
         /// Alert message
         message: String,
+    },
+    /// Read inbox messages from human
+    Receive,
+    /// Print current time or compute a future time
+    Time {
+        /// Offset from now (e.g. "+30 minutes", "+2 hours", "+1 day")
+        offset: Option<String>,
     },
 }
 
@@ -86,7 +99,9 @@ fn main() -> Result<()> {
             )
         }
         Commands::Note { text } => send(&dir, &Request::Note { text }),
-        Commands::Reply { text } => send(&dir, &Request::Reply { text }),
+        Commands::Send { text } | Commands::Reply { text } => {
+            send(&dir, &Request::Reply { text })
+        }
         Commands::Alert {
             action,
             target,
@@ -99,5 +114,60 @@ fn main() -> Result<()> {
                 message,
             },
         ),
+        Commands::Receive => cmd_receive(&dir),
+        Commands::Time { offset } => cmd_time(offset.as_deref()),
     }
+}
+
+fn cmd_receive(dir: &Path) -> Result<()> {
+    let messages = message::read_inbox(dir)?;
+    if messages.is_empty() {
+        println!("No messages.");
+        return Ok(());
+    }
+    for (filename, msg) in &messages {
+        println!("--- {} ---", filename);
+        if !msg.from.is_empty() {
+            println!("From: {}", msg.from);
+        }
+        if !msg.subject.is_empty() {
+            println!("Subject: {}", msg.subject);
+        }
+        println!();
+        println!("{}", msg.body);
+        println!();
+    }
+    Ok(())
+}
+
+fn cmd_time(offset: Option<&str>) -> Result<()> {
+    use chrono::Local;
+
+    let now = Local::now();
+
+    let target = match offset {
+        None => now,
+        Some(s) => {
+            let s = s.trim().trim_start_matches('+');
+            let parts: Vec<&str> = s.splitn(2, ' ').collect();
+            if parts.len() != 2 {
+                anyhow::bail!("Invalid offset format. Use e.g. \"+30 minutes\", \"+2 hours\", \"+1 day\"");
+            }
+            let n: i64 = parts[0]
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid number: {}", parts[0]))?;
+            let unit = parts[1].trim_end_matches('s'); // "minutes" -> "minute"
+            let duration = match unit {
+                "minute" | "min" => chrono::Duration::minutes(n),
+                "hour" | "hr" => chrono::Duration::hours(n),
+                "day" => chrono::Duration::days(n),
+                "week" => chrono::Duration::weeks(n),
+                _ => anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks."),
+            };
+            now + duration
+        }
+    };
+
+    println!("{}", target.format("%Y-%m-%dT%H:%M"));
+    Ok(())
 }

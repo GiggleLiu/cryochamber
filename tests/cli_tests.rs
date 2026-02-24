@@ -523,6 +523,62 @@ fn test_daemon_cancel() {
 }
 
 #[test]
+fn test_wake_signal_wakes_daemon() {
+    // Daemon with watch_inbox=false should still respond to `cryo wake` (SIGUSR1).
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+    init_dir(dir.path());
+
+    // Disable watch_inbox
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = config.replace("watch_inbox = true", "watch_inbox = false");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    // Start daemon with a mock agent that hibernates with a far-future wake (not --complete)
+    let agent = &mock_agent_cmd();
+    cmd()
+        .args(["start", "--agent", agent])
+        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("MOCK_AGENT_COMPLETE", "false")
+        .env("MOCK_AGENT_WAKE", "2099-12-31T23:59")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for first session to complete and daemon to sleep
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Verify daemon is alive
+    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
+    assert!(state_content.contains("\"pid\""));
+
+    // `cryo wake` should succeed and signal the daemon
+    cmd()
+        .arg("wake")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wake signal sent"));
+
+    // Wait for daemon to wake and run the new session
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Verify a second session was logged (daemon woke and ran)
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("CRYO SESSION 2"),
+        "Expected session 2 after wake signal, got:\n{log}"
+    );
+
+    // Cleanup
+    cmd()
+        .arg("cancel")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_daemon_config_watch_inbox() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();

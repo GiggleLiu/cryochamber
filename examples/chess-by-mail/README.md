@@ -20,7 +20,7 @@ A cron job can't do this because:
 
 ```bash
 cd examples/chess-by-mail
-cryo init && cryo start && cryo watch
+cryo init && cryo start && cryo watch &
 ```
 
 ## Playing
@@ -28,19 +28,10 @@ cryo init && cryo start && cryo watch
 ```bash
 # Send a move (algebraic or coordinate notation)
 cryo send "e2e4"
-cryo send "Nf3"
+cryo send "Nf3" --wake  # wake the AI immediately
 
 # Check the board (shows last session output)
 cryo status
-
-# Read AI's messages
-cryo receive
-
-# If the AI is sleeping, send your move (inbox watching wakes the daemon)
-cryo send "e2e4"
-
-# Resign
-cryo send "resign"
 ```
 
 ## How It Works
