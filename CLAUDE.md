@@ -74,7 +74,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 ### Files Created by `cryo init`
 
-- `cryo.toml` — project configuration (agent, plan_path, max_retries, max_session_duration, watch_inbox)
+- `cryo.toml` — project configuration (agent, max_retries, max_session_duration, watch_inbox)
 - `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `plan.md` — template plan file
 - `Makefile` — agent utility targets (`make time`, etc.)
@@ -83,7 +83,6 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 - `timer.json` — runtime state only (session number, PID lock, retry count, CLI overrides)
 - `cryo.log` — append-only session log
-- `plan.md` — copy of the plan file in the working directory
 - `messages/inbox/` — incoming messages for the agent
 - `messages/outbox/` — outgoing messages (fallback alerts)
 - `messages/inbox/archive/` — processed inbox messages

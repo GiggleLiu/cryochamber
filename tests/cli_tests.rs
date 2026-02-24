@@ -189,6 +189,47 @@ fn test_cancel_no_instance() {
         .stderr(predicate::str::contains("No cryochamber project"));
 }
 
+#[test]
+fn test_cancel_stale_state() {
+    let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
+    // Write stale state with a dead PID (pid=1 is init, won't match our process)
+    let state = serde_json::json!({
+        "session_number": 2,
+        "pid": 999999,
+        "retry_count": 0
+    });
+    fs::write(
+        dir.path().join("timer.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    // Cancel should succeed (clean up stale state) instead of failing
+    cmd()
+        .arg("cancel")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Removed timer.json"));
+
+    // timer.json should be gone
+    assert!(!dir.path().join("timer.json").exists());
+}
+
+#[test]
+fn test_cancel_no_state_file() {
+    let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
+    // No timer.json at all
+    cmd()
+        .arg("cancel")
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Nothing to cancel"));
+}
+
 // --- Start ---
 
 #[test]

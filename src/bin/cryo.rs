@@ -68,7 +68,7 @@ enum Commands {
     },
     /// Read messages from the agent's outbox
     Receive,
-    /// Wake the daemon immediately with an optional message
+    /// Send a wake message to the daemon's inbox
     Wake {
         /// Message to include in the agent's prompt
         message: Option<String>,
@@ -277,7 +277,6 @@ fn cmd_status() -> Result<()> {
             println!("No daemon has been started yet. Run `cryo start` to begin.");
             println!("\nConfig (cryo.toml):");
             println!("  Agent: {}", cfg.agent);
-            println!("  Plan: {}", cfg.plan_path);
         }
         Some(st) => {
             // Runtime state first
@@ -368,18 +367,25 @@ fn cmd_ps(kill_all: bool) -> Result<()> {
 
 fn cmd_cancel() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let cryo_state = require_live_daemon(&dir)?;
-
-    // Kill daemon process
-    if let Some(pid) = cryo_state.pid {
-        cryochamber::process::terminate_pid(pid)?;
-        println!("Killed daemon (PID {pid}).");
-    }
+    require_valid_project(&dir)?;
 
     let sp = state::state_path(&dir);
-    if sp.exists() {
-        std::fs::remove_file(sp)?;
-        println!("Removed timer.json.");
+    match state::load_state(&sp)? {
+        None => {
+            anyhow::bail!("No daemon state found. Nothing to cancel.");
+        }
+        Some(cryo_state) => {
+            // Kill daemon process if still alive
+            if state::is_locked(&cryo_state) {
+                if let Some(pid) = cryo_state.pid {
+                    cryochamber::process::terminate_pid(pid)?;
+                    println!("Killed daemon (PID {pid}).");
+                }
+            }
+            // Always clean up state file
+            std::fs::remove_file(sp)?;
+            println!("Removed timer.json.");
+        }
     }
 
     println!("Cryochamber cancelled.");
@@ -398,14 +404,33 @@ fn cmd_log() -> Result<()> {
     Ok(())
 }
 
+fn build_inbox_message(from: &str, subject: &str, body: &str) -> message::Message {
+    message::Message {
+        from: from.to_string(),
+        subject: subject.to_string(),
+        body: body.to_string(),
+        timestamp: chrono::Local::now().naive_local(),
+        metadata: std::collections::BTreeMap::new(),
+    }
+}
+
 fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
 
+    // Warn if no daemon is running
+    let daemon_alive =
+        state::load_state(&state::state_path(&dir))?.is_some_and(|st| state::is_locked(&st));
+    if !daemon_alive {
+        eprintln!(
+            "Warning: no daemon is running. Message will be queued for the next `cryo start`."
+        );
+    }
+
     // Warn if watch_inbox is disabled in config
     let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
-    if !cfg.watch_inbox {
+    if daemon_alive && !cfg.watch_inbox {
         eprintln!(
             "Warning: inbox watching is disabled in cryo.toml. \
              Message will be delivered at the next scheduled wake, not immediately."
@@ -413,16 +438,14 @@ fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
     }
 
     let body = wake_message.unwrap_or("Manual wake requested by operator.");
-    let msg = message::Message {
-        from: "operator".to_string(),
-        subject: "Wake".to_string(),
-        body: body.to_string(),
-        timestamp: chrono::Local::now().naive_local(),
-        metadata: std::collections::BTreeMap::new(),
-    };
-
+    let msg = build_inbox_message("operator", "Wake", body);
     message::write_message(&dir, "inbox", &msg)?;
-    println!("Wake message sent. Daemon will wake on next inbox check.");
+
+    if daemon_alive {
+        println!("Wake message sent. Daemon will wake on next inbox check.");
+    } else {
+        println!("Message queued in inbox.");
+    }
     Ok(())
 }
 
@@ -431,18 +454,8 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
     require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
 
-    let subject = subject
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| body.chars().take(50).collect::<String>());
-
-    let msg = message::Message {
-        from: from.to_string(),
-        subject,
-        body: body.to_string(),
-        timestamp: chrono::Local::now().naive_local(),
-        metadata: std::collections::BTreeMap::new(),
-    };
-
+    let subject = subject.unwrap_or_else(|| &body[..body.len().min(50)]);
+    let msg = build_inbox_message(from, subject, body);
     let path = message::write_message(&dir, "inbox", &msg)?;
     println!(
         "Message sent to {}",

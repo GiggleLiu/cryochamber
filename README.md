@@ -20,11 +20,12 @@ Our goal is full automation of human activities. Many real world tasks span hour
 cargo install --path .
 
 # Initialize a working directory
-cryo init                      # for opencode (writes AGENTS.md)
-cryo init --agent claude       # for Claude Code (writes CLAUDE.md)
+cryo init                      # for opencode (writes AGENTS.md + cryo.toml)
+cryo init --agent claude       # for Claude Code (writes CLAUDE.md + cryo.toml)
 
-# Edit the generated plan with your tasks
-vim plan.md
+# Edit the generated plan and config
+vim plan.md                    # your task plan
+vim cryo.toml                  # agent, retries, timeout, inbox settings
 
 # Start the daemon and watch output
 cryo start && cryo watch
@@ -55,7 +56,7 @@ Session events are logged to `cryo.log`. Monitor progress with `cryo watch`. Che
 ## How It Works
 
 ```
-cryo start plan.md → spawn daemon → run agent → agent calls cryo-agent hibernate → sleep
+cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate → sleep
                                                                                       ↓
                     inbox message → (immediate wake) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
                                                                                       ↓
@@ -69,6 +70,20 @@ cryo start plan.md → spawn daemon → run agent → agent calls cryo-agent hib
 **The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates with the daemon via `cryo-agent` CLI commands over a Unix domain socket.
 
 **Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's event log as context. The agent uses `cryo-agent note` to leave memory for future sessions.
+
+## Configuration
+
+`cryo init` creates a `cryo.toml` file with project settings:
+
+```toml
+# cryo.toml — Cryochamber project configuration
+agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
+max_retries = 1           # Max retry attempts on agent failure (1 = no retry)
+max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
+watch_inbox = true        # Watch inbox for reactive wake
+```
+
+CLI flags to `cryo start` (e.g. `--agent claude`) temporarily override `cryo.toml` values for that run.
 
 ## Example: Mr. Lazy
 
@@ -109,11 +124,10 @@ The daemon ran two sessions, sleeping 2 minutes between them, then stopped when 
 ### Operator (`cryo`)
 
 ```bash
-cryo init [--agent <cmd>]           # Initialize working directory
-cryo start [<plan|dir>] [--agent <cmd>] # Start a plan (default: ./plan.md)
-cryo start --max-retries 3          # Retry agent spawn failures (default: 1)
-cryo start --max-session-duration 3600  # Session timeout in seconds (default: no timeout)
-cryo start --no-watch               # Disable inbox file watching
+cryo init [--agent <cmd>]           # Initialize working directory (writes cryo.toml)
+cryo start [--agent <cmd>]          # Start the daemon (reads cryo.toml for config)
+cryo start --max-retries 3          # Override max retries from cryo.toml
+cryo start --max-session-duration 3600  # Override session timeout from cryo.toml
 cryo status                         # Show current state
 cryo ps [--kill-all]                # List (or kill) all running daemons
 cryo restart                        # Kill running daemon and restart
@@ -122,7 +136,7 @@ cryo watch [--all]                  # Watch session log in real-time
 cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
-cryo wake ["message"]               # Wake the daemon immediately with an optional message
+cryo wake ["message"]               # Send a wake message to the daemon's inbox
 ```
 
 ### Agent IPC (`cryo-agent`)
@@ -153,7 +167,7 @@ The daemon process is suspended along with everything else. When your machine wa
 
 **How do I manually wake a sleeping daemon?**
 
-Use `cryo wake` to send an immediate wake signal. You can include a message: `cryo wake "Please check the latest PR"`. This writes to the inbox, which triggers the daemon's file watcher. You can also use `cryo send` for the same effect.
+Use `cryo wake` to send a message to the daemon's inbox. You can include a message: `cryo wake "Please check the latest PR"`. If inbox watching is enabled (the default), the daemon wakes immediately. You can also use `cryo send` for the same effect. If no daemon is running, the message is queued for the next `cryo start`.
 
 ## License
 

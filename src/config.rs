@@ -11,10 +11,6 @@ pub struct CryoConfig {
     #[serde(default = "default_agent")]
     pub agent: String,
 
-    /// Path to the plan file
-    #[serde(default = "default_plan_path")]
-    pub plan_path: String,
-
     /// Max retry attempts on agent failure (1 = no retry)
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
@@ -32,10 +28,6 @@ fn default_agent() -> String {
     "opencode".to_string()
 }
 
-fn default_plan_path() -> String {
-    "plan.md".to_string()
-}
-
 fn default_max_retries() -> u32 {
     1
 }
@@ -48,7 +40,6 @@ impl Default for CryoConfig {
     fn default() -> Self {
         Self {
             agent: default_agent(),
-            plan_path: default_plan_path(),
             max_retries: default_max_retries(),
             max_session_duration: 0,
             watch_inbox: default_watch_inbox(),

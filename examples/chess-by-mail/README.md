@@ -12,6 +12,10 @@ A cron job can't do this because:
 - Board state and strategy notes persist across arbitrarily long gaps
 - Multiple moves can accumulate; the AI processes them all on wake
 
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) (the chess engine script uses uv for dependency management)
+
 ## Quick Start
 
 ```bash
@@ -38,6 +42,10 @@ cryo send "e2e4"
 # Resign
 cryo send "resign"
 ```
+
+## How It Works
+
+The AI uses `chess_engine.py` (powered by `python-chess` via uv) for all chess operations. After each move, the AI recommends 3 candidate moves for you with tactical explanations.
 
 ## Configuration
 

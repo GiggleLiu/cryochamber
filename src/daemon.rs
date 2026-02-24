@@ -112,6 +112,16 @@ pub enum SessionLoopOutcome {
     ValidationFailed,
 }
 
+/// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
+fn terminate_child(child: &mut std::process::Child, pid: u32) {
+    send_signal(pid, libc::SIGTERM);
+    std::thread::sleep(Duration::from_secs(2));
+    if child.try_wait().ok().flatten().is_none() {
+        send_signal(pid, libc::SIGKILL);
+    }
+    let _ = child.wait(); // reap to prevent zombie
+}
+
 /// The persistent daemon process.
 pub struct Daemon {
     dir: PathBuf,
@@ -244,7 +254,7 @@ impl Daemon {
                         None
                     }
                 });
-                next_wake = None;
+                let saved_wake = next_wake.take();
 
                 cryo_state.session_number += 1;
 
@@ -280,6 +290,8 @@ impl Daemon {
                     Err(e) => {
                         // Roll back session number — no session was logged
                         cryo_state.session_number -= 1;
+                        // Restore prior wake schedule so we don't fall back to hourly polling
+                        next_wake = saved_wake;
                         eprintln!("Daemon: session failed: {e}");
                         let backoff = retry.next_backoff();
                         retry.record_failure();
@@ -428,12 +440,7 @@ impl Daemon {
         loop {
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
-                send_signal(child_pid, libc::SIGTERM);
-                std::thread::sleep(Duration::from_secs(2));
-                if child.try_wait()?.is_none() {
-                    send_signal(child_pid, libc::SIGKILL);
-                }
-                let _ = child.wait(); // reap to prevent zombie
+                terminate_child(&mut child, child_pid);
                 logger.finish("daemon shutdown — agent terminated")?;
                 return Ok(SessionLoopOutcome::ValidationFailed);
             }
@@ -442,12 +449,7 @@ impl Daemon {
             if let Some(d) = deadline {
                 if std::time::Instant::now() >= d {
                     eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
-                    send_signal(child_pid, libc::SIGTERM);
-                    std::thread::sleep(Duration::from_secs(2));
-                    if child.try_wait()?.is_none() {
-                        send_signal(child_pid, libc::SIGKILL);
-                    }
-                    let _ = child.wait(); // reap to prevent zombie
+                    terminate_child(&mut child, child_pid);
                     logger.finish("session timeout — agent killed")?;
                     return Ok(SessionLoopOutcome::ValidationFailed);
                 }
