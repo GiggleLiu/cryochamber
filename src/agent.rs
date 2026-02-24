@@ -1,23 +1,9 @@
 // src/agent.rs
 use anyhow::{Context, Result};
 use chrono::Local;
-use std::io::BufRead;
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::process::Command;
 
-use crate::log::SessionWriter;
 use crate::message::Message;
-
-/// Send a signal to a process, logging a warning on failure.
-fn send_signal(pid: u32, signal: i32) {
-    let ret = unsafe { libc::kill(pid as i32, signal) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
-    }
-}
 
 /// Supported agent types.
 enum AgentKind {
@@ -84,12 +70,6 @@ pub struct AgentConfig {
     pub session_number: u32,
     pub task: String,
     pub inbox_messages: Vec<Message>,
-}
-
-pub struct AgentResult {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
 }
 
 pub fn build_prompt(config: &AgentConfig) -> String {
@@ -171,173 +151,4 @@ pub fn spawn_agent(agent_command: &str, prompt: &str) -> anyhow::Result<std::pro
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to spawn agent: {e}"))?;
     Ok(child)
-}
-
-pub fn run_agent(agent_command: &str, prompt: &str) -> Result<AgentResult> {
-    run_agent_streaming(agent_command, prompt, None)
-}
-
-/// Run the agent, streaming stdout lines to a `SessionWriter` in real-time.
-/// If `writer` is None, output is only captured (no streaming to log).
-pub fn run_agent_streaming(
-    agent_command: &str,
-    prompt: &str,
-    mut writer: Option<&mut SessionWriter>,
-) -> Result<AgentResult> {
-    let mut cmd = build_command(agent_command, prompt)?;
-
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context(format!("Failed to spawn agent: {agent_command}"))?;
-
-    let child_stdout = child.stdout.take().unwrap();
-    let child_stderr = child.stderr.take().unwrap();
-
-    // Read stderr in a background thread so it doesn't block stdout reading.
-    let stderr_handle = std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(child_stderr);
-        let mut buf = String::new();
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    buf.push_str(&l);
-                    buf.push('\n');
-                }
-                Err(_) => break,
-            }
-        }
-        buf
-    });
-
-    // Stream stdout line-by-line, writing to log in real-time.
-    let mut stdout_buf = String::new();
-    let reader = std::io::BufReader::new(child_stdout);
-    for line in reader.lines() {
-        match line {
-            Ok(l) => {
-                if let Some(ref mut w) = writer {
-                    if let Err(e) = w.write_line(&l) {
-                        eprintln!("Warning: failed to write to session log: {e}");
-                    }
-                }
-                stdout_buf.push_str(&l);
-                stdout_buf.push('\n');
-            }
-            Err(_) => break,
-        }
-    }
-
-    let status = child.wait().context("Failed to wait for agent process")?;
-    let stderr_buf = stderr_handle.join().unwrap_or_default();
-
-    Ok(AgentResult {
-        stdout: stdout_buf,
-        stderr: stderr_buf,
-        exit_code: status.code().unwrap_or(-1),
-    })
-}
-
-/// Run the agent with a timeout watchdog. Sends SIGTERM then SIGKILL if exceeded.
-///
-/// `shutdown` is an optional external signal (e.g. from daemon SIGINT handler).
-/// When set, the agent is terminated early.
-pub fn run_agent_with_timeout(
-    agent_command: &str,
-    prompt: &str,
-    writer: &mut SessionWriter,
-    timeout_secs: u64,
-    shutdown: Option<Arc<AtomicBool>>,
-) -> Result<AgentResult> {
-    let mut child = build_command(agent_command, prompt)?
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context(format!("Failed to spawn agent: {agent_command}"))?;
-
-    let child_pid = child.id();
-    let child_done = Arc::new(AtomicBool::new(false));
-    let child_done_clone = Arc::clone(&child_done);
-
-    // Spawn watchdog thread: enforces timeout and/or external shutdown signal.
-    // timeout_secs == 0 means no timeout, but shutdown is still monitored.
-    let has_timeout = timeout_secs > 0;
-    let timeout_handle = std::thread::spawn(move || {
-        let deadline =
-            has_timeout.then(|| std::time::Instant::now() + Duration::from_secs(timeout_secs));
-        loop {
-            if child_done_clone.load(Ordering::Relaxed) {
-                return false; // child exited normally
-            }
-            if let Some(d) = deadline {
-                if std::time::Instant::now() >= d {
-                    eprintln!("Session timeout ({timeout_secs}s) — killing agent");
-                    send_signal(child_pid, libc::SIGTERM);
-                    std::thread::sleep(Duration::from_secs(5));
-                    send_signal(child_pid, libc::SIGKILL);
-                    return true; // timed out
-                }
-            }
-            if let Some(ref s) = shutdown {
-                if s.load(Ordering::Relaxed) {
-                    send_signal(child_pid, libc::SIGTERM);
-                    std::thread::sleep(Duration::from_secs(5));
-                    if !child_done_clone.load(Ordering::Relaxed) {
-                        send_signal(child_pid, libc::SIGKILL);
-                    }
-                    return false;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-    });
-
-    let child_stdout = child.stdout.take().unwrap();
-    let child_stderr = child.stderr.take().unwrap();
-
-    let stderr_handle = std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(child_stderr);
-        let mut buf = String::new();
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    buf.push_str(&l);
-                    buf.push('\n');
-                }
-                Err(_) => break,
-            }
-        }
-        buf
-    });
-
-    let mut stdout_buf = String::new();
-    let reader = std::io::BufReader::new(child_stdout);
-    for line in reader.lines() {
-        match line {
-            Ok(l) => {
-                if let Err(e) = writer.write_line(&l) {
-                    eprintln!("Warning: failed to write to session log: {e}");
-                }
-                stdout_buf.push_str(&l);
-                stdout_buf.push('\n');
-            }
-            Err(_) => break,
-        }
-    }
-
-    let status = child.wait().context("Failed to wait for agent process")?;
-    child_done.store(true, Ordering::Relaxed);
-    let stderr_buf = stderr_handle.join().unwrap_or_default();
-    let timed_out = timeout_handle.join().unwrap_or(false);
-
-    if timed_out {
-        anyhow::bail!("Agent killed after {timeout_secs}s timeout");
-    }
-
-    Ok(AgentResult {
-        stdout: stdout_buf,
-        stderr: stderr_buf,
-        exit_code: status.code().unwrap_or(-1),
-    })
 }

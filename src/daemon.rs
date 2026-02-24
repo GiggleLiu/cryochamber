@@ -19,7 +19,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::fallback::FallbackAction;
-use crate::session;
 use crate::state::{self, CryoState};
 
 /// Send a signal to a process, logging a warning on failure.
@@ -571,8 +570,9 @@ impl Daemon {
     }
 
     fn get_task(&self) -> Option<String> {
-        let latest = crate::log::read_latest_session(&self.log_path).ok()??;
-        session::derive_task_from_output(&latest)
+        // The agent manages task continuity via the plan file.
+        // We no longer derive tasks from old stdout markers.
+        None
     }
 
     /// Sleep for `duration`, but return early if shutdown is signaled.

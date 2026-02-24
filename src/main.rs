@@ -4,10 +4,9 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use cryochamber::agent;
-use cryochamber::log;
 use cryochamber::message;
 use cryochamber::protocol;
-use cryochamber::session::{self, SessionOutcome};
+use cryochamber::session;
 use cryochamber::state::{self, CryoState};
 
 #[derive(Parser)]
@@ -54,8 +53,6 @@ enum Commands {
     Restart,
     /// Stop the daemon and remove state
     Cancel,
-    /// Run pre-hibernate validation checks
-    Validate,
     /// Print the session log
     Log,
     /// Watch the session log in real-time
@@ -82,14 +79,6 @@ enum Commands {
         action: String,
         target: String,
         message: String,
-    },
-    /// Force a single agent session (no scheduling, for testing)
-    ForceWakeup {
-        /// Path to plan file or directory (default: current directory)
-        plan: Option<PathBuf>,
-        /// Agent command to use (default: opencode)
-        #[arg(long, default_value = "opencode")]
-        agent: String,
     },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
@@ -243,7 +232,6 @@ fn main() -> Result<()> {
         Commands::Ps { kill_all } => cmd_ps(kill_all),
         Commands::Restart => cmd_restart(),
         Commands::Cancel => cmd_cancel(),
-        Commands::Validate => cmd_validate(),
         Commands::Log => cmd_log(),
         Commands::Watch { all } => cmd_watch(all),
         Commands::Send {
@@ -251,7 +239,6 @@ fn main() -> Result<()> {
             from,
             subject,
         } => cmd_send(&body, &from, subject.as_deref()),
-        Commands::ForceWakeup { plan, agent } => cmd_force_wakeup(plan.as_deref(), &agent),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
@@ -465,86 +452,6 @@ fn cmd_start(
     Ok(())
 }
 
-fn cmd_force_wakeup(plan_path: Option<&Path>, agent_cmd: &str) -> Result<()> {
-    // Validate agent command
-    validate_agent_command(agent_cmd)?;
-
-    // Resolve plan path (same logic as cmd_start)
-    let plan_path = match plan_path {
-        None => PathBuf::from("plan.md"),
-        Some(p) if p.is_dir() => {
-            std::env::set_current_dir(p)
-                .with_context(|| format!("Failed to cd into {}", p.display()))?;
-            PathBuf::from("plan.md")
-        }
-        Some(p) => p.to_path_buf(),
-    };
-
-    let dir = work_dir()?;
-
-    // Auto-init: protocol file + Makefile + message dirs
-    let filename = protocol::protocol_filename(agent_cmd);
-    if protocol::write_protocol_file(&dir, filename)? {
-        println!("Wrote {filename} (cryochamber protocol)");
-    }
-    protocol::write_makefile(&dir)?;
-    message::ensure_dirs(&dir)?;
-
-    // Copy plan if needed
-    let plan_dest = dir.join("plan.md");
-    if session::should_copy_plan(&plan_path, &plan_dest) {
-        std::fs::copy(&plan_path, &plan_dest).context("Failed to copy plan file")?;
-    }
-
-    if !plan_dest.exists() {
-        anyhow::bail!(
-            "plan.md not found. Provide a plan file or run from a directory with plan.md."
-        );
-    }
-
-    // Determine session number from existing log
-    let log = log_path(&dir);
-    let session_number = if log.exists() {
-        log::session_count(&log)? + 1
-    } else {
-        1
-    };
-
-    let task = get_task_from_log(&dir)
-        .unwrap_or_else(|| "Execute the first task from the plan".to_string());
-
-    println!("Session #{session_number}: Running agent ({agent_cmd})...");
-
-    let result = session::execute_session(&dir, session_number, &task, &log, |prompt, writer| {
-        agent::run_agent_streaming(agent_cmd, prompt, Some(writer))
-    })?;
-
-    for warning in &result.warnings {
-        eprintln!("Warning: {warning}");
-    }
-
-    match &result.outcome {
-        SessionOutcome::PlanComplete => println!("Plan complete!"),
-        SessionOutcome::Hibernate { wake_time, .. } => {
-            println!("Next wake: {}", wake_time.format("%Y-%m-%d %H:%M"));
-        }
-        SessionOutcome::ValidationFailed { errors, .. } => {
-            for e in errors {
-                eprintln!("Error: {e}");
-            }
-            anyhow::bail!("Validation failed");
-        }
-    }
-
-    Ok(())
-}
-
-fn get_task_from_log(dir: &Path) -> Option<String> {
-    let log = log_path(dir);
-    let latest = cryochamber::log::read_latest_session(&log).ok()??;
-    session::derive_task_from_output(&latest)
-}
-
 fn cmd_daemon() -> Result<()> {
     let dir = work_dir()?;
     let daemon = cryochamber::daemon::Daemon::new(dir);
@@ -651,35 +558,6 @@ fn cmd_cancel() -> Result<()> {
     }
 
     println!("Cryochamber cancelled.");
-    Ok(())
-}
-
-fn cmd_validate() -> Result<()> {
-    let dir = work_dir()?;
-    let log = log_path(&dir);
-
-    let latest =
-        cryochamber::log::read_latest_session(&log)?.context("No sessions found in log.")?;
-    let markers = cryochamber::marker::parse_markers(&latest)?;
-    let result = cryochamber::validate::validate_markers(&markers);
-
-    if result.plan_complete {
-        println!("Plan is complete. No validation needed.");
-        return Ok(());
-    }
-
-    for error in &result.errors {
-        println!("ERROR: {error}");
-    }
-    for warning in &result.warnings {
-        println!("WARN:  {warning}");
-    }
-
-    if result.can_hibernate {
-        println!("\nAll checks passed. Ready to hibernate.");
-    } else {
-        println!("\nValidation FAILED. Cannot hibernate.");
-    }
     Ok(())
 }
 
@@ -901,8 +779,6 @@ fn cmd_gh_push() -> Result<()> {
         return Ok(());
     };
 
-    let markers = cryochamber::marker::parse_markers(&session_output)?;
-
     // Read session number from state if available
     let session_num = state::load_state(&state_path(&dir))?
         .map(|s| s.session_number)
@@ -914,19 +790,14 @@ fn cmd_gh_push() -> Result<()> {
         return Ok(());
     }
 
-    let auto_summary = session::format_session_summary(session_num, &markers);
+    // Post the raw event log session text (already human-readable)
+    let comment = format!("## Session {session_num}\n\n```\n{session_output}\n```");
 
     println!(
         "Posting session summary to Discussion #{}...",
         sync_state.discussion_number
     );
-    cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &auto_summary)?;
-
-    // Post each CRYO:REPLY marker as a separate comment
-    for reply in &markers.replies {
-        println!("Posting reply...");
-        cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, reply)?;
-    }
+    cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &comment)?;
 
     // Record that this session was pushed
     sync_state.last_pushed_session = Some(session_num);

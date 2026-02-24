@@ -160,61 +160,6 @@ fn test_log_with_content() {
         .stdout(predicate::str::contains("CRYO SESSION"));
 }
 
-// --- Validate ---
-
-#[test]
-fn test_validate_no_log() {
-    let dir = tempfile::tempdir().unwrap();
-    cmd()
-        .arg("validate")
-        .current_dir(dir.path())
-        .assert()
-        .failure();
-}
-
-#[test]
-fn test_validate_plan_complete() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_content = "--- CRYO SESSION 2026-02-23T10:00:00 ---\nSession: 1\nTask: test\n\n[CRYO:EXIT 0] All done\n--- CRYO END ---\n";
-    fs::write(dir.path().join("cryo.log"), log_content).unwrap();
-
-    cmd()
-        .arg("validate")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Plan is complete"));
-}
-
-#[test]
-fn test_validate_can_hibernate() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_content = "--- CRYO SESSION 2026-02-23T10:00:00 ---\nSession: 1\nTask: test\n\n[CRYO:EXIT 0] Partial\n[CRYO:WAKE 2099-12-31T23:59]\n--- CRYO END ---\n";
-    fs::write(dir.path().join("cryo.log"), log_content).unwrap();
-
-    cmd()
-        .arg("validate")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("All checks passed"));
-}
-
-#[test]
-fn test_validate_missing_exit_marker() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_content = "--- CRYO SESSION 2026-02-23T10:00:00 ---\nSession: 1\nTask: test\n\nNo markers here\n--- CRYO END ---\n";
-    fs::write(dir.path().join("cryo.log"), log_content).unwrap();
-
-    cmd()
-        .arg("validate")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("ERROR"))
-        .stdout(predicate::str::contains("Validation FAILED"));
-}
-
 // --- Cancel ---
 
 #[test]

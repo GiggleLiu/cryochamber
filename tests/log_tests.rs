@@ -1,52 +1,36 @@
 // tests/log_tests.rs
-use cryochamber::log::{append_session, read_latest_session, Session};
+use cryochamber::log::{read_latest_session, session_count, EventLogger};
 use std::fs;
 
 #[test]
-fn test_append_session_to_new_file() {
+fn test_event_logger_creates_session() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    let session = Session {
-        number: 1,
-        task: "Review PRs".to_string(),
-        output: "Reviewed 3 PRs.\n[CRYO:EXIT 0] Done".to_string(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
-
-    append_session(&log_path, &session).unwrap();
+    let mut logger = EventLogger::begin(&log_path, 1, "Review PRs", "opencode run", &[]).unwrap();
+    logger.log_event("agent started (pid 1234)").unwrap();
+    logger
+        .log_event("hibernate: wake=2026-03-08T09:00, exit=0")
+        .unwrap();
+    logger.finish("agent exited (code 0)").unwrap();
 
     let contents = fs::read_to_string(&log_path).unwrap();
-    assert!(contents.contains("--- CRYO SESSION"));
-    assert!(contents.contains("Session: 1"));
-    assert!(contents.contains("Task: Review PRs"));
-    assert!(contents.contains("[CRYO:EXIT 0] Done"));
+    assert!(contents.contains("--- CRYO SESSION 1"));
+    assert!(contents.contains("task: Review PRs"));
+    assert!(contents.contains("agent: opencode run"));
     assert!(contents.contains("--- CRYO END ---"));
 }
 
 #[test]
-fn test_append_multiple_sessions() {
+fn test_multiple_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    let s1 = Session {
-        number: 1,
-        task: "Task one".to_string(),
-        output: "[CRYO:EXIT 0] Done".to_string(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
-    let s2 = Session {
-        number: 2,
-        task: "Task two".to_string(),
-        output: "[CRYO:EXIT 0] Also done".to_string(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
+    let logger1 = EventLogger::begin(&log_path, 1, "Task one", "agent", &[]).unwrap();
+    logger1.finish("done").unwrap();
 
-    append_session(&log_path, &s1).unwrap();
-    append_session(&log_path, &s2).unwrap();
+    let logger2 = EventLogger::begin(&log_path, 2, "Task two", "agent", &[]).unwrap();
+    logger2.finish("done").unwrap();
 
     let contents = fs::read_to_string(&log_path).unwrap();
     assert_eq!(contents.matches("--- CRYO SESSION").count(), 2);
@@ -58,27 +42,17 @@ fn test_read_latest_session() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    let s1 = Session {
-        number: 1,
-        task: "Task one".to_string(),
-        output: "[CRYO:EXIT 0] First".to_string(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
-    let s2 = Session {
-        number: 2,
-        task: "Task two".to_string(),
-        output: "[CRYO:EXIT 0] Second".to_string(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
+    let mut logger1 = EventLogger::begin(&log_path, 1, "Task one", "agent", &[]).unwrap();
+    logger1.log_event("first session work").unwrap();
+    logger1.finish("done").unwrap();
 
-    append_session(&log_path, &s1).unwrap();
-    append_session(&log_path, &s2).unwrap();
+    let mut logger2 = EventLogger::begin(&log_path, 2, "Task two", "agent", &[]).unwrap();
+    logger2.log_event("second session work").unwrap();
+    logger2.finish("done").unwrap();
 
     let latest = read_latest_session(&log_path).unwrap().unwrap();
-    assert!(latest.contains("Second"));
-    assert!(!latest.contains("First"));
+    assert!(latest.contains("second session work"));
+    assert!(!latest.contains("first session work"));
 }
 
 #[test]
@@ -105,84 +79,44 @@ fn test_session_count() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 0);
+    assert_eq!(session_count(&log_path).unwrap(), 0);
 
-    let s1 = Session {
-        number: 1,
-        task: "T".into(),
-        output: "O".into(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
-    append_session(&log_path, &s1).unwrap();
-    assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 1);
+    let logger1 = EventLogger::begin(&log_path, 1, "T", "agent", &[]).unwrap();
+    logger1.finish("done").unwrap();
+    assert_eq!(session_count(&log_path).unwrap(), 1);
 
-    let s2 = Session {
-        number: 2,
-        task: "T".into(),
-        output: "O".into(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
-    append_session(&log_path, &s2).unwrap();
-    assert_eq!(cryochamber::log::session_count(&log_path).unwrap(), 2);
+    let logger2 = EventLogger::begin(&log_path, 2, "T", "agent", &[]).unwrap();
+    logger2.finish("done").unwrap();
+    assert_eq!(session_count(&log_path).unwrap(), 2);
 }
 
 #[test]
-fn test_append_and_read_latest_with_markers() {
+fn test_event_logger_with_inbox_filenames() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    let session = Session {
-        number: 1,
-        task: "Review PRs".to_string(),
-        output: "Did work.\n[CRYO:EXIT 0] All done\n[CRYO:WAKE 2026-03-08T09:00]\n[CRYO:CMD opencode test]\n[CRYO:PLAN check status]".to_string(),
-        stderr: None,
-        inbox_filenames: vec![],
-    };
-
-    append_session(&log_path, &session).unwrap();
-    let latest = read_latest_session(&log_path).unwrap().unwrap();
-    assert!(latest.contains("[CRYO:EXIT 0]"));
-    assert!(latest.contains("[CRYO:WAKE 2026-03-08T09:00]"));
-    assert!(latest.contains("[CRYO:CMD opencode test]"));
-    assert!(latest.contains("[CRYO:PLAN check status]"));
-}
-
-#[test]
-fn test_session_with_stderr() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_path = dir.path().join("cryo.log");
-
-    let session = Session {
-        number: 1,
-        task: "Run agent".to_string(),
-        output: "[CRYO:EXIT 1] Partial".to_string(),
-        stderr: Some("Warning: rate limited\nError: timeout".to_string()),
-        inbox_filenames: vec![],
-    };
-    append_session(&log_path, &session).unwrap();
+    let logger = EventLogger::begin(
+        &log_path,
+        1,
+        "Review PRs",
+        "claude -p",
+        &["msg1.md".to_string(), "msg2.md".to_string()],
+    )
+    .unwrap();
+    logger.finish("done").unwrap();
 
     let contents = fs::read_to_string(&log_path).unwrap();
-    assert!(contents.contains("--- STDERR ---"));
-    assert!(contents.contains("Warning: rate limited"));
-    assert!(contents.contains("Error: timeout"));
+    assert!(contents.contains("inbox: 2 messages (msg1.md, msg2.md)"));
 }
 
 #[test]
-fn test_session_empty_stderr_not_logged() {
+fn test_event_logger_no_inbox() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    let session = Session {
-        number: 1,
-        task: "Run agent".to_string(),
-        output: "[CRYO:EXIT 0] Done".to_string(),
-        stderr: Some("  \n  ".to_string()),
-        inbox_filenames: vec![],
-    };
-    append_session(&log_path, &session).unwrap();
+    let logger = EventLogger::begin(&log_path, 1, "task", "agent", &[]).unwrap();
+    logger.finish("done").unwrap();
 
     let contents = fs::read_to_string(&log_path).unwrap();
-    assert!(!contents.contains("--- STDERR ---"));
+    assert!(contents.contains("inbox: 0 messages"));
 }

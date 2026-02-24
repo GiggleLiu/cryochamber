@@ -92,9 +92,8 @@ fn test_spawn_agent_fire_and_forget() {
 }
 
 #[test]
-fn test_run_agent_empty_command() {
-    use cryochamber::agent::run_agent;
-    let result = run_agent("", "test prompt");
+fn test_spawn_agent_empty_command() {
+    let result = cryochamber::agent::spawn_agent("", "test prompt");
     assert!(result.is_err());
     let err = result.err().unwrap().to_string();
     assert!(err.contains("empty"), "Expected 'empty' in error: {err}");
