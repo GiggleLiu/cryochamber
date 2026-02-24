@@ -212,14 +212,38 @@ impl Daemon {
                 break;
             }
 
-            // Check if a pending fallback deadline has passed
-            self.check_fallback(&mut pending_fallback);
-
             if run_now {
                 run_now = false;
+
+                // Detect delayed wake: if the scheduled wake time has long passed
+                // (e.g. computer was sleeping), notify the agent instead of failing.
+                let delayed_wake = next_wake.and_then(|wake| {
+                    let now = Local::now().naive_local();
+                    let delay = now - wake;
+                    if delay > chrono::Duration::minutes(5) {
+                        // Cancel premature fallback — the session is about to run
+                        pending_fallback = None;
+                        let delay_str = if delay.num_hours() > 0 {
+                            format!("{}h {}m", delay.num_hours(), delay.num_minutes() % 60)
+                        } else {
+                            format!("{}m", delay.num_minutes())
+                        };
+                        Some(format!(
+                            "DELAYED WAKE: This session was scheduled for {} but is running {} late \
+                             (the host machine was likely suspended or powered off). \
+                             Check whether time-sensitive tasks need adjustment.",
+                            wake.format("%Y-%m-%dT%H:%M"),
+                            delay_str,
+                        ))
+                    } else {
+                        None
+                    }
+                });
+                next_wake = None;
+
                 cryo_state.session_number += 1;
 
-                match self.run_one_session(&mut cryo_state, &server) {
+                match self.run_one_session(&mut cryo_state, &server, delayed_wake.as_deref()) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -282,6 +306,9 @@ impl Daemon {
                 }
             }
 
+            // Check fallback only when idle (not about to run a session)
+            self.check_fallback(&mut pending_fallback);
+
             // Wait for next event
             let timeout = match next_wake {
                 Some(wake) => {
@@ -302,7 +329,6 @@ impl Daemon {
                     if next_wake.is_some() {
                         eprintln!("Daemon: scheduled wake time reached");
                         run_now = true;
-                        next_wake = None;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -329,6 +355,7 @@ impl Daemon {
         &self,
         cryo_state: &mut CryoState,
         server: &crate::socket::SocketServer,
+        delayed_wake: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
         let agent_cmd = cryo_state
             .last_command
@@ -358,6 +385,7 @@ impl Daemon {
             session_number: cryo_state.session_number,
             task: task.clone(),
             inbox_messages,
+            delayed_wake: delayed_wake.map(|s| s.to_string()),
         };
         let prompt = crate::agent::build_prompt(&config);
 
@@ -369,6 +397,11 @@ impl Daemon {
             &agent_cmd,
             &inbox_filenames,
         )?;
+
+        // Log delayed wake notice
+        if let Some(notice) = delayed_wake {
+            logger.log_event(&format!("delayed wake: {notice}"))?;
+        }
 
         // Spawn agent (fire-and-forget, no stdout capture)
         let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt)?;
@@ -394,6 +427,10 @@ impl Daemon {
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 send_signal(child_pid, libc::SIGTERM);
+                std::thread::sleep(Duration::from_secs(2));
+                if child.try_wait()?.is_none() {
+                    send_signal(child_pid, libc::SIGKILL);
+                }
                 let _ = child.wait(); // reap to prevent zombie
                 logger.finish("daemon shutdown — agent terminated")?;
                 return Ok(SessionLoopOutcome::ValidationFailed);
@@ -405,7 +442,9 @@ impl Daemon {
                     eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
                     send_signal(child_pid, libc::SIGTERM);
                     std::thread::sleep(Duration::from_secs(2));
-                    send_signal(child_pid, libc::SIGKILL);
+                    if child.try_wait()?.is_none() {
+                        send_signal(child_pid, libc::SIGKILL);
+                    }
                     let _ = child.wait(); // reap to prevent zombie
                     logger.finish("session timeout — agent killed")?;
                     return Ok(SessionLoopOutcome::ValidationFailed);

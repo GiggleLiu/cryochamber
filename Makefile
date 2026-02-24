@@ -108,13 +108,21 @@ check-agent: build
 	echo "=== Agent Health Check ==="; \
 	echo "Agent: $(AGENT)"; \
 	echo ""; \
-	./target/debug/cryo force-wakeup "$$TMPDIR" --agent "$(AGENT)"; \
+	./target/debug/cryo start "$$TMPDIR" \
+		--agent "$(AGENT)" \
+		--max-session-duration $(CHECK_TIMEOUT) 2>&1; \
 	RC=$$?; \
+	if [ $$RC -ne 0 ]; then \
+		echo "FAIL: cryo start failed (exit code $$RC)"; \
+		rm -rf "$$TMPDIR"; \
+		exit 1; \
+	fi; \
 	echo ""; \
-	echo "=== Session Log ==="; \
+	echo "=== Session Log (Ctrl-C to stop) ==="; \
+	trap 'cd "'"$$TMPDIR"'" && '"$(CURDIR)"'/target/debug/cryo cancel 2>/dev/null; rm -rf "'"$$TMPDIR"'"; exit 0' INT TERM; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo watch --all; \
-	rm -rf "$$TMPDIR"; \
-	exit $$RC
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
+	rm -rf "$$TMPDIR"
 
 # Full round-trip test with mr-lazy example (daemon mode)
 # Runs until plan completes or Ctrl-C, then cleans up.
@@ -181,7 +189,7 @@ check-gh: build
 	TMPDIR=$$(mktemp -d /tmp/cryo-check-gh-XXXXXX); \
 	printf '# Health Check\n\nThis is an automated test.\n' > "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && \
-	$(CURDIR)/target/debug/cryo gh init --repo "$(REPO)" --title "[Cryo] Health Check $$(date +%Y%m%d-%H%M%S)"; \
+	$(CURDIR)/target/debug/cryo-gh init --repo "$(REPO)" --title "[Cryo] Health Check $$(date +%Y%m%d-%H%M%S)"; \
 	RC=$$?; \
 	if [ $$RC -ne 0 ]; then \
 		echo "   FAIL: could not create Discussion"; \
@@ -194,7 +202,7 @@ check-gh: build
 	mkdir -p "$$TMPDIR/messages/inbox"; \
 	printf '--- CRYO SESSION 1 ---\nSession: 1\nTask: health check\nHello from cryo health check.\n[CRYO:EXIT 0] Health check passed\n--- CRYO END ---\n' > "$$TMPDIR/cryo.log"; \
 	printf '{"plan_path":"plan.md","session_number":1,"last_command":null,"pid":null,"max_retries":1,"retry_count":0,"max_session_duration":300,"watch_inbox":false,"daemon_mode":false}' > "$$TMPDIR/timer.json"; \
-	$(CURDIR)/target/debug/cryo gh push; \
+	$(CURDIR)/target/debug/cryo-gh push; \
 	RC=$$?; \
 	if [ $$RC -ne 0 ]; then \
 		echo "   FAIL: could not post comment"; \

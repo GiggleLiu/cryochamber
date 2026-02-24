@@ -35,9 +35,8 @@ cryo status
 # Read AI's messages
 cryo receive
 
-# If the AI is sleeping, send your move then wake it
+# If the AI is sleeping, send your move (inbox watching wakes the daemon)
 cryo send "e2e4"
-cryo wake
 
 # Resign
 cryo send "resign"

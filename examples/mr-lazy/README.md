@@ -6,7 +6,7 @@ Every time cryochamber wakes Mr. Lazy, he rolls a die — 25% chance he
 actually gets up. Otherwise, he delivers a dramatic, unique complaint
 and hits snooze for a few more minutes. Repeat until he finally rolls a 4.
 
-Demonstrates: repeated wake cycles, `make time` for scheduling, PLAN markers
+Demonstrates: repeated wake cycles, `make time` for scheduling, `cryo-agent note`
 for cross-session memory, probabilistic plan completion.
 
 ## Quick Start
@@ -26,13 +26,13 @@ make check-agent
 
 ```
 Session 1: "What is the point of consciousness this early? It's only 09:15..."
-  → [CRYO:WAKE 2026-03-08T09:18]
+  → cryo-agent hibernate --wake 2026-03-08T09:18
 
 Session 2: "No hobbit ever woke up before second breakfast... and it's 09:18."
-  → [CRYO:WAKE 2026-03-08T09:22]
+  → cryo-agent hibernate --wake 2026-03-08T09:22
 
 Session 3: "Fine. FINE. I'm up. Are you happy now?"
-  → [CRYO:EXIT 0] Mr. Lazy finally got out of bed (plan complete)
+  → cryo-agent hibernate --complete --summary "Mr. Lazy finally got out of bed"
 ```
 
 Use `cryo cancel` if you can't wait for Mr. Lazy to roll a 4.

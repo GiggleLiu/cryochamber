@@ -35,6 +35,7 @@ fn test_build_prompt_with_context() {
         session_number: 3,
         task: "Continue work".to_string(),
         inbox_messages: vec![],
+        delayed_wake: None,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));

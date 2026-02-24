@@ -8,6 +8,7 @@ fn test_build_prompt_first_session() {
         session_number: 1,
         task: "Start the PR review plan".to_string(),
         inbox_messages: vec![],
+        delayed_wake: None,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 1"));
@@ -26,6 +27,7 @@ fn test_build_prompt_with_history() {
         session_number: 3,
         task: "Follow up on PRs".to_string(),
         inbox_messages: vec![],
+        delayed_wake: None,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
@@ -39,6 +41,7 @@ fn test_build_prompt_contains_cli_reminders() {
         session_number: 1,
         task: "Do the thing".to_string(),
         inbox_messages: vec![],
+        delayed_wake: None,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("cryo-agent hibernate"));
@@ -65,6 +68,7 @@ fn test_build_prompt_with_inbox_messages() {
         session_number: 2,
         task: "Continue".to_string(),
         inbox_messages: vec![msg],
+        delayed_wake: None,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("New Messages (1 unread)"));
@@ -80,6 +84,7 @@ fn test_build_prompt_no_messages_section_when_empty() {
         session_number: 1,
         task: "Do stuff".to_string(),
         inbox_messages: vec![],
+        delayed_wake: None,
     };
     let prompt = build_prompt(&config);
     assert!(!prompt.contains("New Messages"));

@@ -70,6 +70,7 @@ pub struct AgentConfig {
     pub session_number: u32,
     pub task: String,
     pub inbox_messages: Vec<Message>,
+    pub delayed_wake: Option<String>,
 }
 
 pub fn build_prompt(config: &AgentConfig) -> String {
@@ -96,12 +97,17 @@ pub fn build_prompt(config: &AgentConfig) -> String {
         text
     };
 
+    let delayed_section = match &config.delayed_wake {
+        Some(notice) => format!("\n## ⚠ System Notice\n\n{notice}\n"),
+        None => String::new(),
+    };
+
     format!(
         r#"# Cryochamber Session
 
 Current time: {current_time}
 Session number: {session_number}
-
+{delayed}
 ## Instructions
 
 Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the full plan.
@@ -117,6 +123,7 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 - Read plan.md before starting work
 "#,
         session_number = config.session_number,
+        delayed = delayed_section,
         task = config.task,
         history = history_section,
         messages = messages_section,
@@ -143,8 +150,20 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
 
 /// Spawn agent as a child process. Does NOT capture stdout/stderr.
 /// Returns the Child handle for the daemon to monitor.
+///
+/// Prepends the directory containing the `cryo` binary to PATH so that `cryo-agent`
+/// is discoverable by the agent subprocess (e.g. when running from `target/debug/`).
 pub fn spawn_agent(agent_command: &str, prompt: &str) -> anyhow::Result<std::process::Child> {
     let mut cmd = build_command(agent_command, prompt)?;
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let path = std::env::var("PATH").unwrap_or_default();
+            let new_path = format!("{}:{}", bin_dir.display(), path);
+            cmd.env("PATH", new_path);
+        }
+    }
+
     let child = cmd
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to spawn agent: {e}"))?;

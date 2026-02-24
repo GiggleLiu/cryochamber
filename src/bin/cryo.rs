@@ -73,6 +73,11 @@ enum Commands {
     },
     /// Read messages from the agent's outbox
     Receive,
+    /// Wake the daemon immediately with an optional message
+    Wake {
+        /// Message to include in the agent's prompt
+        message: Option<String>,
+    },
     /// Execute a fallback action (used internally by timers)
     FallbackExec {
         action: String,
@@ -113,6 +118,7 @@ fn main() -> Result<()> {
             from,
             subject,
         } => cmd_send(&body, &from, subject.as_deref()),
+        Commands::Wake { message } => cmd_wake(message.as_deref()),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
@@ -369,6 +375,34 @@ fn cmd_log() -> Result<()> {
     } else {
         println!("No log file found.");
     }
+    Ok(())
+}
+
+fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
+    let dir = cryochamber::work_dir()?;
+    message::ensure_dirs(&dir)?;
+
+    // Warn if daemon was started with --no-watch
+    if let Some(st) = state::load_state(&state::state_path(&dir))? {
+        if !st.watch_inbox {
+            eprintln!(
+                "Warning: daemon was started with --no-watch. \
+                 Message will be delivered at the next scheduled wake, not immediately."
+            );
+        }
+    }
+
+    let body = wake_message.unwrap_or("Manual wake requested by operator.");
+    let msg = message::Message {
+        from: "operator".to_string(),
+        subject: "Wake".to_string(),
+        body: body.to_string(),
+        timestamp: chrono::Local::now().naive_local(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    message::write_message(&dir, "inbox", &msg)?;
+    println!("Wake message sent. Daemon will wake on next inbox check.");
     Ok(())
 }
 

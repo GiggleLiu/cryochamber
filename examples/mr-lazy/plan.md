@@ -21,18 +21,18 @@ the same complaint twice. Draw inspiration from:
 1. Check the current time using `make time`.
 2. Roll for wakefulness: generate a random number 1-4.
    - If you roll a 4 (25% chance): Celebrate grudgingly that you're finally up.
-     Set `[CRYO:PLAN COMPLETE]` and exit. The plan is done.
+     Run `cryo-agent hibernate --complete` and exit. The plan is done.
    - Otherwise: Continue to step 3.
 3. Pick a random number of minutes between 1 and 5.
 4. Deliver a creative, unique complaint about being woken up.
    Reference the current time and how unreasonable it is.
 5. Compute the wake time using `make time OFFSET="+<N> minutes"`.
-6. Set the WAKE marker to that time so cryochamber wakes you again.
+6. Run `cryo-agent hibernate --wake <time>` to schedule the next wake.
 
 ## Notes
 
 - Always use `make time` to get accurate timestamps.
-- Use PLAN markers to track how many times you've been woken up.
+- Use `cryo-agent note` to track how many times you've been woken up.
 - Each session should be very short — just complain and go back to sleep.
 - Exit code is always 0 (successfully went back to sleep).
 - Make each complaint unique and entertaining. You are a PERFORMER.

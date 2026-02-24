@@ -39,7 +39,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 | Binary | Purpose |
 |--------|---------|
-| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `ps`, `restart`, `daemon` |
+| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
 | `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `reply`, `alert` (sends commands to daemon via socket) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `status` (manages Discussion-based messaging) |
 
@@ -54,7 +54,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (fire-and-forget, no stdout capture). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
 | `session` | Pure utility: `should_copy_plan` checks whether to copy the plan file. |
-| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), and executes fallback actions on deadline. |
+| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend). |
 | `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL). |
