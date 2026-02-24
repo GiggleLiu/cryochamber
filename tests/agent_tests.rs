@@ -14,7 +14,7 @@ fn test_build_prompt_first_session() {
     assert!(prompt.contains("Start the PR review plan"));
     assert!(prompt.contains("plan.md"));
     assert!(prompt.contains("CLAUDE.md"));
-    assert!(prompt.contains("cryo hibernate"));
+    assert!(prompt.contains("cryo-agent hibernate"));
 }
 
 #[test]
@@ -41,9 +41,8 @@ fn test_build_prompt_contains_cli_reminders() {
         inbox_messages: vec![],
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("cryo hibernate"));
-    assert!(prompt.contains("cryo note"));
-    assert!(prompt.contains("cryo inbox"));
+    assert!(prompt.contains("cryo-agent hibernate"));
+    assert!(prompt.contains("cryo-agent note"));
     assert!(prompt.contains("plan.md"));
 }
 

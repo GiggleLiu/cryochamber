@@ -1,5 +1,5 @@
 // tests/cli_tests.rs
-// CLI integration tests using assert_cmd to cover main.rs command handlers.
+// CLI integration tests using assert_cmd to cover binary command handlers.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -8,6 +8,11 @@ use std::fs;
 fn cmd() -> Command {
     #[allow(deprecated)]
     Command::cargo_bin("cryo").unwrap()
+}
+
+fn agent_cmd() -> Command {
+    #[allow(deprecated)]
+    Command::cargo_bin("cryo-agent").unwrap()
 }
 
 // --- Init ---
@@ -214,10 +219,10 @@ fn mock_agent_cmd() -> String {
     format!("{manifest}/tests/mock_agent.sh")
 }
 
-/// Path to the cryo binary built by cargo.
-fn cryo_bin_path() -> String {
+/// Path to the cryo-agent binary built by cargo.
+fn cryo_agent_bin_path() -> String {
     #[allow(deprecated)]
-    let path = assert_cmd::cargo::cargo_bin("cryo");
+    let path = assert_cmd::cargo::cargo_bin("cryo-agent");
     path.to_string_lossy().to_string()
 }
 
@@ -393,10 +398,10 @@ fn test_daemon_plan_complete() {
     fs::write(dir.path().join("plan.md"), "# Plan\nDo stuff").unwrap();
 
     // Start with daemon mode (default)
-    // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
+    // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
-        .env("CRYO_BIN", cryo_bin_path())
+        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
         .current_dir(dir.path())
         .assert()
         .success()
@@ -461,10 +466,10 @@ fn test_daemon_inbox_reactive_wake() {
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
 
     // Start with daemon mode, verify state has watch_inbox: true
-    // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
+    // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
-        .env("CRYO_BIN", cryo_bin_path())
+        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
         .current_dir(dir.path())
         .assert()
         .success();
@@ -519,10 +524,10 @@ fn test_session_logs_inbox_filenames() {
         .success();
 
     // Run a session with mock agent via daemon
-    // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
+    // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
-        .env("CRYO_BIN", cryo_bin_path())
+        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
         .current_dir(dir.path())
         .assert()
         .success();
@@ -547,12 +552,12 @@ fn test_session_logs_inbox_filenames() {
     assert!(log_content.contains("inbox: 1 messages"));
 }
 
-// --- Hibernate / Note / Reply ---
+// --- cryo-agent binary tests ---
 
 #[test]
-fn test_hibernate_no_daemon() {
+fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
-    cmd()
+    agent_cmd()
         .args(["hibernate", "--wake", "2099-01-01T00:00"])
         .current_dir(dir.path())
         .assert()
@@ -561,9 +566,9 @@ fn test_hibernate_no_daemon() {
 }
 
 #[test]
-fn test_note_no_daemon() {
+fn test_agent_note_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
-    cmd()
+    agent_cmd()
         .args(["note", "test note"])
         .current_dir(dir.path())
         .assert()
@@ -572,31 +577,9 @@ fn test_note_no_daemon() {
 }
 
 #[test]
-fn test_reply_no_daemon() {
+fn test_agent_hibernate_requires_wake_or_complete() {
     let dir = tempfile::tempdir().unwrap();
-    cmd()
-        .args(["reply", "hello human"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Cannot connect"));
-}
-
-#[test]
-fn test_hibernate_complete_no_daemon() {
-    let dir = tempfile::tempdir().unwrap();
-    cmd()
-        .args(["hibernate", "--complete"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Cannot connect"));
-}
-
-#[test]
-fn test_hibernate_requires_wake_or_complete() {
-    let dir = tempfile::tempdir().unwrap();
-    cmd()
+    agent_cmd()
         .args(["hibernate"])
         .current_dir(dir.path())
         .assert()

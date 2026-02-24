@@ -4,17 +4,19 @@ use cryochamber::protocol;
 #[test]
 fn test_protocol_content_contains_commands() {
     let content = protocol::PROTOCOL_CONTENT;
-    assert!(content.contains("cryo hibernate"));
-    assert!(content.contains("cryo note"));
-    assert!(content.contains("cryo reply"));
-    assert!(content.contains("cryo alert"));
-    assert!(content.contains("cryo status"));
+    assert!(content.contains("cryo-agent hibernate"));
+    assert!(content.contains("cryo-agent note"));
+    assert!(content.contains("cryo-agent reply"));
+    assert!(content.contains("cryo-agent alert"));
+    // Phantom commands removed (code review #3)
+    assert!(!content.contains("cryo-agent status"));
+    assert!(!content.contains("cryo-agent inbox"));
 }
 
 #[test]
 fn test_protocol_content_contains_rules() {
     let content = protocol::PROTOCOL_CONTENT;
-    assert!(content.contains("Always call `cryo hibernate`"));
+    assert!(content.contains("Always call `cryo-agent hibernate`"));
     assert!(content.contains("plan.md"));
 }
 
@@ -57,7 +59,7 @@ fn test_write_protocol_file() {
     let path = dir.path().join("CLAUDE.md");
     assert!(path.exists());
     let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.contains("cryo hibernate"));
+    assert!(content.contains("cryo-agent hibernate"));
 }
 
 #[test]
@@ -116,9 +118,11 @@ fn test_write_template_plan_skips_existing() {
 #[test]
 fn test_protocol_mentions_hibernate() {
     let content = cryochamber::protocol::PROTOCOL_CONTENT;
-    assert!(content.contains("cryo hibernate"));
-    assert!(content.contains("cryo note"));
-    assert!(content.contains("cryo status"));
+    assert!(content.contains("cryo-agent hibernate"));
+    assert!(content.contains("cryo-agent note"));
+    // No stale cryo status/inbox references
+    assert!(!content.contains("cryo status"));
+    assert!(!content.contains("cryo inbox"));
 }
 
 #[test]
