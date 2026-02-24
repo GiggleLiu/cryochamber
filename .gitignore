@@ -20,3 +20,6 @@ examples/*/*.json
 examples/*/CLAUDE.md
 examples/*/AGENTS.md
 examples/*/Makefile
+examples/*/*.toml
+examples/*/.cryo
+examples/*/.ruff_cache

@@ -107,7 +107,9 @@ cli:
 DIR ?= examples/mr-lazy
 WATCH ?= true
 example: build
-	@cd "$(DIR)" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
+	@cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
+	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log messages AGENTS.md CLAUDE.md Makefile && \
+	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
 	if [ "$(WATCH)" = "true" ]; then \
 		$(CURDIR)/target/debug/cryo watch --all; \
 	else \
