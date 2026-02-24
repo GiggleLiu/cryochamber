@@ -19,8 +19,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::fallback::FallbackAction;
-use crate::session::{self, SessionOutcome};
+use crate::session;
 use crate::state::{self, CryoState};
+
+/// Send a signal to a process, logging a warning on failure.
+fn send_signal(pid: u32, signal: i32) {
+    let ret = unsafe { libc::kill(pid as i32, signal) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
+    }
+}
 
 /// Events the daemon responds to.
 #[derive(Debug, PartialEq)]
@@ -154,8 +163,17 @@ impl Daemon {
         cryo_state.pid = Some(std::process::id());
         state::save_state(&self.state_path, &cryo_state)?;
 
-        // Register in global daemon registry
-        if let Err(e) = crate::registry::register(&self.dir, None) {
+        // Create .cryo/ directory and bind socket server
+        let sock_path = crate::socket::socket_path(&self.dir);
+        if let Some(parent) = sock_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let server = crate::socket::SocketServer::bind(&sock_path)?;
+        server.set_nonblocking(true)?;
+        eprintln!("Daemon: socket listening at {}", sock_path.display());
+
+        // Register in global daemon registry (with socket path)
+        if let Err(e) = crate::registry::register(&self.dir, Some(&sock_path)) {
             eprintln!("Daemon: failed to register in ~/.cryo/daemons: {e}");
         }
 
@@ -209,7 +227,7 @@ impl Daemon {
                 run_now = false;
                 cryo_state.session_number += 1;
 
-                match self.run_one_session(&mut cryo_state) {
+                match self.run_one_session(&mut cryo_state, &server) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -225,9 +243,8 @@ impl Daemon {
                                 fallback,
                             } => {
                                 next_wake = Some(wake_time);
-                                pending_fallback = fallback.map(|fb| {
-                                    (wake_time + chrono::Duration::hours(1), fb)
-                                });
+                                pending_fallback =
+                                    fallback.map(|fb| (wake_time + chrono::Duration::hours(1), fb));
                                 eprintln!(
                                     "Daemon: next wake at {}",
                                     wake_time.format("%Y-%m-%d %H:%M")
@@ -303,19 +320,24 @@ impl Daemon {
             }
         }
 
-        // Cleanup: always unregister, even if state save fails (e.g. dir removed)
+        // Cleanup: always unregister and remove socket, even if state save fails
         cryo_state.pid = None;
         cryo_state.daemon_mode = false;
         if let Err(e) = state::save_state(&self.state_path, &cryo_state) {
             eprintln!("Daemon: failed to save final state: {e}");
         }
         crate::registry::unregister(&self.dir);
+        crate::socket::SocketServer::cleanup(&sock_path);
         eprintln!("Daemon: exited cleanly");
 
         Ok(())
     }
 
-    fn run_one_session(&self, cryo_state: &mut CryoState) -> Result<SessionLoopOutcome> {
+    fn run_one_session(
+        &self,
+        cryo_state: &mut CryoState,
+        server: &crate::socket::SocketServer,
+    ) -> Result<SessionLoopOutcome> {
         let agent_cmd = cryo_state
             .last_command
             .clone()
@@ -332,48 +354,211 @@ impl Daemon {
             cryo_state.session_number
         );
 
-        let result = session::execute_session(
-            &self.dir,
+        // Read inbox for the prompt
+        let inbox = crate::message::read_inbox(&self.dir)?;
+        let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
+        let inbox_filenames: Vec<String> = inbox.into_iter().map(|(f, _)| f).collect();
+
+        // Build prompt
+        let log_content = crate::log::read_latest_session(&self.log_path)?;
+        let config = crate::agent::AgentConfig {
+            log_content,
+            session_number: cryo_state.session_number,
+            task: task.clone(),
+            inbox_messages,
+        };
+        let prompt = crate::agent::build_prompt(&config);
+
+        // Begin event log
+        let mut logger = crate::log::EventLogger::begin(
+            &self.log_path,
             cryo_state.session_number,
             &task,
-            &self.log_path,
-            |prompt, writer| {
-                self.run_agent_with_timeout(&agent_cmd, prompt, writer, timeout_secs)
-            },
+            &agent_cmd,
+            &inbox_filenames,
         )?;
 
-        for warning in &result.warnings {
-            eprintln!("Daemon: Warning: {warning}");
+        // Spawn agent (fire-and-forget, no stdout capture)
+        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt)?;
+        let child_pid = child.id();
+        logger.log_event(&format!("agent started (pid {child_pid})"))?;
+
+        // Archive inbox messages after building prompt
+        if !inbox_filenames.is_empty() {
+            crate::message::archive_messages(&self.dir, &inbox_filenames)?;
         }
 
-        if let Some(cmd) = &result.command {
-            cryo_state.last_command = Some(cmd.clone());
-        }
+        // Poll loop: wait for socket commands + agent exit
+        let deadline = if timeout_secs > 0 {
+            Some(std::time::Instant::now() + Duration::from_secs(timeout_secs))
+        } else {
+            None
+        };
 
-        match result.outcome {
-            SessionOutcome::PlanComplete => Ok(SessionLoopOutcome::PlanComplete),
-            SessionOutcome::ValidationFailed { errors, .. } => {
-                for error in &errors {
-                    eprintln!("Daemon: Error: {error}");
-                }
-                Ok(SessionLoopOutcome::ValidationFailed)
+        let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
+        let mut pending_fallback: Option<FallbackAction> = None;
+
+        loop {
+            // Check shutdown
+            if self.shutdown.load(Ordering::Relaxed) {
+                send_signal(child_pid, libc::SIGTERM);
+                logger.finish("daemon shutdown — agent terminated")?;
+                return Ok(SessionLoopOutcome::ValidationFailed);
             }
-            SessionOutcome::Hibernate {
-                wake_time,
-                fallback,
-                ..
-            } => Ok(SessionLoopOutcome::Hibernate {
-                wake_time,
-                fallback,
-            }),
+
+            // Check timeout
+            if let Some(d) = deadline {
+                if std::time::Instant::now() >= d {
+                    eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
+                    send_signal(child_pid, libc::SIGTERM);
+                    std::thread::sleep(Duration::from_secs(2));
+                    send_signal(child_pid, libc::SIGKILL);
+                    logger.finish("session timeout — agent killed")?;
+                    return Ok(SessionLoopOutcome::ValidationFailed);
+                }
+            }
+
+            // Try accept a socket connection (non-blocking)
+            match server.accept_one() {
+                Ok(Some((request, responder))) => {
+                    match request {
+                        crate::socket::Request::Note { text } => {
+                            logger.log_event(&format!("note: \"{text}\""))?;
+                            let _ = responder.respond(&crate::socket::Response {
+                                ok: true,
+                                message: "Note recorded".into(),
+                            });
+                        }
+                        crate::socket::Request::Hibernate {
+                            wake,
+                            complete,
+                            exit_code,
+                            summary,
+                        } => {
+                            let summary_str = summary.as_deref().unwrap_or("(no summary)");
+                            if complete {
+                                logger.log_event(&format!(
+                                    "hibernate: plan complete, exit={exit_code}, summary=\"{summary_str}\""
+                                ))?;
+                                hibernate_outcome = Some(SessionLoopOutcome::PlanComplete);
+                            } else if let Some(wake_str) = &wake {
+                                match chrono::NaiveDateTime::parse_from_str(
+                                    wake_str,
+                                    "%Y-%m-%dT%H:%M",
+                                ) {
+                                    Ok(wake_time) => {
+                                        logger.log_event(&format!(
+                                            "hibernate: wake={wake_str}, exit={exit_code}, summary=\"{summary_str}\""
+                                        ))?;
+                                        hibernate_outcome = Some(SessionLoopOutcome::Hibernate {
+                                            wake_time,
+                                            fallback: pending_fallback.take(),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        let _ = responder.respond(&crate::socket::Response {
+                                            ok: false,
+                                            message: format!("Invalid wake time: {e}"),
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                            let _ = responder.respond(&crate::socket::Response {
+                                ok: true,
+                                message: if complete {
+                                    "Plan complete. Shutting down.".into()
+                                } else {
+                                    "Hibernating.".into()
+                                },
+                            });
+                        }
+                        crate::socket::Request::Alert {
+                            action,
+                            target,
+                            message,
+                        } => {
+                            logger.log_event(&format!("alert: {action} -> {target}"))?;
+                            pending_fallback = Some(FallbackAction {
+                                action,
+                                target,
+                                message,
+                            });
+                            let _ = responder.respond(&crate::socket::Response {
+                                ok: true,
+                                message: "Alert registered".into(),
+                            });
+                        }
+                        crate::socket::Request::Reply { text } => {
+                            // Write reply to outbox
+                            let msg = crate::message::Message {
+                                from: "agent".to_string(),
+                                subject: "Reply".to_string(),
+                                body: text.clone(),
+                                timestamp: chrono::Local::now().naive_local(),
+                                metadata: std::collections::BTreeMap::new(),
+                            };
+                            let _ = crate::message::write_message(&self.dir, "outbox", &msg);
+                            logger.log_event(&format!("reply: \"{text}\""))?;
+                            let _ = responder.respond(&crate::socket::Response {
+                                ok: true,
+                                message: "Reply sent".into(),
+                            });
+                        }
+                    }
+                }
+                Ok(None) => {} // empty connection, ignore
+                Err(e) => {
+                    // WouldBlock is expected in non-blocking mode
+                    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                        if io_err.kind() != std::io::ErrorKind::WouldBlock {
+                            eprintln!("Daemon: socket accept error: {e}");
+                        }
+                    }
+                }
+            }
+
+            // Check if agent has exited
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let code = status.code();
+                    logger.log_event(&format!(
+                        "agent exited (code {})",
+                        code.map(|c| c.to_string())
+                            .unwrap_or_else(|| "signal".into())
+                    ))?;
+
+                    if let Some(outcome) = hibernate_outcome {
+                        logger.finish("session complete")?;
+                        return Ok(outcome);
+                    } else {
+                        // Agent exited without calling hibernate — treat as crash
+                        logger.finish("agent exited without hibernate")?;
+                        return Ok(SessionLoopOutcome::ValidationFailed);
+                    }
+                }
+                Ok(None) => {} // still running
+                Err(e) => {
+                    logger.finish(&format!("error checking agent: {e}"))?;
+                    return Err(e.into());
+                }
+            }
+
+            // If we got a hibernate command but agent hasn't exited yet,
+            // give it a moment then continue polling
+            if hibernate_outcome.is_some() {
+                // Agent sent hibernate but hasn't exited yet — wait a bit
+                // The agent should exit shortly after calling cryo hibernate
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 
     /// Execute a pending fallback if its deadline has passed.
-    fn check_fallback(
-        &self,
-        pending: &mut Option<(NaiveDateTime, FallbackAction)>,
-    ) {
+    fn check_fallback(&self, pending: &mut Option<(NaiveDateTime, FallbackAction)>) {
         if let Some((deadline, _)) = pending.as_ref() {
             if Local::now().naive_local() > *deadline {
                 let (_, fb) = pending.take().unwrap();
@@ -388,23 +573,6 @@ impl Daemon {
     fn get_task(&self) -> Option<String> {
         let latest = crate::log::read_latest_session(&self.log_path).ok()??;
         session::derive_task_from_output(&latest)
-    }
-
-    /// Run agent with a timeout, forwarding the daemon's shutdown signal.
-    fn run_agent_with_timeout(
-        &self,
-        agent_command: &str,
-        prompt: &str,
-        writer: &mut crate::log::SessionWriter,
-        timeout_secs: u64,
-    ) -> Result<crate::agent::AgentResult> {
-        crate::agent::run_agent_with_timeout(
-            agent_command,
-            prompt,
-            writer,
-            timeout_secs,
-            Some(Arc::clone(&self.shutdown)),
-        )
     }
 
     /// Sleep for `duration`, but return early if shutdown is signaled.

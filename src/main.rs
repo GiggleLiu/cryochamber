@@ -497,7 +497,9 @@ fn cmd_force_wakeup(plan_path: Option<&Path>, agent_cmd: &str) -> Result<()> {
     }
 
     if !plan_dest.exists() {
-        anyhow::bail!("plan.md not found. Provide a plan file or run from a directory with plan.md.");
+        anyhow::bail!(
+            "plan.md not found. Provide a plan file or run from a directory with plan.md."
+        );
     }
 
     // Determine session number from existing log
@@ -513,13 +515,9 @@ fn cmd_force_wakeup(plan_path: Option<&Path>, agent_cmd: &str) -> Result<()> {
 
     println!("Session #{session_number}: Running agent ({agent_cmd})...");
 
-    let result = session::execute_session(
-        &dir,
-        session_number,
-        &task,
-        &log,
-        |prompt, writer| agent::run_agent_streaming(agent_cmd, prompt, Some(writer)),
-    )?;
+    let result = session::execute_session(&dir, session_number, &task, &log, |prompt, writer| {
+        agent::run_agent_streaming(agent_cmd, prompt, Some(writer))
+    })?;
 
     for warning in &result.warnings {
         eprintln!("Warning: {warning}");

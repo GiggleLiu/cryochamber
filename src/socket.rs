@@ -42,8 +42,9 @@ pub fn socket_path(dir: &Path) -> PathBuf {
 /// Send a request to the daemon and return the response.
 pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
     let path = socket_path(dir);
-    let mut stream = UnixStream::connect(&path)
-        .map_err(|e| anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display()))?;
+    let mut stream = UnixStream::connect(&path).map_err(|e| {
+        anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display())
+    })?;
 
     let mut payload = serde_json::to_string(request)?;
     payload.push('\n');
@@ -136,14 +137,19 @@ mod tests {
 
     #[test]
     fn test_serialize_note_request() {
-        let req = Request::Note { text: "progress update".to_string() };
+        let req = Request::Note {
+            text: "progress update".to_string(),
+        };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("progress update"));
     }
 
     #[test]
     fn test_serialize_response_ok() {
-        let resp = Response { ok: true, message: "Hibernating".to_string() };
+        let resp = Response {
+            ok: true,
+            message: "Hibernating".to_string(),
+        };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("true"));
     }
@@ -162,7 +168,9 @@ mod tests {
 
     #[test]
     fn test_serialize_reply_request() {
-        let req = Request::Reply { text: "done with phase 1".to_string() };
+        let req = Request::Reply {
+            text: "done with phase 1".to_string(),
+        };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("done with phase 1"));
     }
@@ -197,12 +205,23 @@ mod tests {
         let handle = std::thread::spawn(move || {
             if let Some((req, responder)) = server.accept_one().unwrap() {
                 tx.send(req).unwrap();
-                responder.respond(&Response { ok: true, message: "got it".into() }).unwrap();
+                responder
+                    .respond(&Response {
+                        ok: true,
+                        message: "got it".into(),
+                    })
+                    .unwrap();
             }
         });
 
         // Client sends a request
-        let resp = send_request(dir.path(), &Request::Note { text: "hello".into() }).unwrap();
+        let resp = send_request(
+            dir.path(),
+            &Request::Note {
+                text: "hello".into(),
+            },
+        )
+        .unwrap();
         assert!(resp.ok);
         assert_eq!(resp.message, "got it");
 

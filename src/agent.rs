@@ -264,8 +264,8 @@ pub fn run_agent_with_timeout(
     // timeout_secs == 0 means no timeout, but shutdown is still monitored.
     let has_timeout = timeout_secs > 0;
     let timeout_handle = std::thread::spawn(move || {
-        let deadline = has_timeout
-            .then(|| std::time::Instant::now() + Duration::from_secs(timeout_secs));
+        let deadline =
+            has_timeout.then(|| std::time::Instant::now() + Duration::from_secs(timeout_secs));
         loop {
             if child_done_clone.load(Ordering::Relaxed) {
                 return false; // child exited normally

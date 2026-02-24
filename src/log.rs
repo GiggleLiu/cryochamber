@@ -103,7 +103,10 @@ impl SessionWriter {
         writeln!(file)?;
         file.flush()?;
 
-        Ok(Self { file, finished: false })
+        Ok(Self {
+            file,
+            finished: false,
+        })
     }
 
     /// Append a line of agent output to the log.

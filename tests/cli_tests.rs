@@ -269,6 +269,13 @@ fn mock_agent_cmd() -> String {
     format!("{manifest}/tests/mock_agent.sh")
 }
 
+/// Path to the cryo binary built by cargo.
+fn cryo_bin_path() -> String {
+    #[allow(deprecated)]
+    let path = assert_cmd::cargo::cargo_bin("cryo");
+    path.to_string_lossy().to_string()
+}
+
 // --- Tests using mock agent ---
 
 #[test]
@@ -441,9 +448,11 @@ fn test_daemon_plan_complete() {
     fs::write(dir.path().join("plan.md"), "# Plan\nDo stuff").unwrap();
 
     // Start with daemon mode (default)
+    // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] All done")
+        .env("CRYO_BIN", cryo_bin_path())
         .current_dir(dir.path())
         .assert()
         .success()
@@ -471,9 +480,9 @@ fn test_daemon_plan_complete() {
     assert!(state["pid"].is_null());
     assert_eq!(state["daemon_mode"].as_bool(), Some(false));
 
-    // Check log
+    // Check log contains session event (EventLogger writes events, not agent stdout)
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(log.contains("[CRYO:EXIT 0]"));
+    assert!(log.contains("plan complete"));
 }
 
 #[test]
@@ -508,9 +517,11 @@ fn test_daemon_inbox_reactive_wake() {
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
 
     // Start with daemon mode, verify state has watch_inbox: true
+    // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
+        .env("CRYO_BIN", cryo_bin_path())
         .current_dir(dir.path())
         .assert()
         .success();
@@ -565,14 +576,11 @@ fn test_session_logs_inbox_filenames() {
         .success();
 
     // Run a session with mock agent via daemon
+    // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
     cmd()
-        .args([
-            "start",
-            "plan.md",
-            "--agent",
-            &mock_agent_cmd(),
-        ])
+        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
         .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
+        .env("CRYO_BIN", cryo_bin_path())
         .current_dir(dir.path())
         .assert()
         .success();
@@ -592,9 +600,9 @@ fn test_session_logs_inbox_filenames() {
     }
     assert!(daemon_exited, "Daemon should have exited within 10 seconds");
 
-    // Check cryo.log contains [inbox] line
+    // Check cryo.log contains inbox line (EventLogger format: "inbox: N messages (file1, ...)")
     let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(log_content.contains("[inbox]"));
+    assert!(log_content.contains("inbox: 1 messages"));
 }
 
 // --- Hibernate / Note / Reply ---
