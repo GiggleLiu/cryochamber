@@ -155,7 +155,7 @@ impl Daemon {
         state::save_state(&self.state_path, &cryo_state)?;
 
         // Register in global daemon registry
-        if let Err(e) = crate::registry::register(&self.dir) {
+        if let Err(e) = crate::registry::register(&self.dir, None) {
             eprintln!("Daemon: failed to register in ~/.cryo/daemons: {e}");
         }
 

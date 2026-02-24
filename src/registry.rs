@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 pub struct DaemonEntry {
     pub pid: u32,
     pub dir: String,
+    #[serde(default)]
+    pub socket_path: Option<String>,
 }
 
 /// Return the registry directory, creating it if needed.
@@ -39,11 +41,12 @@ fn entry_filename(dir: &Path) -> String {
 }
 
 /// Register this daemon in the global registry.
-pub fn register(dir: &Path) -> Result<()> {
+pub fn register(dir: &Path, socket_path: Option<&Path>) -> Result<()> {
     let reg = registry_dir()?;
     let entry = DaemonEntry {
         pid: std::process::id(),
         dir: dir.to_string_lossy().to_string(),
+        socket_path: socket_path.map(|p| p.to_string_lossy().to_string()),
     };
     let path = reg.join(entry_filename(dir));
     std::fs::write(&path, serde_json::to_string(&entry)?)?;
@@ -103,4 +106,20 @@ fn is_pid_alive(pid: u32) -> bool {
     }
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     errno == libc::EPERM
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_entry_has_socket_path() {
+        let entry = DaemonEntry {
+            pid: 1234,
+            dir: "/tmp/test".to_string(),
+            socket_path: Some("/tmp/test/.cryo/cryo.sock".to_string()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("cryo.sock"));
+    }
 }
