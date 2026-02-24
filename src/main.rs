@@ -94,6 +94,40 @@ enum Commands {
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
+    /// End session and schedule next wake
+    Hibernate {
+        /// Wake time in ISO8601 format
+        #[arg(long)]
+        wake: Option<String>,
+        /// Mark plan as complete (no more wakes)
+        #[arg(long)]
+        complete: bool,
+        /// Exit code: 0=success, 1=partial, 2=failure
+        #[arg(long, default_value = "0")]
+        exit: u8,
+        /// Human-readable session summary
+        #[arg(long)]
+        summary: Option<String>,
+    },
+    /// Leave a note for the next session
+    Note {
+        /// Note text
+        text: String,
+    },
+    /// Reply to human (writes to outbox)
+    Reply {
+        /// Reply message text
+        text: String,
+    },
+    /// Set a fallback alert (dead-man switch)
+    Alert {
+        /// Action type (email, webhook)
+        action: String,
+        /// Target (email address, URL)
+        target: String,
+        /// Alert message
+        message: String,
+    },
     /// GitHub Discussion sync utility (independent message sync service)
     Gh {
         #[command(subcommand)]
@@ -232,6 +266,71 @@ fn main() -> Result<()> {
                 message,
             };
             fb.execute(&dir)
+        }
+        Commands::Hibernate {
+            wake,
+            complete,
+            exit,
+            summary,
+        } => {
+            if !complete && wake.is_none() {
+                anyhow::bail!("Either --wake or --complete is required");
+            }
+            let dir = work_dir()?;
+            let req = cryochamber::socket::Request::Hibernate {
+                wake,
+                complete,
+                exit_code: exit,
+                summary,
+            };
+            let resp = cryochamber::socket::send_request(&dir, &req)?;
+            if resp.ok {
+                println!("{}", resp.message);
+            } else {
+                anyhow::bail!("{}", resp.message);
+            }
+            Ok(())
+        }
+        Commands::Note { text } => {
+            let dir = work_dir()?;
+            let req = cryochamber::socket::Request::Note { text };
+            let resp = cryochamber::socket::send_request(&dir, &req)?;
+            if resp.ok {
+                println!("{}", resp.message);
+            } else {
+                anyhow::bail!("{}", resp.message);
+            }
+            Ok(())
+        }
+        Commands::Reply { text } => {
+            let dir = work_dir()?;
+            let req = cryochamber::socket::Request::Reply { text };
+            let resp = cryochamber::socket::send_request(&dir, &req)?;
+            if resp.ok {
+                println!("{}", resp.message);
+            } else {
+                anyhow::bail!("{}", resp.message);
+            }
+            Ok(())
+        }
+        Commands::Alert {
+            action,
+            target,
+            message,
+        } => {
+            let dir = work_dir()?;
+            let req = cryochamber::socket::Request::Alert {
+                action,
+                target,
+                message,
+            };
+            let resp = cryochamber::socket::send_request(&dir, &req)?;
+            if resp.ok {
+                println!("{}", resp.message);
+            } else {
+                anyhow::bail!("{}", resp.message);
+            }
+            Ok(())
         }
         Commands::Gh { action } => match action {
             GhCommands::Init { repo, title } => cmd_gh_init(&repo, title.as_deref()),

@@ -596,3 +596,59 @@ fn test_session_logs_inbox_filenames() {
     let log_content = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert!(log_content.contains("[inbox]"));
 }
+
+// --- Hibernate / Note / Reply ---
+
+#[test]
+fn test_hibernate_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["hibernate", "--wake", "2099-01-01T00:00"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot connect"));
+}
+
+#[test]
+fn test_note_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["note", "test note"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot connect"));
+}
+
+#[test]
+fn test_reply_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["reply", "hello human"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot connect"));
+}
+
+#[test]
+fn test_hibernate_complete_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["hibernate", "--complete"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot connect"));
+}
+
+#[test]
+fn test_hibernate_requires_wake_or_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .args(["hibernate"])
+        .current_dir(dir.path())
+        .assert()
+        .failure();
+}
