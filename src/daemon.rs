@@ -21,14 +21,7 @@ use std::time::Duration;
 use crate::fallback::FallbackAction;
 use crate::state::{self, CryoState};
 
-/// Send a signal to a process, logging a warning on failure.
-fn send_signal(pid: u32, signal: i32) {
-    let ret = unsafe { libc::kill(pid as i32, signal) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
-    }
-}
+use crate::process::send_signal;
 
 /// Events the daemon responds to.
 #[derive(Debug, PartialEq)]
@@ -401,6 +394,7 @@ impl Daemon {
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 send_signal(child_pid, libc::SIGTERM);
+                let _ = child.wait(); // reap to prevent zombie
                 logger.finish("daemon shutdown — agent terminated")?;
                 return Ok(SessionLoopOutcome::ValidationFailed);
             }
@@ -412,6 +406,7 @@ impl Daemon {
                     send_signal(child_pid, libc::SIGTERM);
                     std::thread::sleep(Duration::from_secs(2));
                     send_signal(child_pid, libc::SIGKILL);
+                    let _ = child.wait(); // reap to prevent zombie
                     logger.finish("session timeout — agent killed")?;
                     return Ok(SessionLoopOutcome::ValidationFailed);
                 }
@@ -497,12 +492,22 @@ impl Daemon {
                                 timestamp: chrono::Local::now().naive_local(),
                                 metadata: std::collections::BTreeMap::new(),
                             };
-                            let _ = crate::message::write_message(&self.dir, "outbox", &msg);
-                            logger.log_event(&format!("reply: \"{text}\""))?;
-                            let _ = responder.respond(&crate::socket::Response {
-                                ok: true,
-                                message: "Reply sent".into(),
-                            });
+                            match crate::message::write_message(&self.dir, "outbox", &msg) {
+                                Ok(_) => {
+                                    logger.log_event(&format!("reply: \"{text}\""))?;
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: true,
+                                        message: "Reply sent".into(),
+                                    });
+                                }
+                                Err(e) => {
+                                    logger.log_event(&format!("reply failed: {e}"))?;
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to write reply: {e}"),
+                                    });
+                                }
+                            }
                         }
                     }
                 }
