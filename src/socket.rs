@@ -1,3 +1,7 @@
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 /// Request from CLI to daemon via Unix socket.
@@ -28,6 +32,29 @@ pub enum Request {
 pub struct Response {
     pub ok: bool,
     pub message: String,
+}
+
+/// Returns the socket path for a project directory.
+pub fn socket_path(dir: &Path) -> PathBuf {
+    dir.join(".cryo").join("cryo.sock")
+}
+
+/// Send a request to the daemon and return the response.
+pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
+    let path = socket_path(dir);
+    let mut stream = UnixStream::connect(&path)
+        .map_err(|e| anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display()))?;
+
+    let mut payload = serde_json::to_string(request)?;
+    payload.push('\n');
+    stream.write_all(payload.as_bytes())?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let response: Response = serde_json::from_str(line.trim())?;
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -78,5 +105,20 @@ mod tests {
         let req = Request::Reply { text: "done with phase 1".to_string() };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("done with phase 1"));
+    }
+
+    #[test]
+    fn test_socket_path() {
+        let dir = std::path::Path::new("/tmp/test-cryo");
+        let path = socket_path(dir);
+        assert!(path.ends_with("cryo.sock"));
+        assert!(path.to_str().unwrap().contains(".cryo"));
+    }
+
+    #[test]
+    fn test_send_request_no_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = send_request(dir.path(), &Request::Note { text: "hi".into() });
+        assert!(result.is_err()); // no server listening
     }
 }
