@@ -14,24 +14,26 @@ fn test_build_prompt_first_session() {
     assert!(prompt.contains("Start the PR review plan"));
     assert!(prompt.contains("plan.md"));
     assert!(prompt.contains("CLAUDE.md"));
-    assert!(prompt.contains("[CRYO:EXIT 0]"));
+    assert!(prompt.contains("cryo hibernate"));
 }
 
 #[test]
 fn test_build_prompt_with_history() {
     let config = AgentConfig {
-        log_content: Some("[CRYO:EXIT 0] Did stuff\n[CRYO:PLAN check PR #41]".to_string()),
+        log_content: Some(
+            "note: \"check PR #41\"\nhibernate: wake=2026-03-09T09:00, exit=0".to_string(),
+        ),
         session_number: 3,
         task: "Follow up on PRs".to_string(),
         inbox_messages: vec![],
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
-    assert!(prompt.contains("[CRYO:EXIT 0] Did stuff"));
+    assert!(prompt.contains("check PR #41"));
 }
 
 #[test]
-fn test_build_prompt_contains_marker_reminders() {
+fn test_build_prompt_contains_cli_reminders() {
     let config = AgentConfig {
         log_content: None,
         session_number: 1,
@@ -39,9 +41,9 @@ fn test_build_prompt_contains_marker_reminders() {
         inbox_messages: vec![],
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("[CRYO:EXIT 0]"));
-    assert!(prompt.contains("[CRYO:WAKE 2026"));
-    assert!(prompt.contains("[CRYO:PLAN"));
+    assert!(prompt.contains("cryo hibernate"));
+    assert!(prompt.contains("cryo note"));
+    assert!(prompt.contains("cryo inbox"));
     assert!(prompt.contains("plan.md"));
 }
 

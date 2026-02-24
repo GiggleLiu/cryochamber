@@ -119,8 +119,8 @@ fn test_status_shows_latest_session_tail() {
     )
     .unwrap();
 
-    // Write a log file with a session
-    let log_content = "--- CRYO SESSION 2026-02-23T10:00:00 ---\nSession: 1\nTask: test\n\nDid some work\n[CRYO:EXIT 0] All good\n--- CRYO END ---\n";
+    // Write a log file with a session (new EventLogger format)
+    let log_content = "--- CRYO SESSION 1 | 2026-02-23T10:00:00Z ---\ntask: test\nagent: opencode\ninbox: 0 messages\n[10:00:01] agent started (pid 12345)\n[10:00:05] hibernate: plan complete, exit=0, summary=\"All good\"\n[10:00:05] agent exited (code 0)\n[10:00:05] session complete\n--- CRYO END ---\n";
     fs::write(dir.path().join("cryo.log"), log_content).unwrap();
 
     cmd()
@@ -396,7 +396,6 @@ fn test_daemon_plan_complete() {
     // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
-        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] All done")
         .env("CRYO_BIN", cryo_bin_path())
         .current_dir(dir.path())
         .assert()
@@ -435,8 +434,8 @@ fn test_daemon_cancel() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
 
-    // Use a slow agent that sleeps
-    let agent = "/bin/sh -c 'sleep 30 && echo [CRYO:EXIT 0] Done'";
+    // Use a slow agent that sleeps (doesn't need to hibernate, test just cancels it)
+    let agent = "/bin/sh -c 'sleep 30'";
 
     cmd()
         .args(["start", "plan.md", "--agent", agent])
@@ -465,7 +464,6 @@ fn test_daemon_inbox_reactive_wake() {
     // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
-        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
         .env("CRYO_BIN", cryo_bin_path())
         .current_dir(dir.path())
         .assert()
@@ -524,7 +522,6 @@ fn test_session_logs_inbox_filenames() {
     // CRYO_BIN tells the mock agent to call `cryo hibernate --complete` via socket
     cmd()
         .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
-        .env("MOCK_AGENT_OUTPUT", "[CRYO:EXIT 0] Done")
         .env("CRYO_BIN", cryo_bin_path())
         .current_dir(dir.path())
         .assert()

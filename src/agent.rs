@@ -112,10 +112,9 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 {history}{messages}
 ## Reminders
 
-- Write markers at the end of your response:
-  - `[CRYO:EXIT 0] summary` (0=success, 1=partial, 2=failure)
-  - `[CRYO:WAKE 2026-03-08T09:00]` (omit only if plan is complete)
-  - `[CRYO:PLAN note]` to leave notes for your future self
+- Use `cryo hibernate` to end your session (--wake or --complete)
+- Use `cryo note` to leave context for your next session
+- Check `cryo inbox` for messages from the human
 - Read plan.md before starting work
 "#,
         session_number = config.session_number,

@@ -1,11 +1,19 @@
 #!/bin/sh
 # Mock agent for cryochamber integration tests.
-# Outputs the content of MOCK_AGENT_OUTPUT env var.
-# If CRYO_BIN is set, uses it to call `cryo hibernate --complete` via socket.
-# Otherwise just echoes markers to stdout (legacy mode).
-echo "${MOCK_AGENT_OUTPUT:-[CRYO:EXIT 0] mock done}"
+# Uses cryo CLI commands to communicate with the daemon.
+# CRYO_BIN must be set to the path of the cryo binary.
 
-if [ -n "$CRYO_BIN" ]; then
-    # Socket-based flow: tell the daemon we're done
-    "$CRYO_BIN" hibernate --complete --summary "mock done" 2>/dev/null || true
+# Optionally echo something to stdout (still the agent's output, just not parsed by daemon)
+echo "${MOCK_AGENT_OUTPUT:-Agent running}"
+
+# Leave a note if requested
+if [ -n "$MOCK_AGENT_NOTE" ]; then
+    "$CRYO_BIN" note "$MOCK_AGENT_NOTE" 2>/dev/null || true
+fi
+
+# Default: hibernate --complete
+if [ "$MOCK_AGENT_COMPLETE" = "false" ] && [ -n "$MOCK_AGENT_WAKE" ]; then
+    "$CRYO_BIN" hibernate --wake "$MOCK_AGENT_WAKE" --summary "${MOCK_AGENT_SUMMARY:-continuing}" 2>/dev/null || true
+else
+    "$CRYO_BIN" hibernate --complete --summary "${MOCK_AGENT_SUMMARY:-mock done}" 2>/dev/null || true
 fi
