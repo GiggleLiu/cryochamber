@@ -46,11 +46,11 @@ See [`examples/`](examples/) for complete, runnable examples.
 
 1. Cryochamber spawns a persistent daemon in the background
 2. The daemon runs your agent with the plan and a task prompt
-3. The agent does its work and writes `[CRYO:*]` markers at the end
-4. The daemon parses markers, sleeps until the next wake time, and repeats
+3. The agent does its work and calls `cryo-agent hibernate` to schedule the next wake
+4. The daemon sleeps until the next wake time and repeats
 5. New messages in `messages/inbox/` wake the daemon immediately
 
-All agent output is appended to `cryo.log`. Monitor progress with `cryo watch`. Check state with `cryo status`.
+Session events are logged to `cryo.log`. Monitor progress with `cryo watch`. Check state with `cryo status`.
 
 ## How It Works
 
@@ -66,9 +66,9 @@ cryo start plan.md → spawn daemon → run agent → parse markers → sleep
 
 **The daemon** (cryochamber) handles lifecycle: sleeping until wake time, watching the inbox for reactive wake, enforcing session timeout, retrying on failure, and executing fallback alerts if something goes wrong.
 
-**The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates back to the daemon through structured markers in its output.
+**The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates with the daemon via `cryo-agent` CLI commands over a Unix domain socket.
 
-**Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's output as context. The agent's `[CRYO:PLAN]` markers serve as memory across sessions.
+**Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's event log as context. The agent uses `cryo-agent note` to leave memory for future sessions.
 
 ## Example: Mr. Lazy
 
@@ -131,7 +131,9 @@ The agent writes these markers at the end of its output:
 | `[CRYO:FALLBACK <action> <target> "<msg>"]` | Dead man's switch | `[CRYO:FALLBACK email user@ex.com "task failed"]` |
 | `[CRYO:REPLY "<msg>"]` | Reply to human (synced to Discussion) | `[CRYO:REPLY "Done, API updated."]` |
 
-## Commands (for Admin)
+## Commands
+
+### Operator (`cryo`)
 
 ```bash
 cryo init [--agent <cmd>]           # Initialize working directory
@@ -144,16 +146,29 @@ cryo ps [--kill-all]                # List (or kill) all running daemons
 cryo restart                        # Kill running daemon and restart
 cryo cancel                         # Stop the daemon and remove state
 cryo watch [--all]                  # Watch session log in real-time
-cryo validate                       # Check if ready to hibernate
 cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
-cryo force-wakeup [<plan|dir>] [--agent <cmd>]  # Run single session (testing)
-cryo gh init --repo owner/repo      # Create a GitHub Discussion for sync
-cryo gh pull                        # Pull Discussion comments into inbox
-cryo gh push                        # Push session summary to Discussion
-cryo gh sync                        # Pull then push (full sync)
-cryo gh status                      # Show GitHub sync status
+```
+
+### Agent IPC (`cryo-agent`)
+
+```bash
+cryo-agent hibernate --wake <ISO8601>  # Schedule next wake
+cryo-agent hibernate --complete        # Mark plan as complete
+cryo-agent note "text"                 # Leave a note for next session
+cryo-agent reply "message"             # Reply to human (writes to outbox)
+cryo-agent alert <action> <target> "msg"  # Set dead-man switch
+```
+
+### GitHub Sync (`cryo-gh`)
+
+```bash
+cryo-gh init --repo owner/repo     # Create a GitHub Discussion for sync
+cryo-gh pull                        # Pull Discussion comments into inbox
+cryo-gh push                        # Push session summary to Discussion
+cryo-gh sync                        # Pull then push (full sync)
+cryo-gh status                      # Show GitHub sync status
 ```
 
 ## License
