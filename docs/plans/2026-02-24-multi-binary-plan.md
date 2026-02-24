@@ -187,10 +187,15 @@ git commit -m "chore: add three [[bin]] entries in Cargo.toml"
 
 **Step 1: Write the agent IPC binary**
 
+Extract the repeated send-request-and-check pattern into a helper (code review #5 — DRY):
+
 ```rust
 // src/bin/cryo_agent.rs
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::path::Path;
+
+use cryochamber::socket::{self, Request};
 
 #[derive(Parser)]
 #[command(name = "cryo-agent", about = "Cryochamber agent IPC commands")]
@@ -237,6 +242,17 @@ enum Commands {
     },
 }
 
+/// Send a request to the daemon and print the response. Bail on failure.
+fn send(dir: &Path, req: &Request) -> Result<()> {
+    let resp = socket::send_request(dir, req)?;
+    if resp.ok {
+        println!("{}", resp.message);
+        Ok(())
+    } else {
+        anyhow::bail!("{}", resp.message)
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let dir = cryochamber::work_dir()?;
@@ -251,56 +267,25 @@ fn main() -> Result<()> {
             if !complete && wake.is_none() {
                 anyhow::bail!("Either --wake or --complete is required");
             }
-            let req = cryochamber::socket::Request::Hibernate {
+            send(&dir, &Request::Hibernate {
                 wake,
                 complete,
                 exit_code: exit,
                 summary,
-            };
-            let resp = cryochamber::socket::send_request(&dir, &req)?;
-            if resp.ok {
-                println!("{}", resp.message);
-            } else {
-                anyhow::bail!("{}", resp.message);
-            }
+            })
         }
-        Commands::Note { text } => {
-            let req = cryochamber::socket::Request::Note { text };
-            let resp = cryochamber::socket::send_request(&dir, &req)?;
-            if resp.ok {
-                println!("{}", resp.message);
-            } else {
-                anyhow::bail!("{}", resp.message);
-            }
-        }
-        Commands::Reply { text } => {
-            let req = cryochamber::socket::Request::Reply { text };
-            let resp = cryochamber::socket::send_request(&dir, &req)?;
-            if resp.ok {
-                println!("{}", resp.message);
-            } else {
-                anyhow::bail!("{}", resp.message);
-            }
-        }
+        Commands::Note { text } => send(&dir, &Request::Note { text }),
+        Commands::Reply { text } => send(&dir, &Request::Reply { text }),
         Commands::Alert {
             action,
             target,
             message,
-        } => {
-            let req = cryochamber::socket::Request::Alert {
-                action,
-                target,
-                message,
-            };
-            let resp = cryochamber::socket::send_request(&dir, &req)?;
-            if resp.ok {
-                println!("{}", resp.message);
-            } else {
-                anyhow::bail!("{}", resp.message);
-            }
-        }
+        } => send(&dir, &Request::Alert {
+            action,
+            target,
+            message,
+        }),
     }
-    Ok(())
 }
 ```
 
@@ -699,11 +684,11 @@ git commit -m "feat: add cryo operator binary"
 
 ---
 
-### Task 6: Delete `src/main.rs` and clean up daemon.rs
+### Task 6: Delete `src/main.rs`, clean up daemon.rs, fix bugs
 
 **Files:**
 - Delete: `src/main.rs`
-- Modify: `src/daemon.rs` (remove duplicate `send_signal`)
+- Modify: `src/daemon.rs`
 
 **Step 1: Delete main.rs**
 
@@ -715,24 +700,75 @@ rm src/main.rs
 
 In `src/daemon.rs`, remove the local `send_signal` function (lines 24-31) and replace usages with `crate::process::send_signal`. There are two call sites in `run_one_session()`: lines 403 and 413-414.
 
-**Step 3: Verify full build**
+**Step 3: Fix zombie process risk (code review #1)**
+
+In `run_one_session()`, after signaling the child on timeout (around line 413-416) and shutdown (around line 403-405), reap the child to prevent zombie processes:
+
+```rust
+// Timeout path (around line 413):
+send_signal(child_pid, libc::SIGTERM);
+std::thread::sleep(Duration::from_secs(2));
+send_signal(child_pid, libc::SIGKILL);
+let _ = child.wait(); // reap to prevent zombie
+logger.finish("session timeout — agent killed")?;
+
+// Shutdown path (around line 403):
+send_signal(child_pid, libc::SIGTERM);
+let _ = child.wait(); // reap to prevent zombie
+logger.finish("daemon shutdown — agent terminated")?;
+```
+
+**Step 4: Fix silent reply write error (code review #2)**
+
+In `run_one_session()`, the reply handler (around line 500) silently ignores outbox write errors. Change:
+
+```rust
+// Before:
+let _ = crate::message::write_message(&self.dir, "outbox", &msg);
+// ...
+let _ = responder.respond(&crate::socket::Response {
+    ok: true,
+    message: "Reply sent".into(),
+});
+
+// After:
+match crate::message::write_message(&self.dir, "outbox", &msg) {
+    Ok(_) => {
+        logger.log_event(&format!("reply: \"{text}\""))?;
+        let _ = responder.respond(&crate::socket::Response {
+            ok: true,
+            message: "Reply sent".into(),
+        });
+    }
+    Err(e) => {
+        logger.log_event(&format!("reply failed: {e}"))?;
+        let _ = responder.respond(&crate::socket::Response {
+            ok: false,
+            message: format!("Failed to write reply: {e}"),
+        });
+    }
+}
+```
+
+**Step 5: Verify full build**
 
 Run: `cargo build`
 Expected: all three binaries compile cleanly
 
-**Step 4: Commit**
+**Step 6: Commit**
 
 ```bash
 git add -u
-git commit -m "chore: delete main.rs, deduplicate send_signal"
+git commit -m "fix: reap child processes, propagate reply write errors"
 ```
 
 ---
 
-### Task 7: Update protocol text to use `cryo-agent`
+### Task 7: Update protocol text and agent prompt to use `cryo-agent`
 
 **Files:**
 - Modify: `src/protocol.rs`
+- Modify: `src/agent.rs`
 
 **Step 1: Replace `cryo` with `cryo-agent` in PROTOCOL_CONTENT**
 
@@ -743,28 +779,55 @@ cryo hibernate  ->  cryo-agent hibernate
 cryo note       ->  cryo-agent note
 cryo reply      ->  cryo-agent reply
 cryo alert      ->  cryo-agent alert
-cryo status     ->  cryo-agent status
-cryo inbox      ->  cryo-agent inbox
 ```
 
-Also update the Rules section:
+**Step 2: Fix phantom `cryo inbox` and `cryo status` commands (code review #3)**
+
+The protocol text references `cryo status` and `cryo inbox` as agent-facing commands, but neither exists as an agent command. The agent gets its inbox via the prompt (daemon reads inbox and includes messages). Remove both sections from PROTOCOL_CONTENT:
+
+- Remove the "Check Status" section (`cryo status` block, lines 44-47) — agents don't need this; they see session info in the prompt header.
+- Remove the "Check Inbox" section (`cryo inbox` block, lines 49-53) — inbox messages are injected into the prompt automatically.
+
+Also remove the corresponding Rules entries:
+- Remove rule 4: `Check \`cryo inbox\` for messages from the human`
+
+Updated Rules section should be:
 ```
-Always call `cryo hibernate`  ->  Always call `cryo-agent hibernate`
-Use `cryo note`               ->  Use `cryo-agent note`
-Check `cryo inbox`            ->  Check `cryo-agent inbox`
-Set `cryo alert`              ->  Set `cryo-agent alert`
+1. Always call `cryo-agent hibernate` or `cryo-agent hibernate --complete` before you finish
+2. Read `plan.md` for your objectives at the start of each session
+3. Use `cryo-agent note` to leave context for your next session
+4. Set `cryo-agent alert` if your task is critical and failure should be noticed
 ```
 
-**Step 2: Verify**
+**Step 3: Update agent prompt in `src/agent.rs`**
+
+In `build_prompt()` (around line 115-117), the "Reminders" section also references the phantom commands. Update:
+
+```rust
+// Before:
+- Use `cryo hibernate` to end your session (--wake or --complete)
+- Use `cryo note` to leave context for your next session
+- Check `cryo inbox` for messages from the human
+- Read plan.md before starting work
+
+// After:
+- Use `cryo-agent hibernate` to end your session (--wake or --complete)
+- Use `cryo-agent note` to leave context for your next session
+- Read plan.md before starting work
+```
+
+Remove the `cryo inbox` reminder line entirely (inbox is already in the prompt).
+
+**Step 4: Verify**
 
 Run: `cargo build`
 Expected: compiles
 
-**Step 3: Commit**
+**Step 5: Commit**
 
 ```bash
-git add src/protocol.rs
-git commit -m "feat: update protocol text to reference cryo-agent"
+git add src/protocol.rs src/agent.rs
+git commit -m "fix: update protocol and prompt to cryo-agent, remove phantom commands"
 ```
 
 ---
@@ -873,6 +936,9 @@ fn test_protocol_content_contains_commands() {
     assert!(content.contains("cryo-agent note"));
     assert!(content.contains("cryo-agent reply"));
     assert!(content.contains("cryo-agent alert"));
+    // Phantom commands removed (code review #3)
+    assert!(!content.contains("cryo-agent status"));
+    assert!(!content.contains("cryo-agent inbox"));
 }
 
 #[test]
@@ -887,6 +953,9 @@ fn test_protocol_mentions_hibernate() {
     let content = cryochamber::protocol::PROTOCOL_CONTENT;
     assert!(content.contains("cryo-agent hibernate"));
     assert!(content.contains("cryo-agent note"));
+    // No stale cryo status/inbox references
+    assert!(!content.contains("cryo status"));
+    assert!(!content.contains("cryo inbox"));
 }
 ```
 
