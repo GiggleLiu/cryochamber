@@ -112,9 +112,8 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 {history}{messages}
 ## Reminders
 
-- Use `cryo hibernate` to end your session (--wake or --complete)
-- Use `cryo note` to leave context for your next session
-- Check `cryo inbox` for messages from the human
+- Use `cryo-agent hibernate` to end your session (--wake or --complete)
+- Use `cryo-agent note` to leave context for your next session
 - Read plan.md before starting work
 "#,
         session_number = config.session_number,

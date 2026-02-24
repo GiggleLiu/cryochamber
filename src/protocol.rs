@@ -12,8 +12,8 @@ You are running inside a **cryochamber** — a long-running task scheduler that 
 
 ### End Session
 ```
-cryo hibernate --wake <ISO8601> [--exit <0|1|2>] [--summary "..."]
-cryo hibernate --complete [--summary "..."]
+cryo-agent hibernate --wake <ISO8601> [--exit <0|1|2>] [--summary "..."]
+cryo-agent hibernate --complete [--summary "..."]
 ```
 - `--wake`: When to wake up next (required unless --complete)
 - `--complete`: Plan is done, no more sessions needed
@@ -22,35 +22,23 @@ cryo hibernate --complete [--summary "..."]
 
 ### Leave Notes
 ```
-cryo note "text"
+cryo-agent note "text"
 ```
 Leave a note for your future self. Notes are logged and visible in the next session.
 
 ### Reply to Human
 ```
-cryo reply "message"
+cryo-agent reply "message"
 ```
 Send a message to the human operator (written to outbox).
 
 ### Set Fallback Alert
 ```
-cryo alert <action> <target> "message"
+cryo-agent alert <action> <target> "message"
 ```
 Dead-man switch. If you don't wake up on time, this alert fires.
 - action: `email` or `webhook`
 - target: email address or URL
-
-### Check Status
-```
-cryo status
-```
-See current session info, time remaining, and plan details.
-
-### Check Inbox
-```
-cryo inbox
-```
-List pending messages from the human operator.
 
 ## Utilities
 
@@ -62,11 +50,10 @@ make time OFFSET="+1 day"   # compute future times
 
 ## Rules
 
-1. Always call `cryo hibernate` or `cryo hibernate --complete` before you finish
+1. Always call `cryo-agent hibernate` or `cryo-agent hibernate --complete` before you finish
 2. Read `plan.md` for your objectives at the start of each session
-3. Use `cryo note` to leave context for your next session
-4. Check `cryo inbox` for messages from the human
-5. Set `cryo alert` if your task is critical and failure should be noticed
+3. Use `cryo-agent note` to leave context for your next session
+4. Set `cryo-agent alert` if your task is critical and failure should be noticed
 "#;
 
 /// Template plan written by `cryo init` if no plan.md exists.
