@@ -5,7 +5,15 @@ edition = "2021"
 
 [[bin]]
 name = "cryo"
-path = "src/main.rs"
+path = "src/bin/cryo.rs"
+
+[[bin]]
+name = "cryo-agent"
+path = "src/bin/cryo_agent.rs"
+
+[[bin]]
+name = "cryo-gh"
+path = "src/bin/cryo_gh.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
