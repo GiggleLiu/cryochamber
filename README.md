@@ -37,7 +37,7 @@ cryo cancel                                # stop the daemon
 
 To run a chess playing example:
 ```bash
-cd examples/chess-by-mail && cryo start && cryo watch
+cd examples/chess-by-mail && cryo init && cryo start && cryo watch
 ```
 
 See [`examples/`](examples/) for complete, runnable examples.

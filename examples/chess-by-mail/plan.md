@@ -7,7 +7,7 @@ Play a correspondence chess game against a human opponent. Maintain the board st
 ## Tasks
 
 1. Initialize the board. Print the starting position in ASCII. If playing white, make your opening move.
-2. Each session: check inbox for human moves. Validate each move, apply it to the board, and compute your response. Print the updated ASCII board.
+2. Each session: check inbox for human moves. Validate each move, apply it to the board, and compute your response. Print the updated ASCII board. Then suggest 3 possible next moves for the human with a brief explanation of each (e.g., tactical, positional, or defensive reasoning). Send the board and suggestions via `cryo-agent reply`.
 3. If no move is received, increment your idle counter. After the patience threshold, announce you are going to sleep and run `cryo-agent hibernate --complete`.
 4. On wake from deep sleep: check inbox for the move that triggered the wake, respond, and resume normal polling.
 5. Detect checkmate, stalemate, draw, or resignation. Announce the result and run `cryo-agent hibernate --complete`.

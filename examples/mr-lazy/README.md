@@ -13,7 +13,7 @@ for cross-session memory, probabilistic plan completion.
 
 ```bash
 cd examples/mr-lazy
-cryo start --agent opencode && cryo watch
+cryo init && cryo start && cryo watch
 ```
 
 Or use the health check target (runs in daemon mode, Ctrl-C to stop):

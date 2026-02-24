@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean coverage run-plan logo chess time check-agent check-round-trip check-gh cli
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh cli
 
 # Default target
 help:
@@ -12,10 +12,12 @@ help:
 	@echo "  clippy       - Run clippy lints"
 	@echo "  check        - Quick check (fmt + clippy + test)"
 	@echo "  coverage     - Generate coverage report (requires cargo-llvm-cov)"
-	@echo "  clean        - Clean build artifacts"
+	@echo "  clean        - Clean build artifacts (cargo clean)"
+	@echo "  example-clean - Remove auto-generated files from examples"
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
-	@echo "  chess        - Run the chess-by-mail example"
+	@echo "  example      - Run an example (DIR=examples/mr-lazy WATCH=true)"
+	@echo "  example-cancel - Stop a running example (DIR=examples/mr-lazy)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
@@ -56,12 +58,15 @@ logo:
 	typst compile docs/logo/logo.typ docs/logo/logo.svg
 	typst compile docs/logo/logo.typ docs/logo/logo.png --ppi 300
 
-# Clean build artifacts and auto-generated example files
+# Clean build artifacts
 clean:
 	cargo clean
+
+# Remove auto-generated files from examples
+example-clean:
 	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md examples/*/Makefile
 	rm -f examples/*/*.log examples/*/*.json
-	rm -rf examples/*/messages
+	rm -rf examples/*/messages examples/*/.cryo
 
 # Run a plan with Claude in headless mode
 # Usage: make run-plan [INSTRUCTIONS="..."] [OUTPUT=output.log] [AGENT_TYPE=claude]
@@ -95,9 +100,24 @@ run-plan:
 cli:
 	cargo install --path .
 
-# Run the chess-by-mail example
-chess: build
-	cargo run -- start examples/chess-by-mail
+# Run an example
+# Usage: make example DIR=examples/mr-lazy
+#        make example DIR=examples/chess-by-mail AGENT=claude
+#        make example DIR=examples/chess-by-mail WATCH=false  # no watch (interactive use)
+DIR ?= examples/mr-lazy
+WATCH ?= true
+example: build
+	@cd "$(DIR)" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
+	if [ "$(WATCH)" = "true" ]; then \
+		$(CURDIR)/target/debug/cryo watch --all; \
+	else \
+		echo "Daemon started. Use 'cryo send', 'cryo watch', 'make example-cancel' to interact."; \
+	fi
+
+# Stop a running example
+# Usage: make example-cancel DIR=examples/chess-by-mail
+example-cancel:
+	cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel
 
 # Quick smoke test: force one agent wakeup cycle
 # Usage: make check-agent                 # check default (opencode)
@@ -108,10 +128,11 @@ CHECK_TIMEOUT ?= 3000
 check-agent: build
 	@TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
 	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	echo "=== Agent Health Check ==="; \
 	echo "Agent: $(AGENT)"; \
 	echo ""; \
-	./target/debug/cryo start "$$TMPDIR" \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo start \
 		--agent "$(AGENT)" \
 		--max-session-duration $(CHECK_TIMEOUT) 2>&1; \
 	RC=$$?; \
@@ -147,7 +168,8 @@ check-round-trip: build
 	echo "2. Starting mr-lazy daemon..."; \
 	TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
 	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
-	./target/debug/cryo start "$$TMPDIR" \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo start \
 		--agent "$(AGENT)" \
 		--max-session-duration $(CHECK_TIMEOUT) 2>&1; \
 	RC=$$?; \

@@ -15,6 +15,16 @@ fn agent_cmd() -> Command {
     Command::cargo_bin("cryo-agent").unwrap()
 }
 
+/// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
+fn init_dir(dir: &std::path::Path) {
+    cmd()
+        .arg("init")
+        .current_dir(dir)
+        .assert()
+        .success();
+}
+
+
 // --- Init ---
 
 #[test]
@@ -26,8 +36,7 @@ fn test_init_creates_protocol_and_plan() {
         .assert()
         .success()
         .stdout(predicate::str::contains("AGENTS.md"))
-        .stdout(predicate::str::contains("plan.md"))
-        .stdout(predicate::str::contains("messages/"));
+        .stdout(predicate::str::contains("plan.md"));
 
     assert!(dir.path().join("AGENTS.md").exists());
     assert!(dir.path().join("plan.md").exists());
@@ -59,13 +68,13 @@ fn test_init_idempotent() {
         .success()
         .stdout(predicate::str::contains("Wrote"));
 
-    // Second init — should say "already exists"
+    // Second init — should warn "already exists" on stderr
     cmd()
         .arg("init")
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("already exists"));
+        .stderr(predicate::str::contains("already exists"));
 }
 
 // --- Status ---
@@ -77,13 +86,14 @@ fn test_status_no_instance() {
         .arg("status")
         .current_dir(dir.path())
         .assert()
-        .success()
-        .stdout(predicate::str::contains("No cryochamber instance"));
+        .failure()
+        .stderr(predicate::str::contains("No cryochamber project"));
 }
 
 #[test]
 fn test_status_with_state() {
     let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
     let state = serde_json::json!({
         "plan_path": "plan.md",
         "session_number": 3,
@@ -110,6 +120,7 @@ fn test_status_with_state() {
 #[test]
 fn test_status_shows_latest_session_tail() {
     let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
     let state = serde_json::json!({
         "plan_path": "plan.md",
         "session_number": 1,
@@ -175,7 +186,7 @@ fn test_cancel_no_instance() {
         .current_dir(dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("No cryochamber instance"));
+        .stderr(predicate::str::contains("No cryochamber project"));
 }
 
 // --- Start ---
@@ -262,6 +273,7 @@ fn test_fallback_exec_writes_outbox() {
 #[test]
 fn test_send_creates_inbox_message() {
     let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
     cmd()
         .args(["send", "e2e4"])
         .current_dir(dir.path())
@@ -285,6 +297,7 @@ fn test_send_creates_inbox_message() {
 #[test]
 fn test_send_with_subject_and_from() {
     let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
     cmd()
         .args([
             "send",
@@ -366,6 +379,7 @@ fn test_receive_shows_outbox_messages() {
 #[test]
 fn test_state_backward_compat_without_daemon_fields() {
     let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
     // Old-format state without daemon fields
     let state = serde_json::json!({
         "plan_path": "plan.md",
@@ -396,11 +410,12 @@ fn test_state_backward_compat_without_daemon_fields() {
 fn test_daemon_plan_complete() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan\nDo stuff").unwrap();
+    init_dir(dir.path());
 
     // Start with daemon mode (default)
     // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
         .current_dir(dir.path())
         .assert()
@@ -438,12 +453,13 @@ fn test_daemon_plan_complete() {
 fn test_daemon_cancel() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+    init_dir(dir.path());
 
     // Use a slow agent that sleeps (doesn't need to hibernate, test just cancels it)
     let agent = "/bin/sh -c 'sleep 30'";
 
     cmd()
-        .args(["start", "plan.md", "--agent", agent])
+        .args(["start", "--agent", agent])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -464,11 +480,12 @@ fn test_daemon_cancel() {
 fn test_daemon_inbox_reactive_wake() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+    init_dir(dir.path());
 
     // Start with daemon mode, verify state has watch_inbox: true
     // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
         .current_dir(dir.path())
         .assert()
@@ -485,6 +502,7 @@ fn test_daemon_inbox_reactive_wake() {
 #[test]
 fn test_daemon_status_shows_daemon_mode() {
     let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
     let state = serde_json::json!({
         "plan_path": "plan.md",
         "session_number": 1,
@@ -515,6 +533,7 @@ fn test_daemon_status_shows_daemon_mode() {
 fn test_session_logs_inbox_filenames() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan\nPlay chess").unwrap();
+    init_dir(dir.path());
 
     // Send a message before starting
     cmd()
@@ -526,7 +545,7 @@ fn test_session_logs_inbox_filenames() {
     // Run a session with mock agent via daemon
     // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
-        .args(["start", "plan.md", "--agent", &mock_agent_cmd()])
+        .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
         .current_dir(dir.path())
         .assert()

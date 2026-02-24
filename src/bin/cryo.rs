@@ -137,30 +137,52 @@ fn main() -> Result<()> {
     }
 }
 
+/// Check that this directory is a valid cryo project (has CLAUDE.md or AGENTS.md).
+fn require_valid_project(dir: &Path) -> Result<()> {
+    if protocol::find_protocol_file(dir).is_none() {
+        anyhow::bail!(
+            "No cryochamber project in this directory (missing CLAUDE.md or AGENTS.md). Run `cryo init` first."
+        );
+    }
+    Ok(())
+}
+
+/// Check that a live daemon is running in the current directory.
+fn require_live_daemon(dir: &Path) -> Result<CryoState> {
+    require_valid_project(dir)?;
+    let cryo_state = state::load_state(&state::state_path(dir))?
+        .context("No daemon state found. Run `cryo start` first.")?;
+    if !state::is_locked(&cryo_state) {
+        anyhow::bail!(
+            "No live daemon in this directory (stale state from a previous run). Run `cryo start` to start one."
+        );
+    }
+    Ok(cryo_state)
+}
+
 fn cmd_init(agent_cmd: &str) -> Result<()> {
     let dir = cryochamber::work_dir()?;
 
     let filename = protocol::protocol_filename(agent_cmd);
     if protocol::write_protocol_file(&dir, filename)? {
-        println!("Wrote {filename} (cryochamber protocol)");
+        println!("Wrote {filename}");
     } else {
-        println!("{filename} already exists, skipping");
+        eprintln!("Warning: {filename} already exists, not replaced");
     }
 
     if protocol::write_template_plan(&dir)? {
-        println!("Wrote template plan.md");
+        println!("Wrote plan.md");
     } else {
-        println!("plan.md already exists, skipping");
+        eprintln!("Warning: plan.md already exists, not replaced");
     }
 
     if protocol::write_makefile(&dir)? {
-        println!("Wrote Makefile (agent utilities)");
+        println!("Wrote Makefile");
     } else {
-        println!("Makefile already exists, skipping");
+        eprintln!("Warning: Makefile already exists, not replaced");
     }
 
     message::ensure_dirs(&dir)?;
-    println!("Created messages/ directory");
 
     println!("\nCryochamber initialized. Next steps:");
     println!("  1. Edit plan.md with your task plan");
@@ -220,12 +242,14 @@ fn cmd_start(
         }
     }
 
-    // Auto-init: ensure the agent-specific protocol file and message dirs exist
-    let filename = protocol::protocol_filename(agent_cmd);
-    if protocol::write_protocol_file(&dir, filename)? {
-        println!("Wrote {filename} (cryochamber protocol)");
+    // Require init: protocol file must exist
+    if protocol::find_protocol_file(&dir).is_none() {
+        anyhow::bail!(
+            "No CLAUDE.md or AGENTS.md found. Run `cryo init` first."
+        );
     }
-    protocol::write_makefile(&dir)?;
+
+    // Ensure message dirs exist (needed for inbox watching)
     message::ensure_dirs(&dir)?;
 
     let plan_dest = dir.join("plan.md");
@@ -265,10 +289,10 @@ fn cmd_daemon() -> Result<()> {
 
 fn cmd_status() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let cryo_state = state::load_state(&state::state_path(&dir))?;
+    require_valid_project(&dir)?;
 
-    match cryo_state {
-        None => println!("No cryochamber instance in this directory."),
+    match state::load_state(&state::state_path(&dir))? {
+        None => println!("No daemon has been started yet. Run `cryo start` to begin."),
         Some(state) => {
             println!("Plan: {}", state.plan_path);
             println!("Session: {}", state.session_number);
@@ -295,19 +319,17 @@ fn cmd_status() -> Result<()> {
             }
         }
     }
+
     Ok(())
 }
 
 fn cmd_restart() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let cryo_state =
-        state::load_state(&state::state_path(&dir))?.context("No cryochamber instance found.")?;
+    let cryo_state = require_live_daemon(&dir)?;
 
-    // Kill existing daemon process if running
+    // Kill existing daemon process
     if let Some(pid) = cryo_state.pid {
-        if state::is_locked(&cryo_state) {
-            cryochamber::process::terminate_pid(pid)?;
-        }
+        cryochamber::process::terminate_pid(pid)?;
     }
 
     // Clear PID, keep session_number and last_command
@@ -347,14 +369,11 @@ fn cmd_ps(kill_all: bool) -> Result<()> {
 
 fn cmd_cancel() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let cryo_state =
-        state::load_state(&state::state_path(&dir))?.context("No cryochamber instance found.")?;
+    let cryo_state = require_live_daemon(&dir)?;
 
-    // Kill daemon process if running
+    // Kill daemon process
     if let Some(pid) = cryo_state.pid {
-        if state::is_locked(&cryo_state) {
-            cryochamber::process::terminate_pid(pid)?;
-        }
+        cryochamber::process::terminate_pid(pid)?;
     }
 
     let sp = state::state_path(&dir);
@@ -408,6 +427,7 @@ fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
 
 fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
+    require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
 
     let subject = subject
@@ -456,6 +476,7 @@ fn cmd_watch(show_all: bool) -> Result<()> {
     use std::io::Read;
 
     let dir = cryochamber::work_dir()?;
+    require_valid_project(&dir)?;
     let log = cryochamber::log::log_path(&dir);
     let state_file = state::state_path(&dir);
 

@@ -16,7 +16,5 @@ The agent reasons about its past sessions to determine when to wake and what to 
 
 ```bash
 cd examples/conference-chair
-cryo start && cryo watch
+cryo init && cryo start && cryo watch
 ```
-
-`cryo start` auto-generates the protocol file (CLAUDE.md or AGENTS.md) and Makefile.

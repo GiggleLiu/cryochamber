@@ -190,7 +190,7 @@ impl Daemon {
         // Spawn a thread that forwards shutdown signals to the event channel,
         // so recv_timeout() unblocks immediately on SIGTERM/SIGINT.
         let shutdown_flag = Arc::clone(&self.shutdown);
-        let shutdown_tx = tx.clone();
+        let shutdown_tx = tx;
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(250));
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -243,7 +243,7 @@ impl Daemon {
 
                 cryo_state.session_number += 1;
 
-                match self.run_one_session(&mut cryo_state, &server, delayed_wake.as_deref()) {
+                match self.run_one_session(&cryo_state, &server, delayed_wake.as_deref()) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -353,7 +353,7 @@ impl Daemon {
 
     fn run_one_session(
         &self,
-        cryo_state: &mut CryoState,
+        cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
     ) -> Result<SessionLoopOutcome> {

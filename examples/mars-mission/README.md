@@ -16,7 +16,5 @@ The agent adapts the entire mission plan based on events encountered in each ses
 
 ```bash
 cd examples/mars-mission
-cryo start && cryo watch
+cryo init && cryo start && cryo watch
 ```
-
-`cryo start` auto-generates the protocol file (CLAUDE.md or AGENTS.md) and Makefile.

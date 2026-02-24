@@ -16,10 +16,8 @@ A cron job can't do this because:
 
 ```bash
 cd examples/chess-by-mail
-cryo start && cryo watch
+cryo init && cryo start && cryo watch
 ```
-
-`cryo start` auto-generates the protocol file (CLAUDE.md or AGENTS.md) and Makefile.
 
 ## Playing
 

@@ -24,7 +24,7 @@ make fmt         # cargo fmt
 make clippy      # cargo clippy (warnings are errors)
 make coverage    # generate coverage report (auto-installs cargo-llvm-cov)
 make logo        # compile logo with typst
-make chess       # build and run the chess-by-mail example
+make example     # run an example (DIR=examples/mr-lazy WATCH=true)
 make cli         # cargo install --path .
 make run-plan    # execute a plan with Claude headless (see Makefile for options)
 ```
