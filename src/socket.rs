@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -55,6 +55,66 @@ pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
     reader.read_line(&mut line)?;
     let response: Response = serde_json::from_str(line.trim())?;
     Ok(response)
+}
+
+/// Server side of the Unix socket. Daemon creates this on startup.
+pub struct SocketServer {
+    listener: UnixListener,
+}
+
+/// Handle to send a response back to the client.
+pub struct Responder {
+    stream: UnixStream,
+}
+
+impl Responder {
+    pub fn respond(mut self, response: &Response) -> anyhow::Result<()> {
+        let mut payload = serde_json::to_string(response)?;
+        payload.push('\n');
+        self.stream.write_all(payload.as_bytes())?;
+        self.stream.flush()?;
+        Ok(())
+    }
+}
+
+impl SocketServer {
+    /// Bind to the given socket path. Removes stale socket if present.
+    pub fn bind(path: &Path) -> anyhow::Result<Self> {
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        let listener = UnixListener::bind(path)?;
+        Ok(Self { listener })
+    }
+
+    /// Accept one connection, parse the request, return it with a responder.
+    pub fn accept_one(&self) -> anyhow::Result<Option<(Request, Responder)>> {
+        let (stream, _) = self.listener.accept()?;
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        if line.trim().is_empty() {
+            return Ok(None);
+        }
+        let request: Request = serde_json::from_str(line.trim())?;
+        Ok(Some((request, Responder { stream })))
+    }
+
+    /// Set the listener to non-blocking mode.
+    pub fn set_nonblocking(&self, nonblocking: bool) -> anyhow::Result<()> {
+        self.listener.set_nonblocking(nonblocking)?;
+        Ok(())
+    }
+
+    /// Get a reference to the raw listener (for polling in daemon event loop).
+    pub fn listener(&self) -> &UnixListener {
+        &self.listener
+    }
+
+    /// Remove the socket file.
+    pub fn cleanup(path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 #[cfg(test)]
@@ -120,5 +180,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = send_request(dir.path(), &Request::Note { text: "hi".into() });
         assert!(result.is_err()); // no server listening
+    }
+
+    use std::sync::mpsc;
+
+    #[test]
+    fn test_socket_server_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = socket_path(dir.path());
+        std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let server = SocketServer::bind(&sock).unwrap();
+
+        // Spawn server handler in a thread
+        let handle = std::thread::spawn(move || {
+            if let Some((req, responder)) = server.accept_one().unwrap() {
+                tx.send(req).unwrap();
+                responder.respond(&Response { ok: true, message: "got it".into() }).unwrap();
+            }
+        });
+
+        // Client sends a request
+        let resp = send_request(dir.path(), &Request::Note { text: "hello".into() }).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.message, "got it");
+
+        // Server received the request
+        let received = rx.recv().unwrap();
+        assert!(matches!(received, Request::Note { .. }));
+
+        handle.join().unwrap();
     }
 }
