@@ -1,11 +1,11 @@
 // src/bin/cryo.rs
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use cryochamber::config;
 use cryochamber::message;
 use cryochamber::protocol;
-use cryochamber::session;
 use cryochamber::state::{self, CryoState};
 
 #[derive(Parser)]
@@ -25,20 +25,15 @@ enum Commands {
     },
     /// Begin a new plan: initialize and run the first task
     Start {
-        /// Path to plan file or directory containing plan.md (default: current directory)
-        plan: Option<PathBuf>,
-        /// Agent command to use (default: opencode)
-        #[arg(long, default_value = "opencode")]
-        agent: String,
-        /// Max retry attempts on agent spawn failure (default: 1 = no retry)
-        #[arg(long, default_value = "1")]
-        max_retries: u32,
-        /// Maximum session duration in seconds (0 = no timeout, default: no timeout)
-        #[arg(long, default_value = "0")]
-        max_session_duration: u64,
-        /// Disable inbox file watching
+        /// Agent command to use (overrides cryo.toml)
         #[arg(long)]
-        no_watch: bool,
+        agent: Option<String>,
+        /// Max retry attempts on agent spawn failure (overrides cryo.toml)
+        #[arg(long)]
+        max_retries: Option<u32>,
+        /// Maximum session duration in seconds (overrides cryo.toml)
+        #[arg(long)]
+        max_session_duration: Option<u64>,
     },
     /// Show current status: next wake time, last result
     Status,
@@ -78,7 +73,8 @@ enum Commands {
         /// Message to include in the agent's prompt
         message: Option<String>,
     },
-    /// Execute a fallback action (used internally by timers)
+    /// Execute a fallback action (internal — used by timers)
+    #[command(hide = true)]
     FallbackExec {
         action: String,
         target: String,
@@ -95,18 +91,10 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Init { agent } => cmd_init(&agent),
         Commands::Start {
-            plan,
             agent,
             max_retries,
             max_session_duration,
-            no_watch,
-        } => cmd_start(
-            plan.as_deref(),
-            &agent,
-            max_retries,
-            max_session_duration,
-            no_watch,
-        ),
+        } => cmd_start(agent, max_retries, max_session_duration),
         Commands::Status => cmd_status(),
         Commands::Ps { kill_all } => cmd_ps(kill_all),
         Commands::Restart => cmd_restart(),
@@ -137,12 +125,11 @@ fn main() -> Result<()> {
     }
 }
 
-/// Check that this directory is a valid cryo project (has CLAUDE.md or AGENTS.md).
+/// Check that this directory is a valid cryo project.
+/// Accepts cryo.toml (new) or protocol file (legacy backward compat).
 fn require_valid_project(dir: &Path) -> Result<()> {
-    if protocol::find_protocol_file(dir).is_none() {
-        anyhow::bail!(
-            "No cryochamber project in this directory (missing CLAUDE.md or AGENTS.md). Run `cryo init` first."
-        );
+    if !config::config_path(dir).exists() && protocol::find_protocol_file(dir).is_none() {
+        anyhow::bail!("No cryochamber project in this directory. Run `cryo init` first.");
     }
     Ok(())
 }
@@ -154,7 +141,8 @@ fn require_live_daemon(dir: &Path) -> Result<CryoState> {
         .context("No daemon state found. Run `cryo start` first.")?;
     if !state::is_locked(&cryo_state) {
         anyhow::bail!(
-            "No live daemon in this directory (stale state from a previous run). Run `cryo start` to start one."
+            "No live daemon in this directory (stale state from a previous run). \
+             Run `cryo start` to start a new one, or `cryo cancel` to clean up stale state."
         );
     }
     Ok(cryo_state)
@@ -162,6 +150,13 @@ fn require_live_daemon(dir: &Path) -> Result<CryoState> {
 
 fn cmd_init(agent_cmd: &str) -> Result<()> {
     let dir = cryochamber::work_dir()?;
+
+    // Write cryo.toml first (project config)
+    if protocol::write_config_file(&dir, agent_cmd)? {
+        println!("Wrote cryo.toml");
+    } else {
+        eprintln!("Warning: cryo.toml already exists, not replaced");
+    }
 
     let filename = protocol::protocol_filename(agent_cmd);
     if protocol::write_protocol_file(&dir, filename)? {
@@ -209,28 +204,19 @@ fn validate_agent_command(agent_cmd: &str) -> Result<()> {
 }
 
 fn cmd_start(
-    plan_path: Option<&Path>,
-    agent_cmd: &str,
-    max_retries: u32,
-    max_session_duration: u64,
-    no_watch: bool,
+    agent_override: Option<String>,
+    max_retries_override: Option<u32>,
+    max_session_duration_override: Option<u64>,
 ) -> Result<()> {
-    // Validate agent command is supported and binary exists
-    validate_agent_command(agent_cmd)?;
-
-    // Resolve plan path: None => "plan.md" in cwd, Some(dir) => cd into dir, Some(file) => use file
-    let plan_path = match plan_path {
-        None => PathBuf::from("plan.md"),
-        Some(p) if p.is_dir() => {
-            std::env::set_current_dir(p)
-                .with_context(|| format!("Failed to cd into {}", p.display()))?;
-            PathBuf::from("plan.md")
-        }
-        Some(p) => p.to_path_buf(),
-    };
-    let plan_path = plan_path.as_path();
-
     let dir = cryochamber::work_dir()?;
+
+    // Require init: protocol file or cryo.toml must exist
+    require_valid_project(&dir)?;
+
+    // Require plan.md in the working directory
+    if !dir.join("plan.md").exists() {
+        anyhow::bail!("No plan.md found in the working directory. Create one or run `cryo init`.");
+    }
 
     // Guard: refuse to start if an instance is already active
     if let Some(existing) = state::load_state(&state::state_path(&dir))? {
@@ -242,33 +228,26 @@ fn cmd_start(
         }
     }
 
-    // Require init: protocol file must exist
-    if protocol::find_protocol_file(&dir).is_none() {
-        anyhow::bail!(
-            "No CLAUDE.md or AGENTS.md found. Run `cryo init` first."
-        );
-    }
+    // Load config from cryo.toml (fall back to defaults for legacy projects)
+    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
+
+    // Resolve effective values: CLI override > cryo.toml > hardcoded default
+    let effective_agent = agent_override.as_deref().unwrap_or(&cfg.agent);
+
+    // Validate agent command using effective agent value
+    validate_agent_command(effective_agent)?;
 
     // Ensure message dirs exist (needed for inbox watching)
     message::ensure_dirs(&dir)?;
 
-    let plan_dest = dir.join("plan.md");
-
-    if session::should_copy_plan(plan_path, &plan_dest) {
-        std::fs::copy(plan_path, &plan_dest).context("Failed to copy plan file")?;
-    }
-
-    // Daemon mode: save state and spawn `cryo daemon` in background
+    // Build slim CryoState with override fields only when CLI flags were explicitly provided
     let cryo_state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 0, // daemon will increment to 1
-        last_command: Some(agent_cmd.to_string()),
-        pid: None, // no PID lock — daemon will set its own
-        max_retries,
+        pid: None,         // no PID lock — daemon will set its own
         retry_count: 0,
-        max_session_duration,
-        watch_inbox: !no_watch,
-        daemon_mode: true,
+        agent_override,
+        max_retries_override,
+        max_session_duration_override,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
@@ -291,21 +270,41 @@ fn cmd_status() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
 
+    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
+
     match state::load_state(&state::state_path(&dir))? {
-        None => println!("No daemon has been started yet. Run `cryo start` to begin."),
-        Some(state) => {
-            println!("Plan: {}", state.plan_path);
-            println!("Session: {}", state.session_number);
+        None => {
+            println!("No daemon has been started yet. Run `cryo start` to begin.");
+            println!("\nConfig (cryo.toml):");
+            println!("  Agent: {}", cfg.agent);
+            println!("  Plan: {}", cfg.plan_path);
+        }
+        Some(st) => {
+            // Runtime state first
             println!(
-                "PID: {}",
-                state.pid.map(|p| p.to_string()).unwrap_or("none".into())
+                "Daemon: {}",
+                if state::is_locked(&st) {
+                    "running"
+                } else {
+                    "stopped"
+                }
             );
-            println!(
-                "Daemon mode: {}",
-                if state.daemon_mode { "yes" } else { "no" }
-            );
-            if state.max_session_duration > 0 {
-                println!("Session timeout: {}s", state.max_session_duration);
+            println!("Session: {}", st.session_number);
+            if let Some(pid) = st.pid {
+                println!("PID: {pid}");
+            }
+
+            // Config
+            let effective_agent = st.agent_override.as_deref().unwrap_or(&cfg.agent);
+            println!("Agent: {effective_agent}");
+            if st.agent_override.is_some() {
+                println!("  (override; cryo.toml has \"{}\")", cfg.agent);
+            }
+            let effective_timeout = st
+                .max_session_duration_override
+                .unwrap_or(cfg.max_session_duration);
+            if effective_timeout > 0 {
+                println!("Session timeout: {effective_timeout}s");
             }
 
             let log = cryochamber::log::log_path(&dir);
@@ -332,10 +331,9 @@ fn cmd_restart() -> Result<()> {
         cryochamber::process::terminate_pid(pid)?;
     }
 
-    // Clear PID, keep session_number and last_command
+    // Clear PID, keep session_number and overrides
     let updated = CryoState {
         pid: None,
-        daemon_mode: false,
         ..cryo_state
     };
     state::save_state(&state::state_path(&dir), &updated)?;
@@ -357,10 +355,11 @@ fn cmd_ps(kill_all: bool) -> Result<()> {
     }
 
     for entry in &entries {
-        println!("PID {:>6}  {}", entry.pid, entry.dir);
-
         if kill_all {
             cryochamber::process::terminate_pid(entry.pid)?;
+            println!("Killed PID {:>6}  {}", entry.pid, entry.dir);
+        } else {
+            println!("PID {:>6}  {}", entry.pid, entry.dir);
         }
     }
 
@@ -374,11 +373,13 @@ fn cmd_cancel() -> Result<()> {
     // Kill daemon process
     if let Some(pid) = cryo_state.pid {
         cryochamber::process::terminate_pid(pid)?;
+        println!("Killed daemon (PID {pid}).");
     }
 
     let sp = state::state_path(&dir);
     if sp.exists() {
         std::fs::remove_file(sp)?;
+        println!("Removed timer.json.");
     }
 
     println!("Cryochamber cancelled.");
@@ -399,16 +400,16 @@ fn cmd_log() -> Result<()> {
 
 fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
+    require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
 
-    // Warn if daemon was started with --no-watch
-    if let Some(st) = state::load_state(&state::state_path(&dir))? {
-        if !st.watch_inbox {
-            eprintln!(
-                "Warning: daemon was started with --no-watch. \
-                 Message will be delivered at the next scheduled wake, not immediately."
-            );
-        }
+    // Warn if watch_inbox is disabled in config
+    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
+    if !cfg.watch_inbox {
+        eprintln!(
+            "Warning: inbox watching is disabled in cryo.toml. \
+             Message will be delivered at the next scheduled wake, not immediately."
+        );
     }
 
     let body = wake_message.unwrap_or("Manual wake requested by operator.");
@@ -508,13 +509,13 @@ fn cmd_watch(show_all: bool) -> Result<()> {
             }
         }
 
-        // Check if a session is currently active
+        // Check if a daemon is currently running (PID is alive)
         if let Some(st) = state::load_state(&state_file)? {
             no_state_ticks = 0;
             if state::is_locked(&st) {
-                // Session is running, keep polling
-            } else if !st.daemon_mode {
-                // Final drain
+                // Daemon is running, keep polling
+            } else {
+                // Daemon has exited — final drain
                 if log.exists() {
                     let file_len = log.metadata().map(|m| m.len()).unwrap_or(0);
                     if file_len > pos {

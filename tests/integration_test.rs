@@ -48,15 +48,12 @@ fn test_state_roundtrip() {
     let state_path = dir.path().join("timer.json");
 
     let state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 5,
-        last_command: Some("opencode".to_string()),
         pid: None,
-        max_retries: 3,
         retry_count: 0,
-        max_session_duration: 1800,
-        watch_inbox: true,
-        daemon_mode: false,
+        agent_override: Some("opencode".to_string()),
+        max_retries_override: Some(3),
+        max_session_duration_override: Some(1800),
     };
     save_state(&state_path, &state).unwrap();
 
@@ -64,7 +61,7 @@ fn test_state_roundtrip() {
         .unwrap()
         .unwrap();
     assert_eq!(loaded.session_number, 5);
-    assert_eq!(loaded.max_retries, 3);
+    assert_eq!(loaded.max_retries_override, Some(3));
 }
 
 #[test]

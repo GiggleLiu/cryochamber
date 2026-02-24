@@ -18,6 +18,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::config::CryoConfig;
 use crate::fallback::FallbackAction;
 use crate::state::{self, CryoState};
 
@@ -150,8 +151,12 @@ impl Daemon {
             );
         }
 
-        // Mark as daemon mode and save PID
-        cryo_state.daemon_mode = true;
+        // Load project config from cryo.toml (fall back to defaults for legacy projects)
+        let mut config =
+            crate::config::load_config(&crate::config::config_path(&self.dir))?.unwrap_or_default();
+        config.apply_overrides(&cryo_state);
+
+        // Save PID so other commands can detect the running daemon
         cryo_state.pid = Some(std::process::id());
         state::save_state(&self.state_path, &cryo_state)?;
 
@@ -172,7 +177,7 @@ impl Daemon {
         // Set up inbox watcher
         let (tx, rx) = mpsc::channel();
         let inbox_path = self.dir.join("messages").join("inbox");
-        let _watcher = if cryo_state.watch_inbox && inbox_path.exists() {
+        let _watcher = if config.watch_inbox && inbox_path.exists() {
             match InboxWatcher::start(&inbox_path, tx.clone()) {
                 Ok(w) => {
                     eprintln!("Daemon: watching messages/inbox/ for new messages");
@@ -199,7 +204,7 @@ impl Daemon {
             }
         });
 
-        let mut retry = RetryState::new(cryo_state.max_retries);
+        let mut retry = RetryState::new(config.max_retries);
         let mut next_wake: Option<NaiveDateTime> = None;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 
@@ -243,7 +248,7 @@ impl Daemon {
 
                 cryo_state.session_number += 1;
 
-                match self.run_one_session(&cryo_state, &server, delayed_wake.as_deref()) {
+                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref()) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -340,7 +345,6 @@ impl Daemon {
 
         // Cleanup: always unregister and remove socket, even if state save fails
         cryo_state.pid = None;
-        cryo_state.daemon_mode = false;
         if let Err(e) = state::save_state(&self.state_path, &cryo_state) {
             eprintln!("Daemon: failed to save final state: {e}");
         }
@@ -353,20 +357,18 @@ impl Daemon {
 
     fn run_one_session(
         &self,
+        config: &CryoConfig,
         cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
-        let agent_cmd = cryo_state
-            .last_command
-            .clone()
-            .unwrap_or_else(|| "opencode".to_string());
+        let agent_cmd = config.agent.clone();
 
         let task = self
             .get_task()
             .unwrap_or_else(|| "Continue the plan".to_string());
 
-        let timeout_secs = cryo_state.max_session_duration;
+        let timeout_secs = config.max_session_duration;
 
         eprintln!(
             "Daemon: Session #{}: Running agent...",
@@ -380,14 +382,14 @@ impl Daemon {
 
         // Build prompt
         let log_content = crate::log::read_latest_session(&self.log_path)?;
-        let config = crate::agent::AgentConfig {
+        let agent_config = crate::agent::AgentConfig {
             log_content,
             session_number: cryo_state.session_number,
             task: task.clone(),
             inbox_messages,
             delayed_wake: delayed_wake.map(|s| s.to_string()),
         };
-        let prompt = crate::agent::build_prompt(&config);
+        let prompt = crate::agent::build_prompt(&agent_config);
 
         // Begin event log
         let mut logger = crate::log::EventLogger::begin(

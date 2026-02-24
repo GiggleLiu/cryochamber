@@ -48,12 +48,13 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | Module | Purpose |
 |--------|---------|
 | `socket` | Unix domain socket IPC — message types (`Request`/`Response`), client (`send_request`), server (`SocketServer`). |
-| `state` | JSON persistence to `timer.json` with PID-based locking via `libc::kill(pid, 0)`. |
+| `config` | TOML persistence for project config (`cryo.toml`). `CryoConfig` struct, load/save, `apply_overrides` merges CLI overrides from state. |
+| `state` | JSON persistence to `timer.json` — runtime-only state (session number, PID lock, CLI overrides). PID-based locking via `libc::kill(pid, 0)`. |
 | `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, notes, hibernate, exit). |
-| `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, Makefile). Written by `init`/`start`. |
+| `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, Makefile, cryo.toml). Written by `init`/`start`. |
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (fire-and-forget, no stdout capture). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
-| `session` | Pure utility: `should_copy_plan` checks whether to copy the plan file. |
+| `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
 | `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend). |
 | `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
@@ -66,17 +67,23 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 - **Daemon mode**: `cryo start` launches a persistent background process. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout.
 - **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `reply`, `alert`), which send JSON messages over a Unix domain socket. This replaces the old stdout marker-parsing approach.
 - **Fire-and-forget agent**: The daemon spawns the agent without capturing stdout/stderr. All structured communication flows through the socket.
+- **Config/state split**: `cryo.toml` is the project config (agent, retries, timeout, watch_inbox) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, retry count, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
 - **Default agent**: The CLI defaults to `opencode run` as the agent command (headless mode, not the TUI).
 
+### Files Created by `cryo init`
+
+- `cryo.toml` — project configuration (agent, plan_path, max_retries, max_session_duration, watch_inbox)
+- `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
+- `plan.md` — template plan file
+- `Makefile` — agent utility targets (`make time`, etc.)
+
 ### Files Created at Runtime (per project directory)
 
-- `timer.json` — serialized `CryoState` (plan path, session number, PID lock, daemon mode, session timeout, retry config)
+- `timer.json` — runtime state only (session number, PID lock, retry count, CLI overrides)
 - `cryo.log` — append-only session log
 - `plan.md` — copy of the plan file in the working directory
-- `Makefile` — agent utility targets (`make time`, etc.)
-- `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `messages/inbox/` — incoming messages for the agent
 - `messages/outbox/` — outgoing messages (fallback alerts)
 - `messages/inbox/archive/` — processed inbox messages
@@ -87,7 +94,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 
 - `README.md` — Project overview, quickstart, CLI commands, and admin CLI
 - `Makefile` — Dev targets (`check`, `build`, `test`, `run-plan`, `check-round-trip`, etc.)
-- `templates/` — Single source of truth for agent protocol, template plan, and agent Makefile
+- `templates/` — Single source of truth for agent protocol, template plan, agent Makefile, and cryo.toml config template
 - `docs/plans/` — Design documents and implementation plans
 - `docs/reports/` — Code review reports
 - `examples/` — Showcase examples (chess-by-mail, conference-chair, mars-mission)

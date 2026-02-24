@@ -7,23 +7,19 @@ fn test_save_and_load_state() {
     let state_path = dir.path().join("timer.json");
 
     let state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 3,
-        last_command: Some("opencode test".to_string()),
         pid: Some(std::process::id()),
-        max_retries: 1,
         retry_count: 0,
-        max_session_duration: 1800,
-        watch_inbox: true,
-        daemon_mode: false,
+        agent_override: Some("opencode test".to_string()),
+        max_retries_override: None,
+        max_session_duration_override: None,
     };
 
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
 
     assert_eq!(loaded.session_number, 3);
-    assert_eq!(loaded.last_command, Some("opencode test".to_string()));
-    assert_eq!(loaded.max_retries, 1);
+    assert_eq!(loaded.agent_override, Some("opencode test".to_string()));
     assert_eq!(loaded.retry_count, 0);
 }
 
@@ -41,15 +37,12 @@ fn test_lock_mechanism() {
     let state_path = dir.path().join("timer.json");
 
     let state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 1,
-        last_command: None,
         pid: Some(std::process::id()),
-        max_retries: 1,
         retry_count: 0,
-        max_session_duration: 1800,
-        watch_inbox: true,
-        daemon_mode: false,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -63,15 +56,12 @@ fn test_is_locked_dead_process() {
     use cryochamber::state::is_locked;
     // PID 999999 is very unlikely to exist
     let state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 1,
-        last_command: None,
         pid: Some(999999),
-        max_retries: 1,
         retry_count: 0,
-        max_session_duration: 1800,
-        watch_inbox: true,
-        daemon_mode: false,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
     };
     assert!(!is_locked(&state));
 }
@@ -80,15 +70,12 @@ fn test_is_locked_dead_process() {
 fn test_is_locked_no_pid() {
     use cryochamber::state::is_locked;
     let state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 1,
-        last_command: None,
         pid: None,
-        max_retries: 1,
         retry_count: 0,
-        max_session_duration: 1800,
-        watch_inbox: true,
-        daemon_mode: false,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
     };
     assert!(!is_locked(&state));
 }
@@ -103,40 +90,56 @@ fn test_load_corrupted_state() {
 }
 
 #[test]
-fn test_load_legacy_state_without_retry_fields() {
-    // Old timer.json files won't have max_retries/retry_count — serde defaults should apply
+fn test_load_minimal_state() {
+    // Minimal JSON with only required fields — serde defaults should apply
     let dir = tempfile::tempdir().unwrap();
     let state_path = dir.path().join("timer.json");
-    let legacy_json = r#"{
-        "plan_path": "plan.md",
+    let minimal_json = r#"{
         "session_number": 5,
-        "last_command": "opencode",
         "pid": null
     }"#;
-    std::fs::write(&state_path, legacy_json).unwrap();
+    std::fs::write(&state_path, minimal_json).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
     assert_eq!(loaded.session_number, 5);
-    assert_eq!(loaded.max_retries, 1); // default
     assert_eq!(loaded.retry_count, 0); // default
+    assert!(loaded.agent_override.is_none());
 }
 
 #[test]
-fn test_retry_fields_roundtrip() {
+fn test_override_fields_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let state_path = dir.path().join("timer.json");
     let state = CryoState {
-        plan_path: "plan.md".to_string(),
         session_number: 1,
-        last_command: None,
         pid: None,
-        max_retries: 5,
         retry_count: 2,
-        max_session_duration: 1800,
-        watch_inbox: true,
-        daemon_mode: false,
+        agent_override: Some("claude".to_string()),
+        max_retries_override: Some(5),
+        max_session_duration_override: Some(1800),
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
-    assert_eq!(loaded.max_retries, 5);
-    assert_eq!(loaded.retry_count, 2);
+    assert_eq!(loaded.agent_override, Some("claude".to_string()));
+    assert_eq!(loaded.max_retries_override, Some(5));
+    assert_eq!(loaded.max_session_duration_override, Some(1800));
+}
+
+#[test]
+fn test_none_overrides_not_serialized() {
+    // When overrides are None, they should not appear in the JSON output
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+    };
+    save_state(&state_path, &state).unwrap();
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(!json.contains("agent_override"));
+    assert!(!json.contains("max_retries_override"));
+    assert!(!json.contains("max_session_duration_override"));
 }

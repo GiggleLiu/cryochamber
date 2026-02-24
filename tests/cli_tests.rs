@@ -17,13 +17,8 @@ fn agent_cmd() -> Command {
 
 /// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
 fn init_dir(dir: &std::path::Path) {
-    cmd()
-        .arg("init")
-        .current_dir(dir)
-        .assert()
-        .success();
+    cmd().arg("init").current_dir(dir).assert().success();
 }
-
 
 // --- Init ---
 
@@ -35,13 +30,19 @@ fn test_init_creates_protocol_and_plan() {
         .current_dir(dir.path())
         .assert()
         .success()
+        .stdout(predicate::str::contains("cryo.toml"))
         .stdout(predicate::str::contains("AGENTS.md"))
         .stdout(predicate::str::contains("plan.md"));
 
+    assert!(dir.path().join("cryo.toml").exists());
     assert!(dir.path().join("AGENTS.md").exists());
     assert!(dir.path().join("plan.md").exists());
     assert!(dir.path().join("messages/inbox").is_dir());
     assert!(dir.path().join("messages/outbox").is_dir());
+
+    // Verify cryo.toml contains the default agent
+    let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    assert!(config_content.contains("agent = \"opencode\""));
 }
 
 #[test]
@@ -55,6 +56,10 @@ fn test_init_claude_agent() {
         .stdout(predicate::str::contains("CLAUDE.md"));
 
     assert!(dir.path().join("CLAUDE.md").exists());
+
+    // Verify cryo.toml has claude as agent
+    let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    assert!(config_content.contains("agent = \"claude\""));
 }
 
 #[test]
@@ -95,11 +100,8 @@ fn test_status_with_state() {
     let dir = tempfile::tempdir().unwrap();
     init_dir(dir.path());
     let state = serde_json::json!({
-        "plan_path": "plan.md",
         "session_number": 3,
-        "last_command": "opencode",
         "pid": null,
-        "max_retries": 1,
         "retry_count": 0
     });
     fs::write(
@@ -113,8 +115,9 @@ fn test_status_with_state() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Plan: plan.md"))
-        .stdout(predicate::str::contains("Session: 3"));
+        .stdout(predicate::str::contains("Daemon: stopped"))
+        .stdout(predicate::str::contains("Session: 3"))
+        .stdout(predicate::str::contains("Agent: opencode"));
 }
 
 #[test]
@@ -122,11 +125,8 @@ fn test_status_shows_latest_session_tail() {
     let dir = tempfile::tempdir().unwrap();
     init_dir(dir.path());
     let state = serde_json::json!({
-        "plan_path": "plan.md",
         "session_number": 1,
-        "last_command": "opencode",
         "pid": null,
-        "max_retries": 1,
         "retry_count": 0
     });
     fs::write(
@@ -192,13 +192,17 @@ fn test_cancel_no_instance() {
 // --- Start ---
 
 #[test]
-fn test_start_nonexistent_plan() {
+fn test_start_no_plan_md() {
     let dir = tempfile::tempdir().unwrap();
+    // Init without plan.md — remove the auto-created one
+    init_dir(dir.path());
+    fs::remove_file(dir.path().join("plan.md")).unwrap();
     cmd()
-        .args(["start", "nonexistent.md"])
+        .arg("start")
         .current_dir(dir.path())
         .assert()
-        .failure();
+        .failure()
+        .stderr(predicate::str::contains("No plan.md found"));
 }
 
 // --- Help ---
@@ -377,16 +381,14 @@ fn test_receive_shows_outbox_messages() {
 // --- Backward compat ---
 
 #[test]
-fn test_state_backward_compat_without_daemon_fields() {
+fn test_status_with_legacy_project() {
+    // Legacy project has protocol file but no cryo.toml — should still work
     let dir = tempfile::tempdir().unwrap();
-    init_dir(dir.path());
-    // Old-format state without daemon fields
+    // Only write protocol file, no cryo.toml
+    cryochamber::protocol::write_protocol_file(dir.path(), "AGENTS.md").unwrap();
     let state = serde_json::json!({
-        "plan_path": "plan.md",
         "session_number": 1,
-        "last_command": "opencode",
         "pid": null,
-        "max_retries": 1,
         "retry_count": 0
     });
     fs::write(
@@ -395,7 +397,37 @@ fn test_state_backward_compat_without_daemon_fields() {
     )
     .unwrap();
 
-    // Should load without error, daemon fields get defaults
+    // Should load without error, using defaults from CryoConfig::default()
+    cmd()
+        .arg("status")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Session: 1"));
+}
+
+#[test]
+fn test_state_backward_compat_ignores_unknown_fields() {
+    // Old-format state with fields that no longer exist — serde ignores them
+    let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
+    let state = serde_json::json!({
+        "plan_path": "plan.md",
+        "session_number": 1,
+        "last_command": "opencode",
+        "pid": null,
+        "max_retries": 1,
+        "retry_count": 0,
+        "max_session_duration": 1800,
+        "watch_inbox": true,
+        "daemon_mode": false
+    });
+    fs::write(
+        dir.path().join("timer.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
     cmd()
         .arg("status")
         .current_dir(dir.path())
@@ -438,11 +470,10 @@ fn test_daemon_plan_complete() {
     }
     assert!(daemon_exited, "Daemon should have exited within 10 seconds");
 
-    // Check state: PID should be cleared, daemon_mode false
+    // Check state: PID should be cleared
     let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
     let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
     assert!(state["pid"].is_null());
-    assert_eq!(state["daemon_mode"].as_bool(), Some(false));
 
     // Check log contains session event (EventLogger writes events, not agent stdout)
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
@@ -477,12 +508,16 @@ fn test_daemon_cancel() {
 }
 
 #[test]
-fn test_daemon_inbox_reactive_wake() {
+fn test_daemon_config_watch_inbox() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
     init_dir(dir.path());
 
-    // Start with daemon mode, verify state has watch_inbox: true
+    // Verify cryo.toml has watch_inbox: true (default)
+    let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    assert!(config_content.contains("watch_inbox = true"));
+
+    // Start with daemon mode
     // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
     cmd()
         .args(["start", "--agent", &mock_agent_cmd()])
@@ -493,26 +528,25 @@ fn test_daemon_inbox_reactive_wake() {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // State should have watch_inbox: true
+    // timer.json should be slim — no watch_inbox field at all
     let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
-    assert_eq!(state["watch_inbox"].as_bool(), Some(true));
+    assert!(!state_content.contains("watch_inbox"));
 }
 
 #[test]
-fn test_daemon_status_shows_daemon_mode() {
+fn test_daemon_status_shows_config() {
     let dir = tempfile::tempdir().unwrap();
     init_dir(dir.path());
+
+    // Update cryo.toml to set max_session_duration
+    let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let updated = config_content.replace("max_session_duration = 0", "max_session_duration = 1800");
+    fs::write(dir.path().join("cryo.toml"), updated).unwrap();
+
     let state = serde_json::json!({
-        "plan_path": "plan.md",
         "session_number": 1,
-        "last_command": "opencode",
         "pid": null,
-        "max_retries": 1,
-        "retry_count": 0,
-        "max_session_duration": 1800,
-        "watch_inbox": true,
-        "daemon_mode": true
+        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -525,7 +559,7 @@ fn test_daemon_status_shows_daemon_mode() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Daemon mode: yes"))
+        .stdout(predicate::str::contains("Daemon: stopped"))
         .stdout(predicate::str::contains("Session timeout: 1800s"));
 }
 

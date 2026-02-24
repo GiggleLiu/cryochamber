@@ -14,6 +14,10 @@ pub const TEMPLATE_PLAN: &str = include_str!("../templates/plan.md");
 /// Source: templates/Makefile
 pub const MAKEFILE_CONTENT: &str = include_str!("../templates/Makefile");
 
+/// Config template written by `cryo init`.
+/// Source: templates/cryo.toml
+pub const CONFIG_TEMPLATE: &str = include_str!("../templates/cryo.toml");
+
 /// Determine the protocol filename based on the agent command.
 /// Returns `"CLAUDE.md"` if the executable name contains "claude", otherwise `"AGENTS.md"`.
 /// Only inspects the first token (executable), so flags like `--model claude-3.7` are ignored.
@@ -72,5 +76,17 @@ pub fn write_makefile(dir: &Path) -> Result<bool> {
         return Ok(false);
     }
     std::fs::write(path, MAKEFILE_CONTENT)?;
+    Ok(true)
+}
+
+/// Write cryo.toml config file if none exists. Returns true if written.
+/// Substitutes `{{agent}}` with the given agent command.
+pub fn write_config_file(dir: &Path, agent_cmd: &str) -> Result<bool> {
+    let path = dir.join("cryo.toml");
+    if path.exists() {
+        return Ok(false);
+    }
+    let content = CONFIG_TEMPLATE.replace("{{agent}}", agent_cmd);
+    std::fs::write(path, content)?;
     Ok(true)
 }

@@ -1,0 +1,16 @@
+# cryo.toml — Cryochamber project configuration
+
+# Agent command (e.g. "opencode", "claude", "codex")
+agent = "{{agent}}"
+
+# Path to the plan file
+plan_path = "plan.md"
+
+# Max retry attempts on agent failure (1 = no retry)
+max_retries = 1
+
+# Session timeout in seconds (0 = no timeout)
+max_session_duration = 0
+
+# Watch inbox for reactive wake
+watch_inbox = true
