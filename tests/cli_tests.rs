@@ -71,15 +71,15 @@ fn test_init_idempotent() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Wrote"));
+        .stdout(predicate::str::contains("created"));
 
-    // Second init — should warn "already exists" on stderr
+    // Second init — should say "exists, kept" on stdout
     cmd()
         .arg("init")
         .current_dir(dir.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("already exists"));
+        .stdout(predicate::str::contains("exists, kept"));
 }
 
 // --- Status ---

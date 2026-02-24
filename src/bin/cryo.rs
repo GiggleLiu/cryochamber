@@ -166,22 +166,22 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
 
     // Write cryo.toml first (project config)
     if protocol::write_config_file(&dir, agent_cmd)? {
-        println!("Wrote cryo.toml");
+        println!("  cryo.toml (created)");
     } else {
-        eprintln!("Warning: cryo.toml already exists, not replaced");
+        println!("  cryo.toml (exists, kept)");
     }
 
     let filename = protocol::protocol_filename(agent_cmd);
     if protocol::write_protocol_file(&dir, filename)? {
-        println!("Wrote {filename}");
+        println!("  {filename} (created)");
     } else {
-        eprintln!("Warning: {filename} already exists, not replaced");
+        println!("  {filename} (exists, kept)");
     }
 
     if protocol::write_template_plan(&dir)? {
-        println!("Wrote plan.md");
+        println!("  plan.md (created)");
     } else {
-        eprintln!("Warning: plan.md already exists, not replaced");
+        println!("  plan.md (exists, kept)");
     }
 
     message::ensure_dirs(&dir)?;

@@ -36,9 +36,9 @@ cryo status                                # check current state
 cryo cancel                                # stop the daemon
 ```
 
-To run a chess playing example:
+The [`examples/mr-lazy`](examples/mr-lazy/) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
 ```bash
-cd examples/chess-by-mail && cryo init && cryo start && cryo watch
+cd examples/mr-lazy && cryo init && cryo start && cryo watch
 ```
 
 See [`examples/`](examples/) for complete, runnable examples.
@@ -53,9 +53,7 @@ See [`examples/`](examples/) for complete, runnable examples.
 
 Session events are logged to `cryo.log`. Monitor progress with `cryo watch`. Check state with `cryo status`.
 
-## How It Works
-
-```
+```text
 cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate → sleep
                                                                                       ↓
                     inbox message → (immediate wake) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
@@ -70,28 +68,6 @@ cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate �
 **The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates with the daemon via `cryo-agent` CLI commands over a Unix domain socket.
 
 **Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's event log as context. The agent uses `cryo-agent note` to leave memory for future sessions.
-
-## Configuration
-
-`cryo init` creates a `cryo.toml` file with project settings:
-
-```toml
-# cryo.toml — Cryochamber project configuration
-agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
-max_retries = 1           # Max retry attempts on agent failure (1 = no retry)
-max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
-watch_inbox = true        # Watch inbox for reactive wake
-```
-
-CLI flags to `cryo start` (e.g. `--agent claude`) temporarily override `cryo.toml` values for that run.
-
-## Example: Mr. Lazy
-
-The [`examples/mr-lazy`](examples/mr-lazy/) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
-
-```bash
-make check-round-trip   # run it yourself (Ctrl-C to stop)
-```
 
 Here's a real run (from `cryo.log`):
 
@@ -118,6 +94,19 @@ inbox: 0 messages
 ```
 
 The daemon ran two sessions, sleeping 2 minutes between them, then stopped when the agent called `cryo-agent hibernate --complete`. All output is in `cryo.log`.
+
+
+## Configuration
+
+`cryo init` creates a `cryo.toml` file with project settings:
+
+```toml
+# cryo.toml — Cryochamber project configuration
+agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
+max_retries = 1           # Max retry attempts on agent failure (1 = no retry)
+max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
+watch_inbox = true        # Watch inbox for reactive wake
+```
 
 ## Commands
 
