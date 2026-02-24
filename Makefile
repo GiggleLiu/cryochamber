@@ -200,7 +200,7 @@ check-gh: build
 	echo ""; \
 	echo "4. Posting test comment..."; \
 	mkdir -p "$$TMPDIR/messages/inbox"; \
-	printf '--- CRYO SESSION 1 ---\nSession: 1\nTask: health check\nHello from cryo health check.\n[CRYO:EXIT 0] Health check passed\n--- CRYO END ---\n' > "$$TMPDIR/cryo.log"; \
+	printf '--- CRYO SESSION 1 ---\ntask: health check\nagent: gh-check\ninbox: 0 messages\n[00:00:01] agent started (pid 1)\n[00:00:02] hibernate: complete, exit=0, summary="Health check passed"\n[00:00:02] agent exited (code 0)\n--- CRYO END ---\n' > "$$TMPDIR/cryo.log"; \
 	printf '{"plan_path":"plan.md","session_number":1,"last_command":null,"pid":null,"max_retries":1,"retry_count":0,"max_session_duration":300,"watch_inbox":false,"daemon_mode":false}' > "$$TMPDIR/timer.json"; \
 	$(CURDIR)/target/debug/cryo-gh push; \
 	RC=$$?; \

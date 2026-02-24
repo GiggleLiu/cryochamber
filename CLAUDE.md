@@ -50,7 +50,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | `socket` | Unix domain socket IPC — message types (`Request`/`Response`), client (`send_request`), server (`SocketServer`). |
 | `state` | JSON persistence to `timer.json` with PID-based locking via `libc::kill(pid, 0)`. |
 | `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, notes, hibernate, exit). |
-| `protocol` | Static protocol text with CLI commands, agent Makefile template, and template plan. Written by `init`/`start`. |
+| `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, Makefile). Written by `init`/`start`. |
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (fire-and-forget, no stdout capture). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
 | `session` | Pure utility: `should_copy_plan` checks whether to copy the plan file. |
@@ -86,7 +86,8 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 ## Documentation
 
 - `README.md` — Project overview, quickstart, CLI commands, and admin CLI
-- `cryo-skill.md` — Cryochamber skill definition for AI agents
+- `Makefile` — Dev targets (`check`, `build`, `test`, `run-plan`, `check-round-trip`, etc.)
+- `templates/` — Single source of truth for agent protocol, template plan, and agent Makefile
 - `docs/plans/` — Design documents and implementation plans
 - `docs/reports/` — Code review reports
 - `examples/` — Showcase examples (chess-by-mail, conference-chair, mars-mission)

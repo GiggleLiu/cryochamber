@@ -16,7 +16,7 @@ fn test_protocol_content_contains_commands() {
 #[test]
 fn test_protocol_content_contains_rules() {
     let content = protocol::PROTOCOL_CONTENT;
-    assert!(content.contains("Always call `cryo-agent hibernate`"));
+    assert!(content.contains("cryo-agent hibernate"));
     assert!(content.contains("plan.md"));
 }
 
@@ -101,7 +101,7 @@ fn test_write_template_plan_creates_new() {
     let path = dir.path().join("plan.md");
     assert!(path.exists());
     let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.contains("# My Plan"));
+    assert!(content.contains("# Hello Cryo"));
 }
 
 #[test]
