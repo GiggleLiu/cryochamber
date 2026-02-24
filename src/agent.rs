@@ -163,6 +163,16 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
     Ok(cmd)
 }
 
+/// Spawn agent as a child process. Does NOT capture stdout/stderr.
+/// Returns the Child handle for the daemon to monitor.
+pub fn spawn_agent(agent_command: &str, prompt: &str) -> anyhow::Result<std::process::Child> {
+    let mut cmd = build_command(agent_command, prompt)?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to spawn agent: {e}"))?;
+    Ok(child)
+}
+
 pub fn run_agent(agent_command: &str, prompt: &str) -> Result<AgentResult> {
     run_agent_streaming(agent_command, prompt, None)
 }

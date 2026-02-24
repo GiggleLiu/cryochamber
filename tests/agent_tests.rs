@@ -85,6 +85,13 @@ fn test_build_prompt_no_messages_section_when_empty() {
 }
 
 #[test]
+fn test_spawn_agent_fire_and_forget() {
+    let mut child = cryochamber::agent::spawn_agent("echo", "hello").unwrap();
+    let exit = child.wait().unwrap();
+    assert!(exit.success());
+}
+
+#[test]
 fn test_run_agent_empty_command() {
     use cryochamber::agent::run_agent;
     let result = run_agent("", "test prompt");
