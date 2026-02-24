@@ -62,8 +62,13 @@ logo:
 clean:
 	cargo clean
 
-# Remove auto-generated files from examples
+# Remove auto-generated files from examples (cancels running daemons first)
 example-clean:
+	@for dir in examples/*/; do \
+		if [ -f "$(CURDIR)/$$dir/timer.json" ]; then \
+			cd "$(CURDIR)/$$dir" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
+		fi; \
+	done; true
 	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md examples/*/Makefile
 	rm -f examples/*/*.log examples/*/*.json
 	rm -rf examples/*/messages examples/*/.cryo
@@ -107,8 +112,8 @@ cli:
 DIR ?= examples/mr-lazy
 WATCH ?= true
 example: build
-	@cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
-	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log messages AGENTS.md CLAUDE.md Makefile && \
+	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
+	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md Makefile && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
 	if [ "$(WATCH)" = "true" ]; then \
 		$(CURDIR)/target/debug/cryo watch --all; \

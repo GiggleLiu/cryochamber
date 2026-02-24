@@ -1,7 +1,7 @@
 # Cryochamber agent utilities
 # These targets are available for the AI agent to call during sessions.
 
-.PHONY: time
+.PHONY: time clean
 
 # Show current time or compute a future time
 # Usage: make time                     # current time
@@ -30,3 +30,14 @@ else
 		esac; \
 	fi
 endif
+
+# Kill daemon and remove all runtime files
+clean:
+	@if [ -f timer.json ]; then \
+		echo "Stopping daemon..."; \
+		cryo cancel 2>/dev/null || true; \
+	fi
+	@echo "Removing runtime files..."
+	rm -f timer.json cryo.log cryo-agent.log gh-sync.json
+	rm -rf messages .cryo
+	@echo "Clean."

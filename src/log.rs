@@ -8,6 +8,10 @@ pub fn log_path(dir: &Path) -> PathBuf {
     dir.join("cryo.log")
 }
 
+pub fn agent_log_path(dir: &Path) -> PathBuf {
+    dir.join("cryo-agent.log")
+}
+
 pub const SESSION_START: &str = "--- CRYO SESSION";
 pub const SESSION_END: &str = "--- CRYO END ---";
 

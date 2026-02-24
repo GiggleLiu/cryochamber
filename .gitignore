@@ -20,6 +20,6 @@ examples/*/*.json
 examples/*/CLAUDE.md
 examples/*/AGENTS.md
 examples/*/Makefile
-examples/*/*.toml
+examples/chess-by-mail/game_state.txt
 examples/*/.cryo
 examples/*/.ruff_cache

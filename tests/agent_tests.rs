@@ -92,14 +92,14 @@ fn test_build_prompt_no_messages_section_when_empty() {
 
 #[test]
 fn test_spawn_agent_fire_and_forget() {
-    let mut child = cryochamber::agent::spawn_agent("echo", "hello").unwrap();
+    let mut child = cryochamber::agent::spawn_agent("echo", "hello", None).unwrap();
     let exit = child.wait().unwrap();
     assert!(exit.success());
 }
 
 #[test]
 fn test_spawn_agent_empty_command() {
-    let result = cryochamber::agent::spawn_agent("", "test prompt");
+    let result = cryochamber::agent::spawn_agent("", "test prompt", None);
     assert!(result.is_err());
     let err = result.err().unwrap().to_string();
     assert!(err.contains("empty"), "Expected 'empty' in error: {err}");

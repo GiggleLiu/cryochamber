@@ -148,13 +148,25 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
     Ok(cmd)
 }
 
-/// Spawn agent as a child process. Does NOT capture stdout/stderr.
+/// Spawn agent as a child process.
 /// Returns the Child handle for the daemon to monitor.
+///
+/// If `agent_log` is provided, stdout/stderr are redirected to that file.
+/// Otherwise the child inherits the parent's stdout/stderr.
 ///
 /// Prepends the directory containing the `cryo` binary to PATH so that `cryo-agent`
 /// is discoverable by the agent subprocess (e.g. when running from `target/debug/`).
-pub fn spawn_agent(agent_command: &str, prompt: &str) -> anyhow::Result<std::process::Child> {
+pub fn spawn_agent(
+    agent_command: &str,
+    prompt: &str,
+    agent_log: Option<std::fs::File>,
+) -> anyhow::Result<std::process::Child> {
     let mut cmd = build_command(agent_command, prompt)?;
+
+    if let Some(log) = agent_log {
+        let err = log.try_clone()?;
+        cmd.stdout(log).stderr(err);
+    }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(bin_dir) = exe.parent() {

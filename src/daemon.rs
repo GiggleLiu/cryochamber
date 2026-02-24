@@ -417,8 +417,14 @@ impl Daemon {
             logger.log_event(&format!("delayed wake: {notice}"))?;
         }
 
-        // Spawn agent (fire-and-forget, no stdout capture)
-        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt)?;
+        // Open agent log file for stdout/stderr redirection
+        let agent_log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(crate::log::agent_log_path(&self.dir))?;
+
+        // Spawn agent with stdout/stderr redirected to cryo-agent.log
+        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file))?;
         let child_pid = child.id();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
 

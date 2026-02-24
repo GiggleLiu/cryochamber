@@ -422,32 +422,6 @@ fn test_receive_shows_outbox_messages() {
 // --- Backward compat ---
 
 #[test]
-fn test_status_with_legacy_project() {
-    // Legacy project has protocol file but no cryo.toml — should still work
-    let dir = tempfile::tempdir().unwrap();
-    // Only write protocol file, no cryo.toml
-    cryochamber::protocol::write_protocol_file(dir.path(), "AGENTS.md").unwrap();
-    let state = serde_json::json!({
-        "session_number": 1,
-        "pid": null,
-        "retry_count": 0
-    });
-    fs::write(
-        dir.path().join("timer.json"),
-        serde_json::to_string_pretty(&state).unwrap(),
-    )
-    .unwrap();
-
-    // Should load without error, using defaults from CryoConfig::default()
-    cmd()
-        .arg("status")
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Session: 1"));
-}
-
-#[test]
 fn test_state_backward_compat_ignores_unknown_fields() {
     // Old-format state with fields that no longer exist — serde ignores them
     let dir = tempfile::tempdir().unwrap();

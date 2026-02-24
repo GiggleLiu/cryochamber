@@ -54,6 +54,9 @@ enum Commands {
         /// Show full log from the beginning (default: start from current position)
         #[arg(long)]
         all: bool,
+        /// Which log to follow: "cryo" for structured events, "agent" for raw agent output
+        #[arg(long, default_value = "cryo")]
+        viewpoint: String,
     },
     /// Send a message to the agent's inbox
     Send {
@@ -65,6 +68,9 @@ enum Commands {
         /// Message subject (default: derived from body)
         #[arg(long)]
         subject: Option<String>,
+        /// Wake the agent immediately after sending
+        #[arg(long)]
+        wake: bool,
     },
     /// Read messages from the agent's outbox
     Receive,
@@ -100,12 +106,13 @@ fn main() -> Result<()> {
         Commands::Restart => cmd_restart(),
         Commands::Cancel => cmd_cancel(),
         Commands::Log => cmd_log(),
-        Commands::Watch { all } => cmd_watch(all),
+        Commands::Watch { all, viewpoint } => cmd_watch(all, &viewpoint),
         Commands::Send {
             body,
             from,
             subject,
-        } => cmd_send(&body, &from, subject.as_deref()),
+            wake,
+        } => cmd_send(&body, &from, subject.as_deref(), wake),
         Commands::Wake { message } => cmd_wake(message.as_deref()),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
@@ -125,10 +132,9 @@ fn main() -> Result<()> {
     }
 }
 
-/// Check that this directory is a valid cryo project.
-/// Accepts cryo.toml (new) or protocol file (legacy backward compat).
+/// Check that this directory is a valid cryo project (cryo.toml must exist).
 fn require_valid_project(dir: &Path) -> Result<()> {
-    if !config::config_path(dir).exists() && protocol::find_protocol_file(dir).is_none() {
+    if !config::config_path(dir).exists() {
         anyhow::bail!("No cryochamber project in this directory. Run `cryo init` first.");
     }
     Ok(())
@@ -449,7 +455,7 @@ fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
+fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
     message::ensure_dirs(&dir)?;
@@ -461,6 +467,13 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
         "Message sent to {}",
         path.strip_prefix(&dir).unwrap_or(&path).display()
     );
+
+    if wake {
+        let wake_msg = build_inbox_message("operator", "Wake", "Wake requested via cryo send --wake.");
+        message::write_message(&dir, "inbox", &wake_msg)?;
+        println!("Wake message sent.");
+    }
+
     Ok(())
 }
 
@@ -486,12 +499,16 @@ fn cmd_receive() -> Result<()> {
     Ok(())
 }
 
-fn cmd_watch(show_all: bool) -> Result<()> {
+fn cmd_watch(show_all: bool, viewpoint: &str) -> Result<()> {
     use std::io::Read;
 
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
-    let log = cryochamber::log::log_path(&dir);
+    let log = match viewpoint {
+        "agent" => cryochamber::log::agent_log_path(&dir),
+        "cryo" => cryochamber::log::log_path(&dir),
+        other => anyhow::bail!("Unknown viewpoint '{other}'. Use 'cryo' or 'agent'."),
+    };
     let state_file = state::state_path(&dir);
 
     if !log.exists() {
