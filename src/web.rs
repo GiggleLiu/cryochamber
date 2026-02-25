@@ -1,28 +1,50 @@
 use axum::{
     extract::State,
-    response::Json,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        Json,
+    },
     routing::{get, post},
     Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 use crate::{config, log, message, state};
 
+#[derive(Clone, Debug)]
+pub enum SseEvent {
+    NewMessage {
+        direction: String,
+        from: String,
+        subject: String,
+        body: String,
+        timestamp: String,
+    },
+    StatusChange,
+    LogLine(String),
+}
+
 pub struct AppState {
     pub project_dir: PathBuf,
+    pub tx: tokio::sync::broadcast::Sender<SseEvent>,
 }
 
 pub fn build_router(project_dir: PathBuf) -> Router {
-    let shared = Arc::new(AppState { project_dir });
+    let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(256);
+    let state = Arc::new(AppState { project_dir, tx });
     Router::new()
         .route("/api/status", get(get_status))
         .route("/api/messages", get(get_messages))
         .route("/api/send", post(post_send))
         .route("/api/wake", post(post_wake))
-        .with_state(shared)
+        .route("/api/events", get(get_events))
+        .with_state(state)
 }
 
 async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -169,6 +191,41 @@ async fn post_wake(
     }))
 }
 
+async fn get_events(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|result: Result<SseEvent, _>| {
+        result.ok().map(|event| {
+            let sse_event = match event {
+                SseEvent::NewMessage {
+                    direction,
+                    from,
+                    subject,
+                    body,
+                    timestamp,
+                } => Event::default()
+                    .event("message")
+                    .json_data(json!({
+                        "direction": direction,
+                        "from": from,
+                        "subject": subject,
+                        "body": body,
+                        "timestamp": timestamp,
+                    }))
+                    .unwrap(),
+                SseEvent::StatusChange => Event::default().event("status").data("changed"),
+                SseEvent::LogLine(line) => Event::default()
+                    .event("log")
+                    .json_data(json!({"line": line}))
+                    .unwrap(),
+            };
+            Ok(sse_event)
+        })
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 fn signal_daemon(dir: &std::path::Path) -> bool {
     if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
         if let Some(pid) = st.pid {
@@ -197,8 +254,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_status_no_daemon() {
         let dir = tempfile::tempdir().unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
         let state = AppState {
             project_dir: dir.path().to_path_buf(),
+            tx,
         };
         let resp = get_status(State(Arc::new(state))).await;
         let status = &resp.0;
@@ -210,8 +269,10 @@ mod tests {
     async fn test_get_messages_empty() {
         let dir = tempfile::tempdir().unwrap();
         crate::message::ensure_dirs(dir.path()).unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
         let state = AppState {
             project_dir: dir.path().to_path_buf(),
+            tx,
         };
         let resp = get_messages(State(Arc::new(state))).await;
         let msgs: Vec<serde_json::Value> = serde_json::from_value(resp.0).unwrap();
@@ -249,8 +310,10 @@ mod tests {
         };
         crate::message::write_message(dir.path(), "outbox", &reply).unwrap();
 
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
         let state = AppState {
             project_dir: dir.path().to_path_buf(),
+            tx,
         };
         let resp = get_messages(State(Arc::new(state))).await;
         let msgs: Vec<serde_json::Value> = serde_json::from_value(resp.0).unwrap();
@@ -264,8 +327,10 @@ mod tests {
     async fn test_post_send_creates_inbox_message() {
         let dir = tempfile::tempdir().unwrap();
         crate::message::ensure_dirs(dir.path()).unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
         let state = Arc::new(AppState {
             project_dir: dir.path().to_path_buf(),
+            tx,
         });
 
         let body = Json(SendRequest {
@@ -287,8 +352,10 @@ mod tests {
     async fn test_post_send_defaults() {
         let dir = tempfile::tempdir().unwrap();
         crate::message::ensure_dirs(dir.path()).unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
         let state = Arc::new(AppState {
             project_dir: dir.path().to_path_buf(),
+            tx,
         });
 
         let body = Json(SendRequest {
@@ -301,5 +368,16 @@ mod tests {
 
         let msgs = crate::message::read_inbox(dir.path()).unwrap();
         assert_eq!(msgs[0].1.from, "human");
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_channel() {
+        let (tx, mut rx1) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let mut rx2 = tx.subscribe();
+
+        tx.send(SseEvent::StatusChange).unwrap();
+
+        assert!(matches!(rx1.recv().await.unwrap(), SseEvent::StatusChange));
+        assert!(matches!(rx2.recv().await.unwrap(), SseEvent::StatusChange));
     }
 }
