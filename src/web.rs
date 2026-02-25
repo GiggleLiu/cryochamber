@@ -1,9 +1,10 @@
 use axum::{
     extract::State,
     response::Json,
-    routing::get,
+    routing::{get, post},
     Router,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +20,8 @@ pub fn build_router(project_dir: PathBuf) -> Router {
     Router::new()
         .route("/api/status", get(get_status))
         .route("/api/messages", get(get_messages))
+        .route("/api/send", post(post_send))
+        .route("/api/wake", post(post_wake))
         .with_state(shared)
 }
 
@@ -92,6 +95,89 @@ fn message_to_json(msg: &message::Message, direction: &str) -> Value {
         "body": msg.body,
         "timestamp": msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
     })
+}
+
+#[derive(Deserialize)]
+struct SendRequest {
+    body: String,
+    from: Option<String>,
+    subject: Option<String>,
+}
+
+async fn post_send(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SendRequest>,
+) -> Json<Value> {
+    let dir = &state.project_dir;
+    let from = req.from.as_deref().unwrap_or("human");
+    let subject = req.subject.unwrap_or_else(|| {
+        let end = req.body.len().min(50);
+        let mut e = end;
+        while e > 0 && !req.body.is_char_boundary(e) {
+            e -= 1;
+        }
+        req.body[..e].to_string()
+    });
+
+    let msg = message::Message {
+        from: from.to_string(),
+        subject,
+        body: req.body.clone(),
+        timestamp: chrono::Local::now().naive_local(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    match message::write_message(dir, "inbox", &msg) {
+        Ok(_) => Json(json!({"ok": true, "message": "Message sent"})),
+        Err(e) => Json(json!({"ok": false, "message": format!("Failed: {e}")})),
+    }
+}
+
+#[derive(Deserialize)]
+struct WakeRequest {
+    message: Option<String>,
+}
+
+async fn post_wake(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<WakeRequest>,
+) -> Json<Value> {
+    let dir = &state.project_dir;
+    let body = req
+        .message
+        .as_deref()
+        .unwrap_or("Wake requested from web UI.");
+
+    let msg = message::Message {
+        from: "operator".to_string(),
+        subject: "Wake".to_string(),
+        body: body.to_string(),
+        timestamp: chrono::Local::now().naive_local(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    if let Err(e) = message::write_message(dir, "inbox", &msg) {
+        return Json(json!({"ok": false, "message": format!("Failed to write: {e}")}));
+    }
+
+    // Send SIGUSR1 to daemon
+    let signaled = signal_daemon(dir);
+
+    Json(json!({
+        "ok": true,
+        "message": if signaled { "Wake signal sent" } else { "Message queued (no daemon running)" }
+    }))
+}
+
+fn signal_daemon(dir: &std::path::Path) -> bool {
+    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
+        if let Some(pid) = st.pid {
+            if state::is_locked(&st) {
+                return crate::process::send_signal(pid, libc::SIGUSR1);
+            }
+        }
+    }
+    false
 }
 
 pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -172,5 +258,48 @@ mod tests {
         // Sorted by timestamp — inbox first
         assert_eq!(msgs[0]["direction"], "inbox");
         assert_eq!(msgs[1]["direction"], "outbox");
+    }
+
+    #[tokio::test]
+    async fn test_post_send_creates_inbox_message() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        let state = Arc::new(AppState {
+            project_dir: dir.path().to_path_buf(),
+        });
+
+        let body = Json(SendRequest {
+            body: "Please fix the bug".to_string(),
+            from: Some("alice".to_string()),
+            subject: Some("Bug report".to_string()),
+        });
+        let resp = post_send(State(state), body).await;
+        assert!(resp.0["ok"].as_bool().unwrap());
+
+        // Verify message was written to inbox
+        let msgs = crate::message::read_inbox(dir.path()).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].1.from, "alice");
+        assert_eq!(msgs[0].1.body, "Please fix the bug");
+    }
+
+    #[tokio::test]
+    async fn test_post_send_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        let state = Arc::new(AppState {
+            project_dir: dir.path().to_path_buf(),
+        });
+
+        let body = Json(SendRequest {
+            body: "Hello".to_string(),
+            from: None,
+            subject: None,
+        });
+        let resp = post_send(State(state), body).await;
+        assert!(resp.0["ok"].as_bool().unwrap());
+
+        let msgs = crate::message::read_inbox(dir.path()).unwrap();
+        assert_eq!(msgs[0].1.from, "human");
     }
 }
