@@ -12,7 +12,6 @@ fn test_sync_state_roundtrip() {
         last_read_cursor: Some("Y3Vyc29y".to_string()),
         self_login: None,
         last_pushed_session: None,
-        sync_pid: None,
     };
     save_sync_state(&path, &state).unwrap();
     let loaded = load_sync_state(&path).unwrap().unwrap();
@@ -43,7 +42,6 @@ fn test_sync_state_no_cursor() {
         last_read_cursor: None,
         self_login: None,
         last_pushed_session: None,
-        sync_pid: None,
     };
     save_sync_state(&path, &state).unwrap();
     let loaded = load_sync_state(&path).unwrap().unwrap();
@@ -59,7 +57,6 @@ fn test_sync_state_owner_repo_split() {
         last_read_cursor: None,
         self_login: None,
         last_pushed_session: None,
-        sync_pid: None,
     };
     let (owner, repo) = state.owner_repo().unwrap();
     assert_eq!(owner, "GiggleLiu");
@@ -78,7 +75,6 @@ fn test_sync_state_new_fields_roundtrip() {
         last_read_cursor: None,
         self_login: Some("mybot".to_string()),
         last_pushed_session: Some(3),
-        sync_pid: None,
     };
     save_sync_state(&path, &state).unwrap();
     let loaded = load_sync_state(&path).unwrap().unwrap();

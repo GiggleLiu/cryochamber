@@ -97,7 +97,6 @@ fn cmd_gh_init(repo: &str, title: Option<&str>) -> Result<()> {
         last_read_cursor: None,
         self_login,
         last_pushed_session: None,
-        sync_pid: None,
     };
     cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
     println!("Saved gh-sync.json");
@@ -221,15 +220,6 @@ fn cmd_gh_unsync() -> Result<()> {
         println!("No sync service installed for this directory.");
     }
 
-    // Also clear stale sync_pid if present
-    let sync_path = gh_sync_path(&dir);
-    if let Ok(Some(mut sync_state)) = cryochamber::gh_sync::load_sync_state(&sync_path) {
-        if sync_state.sync_pid.is_some() {
-            sync_state.sync_pid = None;
-            cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state)?;
-        }
-    }
-
     Ok(())
 }
 
@@ -322,12 +312,6 @@ fn cmd_gh_sync_daemon(interval: u64) -> Result<()> {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
-    }
-
-    // Cleanup: clear sync_pid
-    if let Ok(Some(mut sync_state)) = cryochamber::gh_sync::load_sync_state(&sync_path) {
-        sync_state.sync_pid = None;
-        let _ = cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state);
     }
 
     eprintln!("Sync: stopped");

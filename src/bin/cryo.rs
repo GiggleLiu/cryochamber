@@ -360,7 +360,7 @@ fn cmd_restart() -> Result<()> {
     let log_path = cryochamber::log::log_path(&dir);
     cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 
-    println!("Restarted. Daemon running in background.");
+    println!("Restarted (service reinstalled).");
     println!("Use `cryo watch` to follow progress.");
     Ok(())
 }

@@ -152,14 +152,11 @@ pub fn install(
     std::fs::create_dir_all(&unit_dir)?;
     let unit_path = unit_dir.join(format!("{label}.service"));
 
-    let exec_start = format!(
-        "{} {}",
-        exe.display(),
-        args.iter()
-            .map(|a| a.to_string())
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
+    // Quote executable and arguments for systemd ExecStart (handles spaces/special chars)
+    let exec_start = std::iter::once(format!("\"{}\"", exe.display()))
+        .chain(args.iter().map(|a| format!("\"{}\"", a)))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     let restart = if keep_alive { "always" } else { "on-failure" };
 

@@ -275,18 +275,18 @@ check-service: build
 	echo "3. Verifying service is running..."; \
 	sleep 2; \
 	if [ "$$(uname -s)" = "Darwin" ]; then \
-		LABEL=$$(ls ~/Library/LaunchAgents/com.cryo.daemon.*.plist 2>/dev/null | head -1); \
-		if [ -n "$$LABEL" ]; then \
-			echo "   OK: plist found: $$(basename $$LABEL)"; \
+		SVC_FILE=$$(ls -t ~/Library/LaunchAgents/com.cryo.daemon.*.plist 2>/dev/null | head -1); \
+		if [ -n "$$SVC_FILE" ]; then \
+			echo "   OK: plist found: $$(basename $$SVC_FILE)"; \
 		else \
 			echo "   FAIL: no launchd plist found"; \
 			cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
 			rm -rf "$$TMPDIR"; exit 1; \
 		fi; \
 	else \
-		UNIT=$$(ls ~/.config/systemd/user/com.cryo.daemon.*.service 2>/dev/null | head -1); \
-		if [ -n "$$UNIT" ]; then \
-			echo "   OK: unit found: $$(basename $$UNIT)"; \
+		SVC_FILE=$$(ls -t ~/.config/systemd/user/com.cryo.daemon.*.service 2>/dev/null | head -1); \
+		if [ -n "$$SVC_FILE" ]; then \
+			echo "   OK: unit found: $$(basename $$SVC_FILE)"; \
 		else \
 			echo "   FAIL: no systemd unit found"; \
 			cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
@@ -310,16 +310,11 @@ check-service: build
 	echo "   OK: cancelled"; \
 	echo ""; \
 	echo "5. Verifying service removed..."; \
-	if [ "$$(uname -s)" = "Darwin" ]; then \
-		LABEL=$$(ls ~/Library/LaunchAgents/com.cryo.daemon.*.plist 2>/dev/null | grep "$$TMPDIR" | head -1); \
-	else \
-		LABEL=$$(ls ~/.config/systemd/user/com.cryo.daemon.*.service 2>/dev/null | grep "$$TMPDIR" | head -1); \
-	fi; \
-	if [ -z "$$LABEL" ]; then \
-		echo "   OK: service file removed"; \
-	else \
-		echo "   FAIL: service file still exists: $$LABEL"; \
+	if [ -e "$$SVC_FILE" ]; then \
+		echo "   FAIL: service file still exists: $$SVC_FILE"; \
 		rm -rf "$$TMPDIR"; exit 1; \
+	else \
+		echo "   OK: service file removed ($$SVC_FILE)"; \
 	fi; \
 	rm -rf "$$TMPDIR"; \
 	echo ""; \
