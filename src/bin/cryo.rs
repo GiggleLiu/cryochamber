@@ -92,6 +92,12 @@ enum Commands {
         target: String,
         message: String,
     },
+    /// Open a web chat UI for messaging and waking the agent
+    Web {
+        /// Port to listen on
+        #[arg(long, default_value = "3945")]
+        port: u16,
+    },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
@@ -121,6 +127,7 @@ fn main() -> Result<()> {
             wake,
         } => cmd_send(&body, &from, subject.as_deref(), wake),
         Commands::Wake { message } => cmd_wake(message.as_deref()),
+        Commands::Web { port } => cmd_web(port),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
@@ -296,6 +303,14 @@ fn cmd_daemon() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let daemon = cryochamber::daemon::Daemon::new(dir);
     daemon.run()
+}
+
+fn cmd_web(port: u16) -> Result<()> {
+    let dir = cryochamber::work_dir()?;
+    require_valid_project(&dir)?;
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(cryochamber::web::serve(dir, port))
 }
 
 fn cmd_status() -> Result<()> {
