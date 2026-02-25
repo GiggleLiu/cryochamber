@@ -227,10 +227,7 @@ fn cmd_gh_sync_daemon(interval: u64) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let sync_path = gh_sync_path(&dir);
 
-    eprintln!(
-        "Sync daemon started (PID {})",
-        std::process::id()
-    );
+    eprintln!("Sync daemon started (PID {})", std::process::id());
 
     // Register signal handlers
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -243,15 +240,14 @@ fn cmd_gh_sync_daemon(interval: u64) -> Result<()> {
     let outbox_path = dir.join("messages").join("outbox");
     let _watcher = {
         let tx = tx.clone();
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if let Ok(event) = res {
-                    if event.kind.is_create() {
-                        let _ = tx.send(());
-                    }
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if event.kind.is_create() {
+                    let _ = tx.send(());
                 }
-            })
-            .context("Failed to create outbox watcher")?;
+            }
+        })
+        .context("Failed to create outbox watcher")?;
         watcher
             .watch(&outbox_path, notify::RecursiveMode::NonRecursive)
             .context("Failed to watch messages/outbox/")?;
@@ -319,10 +315,7 @@ fn cmd_gh_sync_daemon(interval: u64) -> Result<()> {
 }
 
 /// Read outbox messages and post each as a Discussion comment, then archive them.
-fn push_outbox(
-    dir: &Path,
-    sync_state: &cryochamber::gh_sync::GhSyncState,
-) -> Result<()> {
+fn push_outbox(dir: &Path, sync_state: &cryochamber::gh_sync::GhSyncState) -> Result<()> {
     let messages = cryochamber::message::read_outbox(dir)?;
     if messages.is_empty() {
         return Ok(());

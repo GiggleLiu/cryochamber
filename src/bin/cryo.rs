@@ -270,8 +270,7 @@ fn cmd_start(
         cryochamber::process::spawn_daemon(&dir)?;
         println!("Cryochamber started (background process).");
     } else {
-        let exe = std::env::current_exe()
-            .context("Failed to resolve cryo executable path")?;
+        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
         let log_path = cryochamber::log::log_path(&dir);
         cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
         println!("Cryochamber started (service installed, survives reboot).");
@@ -287,9 +286,7 @@ fn cmd_start(
             }
         }
         if std::time::Instant::now() > deadline {
-            anyhow::bail!(
-                "Daemon did not start within 10 seconds. Check cryo.log for errors."
-            );
+            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
         }
     }
 
@@ -387,8 +384,7 @@ fn cmd_restart() -> Result<()> {
     };
     state::save_state(&state::state_path(&dir), &updated)?;
 
-    let exe = std::env::current_exe()
-        .context("Failed to resolve cryo executable path")?;
+    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
     let log_path = cryochamber::log::log_path(&dir);
     cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 

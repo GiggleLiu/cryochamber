@@ -62,19 +62,19 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
         .flatten()
         .unwrap_or_default();
 
-    let (running, session, agent) =
-        match state::load_state(&state::state_path(dir)).ok().flatten() {
-            Some(st) => {
-                let is_running = state::is_locked(&st);
-                let effective_agent = st
-                    .agent_override
-                    .as_deref()
-                    .unwrap_or(&cfg.agent)
-                    .to_string();
-                (is_running, st.session_number, effective_agent)
-            }
-            None => (false, 0, cfg.agent.clone()),
-        };
+    let (running, session, agent) = match state::load_state(&state::state_path(dir)).ok().flatten()
+    {
+        Some(st) => {
+            let is_running = state::is_locked(&st);
+            let effective_agent = st
+                .agent_override
+                .as_deref()
+                .unwrap_or(&cfg.agent)
+                .to_string();
+            (is_running, st.session_number, effective_agent)
+        }
+        None => (false, 0, cfg.agent.clone()),
+    };
 
     let log_tail = log::read_latest_session(&log::log_path(dir))
         .ok()

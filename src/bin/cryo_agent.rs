@@ -99,9 +99,7 @@ fn main() -> Result<()> {
             )
         }
         Commands::Note { text } => send(&dir, &Request::Note { text }),
-        Commands::Send { text } | Commands::Reply { text } => {
-            send(&dir, &Request::Reply { text })
-        }
+        Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
         Commands::Alert {
             action,
             target,
@@ -151,7 +149,9 @@ fn cmd_time(offset: Option<&str>) -> Result<()> {
             let s = s.trim().trim_start_matches('+');
             let parts: Vec<&str> = s.splitn(2, ' ').collect();
             if parts.len() != 2 {
-                anyhow::bail!("Invalid offset format. Use e.g. \"+30 minutes\", \"+2 hours\", \"+1 day\"");
+                anyhow::bail!(
+                    "Invalid offset format. Use e.g. \"+30 minutes\", \"+2 hours\", \"+1 day\""
+                );
             }
             let n: i64 = parts[0]
                 .parse()
@@ -162,7 +162,9 @@ fn cmd_time(offset: Option<&str>) -> Result<()> {
                 "hour" | "hr" => chrono::Duration::hours(n),
                 "day" => chrono::Duration::days(n),
                 "week" => chrono::Duration::weeks(n),
-                _ => anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks."),
+                _ => {
+                    anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks.")
+                }
             };
             now + duration
         }
