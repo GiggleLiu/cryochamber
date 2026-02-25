@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh cli
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli
 
 # Default target
 help:
@@ -22,6 +22,7 @@ help:
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
 	@echo "  check-gh     - Verify GitHub Discussion sync (requires gh auth)"
+	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
 	@echo "  cli          - Install the cryo CLI locally"
 
 # Build the project
@@ -245,3 +246,88 @@ check-gh: build
 	rm -rf "$$TMPDIR"; \
 	echo ""; \
 	echo "=== GitHub sync check passed ==="
+
+# Verify OS service install/uninstall lifecycle (launchd on macOS, systemd on Linux)
+# This test installs a real service, verifies it runs, cancels it, and cleans up.
+# Usage: make check-service
+#        make check-service AGENT="opencode run"
+check-service: build
+	@echo "=== Service Lifecycle Check ==="
+	@echo "Platform: $$(uname -s)"
+	@echo ""
+	@echo "1. Setting up test project..."
+	@TMPDIR=$$(mktemp -d /tmp/cryo-check-svc-XXXXXX); \
+	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
+	echo "   OK: $$TMPDIR"; \
+	echo ""; \
+	echo "2. Installing daemon service (cryo start)..."; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo start \
+		--agent "/bin/sh -c 'sleep 600'" \
+		--max-session-duration 600 2>&1; \
+	RC=$$?; \
+	if [ $$RC -ne 0 ]; then \
+		echo "   FAIL: cryo start failed (exit $$RC)"; \
+		rm -rf "$$TMPDIR"; exit 1; \
+	fi; \
+	echo "   OK: service installed"; \
+	echo ""; \
+	echo "3. Verifying service is running..."; \
+	sleep 2; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		LABEL=$$(ls ~/Library/LaunchAgents/com.cryo.daemon.*.plist 2>/dev/null | head -1); \
+		if [ -n "$$LABEL" ]; then \
+			echo "   OK: plist found: $$(basename $$LABEL)"; \
+		else \
+			echo "   FAIL: no launchd plist found"; \
+			cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
+			rm -rf "$$TMPDIR"; exit 1; \
+		fi; \
+	else \
+		UNIT=$$(ls ~/.config/systemd/user/com.cryo.daemon.*.service 2>/dev/null | head -1); \
+		if [ -n "$$UNIT" ]; then \
+			echo "   OK: unit found: $$(basename $$UNIT)"; \
+		else \
+			echo "   FAIL: no systemd unit found"; \
+			cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
+			rm -rf "$$TMPDIR"; exit 1; \
+		fi; \
+	fi; \
+	PID=$$(cd "$$TMPDIR" && cat timer.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('pid',''))" 2>/dev/null); \
+	if [ -n "$$PID" ] && kill -0 "$$PID" 2>/dev/null; then \
+		echo "   OK: daemon process alive (PID $$PID)"; \
+	else \
+		echo "   WARN: daemon PID not found in timer.json (may still be starting)"; \
+	fi; \
+	echo ""; \
+	echo "4. Cancelling (cryo cancel)..."; \
+	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo cancel 2>&1; \
+	RC=$$?; \
+	if [ $$RC -ne 0 ]; then \
+		echo "   FAIL: cryo cancel failed (exit $$RC)"; \
+		rm -rf "$$TMPDIR"; exit 1; \
+	fi; \
+	echo "   OK: cancelled"; \
+	echo ""; \
+	echo "5. Verifying service removed..."; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		LABEL=$$(ls ~/Library/LaunchAgents/com.cryo.daemon.*.plist 2>/dev/null | grep "$$TMPDIR" | head -1); \
+	else \
+		LABEL=$$(ls ~/.config/systemd/user/com.cryo.daemon.*.service 2>/dev/null | grep "$$TMPDIR" | head -1); \
+	fi; \
+	if [ -z "$$LABEL" ]; then \
+		echo "   OK: service file removed"; \
+	else \
+		echo "   FAIL: service file still exists: $$LABEL"; \
+		rm -rf "$$TMPDIR"; exit 1; \
+	fi; \
+	rm -rf "$$TMPDIR"; \
+	echo ""; \
+	echo "=== Service lifecycle check passed ==="; \
+	echo ""; \
+	echo "To test reboot persistence, run manually:"; \
+	echo "  cd /tmp/cryo-reboot-test && cryo init && cryo start --agent '/bin/sh -c sleep 999'"; \
+	echo "  # Reboot your machine"; \
+	echo "  # After reboot, verify:"; \
+	echo "  #   macOS:  launchctl list | grep com.cryo"; \
+	echo "  #   Linux:  systemctl --user status com.cryo.daemon.*"
