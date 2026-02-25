@@ -27,6 +27,7 @@ make logo        # compile logo with typst
 make example     # run an example (DIR=examples/mr-lazy WATCH=true)
 make cli         # cargo install --path .
 make run-plan    # execute a plan with Claude headless (see Makefile for options)
+make check-service # verify OS service install/uninstall lifecycle (launchd/systemd)
 ```
 
 ## Architecture
@@ -41,7 +42,7 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
 | `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `send`, `receive`, `alert`, `time` (sends commands to daemon via socket; `receive` and `time` are local) |
-| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `status` (manages Discussion-based messaging) |
+| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 
 ### Modules
 
@@ -60,11 +61,12 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL). |
 | `registry` | PID file registry for tracking running daemons. Uses `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. |
+| `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
 
 ### Key Design Decisions
 
-- **Daemon mode**: `cryo start` launches a persistent background process. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout.
+- **Daemon mode**: `cryo start` installs an OS service (launchd on macOS, systemd on Linux) that survives reboots. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout. Set `CRYO_NO_SERVICE=1` to fall back to direct background process spawn.
 - **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `send`, `alert`), which send JSON messages over a Unix domain socket. `receive` and `time` are local (no daemon needed).
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. All structured communication flows through the socket.
 - **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
@@ -89,6 +91,9 @@ make run-plan    # execute a plan with Claude headless (see Makefile for options
 - `messages/inbox/archive/` — processed inbox messages
 - `.cryo/cryo.sock` — Unix domain socket for agent-daemon IPC
 - `gh-sync.json` — GitHub Discussion sync state (if configured)
+- `cryo-gh-sync.log` — GitHub sync daemon log output (if configured)
+- `~/Library/LaunchAgents/com.cryo.*.plist` — macOS launchd service files (auto-managed)
+- `~/.config/systemd/user/com.cryo.*.service` — Linux systemd service files (auto-managed)
 
 ## Documentation
 

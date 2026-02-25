@@ -68,6 +68,10 @@ pub fn install(
             .to_string()
     };
 
+    // Capture PATH so the daemon can find agent binaries (e.g. opencode, claude).
+    // launchd services get a minimal PATH by default.
+    let path_env = std::env::var("PATH").unwrap_or_default();
+
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -82,6 +86,11 @@ pub fn install(
   </array>
   <key>WorkingDirectory</key>
   <string>{dir}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{path}</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
 {keep_alive_xml}
@@ -94,6 +103,7 @@ pub fn install(
         label = xml_escape(&label),
         args_xml = args_xml,
         dir = xml_escape(&dir.display().to_string()),
+        path = xml_escape(&path_env),
         keep_alive_xml = keep_alive_xml,
         log = xml_escape(&log_file.display().to_string()),
     );
@@ -170,6 +180,9 @@ pub fn install(
 
     let restart = if keep_alive { "always" } else { "on-failure" };
 
+    // Capture PATH so the daemon can find agent binaries (e.g. opencode, claude).
+    let path_env = std::env::var("PATH").unwrap_or_default();
+
     let unit = format!(
         "[Unit]\n\
          Description=Cryochamber {prefix} ({dir})\n\
@@ -177,6 +190,7 @@ pub fn install(
          [Service]\n\
          ExecStart={exec_start}\n\
          WorkingDirectory={dir}\n\
+         Environment=PATH={path}\n\
          Restart={restart}\n\
          StandardOutput=append:{log}\n\
          StandardError=append:{log}\n\
@@ -186,6 +200,7 @@ pub fn install(
         prefix = label_prefix,
         exec_start = exec_start,
         dir = dir.display(),
+        path = path_env,
         restart = restart,
         log = log_file.display(),
     );

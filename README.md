@@ -44,7 +44,7 @@ See [`examples/`](examples/) for complete, runnable examples.
 
 **What happens next:**
 
-1. Cryochamber spawns a persistent daemon in the background
+1. Cryochamber installs an OS service (launchd/systemd) that **survives reboots**
 2. The daemon runs your agent with the plan and a task prompt
 3. The agent does its work and calls `cryo-agent hibernate` to schedule the next wake
 4. The daemon sleeps until the next wake time and repeats
@@ -158,11 +158,22 @@ cryo-agent alert <action> <target> "msg"  # Set dead-man switch
 
 Sync messages with a GitHub Discussion board for remote monitoring and two-way messaging. See [`docs/cryo-gh.md`](docs/cryo-gh.md) for setup and recommended workflow.
 
+```bash
+cryo-gh init --repo owner/repo     # Create a Discussion and write gh-sync.json
+cryo-gh sync [--interval 30]       # Start background sync daemon (OS service)
+cryo-gh unsync                     # Stop the sync daemon and remove service
+cryo-gh pull                       # One-shot: pull new comments → inbox
+cryo-gh push                       # One-shot: push latest session log → Discussion
+cryo-gh status                     # Show sync configuration
+```
+
 ## FAQ
 
-**What happens if my computer sleeps or shuts down during a scheduled wake?**
+**What happens if my computer sleeps or reboots?**
 
-The daemon process is suspended along with everything else. When your machine wakes up, the daemon resumes and detects that the scheduled wake time has passed. It runs the session immediately and includes a "DELAYED WAKE" notice in the agent's prompt with the original scheduled time and how late the session is. The agent can then decide whether time-sensitive tasks need adjustment. Fallback alerts are not triggered prematurely — only if the session itself fails after running.
+*Sleep:* The daemon process is suspended along with everything else. When your machine wakes up, the daemon resumes and detects that the scheduled wake time has passed. It runs the session immediately and includes a "DELAYED WAKE" notice in the agent's prompt with the original scheduled time and how late the session is.
+
+*Reboot:* The daemon is installed as an OS service (launchd on macOS, systemd on Linux) and restarts automatically after reboot. Set `CRYO_NO_SERVICE=1` before `cryo start` to disable this and use a plain background process instead.
 
 **How do I manually wake a sleeping daemon?**
 

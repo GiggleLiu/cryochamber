@@ -269,6 +269,23 @@ fn cmd_start(
         cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
         println!("Cryochamber started (service installed, survives reboot).");
     }
+
+    // Wait for the daemon to write its PID before returning
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(st) = state::load_state(&state::state_path(&dir))? {
+            if state::is_locked(&st) {
+                break;
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!(
+                "Daemon did not start within 10 seconds. Check cryo.log for errors."
+            );
+        }
+    }
+
     println!("Use `cryo watch` to follow progress.");
     println!("Use `cryo status` to check state.");
 
