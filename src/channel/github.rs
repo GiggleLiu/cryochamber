@@ -184,10 +184,11 @@ pub fn create_discussion(
 ) -> Result<(String, u64)> {
     let (mut repo_node_id, mut categories) = query_repo_and_categories(owner, repo)?;
 
-    // If no categories, enable Discussions and retry
+    // If no categories, enable Discussions and retry after a brief delay for API propagation
     if categories.is_empty() {
         eprintln!("No discussion categories found. Enabling Discussions on {owner}/{repo}...");
         enable_discussions(owner, repo)?;
+        std::thread::sleep(std::time::Duration::from_secs(2));
         let result = query_repo_and_categories(owner, repo)?;
         repo_node_id = result.0;
         categories = result.1;

@@ -20,6 +20,15 @@ pub fn service_label(prefix: &str, dir: &Path) -> String {
     format!("com.cryo.{}.{}", prefix, path_hash(dir))
 }
 
+/// Escape XML special characters for safe embedding in plist <string> elements.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// Install and start a system service.
 ///
 /// - `label_prefix`: e.g. "daemon" or "gh-sync"
@@ -44,10 +53,11 @@ pub fn install(
     std::fs::create_dir_all(&agents_dir)?;
     let plist_path = agents_dir.join(format!("{label}.plist"));
 
-    let args_xml: String = std::iter::once(format!("    <string>{}</string>", exe.display()))
-        .chain(args.iter().map(|a| format!("    <string>{a}</string>")))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let args_xml: String =
+        std::iter::once(format!("    <string>{}</string>", xml_escape(&exe.display().to_string())))
+            .chain(args.iter().map(|a| format!("    <string>{}</string>", xml_escape(a))))
+            .collect::<Vec<_>>()
+            .join("\n");
 
     // KeepAlive: true = always restart
     // KeepAlive with SuccessfulExit: false = restart only on crash (non-zero exit)
@@ -81,11 +91,11 @@ pub fn install(
   <string>{log}</string>
 </dict>
 </plist>"#,
-        label = label,
+        label = xml_escape(&label),
         args_xml = args_xml,
-        dir = dir.display(),
+        dir = xml_escape(&dir.display().to_string()),
         keep_alive_xml = keep_alive_xml,
-        log = log_file.display(),
+        log = xml_escape(&log_file.display().to_string()),
     );
 
     std::fs::write(&plist_path, plist)?;
@@ -232,4 +242,26 @@ pub fn is_installed(label_prefix: &str, dir: &Path) -> bool {
                 .exists()
         })
         .unwrap_or(false)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn install(
+    _label_prefix: &str,
+    _dir: &Path,
+    _exe: &Path,
+    _args: &[&str],
+    _log_file: &Path,
+    _keep_alive: bool,
+) -> Result<()> {
+    anyhow::bail!("OS service management is not supported on this platform")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn uninstall(_label_prefix: &str, _dir: &Path) -> Result<bool> {
+    anyhow::bail!("OS service management is not supported on this platform")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn is_installed(_label_prefix: &str, _dir: &Path) -> bool {
+    false
 }
