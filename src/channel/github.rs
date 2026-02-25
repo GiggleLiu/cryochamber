@@ -142,14 +142,20 @@ pub fn parse_create_discussion_response(json: &serde_json::Value) -> Result<(Str
     Ok((id, number))
 }
 
-/// Create a new GitHub Discussion. Returns (node_id, number).
-pub fn create_discussion(
-    owner: &str,
-    repo: &str,
-    title: &str,
-    body: &str,
-) -> Result<(String, u64)> {
-    // Get repo node ID and find a discussion category
+/// Enable GitHub Discussions on a repository via `gh repo edit`.
+fn enable_discussions(owner: &str, repo: &str) -> Result<()> {
+    let status = Command::new("gh")
+        .args(["repo", "edit", &format!("{owner}/{repo}"), "--enable-discussions"])
+        .status()
+        .context("Failed to run `gh repo edit`")?;
+    if !status.success() {
+        anyhow::bail!("Failed to enable Discussions on {owner}/{repo}. Check repository permissions.");
+    }
+    Ok(())
+}
+
+/// Query repository node ID and discussion categories.
+fn query_repo_and_categories(owner: &str, repo: &str) -> Result<(String, Vec<serde_json::Value>)> {
     let repo_query = format!(
         r#"{{ repository(owner: "{owner}", name: "{repo}") {{ id discussionCategories(first: 25) {{ nodes {{ id name }} }} }} }}"#
     );
@@ -157,20 +163,45 @@ pub fn create_discussion(
 
     let repo_node_id = repo_json["data"]["repository"]["id"]
         .as_str()
-        .context("Failed to get repository node ID")?;
+        .context("Failed to get repository node ID")?
+        .to_string();
 
     let categories = repo_json["data"]["repository"]["discussionCategories"]["nodes"]
         .as_array()
-        .context("Failed to get discussion categories")?;
+        .context("Failed to get discussion categories")?
+        .clone();
+
+    Ok((repo_node_id, categories))
+}
+
+/// Create a new GitHub Discussion. Returns (node_id, number).
+/// Automatically enables Discussions if not already enabled.
+pub fn create_discussion(
+    owner: &str,
+    repo: &str,
+    title: &str,
+    body: &str,
+) -> Result<(String, u64)> {
+    let (mut repo_node_id, mut categories) = query_repo_and_categories(owner, repo)?;
+
+    // If no categories, enable Discussions and retry after a brief delay for API propagation
+    if categories.is_empty() {
+        eprintln!("No discussion categories found. Enabling Discussions on {owner}/{repo}...");
+        enable_discussions(owner, repo)?;
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let result = query_repo_and_categories(owner, repo)?;
+        repo_node_id = result.0;
+        categories = result.1;
+    }
 
     let category_id = categories
         .iter()
         .find(|c| c["name"].as_str() == Some("General"))
         .or_else(|| categories.first())
         .and_then(|c| c["id"].as_str())
-        .context("No discussion categories found. Enable Discussions on the repository.")?;
+        .context("No discussion categories found even after enabling Discussions.")?;
 
-    let mutation = build_create_discussion_mutation(repo_node_id, category_id, title, body);
+    let mutation = build_create_discussion_mutation(&repo_node_id, category_id, title, body);
     let result = gh_graphql(&mutation)?;
     parse_create_discussion_response(&result)
 }

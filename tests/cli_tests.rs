@@ -464,6 +464,7 @@ fn test_daemon_plan_complete() {
     cmd()
         .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
         .success()
@@ -506,6 +507,7 @@ fn test_daemon_cancel() {
 
     cmd()
         .args(["start", "--agent", agent])
+        .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
         .success();
@@ -539,6 +541,7 @@ fn test_wake_signal_wakes_daemon() {
     cmd()
         .args(["start", "--agent", agent])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("CRYO_NO_SERVICE", "1")
         .env("MOCK_AGENT_COMPLETE", "false")
         .env("MOCK_AGENT_WAKE", "2099-12-31T23:59")
         .current_dir(dir.path())
@@ -593,6 +596,7 @@ fn test_daemon_config_watch_inbox() {
     cmd()
         .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
         .success();
@@ -652,6 +656,7 @@ fn test_session_logs_inbox_filenames() {
     cmd()
         .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
         .success();

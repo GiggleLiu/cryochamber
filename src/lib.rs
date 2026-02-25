@@ -9,12 +9,15 @@ pub mod message;
 pub mod process;
 pub mod protocol;
 pub mod registry;
+pub mod service;
 pub mod session;
 pub mod socket;
 pub mod state;
 
 pub fn work_dir() -> anyhow::Result<std::path::PathBuf> {
-    std::env::current_dir().context("Failed to get current directory")
+    let dir = std::env::current_dir().context("Failed to get current directory")?;
+    dir.canonicalize()
+        .or_else(|_| Ok(dir))
 }
 
 use anyhow::Context;

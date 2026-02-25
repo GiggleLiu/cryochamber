@@ -156,13 +156,7 @@ cryo-agent alert <action> <target> "msg"  # Set dead-man switch
 
 ### GitHub Sync (`cryo-gh`)
 
-```bash
-cryo-gh init --repo owner/repo     # Create a GitHub Discussion for sync
-cryo-gh pull                        # Pull Discussion comments into inbox
-cryo-gh push                        # Push session summary to Discussion
-cryo-gh sync                        # Pull then push (full sync)
-cryo-gh status                      # Show GitHub sync status
-```
+Sync messages with a GitHub Discussion board for remote monitoring and two-way messaging. See [`docs/cryo-gh.md`](docs/cryo-gh.md) for setup and recommended workflow.
 
 ## FAQ
 
