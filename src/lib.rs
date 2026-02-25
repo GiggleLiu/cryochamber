@@ -9,6 +9,7 @@ pub mod message;
 pub mod process;
 pub mod protocol;
 pub mod registry;
+pub mod service;
 pub mod session;
 pub mod socket;
 pub mod state;

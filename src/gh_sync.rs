@@ -21,6 +21,9 @@ pub struct GhSyncState {
     /// Last session number that was pushed (to prevent duplicate posts)
     #[serde(default)]
     pub last_pushed_session: Option<u32>,
+    /// PID of the running sync daemon (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_pid: Option<u32>,
 }
 
 impl GhSyncState {

@@ -258,9 +258,17 @@ fn cmd_start(
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
-    cryochamber::process::spawn_daemon(&dir)?;
-
-    println!("Cryochamber started (daemon running in background).");
+    // CRYO_NO_SERVICE=1 disables OS service installation (useful for tests / debugging)
+    if std::env::var("CRYO_NO_SERVICE").is_ok() {
+        cryochamber::process::spawn_daemon(&dir)?;
+        println!("Cryochamber started (background process).");
+    } else {
+        let exe = std::env::current_exe()
+            .context("Failed to resolve cryo executable path")?;
+        let log_path = cryochamber::log::log_path(&dir);
+        cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
+        println!("Cryochamber started (service installed, survives reboot).");
+    }
     println!("Use `cryo watch` to follow progress.");
     println!("Use `cryo status` to check state.");
 
@@ -332,6 +340,9 @@ fn cmd_restart() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let cryo_state = require_live_daemon(&dir)?;
 
+    // Uninstall old service
+    let _ = cryochamber::service::uninstall("daemon", &dir);
+
     // Kill existing daemon process
     if let Some(pid) = cryo_state.pid {
         cryochamber::process::terminate_pid(pid)?;
@@ -344,7 +355,10 @@ fn cmd_restart() -> Result<()> {
     };
     state::save_state(&state::state_path(&dir), &updated)?;
 
-    cryochamber::process::spawn_daemon(&dir)?;
+    let exe = std::env::current_exe()
+        .context("Failed to resolve cryo executable path")?;
+    let log_path = cryochamber::log::log_path(&dir);
+    cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 
     println!("Restarted. Daemon running in background.");
     println!("Use `cryo watch` to follow progress.");
@@ -376,10 +390,18 @@ fn cmd_cancel() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
 
+    // Uninstall system service (launchd/systemd) if installed
+    let service_removed = cryochamber::service::uninstall("daemon", &dir)?;
+    if service_removed {
+        println!("Service removed.");
+    }
+
     let sp = state::state_path(&dir);
     match state::load_state(&sp)? {
         None => {
-            anyhow::bail!("No daemon state found. Nothing to cancel.");
+            if !service_removed {
+                anyhow::bail!("Nothing to cancel. No daemon state or service found.");
+            }
         }
         Some(cryo_state) => {
             // Kill daemon process if still alive
@@ -418,7 +440,15 @@ fn cmd_clean(force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Cancel daemon if running
+    // Uninstall services (daemon + gh-sync)
+    if cryochamber::service::uninstall("daemon", &dir)? {
+        println!("Removed daemon service.");
+    }
+    if cryochamber::service::uninstall("gh-sync", &dir)? {
+        println!("Removed gh-sync service.");
+    }
+
+    // Kill daemon process if still running
     let sp = state::state_path(&dir);
     if let Some(cryo_state) = state::load_state(&sp)? {
         if state::is_locked(&cryo_state) {
@@ -434,6 +464,7 @@ fn cmd_clean(force: bool) -> Result<()> {
         "timer.json",
         "cryo.log",
         "cryo-agent.log",
+        "cryo-gh-sync.log",
         "gh-sync.json",
     ];
     for name in &runtime_files {
