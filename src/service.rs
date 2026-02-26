@@ -2,7 +2,7 @@
 //! OS service management: install/uninstall launchd (macOS) or systemd (Linux)
 //! user services that survive reboots.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 
 /// Derive a short hex hash from a path for unique service naming.

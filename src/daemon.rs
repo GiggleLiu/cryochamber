@@ -10,7 +10,9 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDateTime};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+#[cfg(unix)]
 use signal_hook::consts::{SIGINT, SIGTERM, SIGUSR1};
+#[cfg(unix)]
 use signal_hook::flag;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -114,10 +116,10 @@ pub enum SessionLoopOutcome {
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
 fn terminate_child(child: &mut std::process::Child, pid: u32) {
-    send_signal(pid, libc::SIGTERM);
+    send_signal(pid, crate::process::SIGTERM);
     std::thread::sleep(Duration::from_secs(2));
     if child.try_wait().ok().flatten().is_none() {
-        send_signal(pid, libc::SIGKILL);
+        send_signal(pid, crate::process::SIGKILL);
     }
     let _ = child.wait(); // reap to prevent zombie
 }
@@ -146,13 +148,18 @@ impl Daemon {
 
     /// Run the daemon event loop. Blocks until SIGTERM or plan completion.
     pub fn run(&self) -> Result<()> {
-        // Register signal handlers
-        flag::register(SIGTERM, Arc::clone(&self.shutdown))
-            .context("Failed to register SIGTERM handler")?;
-        flag::register(SIGINT, Arc::clone(&self.shutdown))
-            .context("Failed to register SIGINT handler")?;
-        flag::register(SIGUSR1, Arc::clone(&self.wake_requested))
-            .context("Failed to register SIGUSR1 handler")?;
+        // Register signal handlers (Unix only; Windows handles Ctrl-C differently)
+        #[cfg(unix)]
+        {
+            flag::register(SIGTERM, Arc::clone(&self.shutdown))
+                .context("Failed to register SIGTERM handler")?;
+            flag::register(SIGINT, Arc::clone(&self.shutdown))
+                .context("Failed to register SIGINT handler")?;
+            flag::register(SIGUSR1, Arc::clone(&self.wake_requested))
+                .context("Failed to register SIGUSR1 handler")?;
+        }
+        // On Windows, Ctrl-C is handled by the OS terminating the process.
+        // The shutdown flag is not set via signals, but the process will exit cleanly.
 
         let mut cryo_state =
             state::load_state(&self.state_path)?.context("No cryochamber state found")?;
