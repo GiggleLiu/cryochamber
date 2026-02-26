@@ -11,3 +11,7 @@ max_session_duration = 0
 
 # Watch inbox for reactive wake
 watch_inbox = true
+
+# Web UI host and port (for `cryo web`)
+# web_host = "127.0.0.1"
+# web_port = 3945

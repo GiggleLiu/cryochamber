@@ -94,6 +94,14 @@ async fn get_messages(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     let mut all_messages: Vec<Value> = Vec::new();
 
+    // Include archived inbox messages (already processed by agent)
+    if let Ok(archived) = message::read_inbox_archive(dir) {
+        for (_filename, msg) in archived {
+            all_messages.push(message_to_json(&msg, "inbox"));
+        }
+    }
+
+    // Include pending inbox messages (not yet processed)
     if let Ok(inbox) = message::read_inbox(dir) {
         for (_filename, msg) in inbox {
             all_messages.push(message_to_json(&msg, "inbox"));
@@ -348,7 +356,7 @@ fn signal_daemon(dir: &std::path::Path) -> bool {
     false
 }
 
-pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
+pub async fn serve(project_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
     // Ensure message dirs exist
     crate::message::ensure_dirs(&project_dir)?;
 
@@ -369,7 +377,7 @@ pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/events", get(get_events))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{host}:{port}");
     println!("Cryochamber web UI: http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
@@ -451,6 +459,39 @@ mod tests {
         // Sorted by timestamp — inbox first
         assert_eq!(msgs[0]["direction"], "inbox");
         assert_eq!(msgs[1]["direction"], "outbox");
+    }
+
+    #[tokio::test]
+    async fn test_get_messages_includes_archived_inbox() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+
+        // Write inbox message then archive it
+        let msg = crate::message::Message {
+            from: "human".to_string(),
+            subject: "Old".to_string(),
+            body: "Archived msg".to_string(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 2, 25)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            metadata: std::collections::BTreeMap::new(),
+        };
+        crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
+        let inbox = crate::message::read_inbox(dir.path()).unwrap();
+        let filename = inbox[0].0.clone();
+        crate::message::archive_messages(dir.path(), std::slice::from_ref(&filename)).unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_messages(State(Arc::new(state))).await;
+        let msgs: Vec<serde_json::Value> = serde_json::from_value(resp.0).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["direction"], "inbox");
+        assert_eq!(msgs[0]["body"], "Archived msg");
     }
 
     #[tokio::test]

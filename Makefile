@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli book book-serve book-deploy
 
 # Default target
 help:
@@ -24,6 +24,9 @@ help:
 	@echo "  check-gh     - Verify GitHub Discussion sync (requires gh auth)"
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
 	@echo "  cli          - Install the cryo CLI locally"
+	@echo "  book         - Build mdbook documentation"
+	@echo "  book-serve   - Serve mdbook locally with live reload"
+	@echo "  book-deploy  - Deploy mdbook to GitHub Pages (gh-pages branch)"
 
 # Build the project
 build:
@@ -326,3 +329,28 @@ check-service: build
 	echo "  # After reboot, verify:"; \
 	echo "  #   macOS:  launchctl list | grep com.cryo"; \
 	echo "  #   Linux:  systemctl --user status com.cryo.daemon.*"
+
+# Build mdbook documentation
+book:
+	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
+	mdbook build
+
+# Serve mdbook locally with live reload
+book-serve:
+	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
+	mdbook serve --open
+
+# Deploy mdbook to GitHub Pages (gh-pages branch)
+book-deploy: book
+	@echo "=== Deploying to gh-pages ==="
+	@TMPDIR=$$(mktemp -d); \
+	cp -r book/* "$$TMPDIR/"; \
+	cd "$$TMPDIR" && \
+	git init && \
+	git checkout -b gh-pages && \
+	git add -A && \
+	git commit -m "Deploy mdbook" && \
+	git remote add origin "$$(cd "$(CURDIR)" && git remote get-url origin)" && \
+	git push --force origin gh-pages; \
+	rm -rf "$$TMPDIR"; \
+	echo "=== Deployed to gh-pages ==="

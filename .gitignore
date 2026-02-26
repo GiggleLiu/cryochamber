@@ -5,6 +5,7 @@ Cargo.lock
 # Generated docs
 docs/reports/
 docs/plans/
+book/
 PR_REVIEW.md
 
 # Compiled logo raster (regenerate with `make logo`)

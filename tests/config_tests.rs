@@ -21,6 +21,7 @@ fn test_config_roundtrip() {
         max_retries: 5,
         max_session_duration: 3600,
         watch_inbox: false,
+        ..Default::default()
     };
 
     save_config(&path, &config).unwrap();
@@ -77,10 +78,10 @@ fn test_apply_overrides_all() {
 fn test_apply_overrides_none_keeps_config() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
-
         max_retries: 3,
         max_session_duration: 1800,
         watch_inbox: true,
+        ..Default::default()
     };
 
     let state = CryoState {
@@ -105,10 +106,10 @@ fn test_apply_overrides_none_keeps_config() {
 fn test_apply_overrides_partial() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
-
         max_retries: 3,
         max_session_duration: 1800,
         watch_inbox: true,
+        ..Default::default()
     };
 
     let state = CryoState {
