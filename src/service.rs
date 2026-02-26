@@ -21,6 +21,7 @@ pub fn service_label(prefix: &str, dir: &Path) -> String {
 }
 
 /// Escape XML special characters for safe embedding in plist <string> elements.
+#[cfg(target_os = "macos")]
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

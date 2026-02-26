@@ -65,7 +65,7 @@ impl EventLogger {
             .append(true)
             .open(log_path)?;
 
-        let now = chrono::Local::now();
+        let now = chrono::Utc::now();
         writeln!(
             file,
             "--- CRYO SESSION {session_number} | {} ---",
@@ -94,7 +94,7 @@ impl EventLogger {
 
     /// Log a timestamped event.
     pub fn log_event(&mut self, event: &str) -> Result<(), anyhow::Error> {
-        let now = chrono::Local::now();
+        let now = chrono::Utc::now();
         writeln!(self.file, "[{}] {event}", now.format("%H:%M:%S"))?;
         self.file.flush()?;
         Ok(())
