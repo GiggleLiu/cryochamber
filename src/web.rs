@@ -341,7 +341,7 @@ fn signal_daemon(dir: &std::path::Path) -> bool {
     if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
         if let Some(pid) = st.pid {
             if state::is_locked(&st) {
-                return crate::process::send_signal(pid, libc::SIGUSR1);
+                return crate::process::send_signal(pid, crate::process::SIGUSR1);
             }
         }
     }

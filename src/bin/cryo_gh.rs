@@ -229,10 +229,13 @@ fn cmd_gh_sync_daemon(interval: u64) -> Result<()> {
 
     eprintln!("Sync daemon started (PID {})", std::process::id());
 
-    // Register signal handlers
+    // Register signal handlers (Unix only)
     let shutdown = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
-    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))?;
+    #[cfg(unix)]
+    {
+        signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
+        signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))?;
+    }
 
     // Set up outbox watcher for immediate push on new messages
     use notify::Watcher;

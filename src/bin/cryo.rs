@@ -553,7 +553,7 @@ fn signal_daemon_wake(dir: &std::path::Path) -> bool {
     if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
         if let Some(pid) = st.pid {
             if state::is_locked(&st) {
-                return cryochamber::process::send_signal(pid, libc::SIGUSR1);
+                return cryochamber::process::send_signal(pid, cryochamber::process::SIGUSR1);
             }
         }
     }
