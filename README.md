@@ -179,6 +179,52 @@ cryo-gh status                     # Show sync configuration
 
 Use `cryo wake` to send a message to the daemon's inbox. You can include a message: `cryo wake "Please check the latest PR"`. If inbox watching is enabled (the default), the daemon wakes immediately. You can also use `cryo send --wake` for the same effect. If inbox watching is disabled, `cryo wake` sends a SIGUSR1 signal to force the daemon awake. If no daemon is running, the message is queued for the next `cryo start`.
 
+## Optional: Enhancing Agent Capabilities
+
+Cryochamber agents run as standard AI coding agents. You can improve their effectiveness with these optional configurations.
+
+### Customize the Protocol File
+
+`cryo init` generates a `CLAUDE.md` (or `AGENTS.md`) with the cryochamber protocol. Append project-specific instructions to improve agent reasoning:
+
+```markdown
+<!-- Add to CLAUDE.md after the generated protocol -->
+
+## Project Context
+- This is a Rust project using axum for HTTP and tokio for async
+- Always run `cargo test` before hibernating
+- Prefer conservative wake intervals (hours, not minutes)
+```
+
+### MCP Servers
+
+[MCP servers](https://modelcontextprotocol.io/) give agents access to external tools — web search, databases, APIs, etc. Configure them in your agent's settings (e.g. `~/.claude/settings.json` for Claude Code):
+
+```jsonc
+// Example: add web search and GitHub access
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx", "args": ["mcp-server-fetch"]
+    },
+    "github": {
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }
+    }
+  }
+}
+```
+
+Useful MCP servers for long-running tasks: `mcp-server-fetch` (web access), `@modelcontextprotocol/server-github` (issues/PRs), `mcp-server-filesystem` (broader file access).
+
+### PDF and Reference Management
+
+For research-oriented tasks, give agents access to your paper library:
+
+- **Zotero**: Use [mcp-server-zotero](https://github.com/kujenga/mcp-server-zotero) if Zotero is running locally — agents can search and read papers from your collection
+- **Direct PDF**: Place PDFs in the working directory and reference them in `plan.md` — Claude Code can read PDFs natively
+- **No Zotero?** Use `mcp-server-fetch` to retrieve papers by URL, or pre-extract key content into markdown files in the project directory
+
 ## License
 
 [MIT](LICENSE)
