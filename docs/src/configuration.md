@@ -22,7 +22,7 @@ watch_inbox = true        # Watch inbox for reactive wake
 | `max_retries` | `1` | Max retry attempts on agent failure. `1` means no retry. |
 | `max_session_duration` | `0` | Session timeout in seconds. `0` disables timeout. |
 | `watch_inbox` | `true` | Watch `messages/inbox/` for new files and wake immediately. |
-| `web_host` | `"127.0.0.1"` | Host for `cryo web` to listen on. Set to `"0.0.0.0"` for remote access. |
+| `web_host` | `"127.0.0.1"` | Host for `cryo web` to listen on. Use `"0.0.0.0"` for remote access only behind an authenticated, TLS-terminating proxy. |
 | `web_port` | `3945` | Port for `cryo web` to listen on. |
 
 ## CLI Overrides

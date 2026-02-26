@@ -7,8 +7,10 @@
 ```bash
 cryo web                         # default: http://127.0.0.1:3945
 cryo web --port 8080             # custom port
-cryo web --host 0.0.0.0          # listen on all interfaces
+cryo web --host 0.0.0.0          # listen on all interfaces (see warning below)
 ```
+
+> **Warning:** The web UI has no authentication. Binding to `0.0.0.0` exposes all endpoints (status, messages, wake) to the network. Only do this behind an authenticated, TLS-terminating reverse proxy.
 
 Or configure in `cryo.toml`:
 

@@ -462,6 +462,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_messages_includes_archived_inbox() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+
+        // Write inbox message then archive it
+        let msg = crate::message::Message {
+            from: "human".to_string(),
+            subject: "Old".to_string(),
+            body: "Archived msg".to_string(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 2, 25)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            metadata: std::collections::BTreeMap::new(),
+        };
+        crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
+        let inbox = crate::message::read_inbox(dir.path()).unwrap();
+        let filename = inbox[0].0.clone();
+        crate::message::archive_messages(dir.path(), std::slice::from_ref(&filename)).unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_messages(State(Arc::new(state))).await;
+        let msgs: Vec<serde_json::Value> = serde_json::from_value(resp.0).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["direction"], "inbox");
+        assert_eq!(msgs[0]["body"], "Archived msg");
+    }
+
+    #[tokio::test]
     async fn test_post_send_creates_inbox_message() {
         let dir = tempfile::tempdir().unwrap();
         crate::message::ensure_dirs(dir.path()).unwrap();
