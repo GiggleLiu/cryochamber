@@ -21,6 +21,7 @@ pub fn service_label(prefix: &str, dir: &Path) -> String {
 }
 
 /// Escape XML special characters for safe embedding in plist <string> elements.
+#[cfg(target_os = "macos")]
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -53,11 +54,16 @@ pub fn install(
     std::fs::create_dir_all(&agents_dir)?;
     let plist_path = agents_dir.join(format!("{label}.plist"));
 
-    let args_xml: String =
-        std::iter::once(format!("    <string>{}</string>", xml_escape(&exe.display().to_string())))
-            .chain(args.iter().map(|a| format!("    <string>{}</string>", xml_escape(a))))
-            .collect::<Vec<_>>()
-            .join("\n");
+    let args_xml: String = std::iter::once(format!(
+        "    <string>{}</string>",
+        xml_escape(&exe.display().to_string())
+    ))
+    .chain(
+        args.iter()
+            .map(|a| format!("    <string>{}</string>", xml_escape(a))),
+    )
+    .collect::<Vec<_>>()
+    .join("\n");
 
     // KeepAlive: true = always restart
     // KeepAlive with SuccessfulExit: false = restart only on crash (non-zero exit)

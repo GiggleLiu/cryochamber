@@ -92,6 +92,12 @@ enum Commands {
         target: String,
         message: String,
     },
+    /// Open a web chat UI for messaging and waking the agent
+    Web {
+        /// Port to listen on
+        #[arg(long, default_value = "3945")]
+        port: u16,
+    },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
@@ -121,6 +127,7 @@ fn main() -> Result<()> {
             wake,
         } => cmd_send(&body, &from, subject.as_deref(), wake),
         Commands::Wake { message } => cmd_wake(message.as_deref()),
+        Commands::Web { port } => cmd_web(port),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
@@ -263,8 +270,7 @@ fn cmd_start(
         cryochamber::process::spawn_daemon(&dir)?;
         println!("Cryochamber started (background process).");
     } else {
-        let exe = std::env::current_exe()
-            .context("Failed to resolve cryo executable path")?;
+        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
         let log_path = cryochamber::log::log_path(&dir);
         cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
         println!("Cryochamber started (service installed, survives reboot).");
@@ -280,9 +286,7 @@ fn cmd_start(
             }
         }
         if std::time::Instant::now() > deadline {
-            anyhow::bail!(
-                "Daemon did not start within 10 seconds. Check cryo.log for errors."
-            );
+            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
         }
     }
 
@@ -296,6 +300,14 @@ fn cmd_daemon() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let daemon = cryochamber::daemon::Daemon::new(dir);
     daemon.run()
+}
+
+fn cmd_web(port: u16) -> Result<()> {
+    let dir = cryochamber::work_dir()?;
+    require_valid_project(&dir)?;
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(cryochamber::web::serve(dir, port))
 }
 
 fn cmd_status() -> Result<()> {
@@ -372,8 +384,7 @@ fn cmd_restart() -> Result<()> {
     };
     state::save_state(&state::state_path(&dir), &updated)?;
 
-    let exe = std::env::current_exe()
-        .context("Failed to resolve cryo executable path")?;
+    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
     let log_path = cryochamber::log::log_path(&dir);
     cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 

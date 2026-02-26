@@ -145,11 +145,18 @@ pub fn parse_create_discussion_response(json: &serde_json::Value) -> Result<(Str
 /// Enable GitHub Discussions on a repository via `gh repo edit`.
 fn enable_discussions(owner: &str, repo: &str) -> Result<()> {
     let status = Command::new("gh")
-        .args(["repo", "edit", &format!("{owner}/{repo}"), "--enable-discussions"])
+        .args([
+            "repo",
+            "edit",
+            &format!("{owner}/{repo}"),
+            "--enable-discussions",
+        ])
         .status()
         .context("Failed to run `gh repo edit`")?;
     if !status.success() {
-        anyhow::bail!("Failed to enable Discussions on {owner}/{repo}. Check repository permissions.");
+        anyhow::bail!(
+            "Failed to enable Discussions on {owner}/{repo}. Check repository permissions."
+        );
     }
     Ok(())
 }
