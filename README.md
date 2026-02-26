@@ -6,9 +6,9 @@
   <img src="docs/logo/logo.svg" alt="cryochamber logo" width="500">
 </p>
 
-**Cryochamber** for AI agents (claude, opencode and codex). It hibernates an AI agent between sessions and wakes it at the right time — not on a fixed schedule. AI agent checks the plan and log, complete some task and decide the next wake time. Cryochamber empower AI agents the ability to run tasks that may span days, weeks or even years, just like an interstellar travelers.
+**Cryochamber** is a hibernation chamber for AI agents (Claude, OpenCode, Codex). It hibernates an AI agent between sessions and wakes it at the right time — not on a fixed schedule. The agent checks the plan and log, completes a task, and decides when to wake next. Cryochamber empowers AI agents to run tasks that span days, weeks, or even years, like interstellar travelers in stasis.
 
-Our goal is to automate long running activities that are too irregular for cron. A conference deadline slips because submissions are low. A space probe's next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about *when* to wake and *what* to do next, with a persistent daemon that manages the lifecycle.
+Our goal is to automate long-running activities that are too irregular for cron. A conference deadline slips because submissions are low. A space probe's next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about *when* to wake and *what* to do next, with a persistent daemon that manages the lifecycle.
 
 ## Quick Start
 

@@ -18,6 +18,14 @@ cryo init                      # for opencode (writes AGENTS.md + cryo.toml)
 cryo init --agent claude       # for Claude Code (writes CLAUDE.md + cryo.toml)
 ```
 
+Expected output:
+
+```
+Wrote cryo.toml
+Wrote AGENTS.md
+Wrote plan.md
+```
+
 ## Edit the Generated Files
 
 ```bash
@@ -29,6 +37,19 @@ vim cryo.toml                  # agent, retries, timeout, inbox settings
 
 ```bash
 cryo start && cryo watch
+```
+
+Expected output:
+
+```
+Daemon started (PID 12345)
+Watching cryo.log (Ctrl-C to stop)...
+--- CRYO SESSION 1 | 2026-02-26T10:00:00Z ---
+task: Continue the plan
+agent: opencode
+inbox: 0 messages
+[10:00:00] agent started (pid 12346)
+...
 ```
 
 While the agent runs, you can interact from another terminal:
