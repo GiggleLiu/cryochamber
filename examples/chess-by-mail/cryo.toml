@@ -1,12 +1,17 @@
-# cryo.toml — Chess by Mail
+# cryo.toml — Cryochamber project configuration
 
 # Agent command (e.g. "opencode", "claude", "codex")
 agent = "opencode"
 
+# Max retry attempts on agent failure (1 = no retry)
 max_retries = 1
 
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 0
 
-# Agent checks on its own schedule; inbox messages are picked up at next wake
+# Watch inbox for reactive wake
 watch_inbox = false
+
+# Web UI host and port (for `cryo web`)
+web_host = "127.0.0.1"
+web_port = 3945

@@ -94,9 +94,12 @@ enum Commands {
     },
     /// Open a web chat UI for messaging and waking the agent
     Web {
-        /// Port to listen on
-        #[arg(long, default_value = "3945")]
-        port: u16,
+        /// Host to listen on (overrides cryo.toml web_host)
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to listen on (overrides cryo.toml web_port)
+        #[arg(long)]
+        port: Option<u16>,
     },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
@@ -127,7 +130,7 @@ fn main() -> Result<()> {
             wake,
         } => cmd_send(&body, &from, subject.as_deref(), wake),
         Commands::Wake { message } => cmd_wake(message.as_deref()),
-        Commands::Web { port } => cmd_web(port),
+        Commands::Web { host, port } => cmd_web(host, port),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
@@ -302,12 +305,16 @@ fn cmd_daemon() -> Result<()> {
     daemon.run()
 }
 
-fn cmd_web(port: u16) -> Result<()> {
+fn cmd_web(host: Option<String>, port: Option<u16>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
 
+    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
+    let host = host.unwrap_or(cfg.web_host);
+    let port = port.unwrap_or(cfg.web_port);
+
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::web::serve(dir, port))
+    rt.block_on(cryochamber::web::serve(dir, &host, port))
 }
 
 fn cmd_status() -> Result<()> {

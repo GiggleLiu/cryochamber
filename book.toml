@@ -1,0 +1,32 @@
+[book]
+title = "Cryochamber"
+authors = ["liujinguo"]
+description = "Hibernation chamber for AI agents"
+language = "en"
+src = "docs/src"
+
+[output.html]
+default-theme = "navy"
+git-repository-url = "https://github.com/GiggleLiu/cryochamber"
+edit-url-template = "https://github.com/GiggleLiu/cryochamber/edit/main/{path}"
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+editable = false
+copy-js = true
+runnable = false
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+copy-js = true

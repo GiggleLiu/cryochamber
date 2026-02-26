@@ -94,6 +94,14 @@ async fn get_messages(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     let mut all_messages: Vec<Value> = Vec::new();
 
+    // Include archived inbox messages (already processed by agent)
+    if let Ok(archived) = message::read_inbox_archive(dir) {
+        for (_filename, msg) in archived {
+            all_messages.push(message_to_json(&msg, "inbox"));
+        }
+    }
+
+    // Include pending inbox messages (not yet processed)
     if let Ok(inbox) = message::read_inbox(dir) {
         for (_filename, msg) in inbox {
             all_messages.push(message_to_json(&msg, "inbox"));
@@ -348,7 +356,7 @@ fn signal_daemon(dir: &std::path::Path) -> bool {
     false
 }
 
-pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
+pub async fn serve(project_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
     // Ensure message dirs exist
     crate::message::ensure_dirs(&project_dir)?;
 
@@ -369,7 +377,7 @@ pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/events", get(get_events))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{host}:{port}");
     println!("Cryochamber web UI: http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
