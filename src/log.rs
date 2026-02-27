@@ -191,21 +191,8 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
         } else if block.contains("agent exited (code 0)") || block.contains("hibernate:") {
             SessionOutcome::Success
         } else {
-            // Check for non-zero exit code
-            let has_nonzero_exit = block.lines().any(|line| {
-                if let Some(pos) = line.find("agent exited (code ") {
-                    let after = &line[pos + "agent exited (code ".len()..];
-                    let code_str = after.split(')').next().unwrap_or("");
-                    code_str != "0"
-                } else {
-                    false
-                }
-            });
-            if has_nonzero_exit {
-                SessionOutcome::Failed
-            } else {
-                SessionOutcome::Failed // Unknown outcome treated as failure
-            }
+            // Non-zero exit code or unknown outcome — treat as failure
+            SessionOutcome::Failed
         };
 
         summaries.push(SessionSummary {

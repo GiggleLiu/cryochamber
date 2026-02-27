@@ -218,6 +218,23 @@ impl Daemon {
             }
         });
 
+        // Compute next report time
+        let last_report = cryo_state
+            .last_report_time
+            .as_ref()
+            .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok());
+        let mut next_report_time = crate::report::compute_next_report_time(
+            &config.report_time,
+            config.report_interval,
+            last_report,
+        );
+        if let Some(nrt) = next_report_time {
+            eprintln!(
+                "Daemon: next report at {}",
+                nrt.format("%Y-%m-%d %H:%M")
+            );
+        }
+
         let mut retry = RetryState::new(config.max_retries);
         let mut next_wake: Option<NaiveDateTime> = None;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
@@ -317,14 +334,28 @@ impl Daemon {
             // Check fallback only when idle (not about to run a session)
             self.check_fallback(&mut pending_fallback, &config.fallback_alert);
 
-            // Wait for next event
-            let timeout = match next_wake {
-                Some(wake) => {
-                    let now = Local::now().naive_local();
-                    let diff = wake - now;
-                    diff.to_std().unwrap_or(Duration::ZERO)
+            // Check if periodic report is due
+            if let Some(report_time) = next_report_time {
+                if Local::now().naive_local() >= report_time {
+                    self.send_periodic_report(&config, &mut cryo_state, &mut next_report_time);
                 }
-                None => Duration::from_secs(3600), // poll hourly if no wake scheduled
+            }
+
+            // Wait for next event
+            let timeout = {
+                let now = Local::now().naive_local();
+                let wake_timeout = next_wake.map(|w| w - now);
+                let report_timeout = next_report_time.map(|r| r - now);
+                let min_timeout = match (wake_timeout, report_timeout) {
+                    (Some(w), Some(r)) => Some(w.min(r)),
+                    (Some(w), None) => Some(w),
+                    (None, Some(r)) => Some(r),
+                    (None, None) => None,
+                };
+                match min_timeout {
+                    Some(d) => d.to_std().unwrap_or(Duration::ZERO),
+                    None => Duration::from_secs(3600),
+                }
             };
 
             match rx.recv_timeout(timeout) {
@@ -670,6 +701,49 @@ impl Daemon {
         crate::log::parse_latest_session_task(&self.log_path)
             .ok()
             .flatten()
+    }
+
+    /// Generate and send the periodic activity report.
+    fn send_periodic_report(
+        &self,
+        config: &CryoConfig,
+        cryo_state: &mut CryoState,
+        next_report_time: &mut Option<NaiveDateTime>,
+    ) {
+        let since =
+            Local::now().naive_local() - chrono::Duration::hours(config.report_interval as i64);
+        match crate::report::generate_report(&self.log_path, since) {
+            Ok(summary) => {
+                let project_name = self
+                    .dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                if let Err(e) = crate::report::send_report_notification(&summary, project_name) {
+                    eprintln!("Daemon: report notification failed: {e}");
+                }
+                eprintln!(
+                    "Daemon: report sent ({} sessions, {} failed)",
+                    summary.total_sessions, summary.failed_sessions
+                );
+            }
+            Err(e) => {
+                eprintln!("Daemon: report generation failed: {e}");
+            }
+        }
+
+        // Update state and advance timer
+        let now = Local::now().naive_local();
+        cryo_state.last_report_time = Some(now.format("%Y-%m-%dT%H:%M:%S").to_string());
+        let _ = state::save_state(&self.state_path, cryo_state);
+        *next_report_time = crate::report::compute_next_report_time(
+            &config.report_time,
+            config.report_interval,
+            Some(now),
+        );
+        if let Some(next) = next_report_time {
+            eprintln!("Daemon: next report at {}", next.format("%Y-%m-%d %H:%M"));
+        }
     }
 
     /// Sleep for `duration`, but return early if shutdown is signaled.
