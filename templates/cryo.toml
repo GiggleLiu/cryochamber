@@ -21,3 +21,9 @@ watch_inbox = true
 #   "outbox" = outbox file only (no popup)
 #   "none"   = disable fallback alerts entirely
 # fallback_alert = "notify"
+
+# Periodic status report:
+#   report_time = "09:00" (HH:MM local time)
+#   report_interval = 24 (hours between reports; 0 = disabled)
+# report_time = "09:00"
+# report_interval = 24

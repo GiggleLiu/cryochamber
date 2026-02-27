@@ -20,6 +20,11 @@ pub struct CryoState {
     /// Scheduled next wake time (ISO 8601 format), set by daemon on hibernate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_wake: Option<String>,
+
+    /// Last time a periodic report was sent, stored as an ISO 8601 local time
+    /// string without timezone offset (from `Local::now().naive_local()`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_report_time: Option<String>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
@@ -37,6 +42,10 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
         return Ok(None);
     }
     let contents = std::fs::read_to_string(path)?;
+    if contents.trim().is_empty() {
+        // File exists but is empty — likely caught mid-write (truncate-then-write race).
+        return Ok(None);
+    }
     let state: CryoState = serde_json::from_str(&contents)?;
     Ok(Some(state))
 }
