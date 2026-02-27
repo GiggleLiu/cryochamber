@@ -80,7 +80,9 @@ pub fn parse_latest_session_notes(log_path: &Path) -> Result<Vec<String>> {
         let session = &contents[start..];
         let notes: Vec<String> = session
             .lines()
-            .take_while(|l| !l.starts_with(SESSION_START) || l.as_ptr() == session.as_ptr())
+            .enumerate()
+            .take_while(|(i, l)| *i == 0 || !l.starts_with(SESSION_START))
+            .map(|(_, l)| l)
             .filter_map(|line| {
                 let after = line.find("note: \"")?.checked_add("note: \"".len())?;
                 let rest = line.get(after..)?;

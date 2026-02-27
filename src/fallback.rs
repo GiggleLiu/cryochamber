@@ -32,11 +32,16 @@ impl FallbackAction {
     /// Write the fallback alert to messages/outbox/ and optionally dispatch
     /// a system notification based on the configured alert method.
     ///
-    /// `alert_method` controls the additional action:
-    /// - `"notify"`: show a desktop notification via notify-rust
+    /// `alert_method` controls the action:
+    /// - `"notify"`: desktop notification + outbox file
     /// - `"outbox"`: outbox file only (no popup)
-    /// - `"none"`: outbox file only (no popup)
+    /// - `"none"`: disable fallback alerts entirely
     pub fn execute(&self, work_dir: &Path, alert_method: &str) -> Result<()> {
+        if alert_method == "none" {
+            eprintln!("Fallback: alert suppressed (fallback_alert = \"none\")");
+            return Ok(());
+        }
+
         message::ensure_dirs(work_dir)?;
 
         let msg = Message {

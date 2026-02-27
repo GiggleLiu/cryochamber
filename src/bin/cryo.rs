@@ -562,14 +562,7 @@ fn is_daemon_running(dir: &std::path::Path) -> bool {
 /// Send SIGUSR1 to the daemon to force an immediate wake.
 /// Returns true if the signal was delivered successfully.
 fn signal_daemon_wake(dir: &std::path::Path) -> bool {
-    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
-        if let Some(pid) = st.pid {
-            if state::is_locked(&st) {
-                return cryochamber::process::send_signal(pid, libc::SIGUSR1);
-            }
-        }
-    }
-    false
+    cryochamber::process::signal_daemon_wake(dir)
 }
 
 /// After writing an inbox message, notify the daemon and print status.

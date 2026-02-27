@@ -17,7 +17,7 @@ fn test_build_prompt_first_session() {
 }
 
 #[test]
-fn test_build_prompt_with_history() {
+fn test_build_prompt_references_log() {
     let config = AgentConfig {
         session_number: 3,
         task: "Follow up on PRs".to_string(),

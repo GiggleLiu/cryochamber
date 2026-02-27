@@ -11,7 +11,7 @@ pub struct CryoConfig {
     #[serde(default = "default_agent")]
     pub agent: String,
 
-    /// Max retry attempts on agent failure (1 = no retry)
+    /// Max retry attempts on agent failure (0 = no retry)
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 

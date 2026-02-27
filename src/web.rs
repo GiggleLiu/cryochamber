@@ -382,14 +382,7 @@ pub fn spawn_watchers(project_dir: &Path, tx: tokio::sync::broadcast::Sender<Sse
 }
 
 fn signal_daemon(dir: &std::path::Path) -> bool {
-    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
-        if let Some(pid) = st.pid {
-            if state::is_locked(&st) {
-                return crate::process::send_signal(pid, libc::SIGUSR1);
-            }
-        }
-    }
-    false
+    crate::process::signal_daemon_wake(dir)
 }
 
 pub async fn serve(project_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {

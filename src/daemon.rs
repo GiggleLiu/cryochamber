@@ -55,7 +55,7 @@ impl RetryState {
         if self.attempt >= self.max_retries {
             return None;
         }
-        let secs = 5u64 << self.attempt; // 5 * 2^attempt
+        let secs = 5u64.checked_shl(self.attempt).unwrap_or(3600).min(3600);
         Some(Duration::from_secs(secs))
     }
 
@@ -292,72 +292,24 @@ impl Daemon {
                                 );
                             }
                             SessionLoopOutcome::ValidationFailed => {
-                                // Restore prior wake schedule
                                 next_wake = saved_wake;
-                                // Retry with backoff, same as Err path
-                                let backoff = retry.next_backoff();
-                                retry.record_failure();
-                                if let Some(backoff) = backoff {
-                                    eprintln!(
-                                        "Daemon: agent exited without hibernate. Retry {}/{} in {}s.",
-                                        retry.attempt,
-                                        retry.max_retries,
-                                        backoff.as_secs()
-                                    );
-                                    if self.sleep_or_shutdown(backoff) {
-                                        break;
-                                    }
-                                    run_now = true;
-                                    continue;
-                                } else {
-                                    eprintln!(
-                                        "Daemon: {} retries failed, sending alert. Will keep retrying.",
-                                        retry.max_retries
-                                    );
-                                    self.send_retry_alert(&config.fallback_alert);
-                                    retry.reset();
-                                    if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                                        break;
-                                    }
-                                    run_now = true;
-                                    continue;
+                                if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
+                                    break;
                                 }
+                                run_now = true;
+                                continue;
                             }
                         }
                     }
                     Err(e) => {
-                        // Roll back session number — no session was logged
                         cryo_state.session_number -= 1;
-                        // Restore prior wake schedule so we don't fall back to hourly polling
                         next_wake = saved_wake;
                         eprintln!("Daemon: session failed: {e}");
-                        let backoff = retry.next_backoff();
-                        retry.record_failure();
-                        if let Some(backoff) = backoff {
-                            eprintln!(
-                                "Daemon: retry {}/{} in {}s",
-                                retry.attempt,
-                                retry.max_retries,
-                                backoff.as_secs()
-                            );
-                            if self.sleep_or_shutdown(backoff) {
-                                break;
-                            }
-                            run_now = true;
-                            continue;
-                        } else {
-                            eprintln!(
-                                "Daemon: {} retries failed, sending alert. Will keep retrying.",
-                                retry.max_retries
-                            );
-                            self.send_retry_alert(&config.fallback_alert);
-                            retry.reset();
-                            if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                                break;
-                            }
-                            run_now = true;
-                            continue;
+                        if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
+                            break;
                         }
+                        run_now = true;
+                        continue;
                     }
                 }
             }
@@ -623,14 +575,16 @@ impl Daemon {
                     } else {
                         // Quick-exit detection: agent exited fast without hibernating
                         if elapsed < Duration::from_secs(5) {
-                            let secs = elapsed.as_secs();
+                            let elapsed_s = format!("{:.1}s", elapsed.as_secs_f32());
                             eprintln!(
-                                "Daemon: agent exited in <{secs}s without hibernating — possible causes:\n  \
+                                "Daemon: agent exited in {elapsed_s} without hibernating — possible causes:\n  \
                                  - Missing or invalid API key\n  \
                                  - Agent command misconfigured (try running it manually)\n  \
                                  - Check cryo-agent.log for details"
                             );
-                            logger.log_event("quick exit detected (<5s without hibernate)")?;
+                            logger.log_event(&format!(
+                                "quick exit detected ({elapsed_s} without hibernate)"
+                            ))?;
                         }
                         // Agent exited without calling hibernate — treat as crash
                         logger.finish("agent exited without hibernate")?;
@@ -674,6 +628,29 @@ impl Daemon {
         }
     }
 
+    /// Handle a failure by retrying with backoff or sending an alert when exhausted.
+    /// Returns true if the daemon should shut down.
+    fn handle_failure_retry(&self, retry: &mut RetryState, alert_method: &str) -> bool {
+        let backoff = retry.next_backoff();
+        retry.record_failure();
+        if let Some(backoff) = backoff {
+            eprintln!(
+                "Daemon: retry {}/{} in {}s",
+                retry.attempt,
+                retry.max_retries,
+                backoff.as_secs()
+            );
+            return self.sleep_or_shutdown(backoff);
+        }
+        eprintln!(
+            "Daemon: {} retries failed, sending alert. Will keep retrying.",
+            retry.max_retries
+        );
+        self.send_retry_alert(alert_method);
+        retry.reset();
+        self.sleep_or_shutdown(Duration::from_secs(60))
+    }
+
     /// Send a system alert when retries are exhausted.
     fn send_retry_alert(&self, alert_method: &str) {
         let fb = FallbackAction {
@@ -690,9 +667,9 @@ impl Daemon {
     }
 
     fn get_task(&self) -> Option<String> {
-        // The agent manages task continuity via the plan file.
-        // We no longer derive tasks from old stdout markers.
-        None
+        crate::log::parse_latest_session_task(&self.log_path)
+            .ok()
+            .flatten()
     }
 
     /// Sleep for `duration`, but return early if shutdown is signaled.
