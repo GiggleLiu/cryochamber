@@ -33,6 +33,7 @@ dirs = "6.0.0"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+notify-rust = "4"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"

@@ -52,6 +52,7 @@ fn test_state_roundtrip() {
         agent_override: Some("opencode".to_string()),
         max_retries_override: Some(3),
         max_session_duration_override: Some(1800),
+        next_wake: None,
     };
     save_state(&state_path, &state).unwrap();
 

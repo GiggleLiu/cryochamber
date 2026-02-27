@@ -30,6 +30,10 @@ pub struct CryoConfig {
     /// Web UI port (default: 3945)
     #[serde(default = "default_web_port")]
     pub web_port: u16,
+
+    /// Fallback alert method: "notify" (desktop popup), "outbox" (file only), "none"
+    #[serde(default = "default_fallback_alert")]
+    pub fallback_alert: String,
 }
 
 fn default_agent() -> String {
@@ -37,7 +41,7 @@ fn default_agent() -> String {
 }
 
 fn default_max_retries() -> u32 {
-    1
+    5
 }
 
 fn default_watch_inbox() -> bool {
@@ -52,6 +56,10 @@ fn default_web_port() -> u16 {
     3945
 }
 
+fn default_fallback_alert() -> String {
+    "notify".to_string()
+}
+
 impl Default for CryoConfig {
     fn default() -> Self {
         Self {
@@ -61,6 +69,7 @@ impl Default for CryoConfig {
             watch_inbox: default_watch_inbox(),
             web_host: default_web_host(),
             web_port: default_web_port(),
+            fallback_alert: default_fallback_alert(),
         }
     }
 }

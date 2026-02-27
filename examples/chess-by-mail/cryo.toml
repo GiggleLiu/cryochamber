@@ -14,4 +14,4 @@ watch_inbox = false
 
 # Web UI host and port (for `cryo web`)
 web_host = "127.0.0.1"
-web_port = 3945
+web_port = 3947

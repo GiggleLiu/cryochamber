@@ -50,16 +50,12 @@ impl RetryState {
 
     /// Calculate backoff duration for current attempt.
     /// Returns None if max retries exceeded.
+    /// Doubles each time: 5s, 10s, 20s, 40s, 80s, 160s, ...
     pub fn next_backoff(&self) -> Option<Duration> {
         if self.attempt >= self.max_retries {
             return None;
         }
-        // 5s, 15s, 60s, 60s, 60s, ...
-        let secs = match self.attempt {
-            0 => 5,
-            1 => 15,
-            _ => 60,
-        };
+        let secs = 5u64 << self.attempt; // 5 * 2^attempt
         Some(Duration::from_secs(secs))
     }
 
@@ -265,14 +261,16 @@ impl Daemon {
                 let saved_wake = next_wake.take();
 
                 cryo_state.session_number += 1;
+                cryo_state.next_wake = None;
+                let _ = state::save_state(&self.state_path, &cryo_state);
 
                 match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref()) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
-                        retry.reset();
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
+                                retry.reset();
                                 drop(pending_fallback);
                                 eprintln!("Daemon: plan complete. Shutting down.");
                                 break;
@@ -281,7 +279,11 @@ impl Daemon {
                                 wake_time,
                                 fallback,
                             } => {
+                                retry.reset();
                                 next_wake = Some(wake_time);
+                                cryo_state.next_wake =
+                                    Some(wake_time.format("%Y-%m-%dT%H:%M").to_string());
+                                let _ = state::save_state(&self.state_path, &cryo_state);
                                 pending_fallback =
                                     fallback.map(|fb| (wake_time + chrono::Duration::hours(1), fb));
                                 eprintln!(
@@ -290,8 +292,36 @@ impl Daemon {
                                 );
                             }
                             SessionLoopOutcome::ValidationFailed => {
-                                eprintln!("Daemon: validation failed. Will retry on next event.");
-                                next_wake = None;
+                                // Restore prior wake schedule
+                                next_wake = saved_wake;
+                                // Retry with backoff, same as Err path
+                                let backoff = retry.next_backoff();
+                                retry.record_failure();
+                                if let Some(backoff) = backoff {
+                                    eprintln!(
+                                        "Daemon: agent exited without hibernate. Retry {}/{} in {}s.",
+                                        retry.attempt,
+                                        retry.max_retries,
+                                        backoff.as_secs()
+                                    );
+                                    if self.sleep_or_shutdown(backoff) {
+                                        break;
+                                    }
+                                    run_now = true;
+                                    continue;
+                                } else {
+                                    eprintln!(
+                                        "Daemon: {} retries failed, sending alert. Will keep retrying.",
+                                        retry.max_retries
+                                    );
+                                    self.send_retry_alert(&config.fallback_alert);
+                                    retry.reset();
+                                    if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                                        break;
+                                    }
+                                    run_now = true;
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -317,15 +347,16 @@ impl Daemon {
                             continue;
                         } else {
                             eprintln!(
-                                "Daemon: exhausted {} retries. Cooling down 60s before accepting new events.",
+                                "Daemon: {} retries failed, sending alert. Will keep retrying.",
                                 retry.max_retries
                             );
-                            self.check_fallback(&mut pending_fallback, &config.fallback_alert);
+                            self.send_retry_alert(&config.fallback_alert);
                             retry.reset();
-                            // Cooldown: prevent immediate re-failure from inbox events
                             if self.sleep_or_shutdown(Duration::from_secs(60)) {
                                 break;
                             }
+                            run_now = true;
+                            continue;
                         }
                     }
                 }
@@ -643,6 +674,21 @@ impl Daemon {
         }
     }
 
+    /// Send a system alert when retries are exhausted.
+    fn send_retry_alert(&self, alert_method: &str) {
+        let fb = FallbackAction {
+            action: "retry_exhausted".to_string(),
+            target: "operator".to_string(),
+            message: format!(
+                "Agent failed to hibernate after multiple attempts. Daemon will keep retrying. Directory: {}",
+                self.dir.display()
+            ),
+        };
+        if let Err(e) = fb.execute(&self.dir, alert_method) {
+            eprintln!("Daemon: retry alert failed: {e}");
+        }
+    }
+
     fn get_task(&self) -> Option<String> {
         // The agent manages task continuity via the plan file.
         // We no longer derive tasks from old stdout markers.
@@ -672,19 +718,24 @@ mod tests {
 
     #[test]
     fn test_backoff_sequence() {
-        let mut state = RetryState::new(3);
+        let mut state = RetryState::new(5);
+        // 5s, 10s, 20s, 40s, 80s, exhausted
         assert_eq!(state.next_backoff(), Some(Duration::from_secs(5)));
 
         state.record_failure();
-        assert_eq!(state.attempt, 1);
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(15)));
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(10)));
 
         state.record_failure();
-        assert_eq!(state.attempt, 2);
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(60)));
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(20)));
 
         state.record_failure();
-        assert_eq!(state.attempt, 3);
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(40)));
+
+        state.record_failure();
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(80)));
+
+        state.record_failure();
+        assert_eq!(state.attempt, 5);
         assert_eq!(state.next_backoff(), None);
         assert!(state.exhausted());
     }

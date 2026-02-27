@@ -154,7 +154,7 @@
   #log-panel::-webkit-scrollbar-track { background: transparent; }
   #log-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   .log-line { line-height: 1.6; font-family: inherit; }
-  .log-toggle {
+  .hdr-toggle {
     cursor: pointer;
     font-size: 11px;
     color: var(--text-dim);
@@ -163,7 +163,24 @@
     padding: 3px 8px;
     border-radius: 4px;
   }
-  .log-toggle:hover { color: var(--text); border-color: var(--text-dim); }
+  .hdr-toggle:hover { color: var(--text); border-color: var(--text-dim); }
+
+  /* Info panel */
+  #info-panel {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    padding: 10px 20px;
+    font-size: 12px;
+    flex-shrink: 0;
+    display: none;
+  }
+  #info-panel.visible { display: block; }
+  .info-row { display: flex; gap: 8px; line-height: 1.8; }
+  .info-label { color: var(--text-dim); min-width: 80px; flex-shrink: 0; }
+  .info-value { color: var(--text); }
+  .info-notes { list-style: none; padding: 0; margin: 0; }
+  .info-notes li { color: var(--text); line-height: 1.6; }
+  .info-notes li::before { content: "\2022 "; color: var(--text-dim); }
 
   /* Input area */
   footer {
@@ -264,11 +281,17 @@
     </div>
     <div class="status-item">session <strong id="status-session">-</strong></div>
     <div class="status-item">agent: <strong id="status-agent">-</strong></div>
-    <button class="log-toggle" id="log-toggle">log</button>
+    <button class="hdr-toggle" id="info-toggle">info</button>
+    <button class="hdr-toggle" id="log-toggle">log</button>
   </div>
 </header>
 
 <main>
+  <div id="info-panel">
+    <div class="info-row"><span class="info-label">Next wake</span><span class="info-value" id="info-wake">&mdash;</span></div>
+    <div class="info-row"><span class="info-label">Task</span><span class="info-value" id="info-task">&mdash;</span></div>
+    <div class="info-row"><span class="info-label">Notes</span><span class="info-value" id="info-notes">&mdash;</span></div>
+  </div>
   <div id="messages"></div>
   <div id="log-panel"></div>
 </main>
@@ -288,6 +311,11 @@
   const messagesEl = document.getElementById('messages');
   const logPanel = document.getElementById('log-panel');
   const logToggle = document.getElementById('log-toggle');
+  const infoPanel = document.getElementById('info-panel');
+  const infoToggle = document.getElementById('info-toggle');
+  const infoWake = document.getElementById('info-wake');
+  const infoTask = document.getElementById('info-task');
+  const infoNotes = document.getElementById('info-notes');
   const input = document.getElementById('msg-input');
   const btnSend = document.getElementById('btn-send');
   const btnWake = document.getElementById('btn-wake');
@@ -297,6 +325,8 @@
   const statusAgent = document.getElementById('status-agent');
   const toastEl = document.getElementById('toast');
 
+  let infoLoaded = false;
+  let infoHidden = false;
   let knownKeys = new Set();
   let logTailLoaded = false;
   let knownLogLines = new Set();
@@ -370,6 +400,28 @@
       statusText.textContent = running ? 'running' : 'stopped';
       statusSession.textContent = data.session || '0';
       statusAgent.textContent = data.agent || '-';
+
+      // Update info panel
+      if (!infoLoaded && !infoHidden) {
+        infoLoaded = true;
+        infoPanel.classList.add('visible');
+        infoToggle.textContent = 'hide info';
+      }
+      infoWake.textContent = data.next_wake || '\u2014';
+      infoTask.textContent = data.task || '\u2014';
+      if (data.notes && data.notes.length > 0) {
+        var ul = document.createElement('ul');
+        ul.className = 'info-notes';
+        data.notes.forEach(function(n) {
+          var li = document.createElement('li');
+          li.textContent = n;
+          ul.appendChild(li);
+        });
+        infoNotes.innerHTML = '';
+        infoNotes.appendChild(ul);
+      } else {
+        infoNotes.textContent = '\u2014';
+      }
 
       // Show log tail only on first load
       if (!logTailLoaded && data.log_tail) {
@@ -450,6 +502,13 @@
     logPanel.appendChild(div);
     logPanel.scrollTop = logPanel.scrollHeight;
   }
+
+  infoToggle.addEventListener('click', function() {
+    infoPanel.classList.toggle('visible');
+    var vis = infoPanel.classList.contains('visible');
+    infoHidden = !vis;
+    infoToggle.textContent = vis ? 'hide info' : 'info';
+  });
 
   logToggle.addEventListener('click', function() {
     logPanel.classList.toggle('visible');

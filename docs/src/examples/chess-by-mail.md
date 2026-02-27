@@ -21,7 +21,7 @@ A cron job can't do this because:
 ```bash
 cd examples/chess-by-mail
 cryo init && cryo start
-cryo web   # open the browser chat UI
+cryo web   # open the browser chat UI (port 3947)
 ```
 
 ## Playing

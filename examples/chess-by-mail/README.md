@@ -20,7 +20,8 @@ A cron job can't do this because:
 
 ```bash
 cd examples/chess-by-mail
-cryo init && cryo start && cryo watch &
+cryo init && cryo start
+cryo web   # open the browser chat UI (port 3947)
 ```
 
 ## Playing
@@ -30,8 +31,8 @@ cryo init && cryo start && cryo watch &
 cryo send "e2e4"
 cryo send "Nf3" --wake  # wake the AI immediately
 
-# Check the board (shows last session output)
-cryo status
+# Or use the web UI
+cryo web
 ```
 
 ## How It Works

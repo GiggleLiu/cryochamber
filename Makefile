@@ -16,8 +16,8 @@ help:
 	@echo "  example-clean - Remove auto-generated files from examples"
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
-	@echo "  example      - Run an example (DIR=examples/mr-lazy WATCH=true)"
-	@echo "  example-cancel - Stop a running example (DIR=examples/mr-lazy)"
+	@echo "  example      - Run an example (DIR=examples/mr-lazy or DIR=examples/chess-by-mail)"
+	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
@@ -112,18 +112,12 @@ cli:
 # Run an example
 # Usage: make example DIR=examples/mr-lazy
 #        make example DIR=examples/chess-by-mail AGENT=claude
-#        make example DIR=examples/chess-by-mail WATCH=false  # no watch (interactive use)
-DIR ?= examples/mr-lazy
-WATCH ?= true
 example: build
+	@if [ -z "$(DIR)" ]; then echo "Usage: make example DIR=examples/mr-lazy"; exit 1; fi
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
-	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
-	if [ "$(WATCH)" = "true" ]; then \
-		$(CURDIR)/target/debug/cryo watch --all; \
-	else \
-		echo "Daemon started. Use 'cryo send', 'cryo watch', 'make example-cancel' to interact."; \
-	fi
+	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
+	$(CURDIR)/target/debug/cryo web
 
 # Stop a running example
 # Usage: make example-cancel DIR=examples/chess-by-mail

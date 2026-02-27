@@ -13,7 +13,8 @@ for cross-session memory, probabilistic plan completion.
 
 ```bash
 cd examples/mr-lazy
-cryo init && cryo start && cryo watch
+cryo init && cryo start
+cryo web   # open the browser chat UI (port 3946)
 ```
 
 Or use the health check target (runs in daemon mode, Ctrl-C to stop):

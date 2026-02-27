@@ -17,6 +17,9 @@ pub struct CryoState {
     pub max_retries_override: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_session_duration_override: Option<u64>,
+    /// Scheduled next wake time (ISO 8601 format), set by daemon on hibernate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_wake: Option<String>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

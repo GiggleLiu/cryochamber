@@ -29,9 +29,14 @@ impl FallbackAction {
         self.action == "webhook"
     }
 
-    /// Write the fallback alert to messages/outbox/ as a markdown file.
-    /// External runners watch the outbox and deliver via email, webhook, etc.
-    pub fn execute(&self, work_dir: &Path) -> Result<()> {
+    /// Write the fallback alert to messages/outbox/ and optionally dispatch
+    /// a system notification based on the configured alert method.
+    ///
+    /// `alert_method` controls the additional action:
+    /// - `"notify"`: show a desktop notification via notify-rust
+    /// - `"outbox"`: outbox file only (no popup)
+    /// - `"none"`: outbox file only (no popup)
+    pub fn execute(&self, work_dir: &Path, alert_method: &str) -> Result<()> {
         message::ensure_dirs(work_dir)?;
 
         let msg = Message {
@@ -50,6 +55,24 @@ impl FallbackAction {
             "Fallback alert written to {}",
             path.strip_prefix(work_dir).unwrap_or(&path).display()
         );
+
+        if alert_method == "notify" {
+            if let Err(e) = self.send_notification() {
+                eprintln!("Fallback: desktop notification failed: {e}");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Send a desktop notification via notify-rust.
+    fn send_notification(&self) -> Result<()> {
+        notify_rust::Notification::new()
+            .summary(&format!("Cryochamber Alert: {}", self.action))
+            .body(&self.message)
+            .urgency(notify_rust::Urgency::Critical)
+            .timeout(notify_rust::Timeout::Never)
+            .show()?;
         Ok(())
     }
 }

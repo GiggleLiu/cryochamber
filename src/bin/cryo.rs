@@ -144,7 +144,9 @@ fn main() -> Result<()> {
                 target,
                 message,
             };
-            fb.execute(&dir)
+            let config = cryochamber::config::load_config(&cryochamber::config::config_path(&dir))?
+                .unwrap_or_default();
+            fb.execute(&dir, &config.fallback_alert)
         }
     }
 }
@@ -265,6 +267,7 @@ fn cmd_start(
         agent_override,
         max_retries_override,
         max_session_duration_override,
+        next_wake: None,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
@@ -293,7 +296,7 @@ fn cmd_start(
         }
     }
 
-    println!("Use `cryo watch` to follow progress.");
+    println!("Use `cryo watch` or `cryo web` to follow progress.");
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -376,12 +379,14 @@ fn cmd_restart() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let cryo_state = require_live_daemon(&dir)?;
 
-    // Uninstall old service
+    // Uninstall old service (systemd/launchd stop may already kill the process)
     let _ = cryochamber::service::uninstall("daemon", &dir);
 
-    // Kill existing daemon process
-    if let Some(pid) = cryo_state.pid {
-        cryochamber::process::terminate_pid(pid)?;
+    // Kill existing daemon process only if still alive after service removal
+    if state::is_locked(&cryo_state) {
+        if let Some(pid) = cryo_state.pid {
+            cryochamber::process::terminate_pid(pid)?;
+        }
     }
 
     // Clear PID, keep session_number and overrides
@@ -396,7 +401,7 @@ fn cmd_restart() -> Result<()> {
     cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 
     println!("Restarted (service reinstalled).");
-    println!("Use `cryo watch` to follow progress.");
+    println!("Use `cryo watch` or `cryo web` to follow progress.");
     Ok(())
 }
 
