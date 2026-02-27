@@ -20,6 +20,10 @@ pub struct CryoState {
     /// Scheduled next wake time (ISO 8601 format), set by daemon on hibernate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_wake: Option<String>,
+
+    /// Last time a periodic report was sent (ISO 8601)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_report_time: Option<String>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

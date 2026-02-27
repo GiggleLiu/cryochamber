@@ -66,6 +66,7 @@ fn test_apply_overrides_all() {
         max_retries_override: Some(10),
         max_session_duration_override: Some(7200),
         next_wake: None,
+        last_report_time: None,
     };
 
     config.apply_overrides(&state);
@@ -93,6 +94,7 @@ fn test_apply_overrides_none_keeps_config() {
         max_retries_override: None,
         max_session_duration_override: None,
         next_wake: None,
+        last_report_time: None,
     };
 
     config.apply_overrides(&state);
@@ -122,6 +124,7 @@ fn test_apply_overrides_partial() {
         max_retries_override: None,
         max_session_duration_override: None,
         next_wake: None,
+        last_report_time: None,
     };
 
     config.apply_overrides(&state);

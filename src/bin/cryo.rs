@@ -268,6 +268,7 @@ fn cmd_start(
         max_retries_override,
         max_session_duration_override,
         next_wake: None,
+        last_report_time: None,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
