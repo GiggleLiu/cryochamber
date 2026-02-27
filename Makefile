@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli book book-serve book-deploy
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli book book-serve book-deploy copilot-review
 
 # Default target
 help:
@@ -27,6 +27,7 @@ help:
 	@echo "  book         - Build mdbook documentation"
 	@echo "  book-serve   - Serve mdbook locally with live reload"
 	@echo "  book-deploy  - Deploy mdbook to GitHub Pages (gh-pages branch)"
+	@echo "  copilot-review - Request Copilot code review on current PR"
 
 # Build the project
 build:
@@ -348,3 +349,10 @@ book-deploy: book
 	git push --force origin gh-pages; \
 	rm -rf "$$TMPDIR"; \
 	echo "=== Deployed to gh-pages ==="
+
+# Request Copilot code review on the current PR
+# Requires: gh extension install ChrisCarini/gh-copilot-review
+copilot-review:
+	@PR=$$(gh pr view --json number --jq .number 2>/dev/null) || { echo "No PR found for current branch"; exit 1; }; \
+	echo "Requesting Copilot review on PR #$$PR..."; \
+	gh copilot-review $$PR
