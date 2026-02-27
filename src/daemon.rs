@@ -228,6 +228,12 @@ impl Daemon {
             config.report_interval,
             last_report,
         );
+        if config.report_interval > 0 && next_report_time.is_none() {
+            eprintln!(
+                "Daemon: warning: report_interval={} but report_time='{}' is invalid (expected HH:MM)",
+                config.report_interval, config.report_time
+            );
+        }
         if let Some(nrt) = next_report_time {
             eprintln!("Daemon: next report at {}", nrt.format("%Y-%m-%d %H:%M"));
         }
@@ -708,7 +714,7 @@ impl Daemon {
         next_report_time: &mut Option<NaiveDateTime>,
     ) {
         let since =
-            Local::now().naive_local() - chrono::Duration::hours(config.report_interval as i64);
+            chrono::Utc::now().naive_utc() - chrono::Duration::hours(config.report_interval as i64);
         match crate::report::generate_report(&self.log_path, since) {
             Ok(summary) => {
                 let project_name = self
@@ -848,18 +854,4 @@ mod tests {
         let _ = event; // suppress unused warning
     }
 
-    #[test]
-    fn test_report_timer_fires_when_due() {
-        // Verify that compute_next_report_time returns a future time
-        // and that after that time passes, it would advance again
-        let now = Local::now().naive_local();
-        let next = crate::report::compute_next_report_time("09:00", 24, Some(now));
-        assert!(next.is_some());
-        let next = next.unwrap();
-        assert!(next > now);
-        // Should be ~24h from now
-        let diff = next - now;
-        assert!(diff.num_hours() >= 23);
-        assert!(diff.num_hours() <= 24);
-    }
 }

@@ -155,6 +155,33 @@ fn test_none_overrides_not_serialized() {
     assert!(!json.contains("max_retries_override"));
     assert!(!json.contains("max_session_duration_override"));
     assert!(!json.contains("next_wake"));
+    assert!(!json.contains("last_report_time"));
+}
+
+#[test]
+fn test_last_report_time_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+        next_wake: None,
+        last_report_time: Some("2026-02-28T09:00:00".to_string()),
+    };
+    save_state(&state_path, &state).unwrap();
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    assert_eq!(
+        loaded.last_report_time,
+        Some("2026-02-28T09:00:00".to_string())
+    );
+
+    // Verify it appears in JSON
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(json.contains("last_report_time"));
 }
 
 #[test]

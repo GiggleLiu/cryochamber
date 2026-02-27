@@ -83,7 +83,7 @@ impl Default for CryoConfig {
             web_port: default_web_port(),
             fallback_alert: default_fallback_alert(),
             report_time: default_report_time(),
-            report_interval: 24,
+            report_interval: 0,
         }
     }
 }

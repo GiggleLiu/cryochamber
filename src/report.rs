@@ -162,11 +162,21 @@ mod tests {
     #[test]
     fn test_compute_next_report_with_last_report() {
         let last = Local::now().naive_local() - chrono::Duration::hours(25);
-        let next = compute_next_report_time("09:00", 24, Some(last));
-        assert!(next.is_some());
-        let next = next.unwrap();
+        let next = compute_next_report_time("09:00", 24, Some(last)).unwrap();
         let now = Local::now().naive_local();
         assert!(next > now);
+        // last + 24h was 1h ago, so next should be last + 48h = ~23h from now
+        let expected = last + chrono::Duration::hours(48);
+        let diff = (next - expected).num_seconds().abs();
+        assert!(diff < 2, "expected ~{expected}, got {next}");
+    }
+
+    #[test]
+    fn test_compute_next_report_invalid_time() {
+        // Invalid report_time should return None
+        assert_eq!(compute_next_report_time("invalid", 24, None), None);
+        assert_eq!(compute_next_report_time("25:99", 24, None), None);
+        assert_eq!(compute_next_report_time("", 24, None), None);
     }
 
     #[test]
