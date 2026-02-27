@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Local, NaiveDateTime, NaiveTime};
+use chrono::{NaiveDateTime, NaiveTime, Utc};
 use std::path::Path;
 
 use crate::log::{self, SessionOutcome};
@@ -24,7 +24,7 @@ pub fn generate_report(log_path: &Path, since: NaiveDateTime) -> Result<ReportSu
             )
         })
         .count();
-    let now = Local::now().naive_local();
+    let now = Utc::now().naive_utc();
     let period_hours = (now - since).num_hours().max(0) as u64;
     Ok(ReportSummary {
         total_sessions: summaries.len(),
@@ -63,7 +63,14 @@ pub fn send_report_notification(summary: &ReportSummary, project_name: &str) -> 
 }
 
 /// Compute the next report time based on config and last report.
-/// Returns None if reporting is disabled (interval == 0).
+/// Returns None if reporting is disabled (interval == 0) or if report_time
+/// is invalid (not a valid HH:MM string).
+///
+/// Reports are aligned to the configured wall-clock `report_time`. When a
+/// `last_report` is provided, the next time is the earliest wall-clock-aligned
+/// slot that is both in the future and at least `interval_hours` after the last
+/// report. This prevents drift when reports are sent late (e.g., after machine
+/// suspend).
 pub fn compute_next_report_time(
     report_time: &str,
     interval_hours: u64,
@@ -74,31 +81,31 @@ pub fn compute_next_report_time(
     }
 
     let time = NaiveTime::parse_from_str(report_time, "%H:%M").ok()?;
-    let now = Local::now().naive_local();
+    let now = chrono::Local::now().naive_local();
     let interval = chrono::Duration::hours(interval_hours as i64);
 
-    if let Some(last) = last_report {
-        // Advance from last report by interval until in the future
-        let mut next = last + interval;
-        while next <= now {
-            next += interval;
-        }
-        Some(next)
-    } else {
-        // No last report: start from today at report_time
-        let mut next = now.date().and_time(time);
-        if next <= now {
-            next += interval;
-        }
-        Some(next)
+    // Start from the next wall-clock time aligned to report_time
+    let mut next = now.date().and_time(time);
+    if next <= now {
+        next += interval;
     }
+
+    if let Some(last) = last_report {
+        // Ensure at least interval since last report, staying wall-clock aligned
+        let min_next = last + interval;
+        while next < min_next {
+            next += interval;
+        }
+    }
+
+    Some(next)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::log::EventLogger;
-    use chrono::Timelike;
+    use chrono::{Local, Timelike};
 
     #[test]
     fn test_generate_report_counts() {
@@ -124,11 +131,19 @@ mod tests {
         logger.log_event("agent exited (code 0)").unwrap();
         logger.finish("session complete").unwrap();
 
+        // Session 4: exit code 0 but without hibernate — should be failure
+        let mut logger = EventLogger::begin(&log_path, 4, "t4", "agent", &[]).unwrap();
+        logger.log_event("agent started (pid 4)").unwrap();
+        logger.log_event("agent exited (code 0)").unwrap();
+        logger
+            .finish("agent exited without hibernate")
+            .unwrap();
+
         let since =
             NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ").unwrap();
         let report = generate_report(&log_path, since).unwrap();
-        assert_eq!(report.total_sessions, 3);
-        assert_eq!(report.failed_sessions, 1);
+        assert_eq!(report.total_sessions, 4);
+        assert_eq!(report.failed_sessions, 2);
     }
 
     #[test]
@@ -165,10 +180,11 @@ mod tests {
         let next = compute_next_report_time("09:00", 24, Some(last)).unwrap();
         let now = Local::now().naive_local();
         assert!(next > now);
-        // last + 24h was 1h ago, so next should be last + 48h = ~23h from now
-        let expected = last + chrono::Duration::hours(48);
-        let diff = (next - expected).num_seconds().abs();
-        assert!(diff < 2, "expected ~{expected}, got {next}");
+        // Wall-clock aligned: should land on 09:00
+        assert_eq!(next.time().hour(), 9);
+        assert_eq!(next.time().minute(), 0);
+        // Must be at least 24h after last report
+        assert!(next >= last + chrono::Duration::hours(24));
     }
 
     #[test]
@@ -181,12 +197,15 @@ mod tests {
 
     #[test]
     fn test_compute_next_report_recent_last() {
-        // Last report was 1 hour ago with 24h interval → next should be ~23h from now
+        // Last report was 1 hour ago with 24h interval → next should be wall-clock aligned
         let last = Local::now().naive_local() - chrono::Duration::hours(1);
         let next = compute_next_report_time("09:00", 24, Some(last)).unwrap();
         let now = Local::now().naive_local();
-        let diff = next - now;
-        assert!(diff.num_hours() >= 22);
-        assert!(diff.num_hours() <= 24);
+        assert!(next > now);
+        // Wall-clock aligned at 09:00
+        assert_eq!(next.time().hour(), 9);
+        assert_eq!(next.time().minute(), 0);
+        // Must be at least 24h after last report
+        assert!(next >= last + chrono::Duration::hours(24));
     }
 }

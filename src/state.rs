@@ -21,7 +21,8 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_wake: Option<String>,
 
-    /// Last time a periodic report was sent (ISO 8601)
+    /// Last time a periodic report was sent, stored as an ISO 8601 local time
+    /// string without timezone offset (from `Local::now().naive_local()`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_report_time: Option<String>,
 }

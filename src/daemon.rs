@@ -737,8 +737,13 @@ impl Daemon {
 
         // Update state and advance timer
         let now = Local::now().naive_local();
+        let previous_last_report_time = cryo_state.last_report_time.clone();
         cryo_state.last_report_time = Some(now.format("%Y-%m-%dT%H:%M:%S").to_string());
-        let _ = state::save_state(&self.state_path, cryo_state);
+        if let Err(e) = state::save_state(&self.state_path, cryo_state) {
+            eprintln!("Daemon: failed to persist last_report_time: {e}");
+            cryo_state.last_report_time = previous_last_report_time;
+            return;
+        }
         *next_report_time = crate::report::compute_next_report_time(
             &config.report_time,
             config.report_interval,

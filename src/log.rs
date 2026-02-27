@@ -186,12 +186,15 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
             continue;
         }
 
-        // Determine outcome
+        // Determine outcome — check failure markers before exit code 0,
+        // since an agent can exit with code 0 without hibernating (still a failure).
         let outcome = if block.contains("--- CRYO INTERRUPTED ---") {
             SessionOutcome::Interrupted
-        } else if block.contains("quick exit detected") {
+        } else if block.contains("quick exit detected")
+            || block.contains("agent exited without hibernate")
+        {
             SessionOutcome::Failed
-        } else if block.contains("agent exited (code 0)") || block.contains("hibernate:") {
+        } else if block.contains("hibernate:") || block.contains("agent exited (code 0)") {
             SessionOutcome::Success
         } else {
             // Non-zero exit code or unknown outcome — treat as failure
@@ -402,6 +405,27 @@ mod tests {
         let summaries = parse_sessions_since(&log_path, since).unwrap();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].outcome, SessionOutcome::Interrupted);
+    }
+
+    #[test]
+    fn test_parse_sessions_exit_code_0_without_hibernate_is_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("cryo.log");
+
+        // Agent exits with code 0 but without hibernating — daemon treats as failure
+        let mut logger = EventLogger::begin(&log_path, 1, "task", "claude", &[]).unwrap();
+        logger.log_event("agent started (pid 100)").unwrap();
+        logger.log_event("agent exited (code 0)").unwrap();
+        logger
+            .finish("agent exited without hibernate")
+            .unwrap();
+
+        let since =
+            chrono::NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
+                .unwrap();
+        let summaries = parse_sessions_since(&log_path, since).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].outcome, SessionOutcome::Failed);
     }
 
     #[test]
