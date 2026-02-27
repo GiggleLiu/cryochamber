@@ -43,7 +43,7 @@ fn test_execute_writes_to_outbox() {
         target: "user@example.com".to_string(),
         message: "session did not run".to_string(),
     };
-    action.execute(dir.path()).unwrap();
+    action.execute(dir.path(), "outbox").unwrap();
 
     // Verify outbox file was created
     let outbox = dir.path().join("messages/outbox");
@@ -67,7 +67,7 @@ fn test_execute_webhook_writes_to_outbox() {
         target: "https://hooks.slack.com/xxx".to_string(),
         message: "alert".to_string(),
     };
-    action.execute(dir.path()).unwrap();
+    action.execute(dir.path(), "outbox").unwrap();
 
     let outbox = dir.path().join("messages/outbox");
     let entries: Vec<_> = std::fs::read_dir(&outbox)

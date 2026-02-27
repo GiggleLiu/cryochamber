@@ -3,8 +3,8 @@
 # Agent command (e.g. "opencode", "claude", "codex")
 agent = "{{agent}}"
 
-# Max retry attempts on agent failure (1 = no retry)
-max_retries = 1
+# Max retry attempts on agent failure (0 = no retry)
+max_retries = 5
 
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 0
@@ -15,3 +15,9 @@ watch_inbox = true
 # Web UI host and port (for `cryo web`)
 # web_host = "127.0.0.1"
 # web_port = 3945
+
+# Fallback alert method when dead-man switch fires:
+#   "notify" = desktop notification popup (default)
+#   "outbox" = outbox file only (no popup)
+#   "none"   = disable fallback alerts entirely
+# fallback_alert = "notify"

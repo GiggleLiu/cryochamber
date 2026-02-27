@@ -1,7 +1,7 @@
 // tests/message_tests.rs
 use chrono::NaiveDateTime;
 use cryochamber::message::{
-    archive_messages, ensure_dirs, message_to_markdown, parse_message, read_inbox,
+    archive_messages, ensure_dirs, list_inbox, message_to_markdown, parse_message, read_inbox,
     read_inbox_archive, write_message, Message,
 };
 use std::collections::BTreeMap;
@@ -234,4 +234,45 @@ fn test_filename_no_colons() {
         "Filename should not contain colons: {filename}"
     );
     assert!(filename.starts_with("2026-02-23T10-30-00"));
+}
+
+#[test]
+fn test_list_inbox_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(list_inbox(dir.path()).unwrap().is_empty());
+
+    ensure_dirs(dir.path()).unwrap();
+    assert!(list_inbox(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn test_list_inbox_returns_filenames() {
+    let dir = tempfile::tempdir().unwrap();
+    let msg1 = make_message("alice", "First", "Hello", "2026-02-23T08:00:00");
+    let msg2 = make_message("bob", "Second", "World", "2026-02-23T09:00:00");
+    write_message(dir.path(), "inbox", &msg1).unwrap();
+    write_message(dir.path(), "inbox", &msg2).unwrap();
+
+    let filenames = list_inbox(dir.path()).unwrap();
+    assert_eq!(filenames.len(), 2);
+    assert!(filenames[0].ends_with(".md"));
+    assert!(filenames[1].ends_with(".md"));
+    // Sorted by filename (timestamp order)
+    assert!(filenames[0] < filenames[1]);
+}
+
+#[test]
+fn test_list_inbox_ignores_non_md_files() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_dirs(dir.path()).unwrap();
+
+    let inbox = dir.path().join("messages/inbox");
+    std::fs::write(inbox.join("note.txt"), "not a message").unwrap();
+    std::fs::write(inbox.join("data.json"), "{}").unwrap();
+    let msg = make_message("human", "Real", "Message", "2026-02-23T10:00:00");
+    write_message(dir.path(), "inbox", &msg).unwrap();
+
+    let filenames = list_inbox(dir.path()).unwrap();
+    assert_eq!(filenames.len(), 1);
+    assert!(filenames[0].ends_with(".md"));
 }

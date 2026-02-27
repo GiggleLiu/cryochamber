@@ -29,9 +29,19 @@ impl FallbackAction {
         self.action == "webhook"
     }
 
-    /// Write the fallback alert to messages/outbox/ as a markdown file.
-    /// External runners watch the outbox and deliver via email, webhook, etc.
-    pub fn execute(&self, work_dir: &Path) -> Result<()> {
+    /// Write the fallback alert to messages/outbox/ and optionally dispatch
+    /// a system notification based on the configured alert method.
+    ///
+    /// `alert_method` controls the action:
+    /// - `"notify"`: desktop notification + outbox file
+    /// - `"outbox"`: outbox file only (no popup)
+    /// - `"none"`: disable fallback alerts entirely
+    pub fn execute(&self, work_dir: &Path, alert_method: &str) -> Result<()> {
+        if alert_method == "none" {
+            eprintln!("Fallback: alert suppressed (fallback_alert = \"none\")");
+            return Ok(());
+        }
+
         message::ensure_dirs(work_dir)?;
 
         let msg = Message {
@@ -50,6 +60,34 @@ impl FallbackAction {
             "Fallback alert written to {}",
             path.strip_prefix(work_dir).unwrap_or(&path).display()
         );
+
+        if alert_method == "notify" {
+            if let Err(e) = self.send_notification() {
+                eprintln!("Fallback: desktop notification failed: {e}");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Send a desktop notification via notify-rust.
+    fn send_notification(&self) -> Result<()> {
+        let mut notification = notify_rust::Notification::new();
+        notification
+            .summary(&format!("Cryochamber Alert: {}", self.action))
+            .body(&self.message);
+        // Platform-specific alert emphasis
+        #[cfg(target_os = "linux")]
+        {
+            notification.urgency(notify_rust::Urgency::Critical);
+            notification.timeout(notify_rust::Timeout::Never);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            notification.subtitle("Dead-man switch fired");
+            notification.sound_name("Sosumi");
+        }
+        notification.show()?;
         Ok(())
     }
 }

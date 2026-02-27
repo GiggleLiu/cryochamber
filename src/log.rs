@@ -37,12 +37,101 @@ pub fn read_latest_session(log_path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Read the most recent session from cryo.log, whether or not it has finished.
+/// Returns from the last `SESSION_START` to EOF.
+pub fn read_current_session(log_path: &Path) -> Result<Option<String>> {
+    if !log_path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(log_path)?;
+    if contents.trim().is_empty() {
+        return Ok(None);
+    }
+
+    match contents.rfind(SESSION_START) {
+        Some(start) => Ok(Some(contents[start..].to_string())),
+        None => Ok(None),
+    }
+}
+
 pub fn session_count(log_path: &Path) -> Result<u32> {
     if !log_path.exists() {
         return Ok(0);
     }
     let contents = fs::read_to_string(log_path)?;
     Ok(contents.matches(SESSION_START).count() as u32)
+}
+
+/// Extract `note: "..."` lines from the most recent session that has notes.
+/// Scans backward through sessions so a restart doesn't hide previous notes.
+pub fn parse_latest_session_notes(log_path: &Path) -> Result<Vec<String>> {
+    if !log_path.exists() {
+        return Ok(Vec::new());
+    }
+    let contents = fs::read_to_string(log_path)?;
+
+    // Iterate sessions from newest to oldest
+    let starts: Vec<usize> = contents
+        .match_indices(SESSION_START)
+        .map(|(i, _)| i)
+        .collect();
+    for &start in starts.iter().rev() {
+        let session = &contents[start..];
+        let notes: Vec<String> = session
+            .lines()
+            .enumerate()
+            .take_while(|(i, l)| *i == 0 || !l.starts_with(SESSION_START))
+            .map(|(_, l)| l)
+            .filter_map(|line| {
+                let after = line.find("note: \"")?.checked_add("note: \"".len())?;
+                let rest = line.get(after..)?;
+                let end = rest.rfind('"')?;
+                Some(rest[..end].to_string())
+            })
+            .collect();
+        if !notes.is_empty() {
+            return Ok(notes);
+        }
+    }
+    Ok(Vec::new())
+}
+
+/// Extract the most recent wake time from the log.
+/// Scans the entire log backward so the value survives session restarts.
+/// Returns the raw time string (e.g. "2026-03-01T09:00").
+pub fn parse_latest_session_wake(log_path: &Path) -> Result<Option<String>> {
+    if !log_path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(log_path)?;
+    // Lines look like: [HH:MM:SS] hibernate: wake=2026-03-01T09:00, exit=0, ...
+    for line in contents.lines().rev() {
+        if let Some(pos) = line.find("hibernate: wake=") {
+            let after = pos + "hibernate: wake=".len();
+            if let Some(rest) = line.get(after..) {
+                let wake = rest.split(',').next().unwrap_or("").trim();
+                if !wake.is_empty() {
+                    return Ok(Some(wake.to_string()));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Extract the task line from the current session in cryo.log.
+pub fn parse_latest_session_task(log_path: &Path) -> Result<Option<String>> {
+    let session = match read_current_session(log_path)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    for line in session.lines() {
+        if let Some(task) = line.strip_prefix("task: ") {
+            return Ok(Some(task.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 /// Event-based session logger. Only cryo writes to this log.

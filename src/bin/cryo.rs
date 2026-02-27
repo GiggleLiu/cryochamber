@@ -144,7 +144,9 @@ fn main() -> Result<()> {
                 target,
                 message,
             };
-            fb.execute(&dir)
+            let config = cryochamber::config::load_config(&cryochamber::config::config_path(&dir))?
+                .unwrap_or_default();
+            fb.execute(&dir, &config.fallback_alert)
         }
     }
 }
@@ -265,6 +267,7 @@ fn cmd_start(
         agent_override,
         max_retries_override,
         max_session_duration_override,
+        next_wake: None,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
@@ -293,7 +296,7 @@ fn cmd_start(
         }
     }
 
-    println!("Use `cryo watch` to follow progress.");
+    println!("Use `cryo watch` or `cryo web` to follow progress.");
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -376,12 +379,14 @@ fn cmd_restart() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let cryo_state = require_live_daemon(&dir)?;
 
-    // Uninstall old service
+    // Uninstall old service (systemd/launchd stop may already kill the process)
     let _ = cryochamber::service::uninstall("daemon", &dir);
 
-    // Kill existing daemon process
-    if let Some(pid) = cryo_state.pid {
-        cryochamber::process::terminate_pid(pid)?;
+    // Kill existing daemon process only if still alive after service removal
+    if state::is_locked(&cryo_state) {
+        if let Some(pid) = cryo_state.pid {
+            cryochamber::process::terminate_pid(pid)?;
+        }
     }
 
     // Clear PID, keep session_number and overrides
@@ -396,7 +401,7 @@ fn cmd_restart() -> Result<()> {
     cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 
     println!("Restarted (service reinstalled).");
-    println!("Use `cryo watch` to follow progress.");
+    println!("Use `cryo watch` or `cryo web` to follow progress.");
     Ok(())
 }
 
@@ -557,14 +562,7 @@ fn is_daemon_running(dir: &std::path::Path) -> bool {
 /// Send SIGUSR1 to the daemon to force an immediate wake.
 /// Returns true if the signal was delivered successfully.
 fn signal_daemon_wake(dir: &std::path::Path) -> bool {
-    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
-        if let Some(pid) = st.pid {
-            if state::is_locked(&st) {
-                return cryochamber::process::send_signal(pid, libc::SIGUSR1);
-            }
-        }
-    }
-    false
+    cryochamber::process::signal_daemon_wake(dir)
 }
 
 /// After writing an inbox message, notify the daemon and print status.

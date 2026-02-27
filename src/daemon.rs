@@ -50,16 +50,12 @@ impl RetryState {
 
     /// Calculate backoff duration for current attempt.
     /// Returns None if max retries exceeded.
+    /// Doubles each time: 5s, 10s, 20s, 40s, 80s, 160s, ...
     pub fn next_backoff(&self) -> Option<Duration> {
         if self.attempt >= self.max_retries {
             return None;
         }
-        // 5s, 15s, 60s, 60s, 60s, ...
-        let secs = match self.attempt {
-            0 => 5,
-            1 => 15,
-            _ => 60,
-        };
+        let secs = 5u64.checked_shl(self.attempt).unwrap_or(3600).min(3600);
         Some(Duration::from_secs(secs))
     }
 
@@ -265,14 +261,16 @@ impl Daemon {
                 let saved_wake = next_wake.take();
 
                 cryo_state.session_number += 1;
+                cryo_state.next_wake = None;
+                let _ = state::save_state(&self.state_path, &cryo_state);
 
                 match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref()) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
-                        retry.reset();
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
+                                retry.reset();
                                 drop(pending_fallback);
                                 eprintln!("Daemon: plan complete. Shutting down.");
                                 break;
@@ -281,7 +279,11 @@ impl Daemon {
                                 wake_time,
                                 fallback,
                             } => {
+                                retry.reset();
                                 next_wake = Some(wake_time);
+                                cryo_state.next_wake =
+                                    Some(wake_time.format("%Y-%m-%dT%H:%M").to_string());
+                                let _ = state::save_state(&self.state_path, &cryo_state);
                                 pending_fallback =
                                     fallback.map(|fb| (wake_time + chrono::Duration::hours(1), fb));
                                 eprintln!(
@@ -290,49 +292,30 @@ impl Daemon {
                                 );
                             }
                             SessionLoopOutcome::ValidationFailed => {
-                                eprintln!("Daemon: validation failed. Will retry on next event.");
-                                next_wake = None;
+                                next_wake = saved_wake;
+                                if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
+                                    break;
+                                }
+                                run_now = true;
+                                continue;
                             }
                         }
                     }
                     Err(e) => {
-                        // Roll back session number — no session was logged
                         cryo_state.session_number -= 1;
-                        // Restore prior wake schedule so we don't fall back to hourly polling
                         next_wake = saved_wake;
                         eprintln!("Daemon: session failed: {e}");
-                        let backoff = retry.next_backoff();
-                        retry.record_failure();
-                        if let Some(backoff) = backoff {
-                            eprintln!(
-                                "Daemon: retry {}/{} in {}s",
-                                retry.attempt,
-                                retry.max_retries,
-                                backoff.as_secs()
-                            );
-                            if self.sleep_or_shutdown(backoff) {
-                                break;
-                            }
-                            run_now = true;
-                            continue;
-                        } else {
-                            eprintln!(
-                                "Daemon: exhausted {} retries. Cooling down 60s before accepting new events.",
-                                retry.max_retries
-                            );
-                            self.check_fallback(&mut pending_fallback);
-                            retry.reset();
-                            // Cooldown: prevent immediate re-failure from inbox events
-                            if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                                break;
-                            }
+                        if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
+                            break;
                         }
+                        run_now = true;
+                        continue;
                     }
                 }
             }
 
             // Check fallback only when idle (not about to run a session)
-            self.check_fallback(&mut pending_fallback);
+            self.check_fallback(&mut pending_fallback, &config.fallback_alert);
 
             // Wait for next event
             let timeout = match next_wake {
@@ -395,18 +378,13 @@ impl Daemon {
             cryo_state.session_number
         );
 
-        // Read inbox for the prompt
-        let inbox = crate::message::read_inbox(&self.dir)?;
-        let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
-        let inbox_filenames: Vec<String> = inbox.into_iter().map(|(f, _)| f).collect();
+        // List inbox filenames for logging (agent reads files itself)
+        let inbox_filenames: Vec<String> = crate::message::list_inbox(&self.dir)?;
 
-        // Build prompt
-        let log_content = crate::log::read_latest_session(&self.log_path)?;
+        // Build prompt (slim — agent reads cryo.log and inbox files directly)
         let agent_config = crate::agent::AgentConfig {
-            log_content,
             session_number: cryo_state.session_number,
             task: task.clone(),
-            inbox_messages,
             delayed_wake: delayed_wake.map(|s| s.to_string()),
         };
         let prompt = crate::agent::build_prompt(&agent_config);
@@ -434,12 +412,8 @@ impl Daemon {
         // Spawn agent with stdout/stderr redirected to cryo-agent.log
         let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file))?;
         let child_pid = child.id();
+        let spawn_time = std::time::Instant::now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
-
-        // Archive inbox messages after building prompt
-        if !inbox_filenames.is_empty() {
-            crate::message::archive_messages(&self.dir, &inbox_filenames)?;
-        }
 
         // Poll loop: wait for socket commands + agent exit
         let deadline = if timeout_secs > 0 {
@@ -583,16 +557,35 @@ impl Daemon {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code();
+                    let elapsed = spawn_time.elapsed();
                     logger.log_event(&format!(
                         "agent exited (code {})",
                         code.map(|c| c.to_string())
                             .unwrap_or_else(|| "signal".into())
                     ))?;
 
+                    // Archive inbox messages now that agent has finished
+                    if !inbox_filenames.is_empty() {
+                        crate::message::archive_messages(&self.dir, &inbox_filenames)?;
+                    }
+
                     if let Some(outcome) = hibernate_outcome {
                         logger.finish("session complete")?;
                         return Ok(outcome);
                     } else {
+                        // Quick-exit detection: agent exited fast without hibernating
+                        if elapsed < Duration::from_secs(5) {
+                            let elapsed_s = format!("{:.1}s", elapsed.as_secs_f32());
+                            eprintln!(
+                                "Daemon: agent exited in {elapsed_s} without hibernating — possible causes:\n  \
+                                 - Missing or invalid API key\n  \
+                                 - Agent command misconfigured (try running it manually)\n  \
+                                 - Check cryo-agent.log for details"
+                            );
+                            logger.log_event(&format!(
+                                "quick exit detected ({elapsed_s} without hibernate)"
+                            ))?;
+                        }
                         // Agent exited without calling hibernate — treat as crash
                         logger.finish("agent exited without hibernate")?;
                         return Ok(SessionLoopOutcome::ValidationFailed);
@@ -619,22 +612,64 @@ impl Daemon {
     }
 
     /// Execute a pending fallback if its deadline has passed.
-    fn check_fallback(&self, pending: &mut Option<(NaiveDateTime, FallbackAction)>) {
+    fn check_fallback(
+        &self,
+        pending: &mut Option<(NaiveDateTime, FallbackAction)>,
+        alert_method: &str,
+    ) {
         if let Some((deadline, _)) = pending.as_ref() {
             if Local::now().naive_local() > *deadline {
                 let (_, fb) = pending.take().unwrap();
                 eprintln!("Daemon: fallback deadline passed, executing fallback action");
-                if let Err(e) = fb.execute(&self.dir) {
+                if let Err(e) = fb.execute(&self.dir, alert_method) {
                     eprintln!("Daemon: fallback execution failed: {e}");
                 }
             }
         }
     }
 
+    /// Handle a failure by retrying with backoff or sending an alert when exhausted.
+    /// Returns true if the daemon should shut down.
+    fn handle_failure_retry(&self, retry: &mut RetryState, alert_method: &str) -> bool {
+        let backoff = retry.next_backoff();
+        retry.record_failure();
+        if let Some(backoff) = backoff {
+            eprintln!(
+                "Daemon: retry {}/{} in {}s",
+                retry.attempt,
+                retry.max_retries,
+                backoff.as_secs()
+            );
+            return self.sleep_or_shutdown(backoff);
+        }
+        eprintln!(
+            "Daemon: {} retries failed, sending alert. Will keep retrying.",
+            retry.max_retries
+        );
+        self.send_retry_alert(alert_method);
+        retry.reset();
+        self.sleep_or_shutdown(Duration::from_secs(60))
+    }
+
+    /// Send a system alert when retries are exhausted.
+    fn send_retry_alert(&self, alert_method: &str) {
+        let fb = FallbackAction {
+            action: "retry_exhausted".to_string(),
+            target: "operator".to_string(),
+            message: format!(
+                "Agent failed to hibernate after multiple attempts. Daemon will keep retrying. Directory: {}",
+                self.dir.display()
+            ),
+        };
+        if let Err(e) = fb.execute(&self.dir, alert_method) {
+            eprintln!("Daemon: retry alert failed: {e}");
+        }
+    }
+
     fn get_task(&self) -> Option<String> {
-        // The agent manages task continuity via the plan file.
-        // We no longer derive tasks from old stdout markers.
-        None
+        crate::log::parse_latest_session_task(&self.log_path)
+            .ok()
+            .flatten()
     }
 
     /// Sleep for `duration`, but return early if shutdown is signaled.
@@ -660,19 +695,24 @@ mod tests {
 
     #[test]
     fn test_backoff_sequence() {
-        let mut state = RetryState::new(3);
+        let mut state = RetryState::new(5);
+        // 5s, 10s, 20s, 40s, 80s, exhausted
         assert_eq!(state.next_backoff(), Some(Duration::from_secs(5)));
 
         state.record_failure();
-        assert_eq!(state.attempt, 1);
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(15)));
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(10)));
 
         state.record_failure();
-        assert_eq!(state.attempt, 2);
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(60)));
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(20)));
 
         state.record_failure();
-        assert_eq!(state.attempt, 3);
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(40)));
+
+        state.record_failure();
+        assert_eq!(state.next_backoff(), Some(Duration::from_secs(80)));
+
+        state.record_failure();
+        assert_eq!(state.attempt, 5);
         assert_eq!(state.next_backoff(), None);
         assert!(state.exhausted());
     }

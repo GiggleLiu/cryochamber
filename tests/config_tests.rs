@@ -6,7 +6,7 @@ use cryochamber::state::CryoState;
 fn test_config_defaults() {
     let config = CryoConfig::default();
     assert_eq!(config.agent, "opencode");
-    assert_eq!(config.max_retries, 1);
+    assert_eq!(config.max_retries, 5);
     assert_eq!(config.max_session_duration, 0);
     assert!(config.watch_inbox);
 }
@@ -50,7 +50,7 @@ fn test_config_partial_toml_uses_defaults() {
 
     let loaded = load_config(&path).unwrap().unwrap();
     assert_eq!(loaded.agent, "codex");
-    assert_eq!(loaded.max_retries, 1); // default
+    assert_eq!(loaded.max_retries, 5); // default
     assert_eq!(loaded.max_session_duration, 0); // default
     assert!(loaded.watch_inbox); // default
 }
@@ -65,6 +65,7 @@ fn test_apply_overrides_all() {
         agent_override: Some("claude".to_string()),
         max_retries_override: Some(10),
         max_session_duration_override: Some(7200),
+        next_wake: None,
     };
 
     config.apply_overrides(&state);
@@ -91,6 +92,7 @@ fn test_apply_overrides_none_keeps_config() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
+        next_wake: None,
     };
 
     config.apply_overrides(&state);
@@ -119,6 +121,7 @@ fn test_apply_overrides_partial() {
         agent_override: Some("claude".to_string()),
         max_retries_override: None,
         max_session_duration_override: None,
+        next_wake: None,
     };
 
     config.apply_overrides(&state);
