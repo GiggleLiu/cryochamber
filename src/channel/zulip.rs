@@ -78,7 +78,10 @@ impl ZulipClient {
     /// Make an authenticated GET request, return parsed JSON.
     fn get(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<serde_json::Value> {
         let url = self.api_url(endpoint);
-        let mut req = self.agent.get(&url).header("Authorization", &self.basic_auth());
+        let mut req = self
+            .agent
+            .get(&url)
+            .header("Authorization", &self.basic_auth());
         for &(key, value) in params {
             req = req.query(key, value);
         }
@@ -147,10 +150,7 @@ impl ZulipClient {
         num_after: u32,
         skip_email: Option<&str>,
     ) -> Result<(Vec<Message>, bool)> {
-        let narrow = format!(
-            r#"[{{"operator":"stream","operand":{}}}]"#,
-            stream_id
-        );
+        let narrow = format!(r#"[{{"operator":"stream","operand":{}}}]"#, stream_id);
         let num_after_str = num_after.to_string();
         let json = self.get(
             "/messages",
@@ -241,10 +241,7 @@ impl ZulipClient {
 /// Parse GET /users/me response. Returns (user_id, email).
 pub fn parse_get_profile_response(json: &serde_json::Value) -> Result<(u64, String)> {
     let user_id = json["user_id"].as_u64().context("Missing user_id")?;
-    let email = json["email"]
-        .as_str()
-        .context("Missing email")?
-        .to_string();
+    let email = json["email"].as_str().context("Missing email")?.to_string();
     Ok((user_id, email))
 }
 

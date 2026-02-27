@@ -858,5 +858,4 @@ mod tests {
         // The key is that create events DO fire (tested above)
         let _ = event; // suppress unused warning
     }
-
 }
