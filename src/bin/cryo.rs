@@ -488,6 +488,9 @@ fn cmd_clean(force: bool) -> Result<()> {
     if cryochamber::service::uninstall("gh-sync", &dir)? {
         println!("Removed gh-sync service.");
     }
+    if cryochamber::service::uninstall("zulip-sync", &dir)? {
+        println!("Removed zulip-sync service.");
+    }
 
     // Kill daemon process if still running
     let sp = state::state_path(&dir);
@@ -507,6 +510,8 @@ fn cmd_clean(force: bool) -> Result<()> {
         "cryo-agent.log",
         "cryo-gh-sync.log",
         "gh-sync.json",
+        "cryo-zulip-sync.log",
+        "zulip-sync.json",
     ];
     for name in &runtime_files {
         let path = dir.join(name);
