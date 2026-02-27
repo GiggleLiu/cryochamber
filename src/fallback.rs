@@ -75,12 +75,17 @@ impl FallbackAction {
         let mut notification = notify_rust::Notification::new();
         notification
             .summary(&format!("Cryochamber Alert: {}", self.action))
-            .body(&self.message)
-            .timeout(notify_rust::Timeout::Never);
-        // urgency is a D-Bus concept, only available on Linux
+            .body(&self.message);
+        // Platform-specific alert emphasis
         #[cfg(target_os = "linux")]
         {
             notification.urgency(notify_rust::Urgency::Critical);
+            notification.timeout(notify_rust::Timeout::Never);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            notification.subtitle("Dead-man switch fired");
+            notification.sound_name("Sosumi");
         }
         notification.show()?;
         Ok(())

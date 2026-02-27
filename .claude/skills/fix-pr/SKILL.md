@@ -9,12 +9,14 @@ Resolve PR review comments, fix CI failures, and address codecov coverage gaps f
 
 ## Step 1: Gather PR State
 
+**IMPORTANT: Never use `gh api --jq`. It double-escapes through the shell and breaks in zsh (backslashes in `\(...)` and `!=` get mangled). Always pipe to `jq` instead.**
+
 ```bash
 # Get PR number
 PR=$(gh pr view --json number --jq .number)
 
 # Get PR head SHA (on remote)
-HEAD_SHA=$(gh api repos/{owner}/{repo}/pulls/$PR --jq '.head.sha')
+HEAD_SHA=$(gh api repos/{owner}/{repo}/pulls/$PR | jq -r '.head.sha')
 ```
 
 ### 1a. Fetch Review Comments
@@ -23,13 +25,16 @@ Three sources of feedback to check:
 
 ```bash
 # Copilot and user inline review comments (on code lines)
-gh api repos/{owner}/{repo}/pulls/$PR/comments --jq '.[] | "[\(.user.login)] \(.path):\(.line // .original_line) — \(.body)"'
+gh api repos/{owner}/{repo}/pulls/$PR/comments \
+  | jq -r '.[] | "[\(.user.login)] \(.path):\(.line // .original_line) — \(.body)"'
 
 # Review-level comments (top-level review body)
-gh api repos/{owner}/{repo}/pulls/$PR/reviews --jq '.[] | select(.body != "") | "[\(.user.login)] \(.state): \(.body)"'
+gh api repos/{owner}/{repo}/pulls/$PR/reviews \
+  | jq -r '.[] | select(.body != "") | "[\(.user.login)] \(.state): \(.body)"'
 
 # Issue-level comments (general discussion)
-gh api repos/{owner}/{repo}/issues/$PR/comments --jq '.[] | select(.user.login | test("codecov|copilot") | not) | "[\(.user.login)] \(.body)"'
+gh api repos/{owner}/{repo}/issues/$PR/comments \
+  | jq -r '.[] | select(.user.login | test("codecov|copilot") | not) | "[\(.user.login)] \(.body)"'
 ```
 
 ### 1b. Check CI Status
@@ -37,7 +42,7 @@ gh api repos/{owner}/{repo}/issues/$PR/comments --jq '.[] | select(.user.login |
 ```bash
 # All check runs on the PR head
 gh api repos/{owner}/{repo}/commits/$HEAD_SHA/check-runs \
-  --jq '.check_runs[] | "\(.name): \(.conclusion // .status)"'
+  | jq -r '.check_runs[] | "\(.name): \(.conclusion // .status)"'
 ```
 
 ### 1c. Check Codecov Report
@@ -45,7 +50,7 @@ gh api repos/{owner}/{repo}/commits/$HEAD_SHA/check-runs \
 ```bash
 # Codecov bot comment with coverage diff
 gh api repos/{owner}/{repo}/issues/$PR/comments \
-  --jq '.[] | select(.user.login == "codecov[bot]") | .body'
+  | jq -r '.[] | select(.user.login == "codecov[bot]") | .body'
 ```
 
 ## Step 2: Triage and Prioritize
@@ -103,7 +108,7 @@ For detailed line-by-line coverage, use the Codecov API:
 ```bash
 # Get file-level coverage for the PR
 gh api repos/{owner}/{repo}/issues/$PR/comments \
-  --jq '.[] | select(.user.login == "codecov[bot]") | .body' \
+  | jq -r '.[] | select(.user.login == "codecov[bot]") | .body' \
   | grep -oP 'filepath=\K[^&]+'
 ```
 
