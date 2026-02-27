@@ -61,6 +61,7 @@ make check-service # verify OS service install/uninstall lifecycle (launchd/syst
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL). |
 | `registry` | PID file registry for tracking running daemons. Uses `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. |
+| `report` | Periodic session summary reports. Parses log, counts sessions/failures, sends desktop notification via notify-rust. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
 

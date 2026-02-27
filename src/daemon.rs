@@ -229,10 +229,7 @@ impl Daemon {
             last_report,
         );
         if let Some(nrt) = next_report_time {
-            eprintln!(
-                "Daemon: next report at {}",
-                nrt.format("%Y-%m-%d %H:%M")
-            );
+            eprintln!("Daemon: next report at {}", nrt.format("%Y-%m-%d %H:%M"));
         }
 
         let mut retry = RetryState::new(config.max_retries);

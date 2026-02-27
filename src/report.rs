@@ -17,7 +17,12 @@ pub fn generate_report(log_path: &Path, since: NaiveDateTime) -> Result<ReportSu
     let summaries = log::parse_sessions_since(log_path, since)?;
     let failed = summaries
         .iter()
-        .filter(|s| matches!(s.outcome, SessionOutcome::Failed | SessionOutcome::Interrupted))
+        .filter(|s| {
+            matches!(
+                s.outcome,
+                SessionOutcome::Failed | SessionOutcome::Interrupted
+            )
+        })
         .count();
     let now = Local::now().naive_local();
     let period_hours = (now - since).num_hours().max(0) as u64;
@@ -92,8 +97,8 @@ pub fn compute_next_report_time(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Timelike;
     use crate::log::EventLogger;
+    use chrono::Timelike;
 
     #[test]
     fn test_generate_report_counts() {
@@ -119,8 +124,8 @@ mod tests {
         logger.log_event("agent exited (code 0)").unwrap();
         logger.finish("session complete").unwrap();
 
-        let since = NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
-            .unwrap();
+        let since =
+            NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ").unwrap();
         let report = generate_report(&log_path, since).unwrap();
         assert_eq!(report.total_sessions, 3);
         assert_eq!(report.failed_sessions, 1);
@@ -131,8 +136,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("cryo.log");
 
-        let since = NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
-            .unwrap();
+        let since =
+            NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ").unwrap();
         let report = generate_report(&log_path, since).unwrap();
         assert_eq!(report.total_sessions, 0);
         assert_eq!(report.failed_sessions, 0);

@@ -162,7 +162,10 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
     let mut summaries = Vec::new();
 
     // Split into session blocks by finding SESSION_START markers
-    let starts: Vec<usize> = contents.match_indices(SESSION_START).map(|(i, _)| i).collect();
+    let starts: Vec<usize> = contents
+        .match_indices(SESSION_START)
+        .map(|(i, _)| i)
+        .collect();
 
     for (idx, &start) in starts.iter().enumerate() {
         let end = if idx + 1 < starts.len() {
@@ -388,8 +391,7 @@ mod tests {
         let log_path = dir.path().join("cryo.log");
 
         {
-            let mut logger =
-                EventLogger::begin(&log_path, 1, "task", "claude", &[]).unwrap();
+            let mut logger = EventLogger::begin(&log_path, 1, "task", "claude", &[]).unwrap();
             logger.log_event("agent started (pid 100)").unwrap();
             // Drop without finish → CRYO INTERRUPTED
         }
