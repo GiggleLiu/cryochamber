@@ -30,11 +30,11 @@ gh api repos/{owner}/{repo}/pulls/$PR/comments \
 
 # Review-level comments (top-level review body)
 gh api repos/{owner}/{repo}/pulls/$PR/reviews \
-  | jq -r '.[] | select(.body != "") | "[\(.user.login)] \(.state): \(.body)"'
+  | jq -r 'map(select(.body | length > 0)) | .[] | "[\(.user.login)] \(.state): \(.body)"'
 
-# Issue-level comments (general discussion)
+# Issue-level comments (general discussion, exclude bots)
 gh api repos/{owner}/{repo}/issues/$PR/comments \
-  | jq -r '.[] | select(.user.login | test("codecov|copilot") | not) | "[\(.user.login)] \(.body)"'
+  | jq -r 'map(select(.user.login | test("codecov|copilot") | not)) | .[] | "[\(.user.login)] \(.body)"'
 ```
 
 ### 1b. Check CI Status

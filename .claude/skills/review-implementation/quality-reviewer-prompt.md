@@ -51,9 +51,13 @@ Only check these if the diff touches CLI-related code:
 7. **Least surprise** -- Output matches expectations? No contradictory output or silent data loss?
 8. **Feedback** -- Tool confirms what it did? Echoes interpreted parameters for ambiguous operations?
 
+### Test Coverage
+
+9. **Coverage Gate** -- Run `make coverage` (or `cargo llvm-cov --summary-only`) and verify overall line coverage is **above 95%**. If below 95%, flag as **Critical**. Report the exact percentage.
+
 ### Test Quality
 
-9. **Naive Test Detection** -- Flag tests that:
+10. **Naive Test Detection** -- Flag tests that:
    - **Only check types/shapes, not values**: e.g., `assert!(result.is_some())` without checking the actual value is correct.
    - **Mirror the implementation**: Tests recomputing the same formula as the code prove nothing.
    - **Lack adversarial cases**: Only happy path. Tests must include error cases and boundary conditions.
@@ -77,6 +81,9 @@ You MUST output in this exact format:
 - Consistency: OK / ISSUE -- [description]
 - Least surprise: OK / ISSUE -- [description]
 - Feedback: OK / ISSUE -- [description]
+
+### Test Coverage
+- Coverage: [X.X%] -- OK (>=95%) / CRITICAL (<95%)
 
 ### Test Quality
 - Naive test detection: OK / ISSUE

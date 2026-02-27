@@ -80,6 +80,9 @@ When the subagent returns:
 ### HCI (if CLI changed)
 ...
 
+### Test Coverage
+- Coverage: [X.X%] -- OK (>=95%) / CRITICAL (<95%)
+
 ### Test Quality
 ...
 
