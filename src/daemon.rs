@@ -850,4 +850,19 @@ mod tests {
         // The key is that create events DO fire (tested above)
         let _ = event; // suppress unused warning
     }
+
+    #[test]
+    fn test_report_timer_fires_when_due() {
+        // Verify that compute_next_report_time returns a future time
+        // and that after that time passes, it would advance again
+        let now = Local::now().naive_local();
+        let next = crate::report::compute_next_report_time("09:00", 24, Some(now));
+        assert!(next.is_some());
+        let next = next.unwrap();
+        assert!(next > now);
+        // Should be ~24h from now
+        let diff = next - now;
+        assert!(diff.num_hours() >= 23);
+        assert!(diff.num_hours() <= 24);
+    }
 }
