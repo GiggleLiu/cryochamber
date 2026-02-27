@@ -72,12 +72,17 @@ impl FallbackAction {
 
     /// Send a desktop notification via notify-rust.
     fn send_notification(&self) -> Result<()> {
-        notify_rust::Notification::new()
+        let mut notification = notify_rust::Notification::new();
+        notification
             .summary(&format!("Cryochamber Alert: {}", self.action))
             .body(&self.message)
-            .urgency(notify_rust::Urgency::Critical)
-            .timeout(notify_rust::Timeout::Never)
-            .show()?;
+            .timeout(notify_rust::Timeout::Never);
+        // urgency is a D-Bus concept, only available on Linux
+        #[cfg(target_os = "linux")]
+        {
+            notification.urgency(notify_rust::Urgency::Critical);
+        }
+        notification.show()?;
         Ok(())
     }
 }
