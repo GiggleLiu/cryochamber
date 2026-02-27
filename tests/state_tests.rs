@@ -89,6 +89,16 @@ fn test_is_locked_no_pid() {
 }
 
 #[test]
+fn test_load_empty_state_returns_none() {
+    // Empty file should return None (handles truncate-then-write race)
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    std::fs::write(&state_path, "").unwrap();
+    let loaded = load_state(&state_path).unwrap();
+    assert!(loaded.is_none());
+}
+
+#[test]
 fn test_load_corrupted_state() {
     let dir = tempfile::tempdir().unwrap();
     let state_path = dir.path().join("timer.json");

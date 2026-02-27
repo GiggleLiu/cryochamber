@@ -42,6 +42,10 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
         return Ok(None);
     }
     let contents = std::fs::read_to_string(path)?;
+    if contents.trim().is_empty() {
+        // File exists but is empty — likely caught mid-write (truncate-then-write race).
+        return Ok(None);
+    }
     let state: CryoState = serde_json::from_str(&contents)?;
     Ok(Some(state))
 }
