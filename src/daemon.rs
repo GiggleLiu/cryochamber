@@ -320,7 +320,7 @@ impl Daemon {
                                 "Daemon: exhausted {} retries. Cooling down 60s before accepting new events.",
                                 retry.max_retries
                             );
-                            self.check_fallback(&mut pending_fallback);
+                            self.check_fallback(&mut pending_fallback, &config.fallback_alert);
                             retry.reset();
                             // Cooldown: prevent immediate re-failure from inbox events
                             if self.sleep_or_shutdown(Duration::from_secs(60)) {
@@ -332,7 +332,7 @@ impl Daemon {
             }
 
             // Check fallback only when idle (not about to run a session)
-            self.check_fallback(&mut pending_fallback);
+            self.check_fallback(&mut pending_fallback, &config.fallback_alert);
 
             // Wait for next event
             let timeout = match next_wake {
@@ -395,18 +395,13 @@ impl Daemon {
             cryo_state.session_number
         );
 
-        // Read inbox for the prompt
-        let inbox = crate::message::read_inbox(&self.dir)?;
-        let inbox_messages: Vec<_> = inbox.iter().map(|(_, msg)| msg.clone()).collect();
-        let inbox_filenames: Vec<String> = inbox.into_iter().map(|(f, _)| f).collect();
+        // List inbox filenames for logging (agent reads files itself)
+        let inbox_filenames: Vec<String> = crate::message::list_inbox(&self.dir)?;
 
-        // Build prompt
-        let log_content = crate::log::read_latest_session(&self.log_path)?;
+        // Build prompt (slim — agent reads cryo.log and inbox files directly)
         let agent_config = crate::agent::AgentConfig {
-            log_content,
             session_number: cryo_state.session_number,
             task: task.clone(),
-            inbox_messages,
             delayed_wake: delayed_wake.map(|s| s.to_string()),
         };
         let prompt = crate::agent::build_prompt(&agent_config);
@@ -434,12 +429,8 @@ impl Daemon {
         // Spawn agent with stdout/stderr redirected to cryo-agent.log
         let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file))?;
         let child_pid = child.id();
+        let spawn_time = std::time::Instant::now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
-
-        // Archive inbox messages after building prompt
-        if !inbox_filenames.is_empty() {
-            crate::message::archive_messages(&self.dir, &inbox_filenames)?;
-        }
 
         // Poll loop: wait for socket commands + agent exit
         let deadline = if timeout_secs > 0 {
@@ -583,16 +574,33 @@ impl Daemon {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code();
+                    let elapsed = spawn_time.elapsed();
                     logger.log_event(&format!(
                         "agent exited (code {})",
                         code.map(|c| c.to_string())
                             .unwrap_or_else(|| "signal".into())
                     ))?;
 
+                    // Archive inbox messages now that agent has finished
+                    if !inbox_filenames.is_empty() {
+                        crate::message::archive_messages(&self.dir, &inbox_filenames)?;
+                    }
+
                     if let Some(outcome) = hibernate_outcome {
                         logger.finish("session complete")?;
                         return Ok(outcome);
                     } else {
+                        // Quick-exit detection: agent exited fast without hibernating
+                        if elapsed < Duration::from_secs(5) {
+                            let secs = elapsed.as_secs();
+                            eprintln!(
+                                "Daemon: agent exited in <{secs}s without hibernating — possible causes:\n  \
+                                 - Missing or invalid API key\n  \
+                                 - Agent command misconfigured (try running it manually)\n  \
+                                 - Check cryo-agent.log for details"
+                            );
+                            logger.log_event("quick exit detected (<5s without hibernate)")?;
+                        }
                         // Agent exited without calling hibernate — treat as crash
                         logger.finish("agent exited without hibernate")?;
                         return Ok(SessionLoopOutcome::ValidationFailed);
@@ -619,12 +627,16 @@ impl Daemon {
     }
 
     /// Execute a pending fallback if its deadline has passed.
-    fn check_fallback(&self, pending: &mut Option<(NaiveDateTime, FallbackAction)>) {
+    fn check_fallback(
+        &self,
+        pending: &mut Option<(NaiveDateTime, FallbackAction)>,
+        alert_method: &str,
+    ) {
         if let Some((deadline, _)) = pending.as_ref() {
             if Local::now().naive_local() > *deadline {
                 let (_, fb) = pending.take().unwrap();
                 eprintln!("Daemon: fallback deadline passed, executing fallback action");
-                if let Err(e) = fb.execute(&self.dir) {
+                if let Err(e) = fb.execute(&self.dir, alert_method) {
                     eprintln!("Daemon: fallback execution failed: {e}");
                 }
             }
