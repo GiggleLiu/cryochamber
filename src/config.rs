@@ -34,6 +34,14 @@ pub struct CryoConfig {
     /// Fallback alert method: "notify" (desktop popup), "outbox" (file only), "none"
     #[serde(default = "default_fallback_alert")]
     pub fallback_alert: String,
+
+    /// Time of day to send periodic report (HH:MM, local time)
+    #[serde(default = "default_report_time")]
+    pub report_time: String,
+
+    /// Hours between reports (0 = disabled, 24 = daily, 168 = weekly)
+    #[serde(default)]
+    pub report_interval: u64,
 }
 
 fn default_agent() -> String {
@@ -60,6 +68,10 @@ fn default_fallback_alert() -> String {
     "notify".to_string()
 }
 
+fn default_report_time() -> String {
+    "09:00".to_string()
+}
+
 impl Default for CryoConfig {
     fn default() -> Self {
         Self {
@@ -70,6 +82,8 @@ impl Default for CryoConfig {
             web_host: default_web_host(),
             web_port: default_web_port(),
             fallback_alert: default_fallback_alert(),
+            report_time: default_report_time(),
+            report_interval: 24,
         }
     }
 }
