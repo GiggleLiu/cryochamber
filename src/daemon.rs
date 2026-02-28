@@ -121,7 +121,9 @@ pub enum SessionLoopOutcome {
         wake_time: NaiveDateTime,
         fallback: Option<FallbackAction>,
     },
-    ValidationFailed,
+    ValidationFailed {
+        quick_exit: bool,
+    },
 }
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
@@ -335,8 +337,41 @@ impl Daemon {
                                     wake_time.format("%Y-%m-%d %H:%M")
                                 );
                             }
-                            SessionLoopOutcome::ValidationFailed => {
+                            SessionLoopOutcome::ValidationFailed { quick_exit } => {
                                 next_wake = saved_wake;
+
+                                // Check if we should rotate provider
+                                let should_rotate = !config.providers.is_empty()
+                                    && config.providers.len() > 1
+                                    && match config.rotate_on {
+                                        crate::config::RotateOn::QuickExit => quick_exit,
+                                        crate::config::RotateOn::AnyFailure => true,
+                                        crate::config::RotateOn::Never => false,
+                                    };
+
+                                if should_rotate {
+                                    let old_name = config.providers[retry.provider_index].name.clone();
+                                    let wrapped = retry.rotate_provider();
+                                    let new_name = &config.providers[retry.provider_index].name;
+                                    eprintln!(
+                                        "Daemon: rotating provider: {} -> {} (reason: {})",
+                                        old_name,
+                                        new_name,
+                                        if quick_exit { "quick-exit" } else { "failure" },
+                                    );
+
+                                    if wrapped {
+                                        // All providers tried — apply backoff before next cycle
+                                        eprintln!("Daemon: all providers tried, backing off before next cycle");
+                                        if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                                            break;
+                                        }
+                                    }
+                                    run_now = true;
+                                    continue;
+                                }
+
+                                // No rotation — use standard retry with backoff
                                 if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
                                     break;
                                 }
@@ -489,7 +524,7 @@ impl Daemon {
             if self.shutdown.load(Ordering::Relaxed) {
                 terminate_child(&mut child, child_pid);
                 logger.finish("daemon shutdown — agent terminated")?;
-                return Ok(SessionLoopOutcome::ValidationFailed);
+                return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
             }
 
             // Check timeout
@@ -498,7 +533,7 @@ impl Daemon {
                     eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
                     terminate_child(&mut child, child_pid);
                     logger.finish("session timeout — agent killed")?;
-                    return Ok(SessionLoopOutcome::ValidationFailed);
+                    return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
                 }
             }
 
@@ -647,7 +682,7 @@ impl Daemon {
                         }
                         // Agent exited without calling hibernate — treat as crash
                         logger.finish("agent exited without hibernate")?;
-                        return Ok(SessionLoopOutcome::ValidationFailed);
+                        return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: elapsed < Duration::from_secs(5) });
                     }
                 }
                 Ok(None) => {} // still running
