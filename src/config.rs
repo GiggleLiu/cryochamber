@@ -74,6 +74,14 @@ pub struct CryoConfig {
     /// Ordered list of provider profiles (env var sets to try)
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
+
+    /// Zulip sync polling interval in seconds (default: 5)
+    #[serde(default = "default_poll_interval")]
+    pub zulip_poll_interval: u64,
+
+    /// GitHub sync polling interval in seconds (default: 5)
+    #[serde(default = "default_poll_interval")]
+    pub gh_poll_interval: u64,
 }
 
 fn default_agent() -> String {
@@ -104,6 +112,10 @@ fn default_report_time() -> String {
     "09:00".to_string()
 }
 
+fn default_poll_interval() -> u64 {
+    5
+}
+
 impl Default for CryoConfig {
     fn default() -> Self {
         Self {
@@ -118,6 +130,8 @@ impl Default for CryoConfig {
             report_interval: 0,
             rotate_on: RotateOn::default(),
             providers: Vec::new(),
+            zulip_poll_interval: default_poll_interval(),
+            gh_poll_interval: default_poll_interval(),
         }
     }
 }

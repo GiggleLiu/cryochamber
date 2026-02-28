@@ -12,7 +12,7 @@
 
 ```bash
 cryo-gh init --repo owner/repo   # Create a Discussion and write gh-sync.json
-cryo-gh sync [--interval 30]     # Start background sync daemon
+cryo-gh sync [--interval N]      # Start background sync daemon (default from cryo.toml or 5s)
 cryo-gh unsync                   # Stop the sync daemon
 cryo-gh pull                     # One-shot: pull new comments → inbox
 cryo-gh push                     # One-shot: push latest session log → Discussion
@@ -23,7 +23,7 @@ cryo-gh status                   # Show sync configuration
 
 `cryo-gh sync` spawns a background daemon (just like `cryo start` does). It does two things in a loop:
 
-**Discussion → Inbox** (pull direction): Polls the GitHub Discussion for new comments every `--interval` seconds (default: 30). New comments are written to `messages/inbox/` where the daemon picks them up on the next session.
+**Discussion → Inbox** (pull direction): Polls the GitHub Discussion for new comments every `--interval` seconds (default: `gh_poll_interval` in `cryo.toml`, or 5s). New comments are written to `messages/inbox/` where the daemon picks them up on the next session.
 
 **Outbox → Discussion** (push direction): Watches `messages/outbox/` for new files. When the agent sends a message (via `cryo-agent send`), the sync daemon posts it as a Discussion comment and archives the file to `messages/outbox/archive/`.
 

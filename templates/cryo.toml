@@ -28,6 +28,10 @@ watch_inbox = true
 # report_time = "09:00"
 # report_interval = 24
 
+# Sync polling interval in seconds (for cryo-zulip sync / cryo-gh sync)
+# zulip_poll_interval = 5
+# gh_poll_interval = 5
+
 # Provider rotation: switch API keys on failure
 # WARNING: If you add API keys below, ensure cryo.toml is in your .gitignore
 # to avoid accidentally committing secrets.

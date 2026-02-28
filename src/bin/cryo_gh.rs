@@ -29,9 +29,9 @@ enum Commands {
     Push,
     /// Start background sync: pull Discussion comments → inbox, push outbox → Discussion
     Sync {
-        /// Polling interval in seconds
-        #[arg(long, default_value = "30")]
-        interval: u64,
+        /// Polling interval in seconds (overrides cryo.toml gh_poll_interval)
+        #[arg(long)]
+        interval: Option<u64>,
     },
     /// Stop the running sync daemon
     Unsync,
@@ -40,8 +40,8 @@ enum Commands {
     /// Run the sync loop (internal — use `cryo-gh sync` instead)
     #[command(hide = true)]
     SyncDaemon {
-        #[arg(long, default_value = "30")]
-        interval: u64,
+        #[arg(long)]
+        interval: Option<u64>,
     },
 }
 
@@ -173,13 +173,22 @@ fn cmd_gh_push() -> Result<()> {
     Ok(())
 }
 
-fn cmd_gh_sync(interval: u64) -> Result<()> {
+fn resolve_interval(interval_override: Option<u64>) -> Result<u64> {
+    let dir = cryochamber::work_dir()?;
+    let cfg = cryochamber::config::load_config(&cryochamber::config::config_path(&dir))?
+        .unwrap_or_default();
+    Ok(interval_override.unwrap_or(cfg.gh_poll_interval))
+}
+
+fn cmd_gh_sync(interval_override: Option<u64>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
 
     // Require valid project (cryo.toml)
     if !cryochamber::config::config_path(&dir).exists() {
         anyhow::bail!("No cryochamber project in this directory. Run `cryo init` first.");
     }
+
+    let interval = resolve_interval(interval_override)?;
 
     // Require initialized gh-sync.json
     let sync_path = gh_sync_path(&dir);
@@ -223,7 +232,8 @@ fn cmd_gh_unsync() -> Result<()> {
     Ok(())
 }
 
-fn cmd_gh_sync_daemon(interval: u64) -> Result<()> {
+fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
+    let interval = resolve_interval(interval_override)?;
     let dir = cryochamber::work_dir()?;
     let sync_path = gh_sync_path(&dir);
 

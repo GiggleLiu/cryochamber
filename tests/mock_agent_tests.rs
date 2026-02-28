@@ -942,3 +942,123 @@ fn test_invalid_report_time_warns() {
         "Warning should mention the invalid value: {log}"
     );
 }
+
+// --- Inbox wake tests ---
+
+/// Write an inbox message file directly (simulates what cryo-zulip sync does).
+fn write_inbox_message(dir: &std::path::Path, filename: &str, body: &str) {
+    let inbox = dir.join("messages").join("inbox");
+    fs::create_dir_all(&inbox).unwrap();
+    let content = format!(
+        "---\nfrom: test-user\nsubject: test\n---\n{body}"
+    );
+    fs::write(inbox.join(filename), content).unwrap();
+}
+
+#[test]
+fn test_inbox_wake_coalesces_multiple_events() {
+    // Regression test: multiple inbox files created rapidly should trigger
+    // only one session, not one per file.
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "inbox-wake.sh");
+
+    // Enable watch_inbox
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = config.replace("watch_inbox = false", "watch_inbox = true");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    // Pre-create inbox dir so watcher can attach
+    fs::create_dir_all(dir.path().join("messages/inbox")).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for daemon to initialize
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Drop multiple inbox files rapidly to generate multiple InboxChanged events
+    for i in 0..5 {
+        write_inbox_message(dir.path(), &format!("msg-{i}.md"), &format!("message {i}"));
+    }
+
+    // Daemon should complete (inbox-wake.sh does --complete on first session)
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Plan should complete: {log}"
+    );
+
+    // Only ONE session should have run (events coalesced)
+    let session_count = log.matches("CRYO SESSION").count();
+    assert_eq!(
+        session_count, 1,
+        "Multiple inbox events should coalesce into 1 session, got {session_count}: {log}"
+    );
+}
+
+#[test]
+fn test_inbox_wake_no_delayed_wake_notice() {
+    // Regression test: when an inbox message triggers a wake while next_wake
+    // holds a past scheduled time, the daemon should NOT inject a "delayed wake"
+    // notice into the agent prompt.
+    //
+    // Scenario: session 1 hibernates with a past wake time, then sleeps 2s.
+    // During that sleep, the test writes an inbox file. The InboxChanged event
+    // queues in the channel before the daemon's event loop resumes. When the
+    // daemon checks recv_timeout(0), it finds InboxChanged first, so session 2
+    // runs as an inbox wake (not a timeout wake) and skips delayed wake detection.
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "inbox-delayed-wake.sh");
+
+    // Enable watch_inbox
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = config.replace("watch_inbox = false", "watch_inbox = true");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for session 1 to hibernate (it logs "hibernate: wake=...")
+    assert!(
+        wait_for_log_content(dir.path(), "hibernate: wake=", Duration::from_secs(10)),
+        "Session 1 should hibernate with past wake time"
+    );
+
+    // Write inbox file while session 1's script is still sleeping (2s after hibernate).
+    // This queues an InboxChanged event before the daemon's event loop resumes.
+    write_inbox_message(dir.path(), "trigger.md", "wake up via inbox");
+
+    // Wait for daemon to complete
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(20)),
+        "Daemon should exit after plan completion"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Plan should complete: {log}"
+    );
+
+    // The key assertion: no "delayed wake" notice should appear.
+    // Session 2 was triggered by inbox (InboxChanged queued during session 1),
+    // so even though next_wake was in the past, the daemon suppresses delayed
+    // wake detection for inbox-triggered wakes.
+    assert!(
+        !log.contains("delayed wake"),
+        "Inbox-triggered wake should NOT produce delayed wake notice: {log}"
+    );
+}

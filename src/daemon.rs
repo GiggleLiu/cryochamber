@@ -316,6 +316,7 @@ impl Daemon {
         // Restore persisted next_wake from state (survives daemon restart).
         let (mut next_wake, mut run_now) =
             restore_wake_state(&cryo_state, Local::now().naive_local());
+        let mut inbox_wake = false;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 
         loop {
@@ -326,10 +327,14 @@ impl Daemon {
 
             if run_now {
                 run_now = false;
+                let is_inbox_wake = inbox_wake;
+                inbox_wake = false;
 
                 // Detect delayed wake: if the scheduled wake time has long passed
                 // (e.g. computer was sleeping), notify the agent instead of failing.
-                let delayed_wake = next_wake.and_then(|wake| {
+                // Skip this check for inbox-triggered wakes — the agent should handle
+                // the user's message without a spurious delay warning.
+                let delayed_wake = if is_inbox_wake { None } else { next_wake.and_then(|wake| {
                     let now = Local::now().naive_local();
                     detect_delayed_wake(wake, now).map(|delay_str| {
                         // Cancel premature fallback — the session is about to run
@@ -342,7 +347,7 @@ impl Daemon {
                             delay_str,
                         )
                     })
-                });
+                }) };
                 let saved_wake = next_wake.take();
 
                 cryo_state.session_number += 1;
@@ -476,8 +481,12 @@ impl Daemon {
 
             match rx.recv_timeout(timeout) {
                 Ok(DaemonEvent::InboxChanged) => {
+                    // Drain any additional queued InboxChanged events to coalesce
+                    // multiple file-system notifications into a single session.
+                    while let Ok(DaemonEvent::InboxChanged) = rx.try_recv() {}
                     eprintln!("Daemon: inbox changed, waking up");
                     run_now = true;
+                    inbox_wake = true;
                 }
                 Ok(DaemonEvent::Shutdown) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {

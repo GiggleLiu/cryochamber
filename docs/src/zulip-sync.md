@@ -14,7 +14,7 @@
 ```bash
 cryo-zulip init --config ~/.zuliprc --stream my-stream  # Validate credentials, resolve stream, write zulip-sync.json
 cryo-zulip init --config ~/.zuliprc --stream my-stream --topic mychannel  # Custom topic (default: "cryochamber")
-cryo-zulip sync [--interval 30]                         # Start background sync daemon
+cryo-zulip sync [--interval N]                           # Start background sync daemon (default from cryo.toml or 5s)
 cryo-zulip unsync                                       # Stop the sync daemon
 cryo-zulip pull                                         # One-shot: pull new messages → inbox
 cryo-zulip push                                         # One-shot: push latest session log → stream
@@ -25,7 +25,7 @@ cryo-zulip status                                       # Show sync configuratio
 
 `cryo-zulip sync` spawns a background daemon (just like `cryo start` does). It does two things in a loop:
 
-**Stream → Inbox** (pull direction): Polls the Zulip stream for new messages every `--interval` seconds (default: 30). New messages are written to `messages/inbox/` where the cryo daemon picks them up on the next session. The bot's own messages are filtered out to prevent echo loops.
+**Stream → Inbox** (pull direction): Polls the Zulip stream for new messages every `--interval` seconds (default: `zulip_poll_interval` in `cryo.toml`, or 5s). New messages are written to `messages/inbox/` where the cryo daemon picks them up on the next session. The bot's own messages are filtered out to prevent echo loops.
 
 **Outbox → Stream** (push direction): Watches `messages/outbox/` for new files. When the agent sends a message (via `cryo-agent send`), the sync daemon posts it to the Zulip stream and archives the file to `messages/outbox/archive/`.
 
