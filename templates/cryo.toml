@@ -27,3 +27,16 @@ watch_inbox = true
 #   report_interval = 24 (hours between reports; 0 = disabled)
 # report_time = "09:00"
 # report_interval = 24
+
+# Provider rotation: switch API keys on failure
+#   rotate_on: "quick-exit" (rotate on fast exit), "any-failure", "never" (default)
+# rotate_on = "never"
+#
+# Provider pool (ordered list of API key configurations):
+# [[providers]]
+# name = "anthropic"
+# env = { ANTHROPIC_API_KEY = "sk-ant-..." }
+#
+# [[providers]]
+# name = "openai"
+# env = { OPENAI_API_KEY = "sk-...", OPENAI_BASE_URL = "https://api.openai.com/v1" }
