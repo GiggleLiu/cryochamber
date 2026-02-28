@@ -22,6 +22,9 @@ use crate::config::CryoConfig;
 use crate::fallback::FallbackAction;
 use crate::state::{self, CryoState};
 
+/// Format for persisting `next_wake` in timer.json (minute precision, no seconds).
+const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
+
 use crate::process::send_signal;
 
 /// Events the daemon responds to.
@@ -150,6 +153,26 @@ fn compute_sleep_timeout(
         (None, Some(r)) => r,
         (None, None) => Duration::from_secs(3600),
     }
+}
+
+/// Restore the initial `(next_wake, run_now)` pair from persisted state.
+///
+/// - If `next_wake` is persisted and in the future → wait (don't run now).
+/// - If `next_wake` is persisted and in the past → run now (delayed wake check will fire).
+/// - If no `next_wake` → run immediately (fresh start).
+fn restore_wake_state(
+    state: &state::CryoState,
+    now: NaiveDateTime,
+) -> (Option<NaiveDateTime>, bool) {
+    let next_wake = state
+        .next_wake
+        .as_ref()
+        .and_then(|s| NaiveDateTime::parse_from_str(s, WAKE_TIME_FMT).ok());
+    let run_now = match next_wake {
+        Some(w) => now >= w,
+        None => true,
+    };
+    (next_wake, run_now)
 }
 
 /// Check if the scheduled wake time is significantly in the past (machine suspend).
@@ -290,11 +313,10 @@ impl Daemon {
 
         let provider_count = config.providers.len();
         let mut retry = RetryState::new(config.max_retries, provider_count);
-        let mut next_wake: Option<NaiveDateTime> = None;
+        // Restore persisted next_wake from state (survives daemon restart).
+        let (mut next_wake, mut run_now) =
+            restore_wake_state(&cryo_state, Local::now().naive_local());
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
-
-        // First session: run immediately
-        let mut run_now = true;
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -316,7 +338,7 @@ impl Daemon {
                             "DELAYED WAKE: This session was scheduled for {} but is running {} late \
                              (the host machine was likely suspended or powered off). \
                              Check whether time-sensitive tasks need adjustment.",
-                            wake.format("%Y-%m-%dT%H:%M"),
+                            wake.format(WAKE_TIME_FMT),
                             delay_str,
                         )
                     })
@@ -361,7 +383,7 @@ impl Daemon {
                                 retry.reset();
                                 next_wake = Some(wake_time);
                                 cryo_state.next_wake =
-                                    Some(wake_time.format("%Y-%m-%dT%H:%M").to_string());
+                                    Some(wake_time.format(WAKE_TIME_FMT).to_string());
                                 let _ = state::save_state(&self.state_path, &cryo_state);
                                 pending_fallback =
                                     fallback.map(|fb| (wake_time + chrono::Duration::hours(1), fb));
@@ -612,10 +634,8 @@ impl Daemon {
                                 ))?;
                                 hibernate_outcome = Some(SessionLoopOutcome::PlanComplete);
                             } else if let Some(wake_str) = &wake {
-                                match chrono::NaiveDateTime::parse_from_str(
-                                    wake_str,
-                                    "%Y-%m-%dT%H:%M",
-                                ) {
+                                match chrono::NaiveDateTime::parse_from_str(wake_str, WAKE_TIME_FMT)
+                                {
                                     Ok(wake_time) => {
                                         logger.log_event(&format!(
                                             "hibernate: wake={wake_str}, exit={exit_code}, summary=\"{summary_str}\""
@@ -1129,5 +1149,87 @@ mod tests {
         let result = detect_delayed_wake(scheduled, now);
         assert!(result.is_some(), "6 min delay should be flagged");
         assert_eq!(result.unwrap(), "6m");
+    }
+
+    fn make_state(next_wake: Option<&str>) -> state::CryoState {
+        state::CryoState {
+            session_number: 1,
+            pid: None,
+            retry_count: 0,
+            next_wake: next_wake.map(String::from),
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+        }
+    }
+
+    #[test]
+    fn test_restore_wake_state_no_persisted_wake() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let state = make_state(None);
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert!(next_wake.is_none());
+        assert!(run_now, "No persisted wake → run immediately");
+    }
+
+    #[test]
+    fn test_restore_wake_state_future_wake() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(8, 0, 0)
+            .unwrap();
+        let state = make_state(Some("2026-03-01T09:00"));
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert_eq!(
+            next_wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap()
+        );
+        assert!(!run_now, "Wake in future → wait");
+    }
+
+    #[test]
+    fn test_restore_wake_state_past_wake() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let state = make_state(Some("2026-03-01T09:00"));
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert!(next_wake.is_some(), "Should parse persisted wake");
+        assert!(
+            run_now,
+            "Wake in past → run now (delayed wake check will fire)"
+        );
+    }
+
+    #[test]
+    fn test_restore_wake_state_exact_wake_time() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        let state = make_state(Some("2026-03-01T09:00"));
+        let (_, run_now) = restore_wake_state(&state, now);
+        assert!(run_now, "Exactly at wake time → run now");
+    }
+
+    #[test]
+    fn test_restore_wake_state_invalid_format() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let state = make_state(Some("not-a-date"));
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert!(next_wake.is_none(), "Invalid format → treated as no wake");
+        assert!(run_now, "Invalid format → run immediately");
     }
 }
