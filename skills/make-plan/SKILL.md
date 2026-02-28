@@ -75,7 +75,7 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 How should the agent communicate with the user?
 - **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval.
 - **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
-- **Web UI only** — simplest, local browser via `cryo web`. Auto-detect an available port: start from the default (3945), check if the port is in use (e.g. `ss -tlnp | grep :3945`), increment by 1 until a free port is found, then confirm the chosen port with the user.
+- **Web UI only** — simplest, browser via `cryo web`. Use `web_host = "0.0.0.0"` so the UI is accessible from remote machines. Auto-detect an available port: start from the default (3945), check if the port is in use (e.g. `ss -tlnp | grep :3945`), increment by 1 until a free port is found, then confirm the chosen port with the user.
 - **None** — agent runs silently, check logs manually.
 
 ### Q10. Periodic reports
@@ -107,7 +107,7 @@ Generate from Phase 1 answers. No new questions — everything maps directly.
 | AI agent (Q7) | `agent` |
 | Retry strategy (Q6) | `max_retries` |
 | Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
-| Sync channel (Q9) | `web_host`, `web_port` |
+| Sync channel (Q9) | `web_host` (default `"0.0.0.0"`), `web_port` |
 | Reports (Q10) | `report_time`, `report_interval` |
 | Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 

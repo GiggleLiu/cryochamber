@@ -3,34 +3,18 @@
 ## Prerequisites
 
 - Rust toolchain ([rustup.rs](https://rustup.rs))
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- An AI coding agent: [OpenCode](https://github.com/opencode-ai/opencode) (default), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex)
 - macOS or Linux
 
 ## Install
 
 ```bash
-cargo install --path .
-claude skill install --path skills/make-plan
+cargo install cryochamber
 ```
 
-This installs the `cryo` CLI and the `make-plan` skill for Claude Code.
+This installs `cryo`, `cryo-agent`, `cryo-gh`, and `cryo-zulip` binaries.
 
-## Create a Project with `/make-plan` (Recommended)
-
-The fastest way to set up a cryochamber application is through the `/make-plan` skill. Open Claude Code and type `/make-plan`. The skill guides you through four phases:
-
-1. **Brainstorm** — answer questions about your task, schedule, tools, messaging, and providers
-2. **Configure** — generates `plan.md` and `cryo.toml` from your answers
-3. **Validate** — tests the agent, verifies files, and runs a smoke test
-4. **Start** — optionally starts the daemon immediately
-
-The skill handles everything: writing the plan, configuring the agent, setting up Zulip or GitHub sync, and verifying the agent can respond. When it finishes, your project is ready to run.
-
-## Manual Setup
-
-If you prefer to set up without Claude Code:
-
-### Initialize a Project
+## Initialize a Project
 
 ```bash
 mkdir my-project && cd my-project
@@ -38,13 +22,19 @@ cryo init                      # for opencode (writes AGENTS.md + cryo.toml + RE
 cryo init --agent claude       # for Claude Code (writes CLAUDE.md + cryo.toml + README.md)
 ```
 
-### Edit the Generated Files
+## Write Your Plan
 
-Write your task plan in `plan.md` — describe the goal, step-by-step tasks, and notes about persistent state. See the [Mr. Lazy](./examples/mr-lazy.md) and [Chess by Mail](./examples/chess-by-mail.md) examples for reference.
+Edit `plan.md` — describe the goal, step-by-step tasks, and notes about persistent state. See the [Mr. Lazy](./examples/mr-lazy.md) and [Chess by Mail](./examples/chess-by-mail.md) examples for reference.
 
 Review `cryo.toml` and adjust the agent command, retry policy, and inbox settings as needed.
 
-### Start the Daemon
+**Recommended:** Tell your AI coding agent to install the skill instead of editing files manually:
+
+> Add the make-plan skill from https://github.com/GiggleLiu/cryochamber
+
+Then run `/make-plan` to create a new project interactively via guided Q&A.
+
+## Start the Daemon
 
 ```bash
 cryo start                                                    # start the daemon
