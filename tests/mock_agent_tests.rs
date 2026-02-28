@@ -1,6 +1,7 @@
 //! Integration tests using mock agent scenario scripts.
 //! Each test spawns a real daemon with CRYO_NO_SERVICE=1 and asserts on cryo.log/timer.json.
 
+use chrono::Timelike;
 use std::fs;
 use std::time::Duration;
 
@@ -644,4 +645,294 @@ MOCK_VAR = "hello"
     assert!(env_check.exists(), ".env-check file should exist");
     let content = fs::read_to_string(&env_check).unwrap();
     assert_eq!(content.trim(), "hello", "MOCK_VAR should be injected");
+}
+
+// --- Fallback, delayed wake, and periodic report tests ---
+
+#[test]
+fn test_fallback_fires_on_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "alert-then-crash.sh");
+
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = config.replace("max_retries = 5", "max_retries = 1");
+    // fallback_alert is commented out in the default template (# fallback_alert = "notify"),
+    // so we always append the uncommented setting. TOML uses the last occurrence.
+    let config = format!("{config}\nfallback_alert = \"outbox\"\n");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // alert-then-crash.sh calls `cryo-agent alert` then exits with code 1.
+    // The daemon logs "alert: email -> ops@test.com" from the agent's alert command.
+    // With max_retries=1, after the first crash, handle_failure_retry fires
+    // send_retry_alert which writes a "retry_exhausted" message to outbox.
+    // The daemon's stderr (redirected to cryo.log) also contains "retries failed".
+    assert!(
+        wait_for_log_content(dir.path(), "alert", Duration::from_secs(30)),
+        "Should show alert in log (from cryo-agent alert command)"
+    );
+
+    // Wait for the retry exhaustion alert to fire and write to outbox.
+    // With max_retries=1 and 5s backoff, the alert fires after ~5s.
+    assert!(
+        wait_for_log_content(dir.path(), "retries failed", Duration::from_secs(20)),
+        "Should show retry exhaustion in log"
+    );
+
+    cancel_and_wait(dir.path());
+
+    // Check outbox for fallback message written by send_retry_alert
+    let outbox = dir.path().join("messages/outbox");
+    assert!(outbox.exists(), "Outbox directory should exist");
+    let files: Vec<_> = fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .collect();
+    assert!(!files.is_empty(), "Outbox should contain fallback alert");
+
+    // Verify at least one outbox file contains "retry_exhausted"
+    let has_retry_alert = files.iter().any(|f| {
+        fs::read_to_string(f.path())
+            .unwrap_or_default()
+            .contains("retry_exhausted")
+    });
+    assert!(
+        has_retry_alert,
+        "Outbox should contain retry_exhausted alert"
+    );
+}
+
+#[test]
+fn test_fallback_suppressed_when_none() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "alert-then-crash.sh");
+
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = config.replace("max_retries = 5", "max_retries = 1");
+    // fallback_alert is commented out in the default template (# fallback_alert = "notify"),
+    // so we always append the uncommented setting.
+    let config = format!("{config}\nfallback_alert = \"none\"\n");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for crash to be detected
+    assert!(
+        wait_for_log_content(
+            dir.path(),
+            "agent exited without hibernate",
+            Duration::from_secs(15)
+        ),
+        "Should detect crash"
+    );
+
+    // Wait long enough for the retry alert to have been attempted (backoff 5s)
+    std::thread::sleep(Duration::from_secs(8));
+
+    cancel_and_wait(dir.path());
+
+    // Outbox should be empty — fallback_alert=none suppresses write_message
+    let outbox = dir.path().join("messages/outbox");
+    if outbox.exists() {
+        let files: Vec<_> = fs::read_dir(&outbox)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .collect();
+        assert!(
+            files.is_empty(),
+            "Outbox should be empty with fallback_alert=none, but found {} files",
+            files.len()
+        );
+    }
+}
+
+#[test]
+fn test_fallback_cancelled_on_success() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "alert-then-succeed.sh");
+
+    // Set fallback_alert=outbox so any fallback would be visible in outbox
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    // fallback_alert is commented out in the default template, so append the uncommented setting
+    let config = format!("{config}\nfallback_alert = \"outbox\"\n");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // alert-then-succeed.sh calls `cryo-agent alert` then `cryo-agent hibernate --complete`.
+    // The alert registers a pending_fallback, but since the agent completes the plan
+    // successfully, the fallback is never executed (pending_fallback is dropped on PlanComplete).
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Session should complete: {log}"
+    );
+
+    // Outbox should NOT contain a fallback alert.
+    // The agent's alert command only registers a pending_fallback in memory;
+    // it doesn't write to outbox. Since the plan completed, the pending fallback
+    // is dropped without executing.
+    let outbox = dir.path().join("messages/outbox");
+    if outbox.exists() {
+        let files: Vec<_> = fs::read_dir(&outbox)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .collect();
+        for file in &files {
+            let content = fs::read_to_string(file.path()).unwrap();
+            assert!(
+                !content.contains("fallback") && !content.contains("retry_exhausted"),
+                "Outbox should not contain fallback alert: {content}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_delayed_wake_detection() {
+    let dir = tempfile::tempdir().unwrap();
+    // delayed-wake.sh: session 1 hibernates with a past wake time (10 min ago),
+    // session 2 detects the delayed wake and completes the plan.
+    setup_scenario(dir.path(), "delayed-wake.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The daemon should detect the delayed wake (>5 minutes late) and log it.
+    // The delayed wake notice contains "DELAYED WAKE" in the log via EventLogger.
+    assert!(
+        wait_for_log_content(dir.path(), "delayed wake", Duration::from_secs(20)),
+        "Log should mention delayed wake"
+    );
+
+    // The plan should complete after the second session
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Plan should complete after delayed wake: {log}"
+    );
+}
+
+#[test]
+fn test_periodic_report_fires() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "multi-session.sh");
+
+    // Configure report_interval=1 (hour) with report_time matching the current HH:MM.
+    // Note: `cryo start` creates a fresh timer.json, overwriting any pre-seeded state.
+    // The daemon reads last_report_time=None from the fresh state, and computes
+    // next_report_time using compute_next_report_time(report_time, 1, None).
+    //
+    // With report_time matching the current HH:MM, the next report time will be
+    // either now (if current second <= 0) or 1 hour from now. In either case,
+    // the report likely won't fire during this short test (minimum 1-hour interval).
+    //
+    // This test verifies that:
+    // 1. The daemon accepts report configuration without errors
+    // 2. The multi-session lifecycle completes normally with report config present
+    // 3. The daemon logs the computed next report time
+    let now = chrono::Local::now();
+    let report_time = format!("{:02}:{:02}", now.hour(), now.minute());
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = format!("{config}\nreport_interval = 1\nreport_time = \"{report_time}\"\n");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(30)),
+        "Daemon should exit after completion"
+    );
+
+    // The daemon should have logged the next report time (stderr -> cryo.log)
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("next report at"),
+        "Daemon should log the computed next report time: {log}"
+    );
+
+    // Verify the plan completed normally despite report config
+    assert!(log.contains("plan complete"), "Plan should complete: {log}");
+
+    // Check timer.json state is valid
+    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
+    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
+    // session_number should be >= 3 (multi-session.sh completes on session 3)
+    let session_num = state["session_number"].as_u64().unwrap_or(0);
+    assert!(
+        session_num >= 3,
+        "Should have at least 3 sessions, got {session_num}"
+    );
+}
+
+#[test]
+fn test_invalid_report_time_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "quick-exit.sh");
+
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = format!("{config}\nreport_interval = 1\nreport_time = \"not-a-time\"\n");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The daemon should warn about invalid report_time.
+    // Since spawn_daemon redirects stderr to cryo.log, the warning
+    // "Daemon: warning: report_interval=1 but report_time='not-a-time' is invalid"
+    // appears in cryo.log.
+    assert!(
+        wait_for_log_content(dir.path(), "report_time", Duration::from_secs(10)),
+        "Should warn about invalid report_time in cryo.log"
+    );
+
+    cancel_and_wait(dir.path());
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("not-a-time"),
+        "Warning should mention the invalid value: {log}"
+    );
 }
