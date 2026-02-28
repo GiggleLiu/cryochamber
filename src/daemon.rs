@@ -316,6 +316,11 @@ impl Daemon {
                     Some(config.providers[retry.provider_index].name.as_str())
                 };
 
+                if !config.providers.is_empty() {
+                    cryo_state.provider_index = Some(retry.provider_index);
+                    let _ = state::save_state(&self.state_path, &cryo_state);
+                }
+
                 match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref(), &provider_env, provider_name) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion

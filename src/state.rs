@@ -25,6 +25,10 @@ pub struct CryoState {
     /// string without timezone offset (from `Local::now().naive_local()`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_report_time: Option<String>,
+
+    /// Current provider index for rotation (persisted for status display)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_index: Option<usize>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

@@ -269,6 +269,7 @@ fn cmd_start(
         max_session_duration_override,
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
@@ -353,6 +354,17 @@ fn cmd_status() -> Result<()> {
             println!("Agent: {effective_agent}");
             if st.agent_override.is_some() {
                 println!("  (override; cryo.toml has \"{}\")", cfg.agent);
+            }
+            if !cfg.providers.is_empty() {
+                let idx = st.provider_index.unwrap_or(0);
+                if let Some(provider) = cfg.providers.get(idx) {
+                    println!(
+                        "Provider: {} ({}/{})",
+                        provider.name,
+                        idx + 1,
+                        cfg.providers.len()
+                    );
+                }
             }
             let effective_timeout = st
                 .max_session_duration_override

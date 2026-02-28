@@ -15,6 +15,7 @@ fn test_save_and_load_state() {
         max_session_duration_override: None,
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -47,6 +48,7 @@ fn test_lock_mechanism() {
         max_session_duration_override: None,
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -68,6 +70,7 @@ fn test_is_locked_dead_process() {
         max_session_duration_override: None,
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     assert!(!is_locked(&state));
 }
@@ -84,6 +87,7 @@ fn test_is_locked_no_pid() {
         max_session_duration_override: None,
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     assert!(!is_locked(&state));
 }
@@ -136,6 +140,7 @@ fn test_override_fields_roundtrip() {
         max_session_duration_override: Some(1800),
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -158,6 +163,7 @@ fn test_none_overrides_not_serialized() {
         max_session_duration_override: None,
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
@@ -181,6 +187,7 @@ fn test_last_report_time_roundtrip() {
         max_session_duration_override: None,
         next_wake: None,
         last_report_time: Some("2026-02-28T09:00:00".to_string()),
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -207,6 +214,7 @@ fn test_next_wake_roundtrip() {
         max_session_duration_override: None,
         next_wake: Some("2026-03-01T09:00".to_string()),
         last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
