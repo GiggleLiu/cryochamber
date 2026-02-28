@@ -26,7 +26,8 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_report_time: Option<String>,
 
-    /// Current provider index for rotation (persisted for status display)
+    /// Current provider index for rotation (persisted for status display only;
+    /// daemon always starts from index 0 on restart)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_index: Option<usize>,
 }

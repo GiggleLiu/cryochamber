@@ -29,6 +29,8 @@ watch_inbox = true
 # report_interval = 24
 
 # Provider rotation: switch API keys on failure
+# WARNING: If you add API keys below, ensure cryo.toml is in your .gitignore
+# to avoid accidentally committing secrets.
 #   rotate_on: "quick-exit" (rotate on fast exit), "any-failure", "never" (default)
 # rotate_on = "never"
 #
