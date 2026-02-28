@@ -39,6 +39,25 @@ cryo web
 
 The AI uses `chess_engine.py` (powered by `python-chess` via uv) for all chess operations. After each move, the AI recommends 3 candidate moves for you with tactical explanations.
 
+## Playing via Zulip
+
+You can play from the Zulip web UI instead of the terminal by connecting a Zulip stream:
+
+```bash
+cd examples/chess-by-mail
+
+# Connect to a Zulip stream (requires a zuliprc with bot credentials)
+cryo-zulip init --config ~/.zuliprc --stream chess-game
+
+# Start cryochamber and the Zulip sync daemon
+cryo init && cryo start
+cryo-zulip sync --interval 30
+```
+
+Now send your moves as messages in the Zulip stream. The sync daemon polls for new messages and delivers them to the agent's inbox. The agent's replies are pushed back to the stream.
+
+To stop: `cryo cancel && cryo-zulip unsync`
+
 ## Configuration
 
 Edit `plan.md` to change:

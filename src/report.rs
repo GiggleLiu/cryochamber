@@ -135,9 +135,7 @@ mod tests {
         let mut logger = EventLogger::begin(&log_path, 4, "t4", "agent", &[]).unwrap();
         logger.log_event("agent started (pid 4)").unwrap();
         logger.log_event("agent exited (code 0)").unwrap();
-        logger
-            .finish("agent exited without hibernate")
-            .unwrap();
+        logger.finish("agent exited without hibernate").unwrap();
 
         let since =
             NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ").unwrap();

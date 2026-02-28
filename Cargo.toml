@@ -15,6 +15,10 @@ path = "src/bin/cryo_agent.rs"
 name = "cryo-gh"
 path = "src/bin/cryo_gh.rs"
 
+[[bin]]
+name = "cryo-zulip"
+path = "src/bin/cryo_zulip.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -34,6 +38,7 @@ axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 notify-rust = "4"
+ureq = "3"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"

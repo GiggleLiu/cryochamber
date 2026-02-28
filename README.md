@@ -32,6 +32,15 @@ cryo start && cryo watch
 
 See [`examples/`](examples/) for complete, runnable examples (chess-by-mail, mr-lazy).
 
+## Messaging Channels
+
+Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary.
+
+| Channel | Binary | Backend | Docs |
+|---------|--------|---------|------|
+| GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
+| Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
+
 ## Documentation
 
 Full documentation is available at **[giggleliu.github.io/cryochamber](https://giggleliu.github.io/cryochamber/)** or build locally:

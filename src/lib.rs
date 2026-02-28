@@ -15,6 +15,7 @@ pub mod session;
 pub mod socket;
 pub mod state;
 pub mod web;
+pub mod zulip_sync;
 
 pub fn work_dir() -> anyhow::Result<std::path::PathBuf> {
     let dir = std::env::current_dir().context("Failed to get current directory")?;

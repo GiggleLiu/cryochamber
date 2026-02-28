@@ -416,9 +416,7 @@ mod tests {
         let mut logger = EventLogger::begin(&log_path, 1, "task", "claude", &[]).unwrap();
         logger.log_event("agent started (pid 100)").unwrap();
         logger.log_event("agent exited (code 0)").unwrap();
-        logger
-            .finish("agent exited without hibernate")
-            .unwrap();
+        logger.finish("agent exited without hibernate").unwrap();
 
         let since =
             chrono::NaiveDateTime::parse_from_str("2020-01-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
