@@ -66,14 +66,17 @@ fn test_build_prompt_delayed_wake() {
 
 #[test]
 fn test_spawn_agent_fire_and_forget() {
-    let mut child = cryochamber::agent::spawn_agent("echo", "hello", None, &std::collections::HashMap::new()).unwrap();
+    let mut child =
+        cryochamber::agent::spawn_agent("echo", "hello", None, &std::collections::HashMap::new())
+            .unwrap();
     let exit = child.wait().unwrap();
     assert!(exit.success());
 }
 
 #[test]
 fn test_spawn_agent_empty_command() {
-    let result = cryochamber::agent::spawn_agent("", "test prompt", None, &std::collections::HashMap::new());
+    let result =
+        cryochamber::agent::spawn_agent("", "test prompt", None, &std::collections::HashMap::new());
     assert!(result.is_err());
     let err = result.err().unwrap().to_string();
     assert!(err.contains("empty"), "Expected 'empty' in error: {err}");

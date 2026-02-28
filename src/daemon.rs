@@ -304,11 +304,12 @@ impl Daemon {
                 let _ = state::save_state(&self.state_path, &cryo_state);
 
                 // Build provider env for this session
-                let provider_env: std::collections::HashMap<String, String> = if config.providers.is_empty() {
-                    std::collections::HashMap::new()
-                } else {
-                    config.providers[retry.provider_index].env.clone()
-                };
+                let provider_env: std::collections::HashMap<String, String> =
+                    if config.providers.is_empty() {
+                        std::collections::HashMap::new()
+                    } else {
+                        config.providers[retry.provider_index].env.clone()
+                    };
 
                 let provider_name = if config.providers.is_empty() {
                     None
@@ -321,7 +322,14 @@ impl Daemon {
                     let _ = state::save_state(&self.state_path, &cryo_state);
                 }
 
-                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref(), &provider_env, provider_name) {
+                match self.run_one_session(
+                    &config,
+                    &cryo_state,
+                    &server,
+                    delayed_wake.as_deref(),
+                    &provider_env,
+                    provider_name,
+                ) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -361,7 +369,8 @@ impl Daemon {
                                     };
 
                                 if should_rotate {
-                                    let old_name = config.providers[retry.provider_index].name.clone();
+                                    let old_name =
+                                        config.providers[retry.provider_index].name.clone();
                                     let wrapped = retry.rotate_provider();
                                     let new_name = &config.providers[retry.provider_index].name;
                                     eprintln!(
@@ -516,7 +525,8 @@ impl Daemon {
             .open(crate::log::agent_log_path(&self.dir))?;
 
         // Spawn agent with stdout/stderr redirected to cryo-agent.log
-        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
+        let mut child =
+            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
         let child_pid = child.id();
         let spawn_time = std::time::Instant::now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
@@ -697,7 +707,9 @@ impl Daemon {
                         }
                         // Agent exited without calling hibernate — treat as crash
                         logger.finish("agent exited without hibernate")?;
-                        return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: elapsed < Duration::from_secs(5) });
+                        return Ok(SessionLoopOutcome::ValidationFailed {
+                            quick_exit: elapsed < Duration::from_secs(5),
+                        });
                     }
                 }
                 Ok(None) => {} // still running
