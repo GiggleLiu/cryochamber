@@ -133,3 +133,13 @@ fn test_load_empty_list_roundtrip() {
     let loaded = TodoList::load(&path).unwrap();
     assert!(loaded.items().is_empty());
 }
+
+#[test]
+fn test_id_auto_increment_after_remove() {
+    let mut list = TodoList::new();
+    list.add("A".to_string(), None);
+    list.add("B".to_string(), None);
+    list.remove(1).unwrap(); // remove A (id=1)
+    let id = list.add("C".to_string(), None);
+    assert_eq!(id, 3, "ID should be max(existing)+1, not reuse removed IDs");
+}
