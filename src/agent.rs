@@ -138,6 +138,7 @@ pub fn spawn_agent(
     agent_command: &str,
     prompt: &str,
     agent_log: Option<std::fs::File>,
+    provider_env: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<std::process::Child> {
     let mut cmd = build_command(agent_command, prompt)?;
 
@@ -152,6 +153,11 @@ pub fn spawn_agent(
             let new_path = format!("{}:{}", bin_dir.display(), path);
             cmd.env("PATH", new_path);
         }
+    }
+
+    // Inject provider-specific environment variables
+    if !provider_env.is_empty() {
+        cmd.envs(provider_env);
     }
 
     let child = cmd

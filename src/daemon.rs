@@ -38,13 +38,17 @@ pub enum DaemonEvent {
 pub struct RetryState {
     pub attempt: u32,
     pub max_retries: u32,
+    pub provider_index: usize,
+    provider_count: usize,
 }
 
 impl RetryState {
-    pub fn new(max_retries: u32) -> Self {
+    pub fn new(max_retries: u32, provider_count: usize) -> Self {
         Self {
             attempt: 0,
             max_retries,
+            provider_index: 0,
+            provider_count,
         }
     }
 
@@ -65,10 +69,22 @@ impl RetryState {
 
     pub fn reset(&mut self) {
         self.attempt = 0;
+        self.provider_index = 0;
     }
 
     pub fn exhausted(&self) -> bool {
         self.attempt >= self.max_retries
+    }
+
+    /// Advance to the next provider. Returns true if we wrapped back to index 0
+    /// (all providers have been tried in this cycle). Resets retry attempt counter.
+    pub fn rotate_provider(&mut self) -> bool {
+        if self.provider_count <= 1 {
+            return true; // can't rotate with 0 or 1 provider
+        }
+        self.provider_index = (self.provider_index + 1) % self.provider_count;
+        self.attempt = 0;
+        self.provider_index == 0 // wrapped
     }
 }
 
@@ -105,7 +121,9 @@ pub enum SessionLoopOutcome {
         wake_time: NaiveDateTime,
         fallback: Option<FallbackAction>,
     },
-    ValidationFailed,
+    ValidationFailed {
+        quick_exit: bool,
+    },
 }
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
@@ -238,7 +256,8 @@ impl Daemon {
             eprintln!("Daemon: next report at {}", nrt.format("%Y-%m-%d %H:%M"));
         }
 
-        let mut retry = RetryState::new(config.max_retries);
+        let provider_count = config.providers.len();
+        let mut retry = RetryState::new(config.max_retries, provider_count);
         let mut next_wake: Option<NaiveDateTime> = None;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 
@@ -282,9 +301,25 @@ impl Daemon {
 
                 cryo_state.session_number += 1;
                 cryo_state.next_wake = None;
+                if !config.providers.is_empty() {
+                    cryo_state.provider_index = Some(retry.provider_index);
+                }
                 let _ = state::save_state(&self.state_path, &cryo_state);
 
-                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref()) {
+                // Build provider env for this session
+                let active_provider = config.providers.get(retry.provider_index);
+                let provider_env: std::collections::HashMap<String, String> =
+                    active_provider.map(|p| p.env.clone()).unwrap_or_default();
+                let provider_name = active_provider.map(|p| p.name.as_str());
+
+                match self.run_one_session(
+                    &config,
+                    &cryo_state,
+                    &server,
+                    delayed_wake.as_deref(),
+                    &provider_env,
+                    provider_name,
+                ) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -311,8 +346,53 @@ impl Daemon {
                                     wake_time.format("%Y-%m-%d %H:%M")
                                 );
                             }
-                            SessionLoopOutcome::ValidationFailed => {
+                            SessionLoopOutcome::ValidationFailed { quick_exit } => {
                                 next_wake = saved_wake;
+
+                                // Check if we should rotate provider
+                                let should_rotate = !config.providers.is_empty()
+                                    && config.providers.len() > 1
+                                    && match config.rotate_on {
+                                        crate::config::RotateOn::QuickExit => quick_exit,
+                                        crate::config::RotateOn::AnyFailure => true,
+                                        crate::config::RotateOn::Never => false,
+                                    };
+
+                                if should_rotate {
+                                    let old_name = config
+                                        .providers
+                                        .get(retry.provider_index)
+                                        .map(|p| p.name.as_str())
+                                        .unwrap_or("unknown");
+                                    let wrapped = retry.rotate_provider();
+                                    let new_name = config
+                                        .providers
+                                        .get(retry.provider_index)
+                                        .map(|p| p.name.as_str())
+                                        .unwrap_or("unknown");
+                                    eprintln!(
+                                        "Daemon: rotating provider: {} -> {} (reason: {})",
+                                        old_name,
+                                        new_name,
+                                        if quick_exit { "quick-exit" } else { "failure" },
+                                    );
+
+                                    // Persist immediately so `cryo status` reflects the change
+                                    cryo_state.provider_index = Some(retry.provider_index);
+                                    let _ = state::save_state(&self.state_path, &cryo_state);
+
+                                    if wrapped {
+                                        // All providers tried — apply backoff before next cycle
+                                        eprintln!("Daemon: all providers tried, backing off before next cycle");
+                                        if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                                            break;
+                                        }
+                                    }
+                                    run_now = true;
+                                    continue;
+                                }
+
+                                // No rotation — use standard retry with backoff
                                 if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
                                     break;
                                 }
@@ -398,6 +478,8 @@ impl Daemon {
         cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
+        provider_env: &std::collections::HashMap<String, String>,
+        provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
         let agent_cmd = config.agent.clone();
 
@@ -444,10 +526,14 @@ impl Daemon {
             .open(crate::log::agent_log_path(&self.dir))?;
 
         // Spawn agent with stdout/stderr redirected to cryo-agent.log
-        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file))?;
+        let mut child =
+            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
         let child_pid = child.id();
         let spawn_time = std::time::Instant::now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
+        if let Some(name) = provider_name {
+            logger.log_event(&format!("provider: {name}"))?;
+        }
 
         // Poll loop: wait for socket commands + agent exit
         let deadline = if timeout_secs > 0 {
@@ -464,7 +550,7 @@ impl Daemon {
             if self.shutdown.load(Ordering::Relaxed) {
                 terminate_child(&mut child, child_pid);
                 logger.finish("daemon shutdown — agent terminated")?;
-                return Ok(SessionLoopOutcome::ValidationFailed);
+                return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
             }
 
             // Check timeout
@@ -473,7 +559,7 @@ impl Daemon {
                     eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
                     terminate_child(&mut child, child_pid);
                     logger.finish("session timeout — agent killed")?;
-                    return Ok(SessionLoopOutcome::ValidationFailed);
+                    return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
                 }
             }
 
@@ -622,7 +708,9 @@ impl Daemon {
                         }
                         // Agent exited without calling hibernate — treat as crash
                         logger.finish("agent exited without hibernate")?;
-                        return Ok(SessionLoopOutcome::ValidationFailed);
+                        return Ok(SessionLoopOutcome::ValidationFailed {
+                            quick_exit: elapsed < Duration::from_secs(5),
+                        });
                     }
                 }
                 Ok(None) => {} // still running
@@ -777,7 +865,7 @@ mod tests {
 
     #[test]
     fn test_backoff_sequence() {
-        let mut state = RetryState::new(5);
+        let mut state = RetryState::new(5, 1);
         // 5s, 10s, 20s, 40s, 80s, exhausted
         assert_eq!(state.next_backoff(), Some(Duration::from_secs(5)));
 
@@ -801,7 +889,7 @@ mod tests {
 
     #[test]
     fn test_backoff_reset() {
-        let mut state = RetryState::new(3);
+        let mut state = RetryState::new(3, 1);
         state.record_failure();
         state.record_failure();
         assert_eq!(state.attempt, 2);
@@ -813,7 +901,7 @@ mod tests {
 
     #[test]
     fn test_backoff_zero_retries() {
-        let state = RetryState::new(0);
+        let state = RetryState::new(0, 1);
         assert_eq!(state.next_backoff(), None);
         assert!(state.exhausted());
     }

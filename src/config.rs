@@ -1,9 +1,33 @@
 // src/config.rs
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::state::CryoState;
+
+/// Controls when the daemon rotates to the next provider on failure.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RotateOn {
+    /// Rotate only on quick-exit (<5s, likely bad API key)
+    QuickExit,
+    /// Rotate on any agent failure
+    AnyFailure,
+    /// Never rotate (default, backward compatible)
+    #[default]
+    Never,
+}
+
+/// A named provider profile with environment variables to inject.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    /// Display name for logging (e.g. "anthropic", "openai")
+    pub name: String,
+    /// Environment variables to set when spawning the agent
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoConfig {
@@ -42,6 +66,14 @@ pub struct CryoConfig {
     /// Hours between reports (0 = disabled, 24 = daily, 168 = weekly)
     #[serde(default)]
     pub report_interval: u64,
+
+    /// When to rotate to the next provider on failure
+    #[serde(default)]
+    pub rotate_on: RotateOn,
+
+    /// Ordered list of provider profiles (env var sets to try)
+    #[serde(default)]
+    pub providers: Vec<ProviderConfig>,
 }
 
 fn default_agent() -> String {
@@ -84,6 +116,8 @@ impl Default for CryoConfig {
             fallback_alert: default_fallback_alert(),
             report_time: default_report_time(),
             report_interval: 0,
+            rotate_on: RotateOn::default(),
+            providers: Vec::new(),
         }
     }
 }

@@ -54,6 +54,7 @@ fn test_state_roundtrip() {
         max_session_duration_override: Some(1800),
         next_wake: None,
         last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
 
