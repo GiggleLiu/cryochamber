@@ -49,6 +49,25 @@ fn cancel_and_wait(dir: &std::path::Path) {
     wait_for_daemon_exit(dir, Duration::from_secs(5));
 }
 
+/// Overwrite cryo.toml with a custom config containing providers and rotate_on policy.
+fn write_provider_config(dir: &std::path::Path, rotate_on: &str, provider_count: usize) {
+    let mut providers = String::new();
+    for i in 0..provider_count {
+        providers.push_str(&format!(
+            "\n[[providers]]\nname = \"provider-{i}\"\n[providers.env]\nMOCK_PROVIDER = \"provider-{i}\"\n"
+        ));
+    }
+    let config = format!(
+        r#"agent = "mock"
+max_retries = 3
+max_session_duration = 30
+watch_inbox = false
+rotate_on = "{rotate_on}"
+{providers}"#
+    );
+    fs::write(dir.join("cryo.toml"), config).unwrap();
+}
+
 /// Wait for specific text to appear in cryo.log.
 fn wait_for_log_content(dir: &std::path::Path, text: &str, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
@@ -402,4 +421,227 @@ fn test_mock_hibernate_then_crash() {
     );
 
     cancel_and_wait(dir.path());
+}
+
+// --- Provider rotation tests ---
+
+#[test]
+fn test_rotate_on_quick_exit_rotates() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "quick-exit.sh");
+    write_provider_config(dir.path(), "quick-exit", 2);
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // After quick exit with rotate_on=quick-exit, daemon should rotate to provider-1.
+    // The rotation is logged via eprintln (stderr), but the next session logs
+    // "provider: provider-1" to cryo.log via EventLogger.
+    assert!(
+        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
+        "Should rotate to provider-1 on quick exit"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_rotate_on_quick_exit_no_rotate_on_slow_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    // slow-exit-no-hibernate.sh runs >5s then exits without hibernate.
+    // This is a slow crash — quick_exit will be false, so rotate_on=quick-exit
+    // should NOT trigger rotation.
+    setup_scenario(dir.path(), "slow-exit-no-hibernate.sh");
+    write_provider_config(dir.path(), "quick-exit", 2);
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for the slow exit to be detected (takes >5s)
+    assert!(
+        wait_for_log_content(
+            dir.path(),
+            "agent exited without hibernate",
+            Duration::from_secs(20)
+        ),
+        "Should detect exit without hibernate"
+    );
+
+    // Wait for retry session to start (with backoff)
+    std::thread::sleep(Duration::from_secs(8));
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+
+    // With rotate_on=quick-exit, slow crashes (>5s) should NOT trigger rotation.
+    assert!(
+        !log.contains("provider: provider-1"),
+        "Should NOT rotate on slow crash with rotate_on=quick-exit: {log}"
+    );
+    // Verify provider-0 is being used
+    assert!(
+        log.contains("provider: provider-0"),
+        "Should be using provider-0: {log}"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_rotate_on_any_failure_rotates_on_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "crash.sh");
+    write_provider_config(dir.path(), "any-failure", 2);
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // With rotate_on=any-failure, any ValidationFailed triggers rotation.
+    // The next session should use provider-1.
+    assert!(
+        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
+        "Should rotate to provider-1 on crash with rotate_on=any-failure"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_rotate_on_never_no_rotation() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "crash.sh");
+    write_provider_config(dir.path(), "never", 2);
+
+    // Set max_retries=1 so daemon sends alert quickly but keeps retrying
+    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    let config = config.replace("max_retries = 3", "max_retries = 1");
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for at least two sessions to run (crash + retry)
+    assert!(
+        wait_for_log_content(
+            dir.path(),
+            "agent exited without hibernate",
+            Duration::from_secs(15)
+        ),
+        "Should detect crash"
+    );
+
+    // Wait for second session to start (retry with backoff)
+    std::thread::sleep(Duration::from_secs(8));
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+
+    // With rotate_on=never, all sessions should use provider-0 (no rotation)
+    assert!(
+        !log.contains("provider: provider-1"),
+        "Should NOT rotate with rotate_on=never, but found provider-1 in log: {log}"
+    );
+    // Verify provider-0 is being used
+    assert!(
+        log.contains("provider: provider-0"),
+        "Should be using provider-0: {log}"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_provider_wrap_all_exhausted() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "quick-exit.sh");
+    write_provider_config(dir.path(), "any-failure", 2);
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // With 2 providers and any-failure rotation: session 1 uses provider-0 (fails),
+    // rotates to provider-1 (session 2, fails), wraps back to provider-0 (session 3).
+    // After wrap, daemon backs off 60s. We detect the wrap by seeing provider-0
+    // appear in the log at least twice (initial + after wrap).
+    // First, wait for provider-1 to appear (first rotation).
+    assert!(
+        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
+        "Should rotate to provider-1 first"
+    );
+
+    // Then wait for provider-0 to appear again (wrap completed).
+    // The daemon sleeps 60s after wrap, but provider-0 is logged at session start,
+    // so we need to wait for the second occurrence.
+    // Count occurrences: we need provider-0 to appear at least twice.
+    let found = {
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        loop {
+            if std::time::Instant::now() > deadline {
+                break false;
+            }
+            if let Ok(log) = fs::read_to_string(dir.path().join("cryo.log")) {
+                if log.matches("provider: provider-0").count() >= 2 {
+                    break true;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    };
+    assert!(
+        found,
+        "Should wrap back to provider-0 after all providers exhausted"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_provider_env_injected() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "check-env.sh");
+
+    let config = r#"agent = "mock"
+max_retries = 1
+max_session_duration = 30
+watch_inbox = false
+
+[[providers]]
+name = "test-provider"
+[providers.env]
+MOCK_VAR = "hello"
+"#;
+    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after completion"
+    );
+
+    let env_check = dir.path().join(".env-check");
+    assert!(env_check.exists(), ".env-check file should exist");
+    let content = fs::read_to_string(&env_check).unwrap();
+    assert_eq!(content.trim(), "hello", "MOCK_VAR should be injected");
 }
