@@ -23,14 +23,7 @@ cargo install cryochamber
 
 This installs `cryo`, `cryo-agent`, `cryo-gh`, and `cryo-zulip` binaries.
 
-### 2. Initialize a project
-
-```bash
-mkdir my-project && cd my-project
-cryo init                          # creates plan.md, cryo.toml, AGENTS.md, README.md
-```
-
-### 3. Write your plan and configure
+### 2. Write your plan and configure
 
 Edit `plan.md` with your task — describe the goal, step-by-step tasks, and notes about persistent state. Edit `cryo.toml` to configure the agent command, retry policy, and inbox settings. See [`examples/`](examples/) for reference (chess-by-mail, mr-lazy).
 
@@ -40,7 +33,7 @@ Edit `plan.md` with your task — describe the goal, step-by-step tasks, and not
 
 Then run `/make-plan` to create a new project interactively via guided Q&A.
 
-### 4. Start the service
+### 3. Start the service
 
 ```bash
 cryo start                                                    # start the daemon
@@ -55,7 +48,7 @@ cryo-gh sync
 cryo web                                                      # if using the web UI
 ```
 
-### 5. Manage the running service
+### 4. Manage the running service
 
 Go to the project folder and type:
 ```bash

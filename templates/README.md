@@ -5,33 +5,26 @@ A [cryochamber](https://github.com/GiggleLiu/cryochamber) application.
 ## Start the Service
 
 ```bash
-cryo start
+cryo start                                                    # start the daemon
 ```
 
-The daemon installs as an OS service (systemd on Linux, launchd on macOS) so it survives reboots. To run without a service, set `CRYO_NO_SERVICE=1`.
-
-After starting, verify the first session completes successfully:
-
+Depending on the way you interact with your agent, start the corresponding service wtih:
 ```bash
-cryo status    # should show "Daemon: running" with session number and PID
-cryo watch     # follow the live log — look for "agent hibernated" to confirm success
+cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
+cryo-zulip sync
+cryo-gh init --repo owner/repo                                # if using GitHub Discussions
+cryo-gh sync
+cryo web                                                      # if using the web UI
 ```
 
-## Day-to-Day Usage
+## Manage the running service
 
-**Check on the agent:**
-
+Go to the project folder and type:
 ```bash
-cryo status       # quick health check: is it running? what session?
-cryo log          # read the full session history
-cryo web          # open the web UI for a visual overview
-```
-
-**Communicate with the agent:**
-
-```bash
-cryo send "your message here"   # drop a message in the agent's inbox
-cryo receive                    # read messages the agent sent you
+cryo status          # check if the daemon is running
+cryo watch           # follow the live log
+cryo send "message"  # send a message to the agent
+cryo cancel          # stop the daemon
 ```
 
 **Control the daemon:**
@@ -42,6 +35,16 @@ cryo restart      # stop and restart the daemon
 cryo cancel       # stop the daemon and clean up state
 cryo ps           # list all running cryochamber daemons on this machine
 ```
+
+## Messaging Channels
+
+Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary. These are configured automatically when using `/make-plan`.
+
+| Channel | Binary | Backend | Docs |
+|---------|--------|---------|------|
+| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web-ui.html) |
+| GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
+| Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 
 ## Troubleshooting
 
