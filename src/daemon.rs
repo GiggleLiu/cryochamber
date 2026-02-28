@@ -310,7 +310,13 @@ impl Daemon {
                     config.providers[retry.provider_index].env.clone()
                 };
 
-                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref(), &provider_env) {
+                let provider_name = if config.providers.is_empty() {
+                    None
+                } else {
+                    Some(config.providers[retry.provider_index].name.as_str())
+                };
+
+                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref(), &provider_env, provider_name) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -458,6 +464,7 @@ impl Daemon {
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
         provider_env: &std::collections::HashMap<String, String>,
+        provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
         let agent_cmd = config.agent.clone();
 
@@ -508,6 +515,9 @@ impl Daemon {
         let child_pid = child.id();
         let spawn_time = std::time::Instant::now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
+        if let Some(name) = provider_name {
+            logger.log_event(&format!("provider: {name}"))?;
+        }
 
         // Poll loop: wait for socket commands + agent exit
         let deadline = if timeout_secs > 0 {
