@@ -51,7 +51,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | Binary | Purpose |
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `web`, `daemon` |
-| `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `send`, `receive`, `alert`, `time` (sends commands to daemon via socket; `receive` and `time` are local) |
+| `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `send`, `reply`, `receive`, `alert`, `time`, `todo` (sends commands to daemon via socket; `receive`, `time`, and `todo` are local) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |
 
@@ -75,6 +75,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `report` | Periodic session summary reports. Parses log, counts sessions/failures, sends desktop notification via notify-rust. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
+| `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoList` structs, load/save, add/done/remove. Local only (no daemon IPC). |
 | `zulip_sync` | Zulip sync state persistence (`zulip-sync.json`). |
 
 ### Key Design Decisions

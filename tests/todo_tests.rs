@@ -145,6 +145,20 @@ fn test_id_auto_increment_after_remove() {
     assert_eq!(id, 3, "ID should be max(existing)+1, not reuse removed IDs");
 }
 
+#[test]
+fn test_display_formatting() {
+    let mut list = TodoList::new();
+    assert_eq!(list.display(), "No todos.");
+
+    list.add("First".to_string(), None);
+    list.add("Second".to_string(), Some("2026-03-05".to_string()));
+    list.done(1).unwrap();
+
+    let output = list.display();
+    assert!(output.starts_with("1. [x] First\n"));
+    assert!(output.contains("2. [ ] Second (at: 2026-03-05)"));
+}
+
 fn agent_cmd() -> Command {
     #[allow(deprecated)]
     Command::cargo_bin("cryo-agent").unwrap()
