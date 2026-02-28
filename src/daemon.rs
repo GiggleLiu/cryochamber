@@ -53,14 +53,11 @@ impl RetryState {
     }
 
     /// Calculate backoff duration for current attempt.
-    /// Returns None if max retries exceeded.
-    /// Doubles each time: 5s, 10s, 20s, 40s, 80s, 160s, ...
-    pub fn next_backoff(&self) -> Option<Duration> {
-        if self.attempt >= self.max_retries {
-            return None;
-        }
+    /// Doubles each time: 5s, 10s, 20s, ..., capped at 3600s (1 hour).
+    /// Always returns a duration (retries indefinitely with backoff).
+    pub fn next_backoff(&self) -> Duration {
         let secs = 5u64.checked_shl(self.attempt).unwrap_or(3600).min(3600);
-        Some(Duration::from_secs(secs))
+        Duration::from_secs(secs)
     }
 
     pub fn record_failure(&mut self) {
@@ -549,6 +546,13 @@ impl Daemon {
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 terminate_child(&mut child, child_pid);
+                if !inbox_filenames.is_empty() {
+                    let _ = crate::message::archive_messages(&self.dir, &inbox_filenames);
+                }
+                if let Some(outcome) = hibernate_outcome {
+                    logger.finish("daemon shutdown — using agent's hibernate outcome")?;
+                    return Ok(outcome);
+                }
                 logger.finish("daemon shutdown — agent terminated")?;
                 return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
             }
@@ -558,6 +562,13 @@ impl Daemon {
                 if std::time::Instant::now() >= d {
                     eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
                     terminate_child(&mut child, child_pid);
+                    if !inbox_filenames.is_empty() {
+                        let _ = crate::message::archive_messages(&self.dir, &inbox_filenames);
+                    }
+                    if let Some(outcome) = hibernate_outcome {
+                        logger.finish("session timeout — using agent's hibernate outcome")?;
+                        return Ok(outcome);
+                    }
                     logger.finish("session timeout — agent killed")?;
                     return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
                 }
@@ -750,27 +761,22 @@ impl Daemon {
         }
     }
 
-    /// Handle a failure by retrying with backoff or sending an alert when exhausted.
+    /// Handle a failure by retrying with exponential backoff (5s, 10s, ..., 1h cap).
+    /// Sends an alert once when max_retries is reached, then keeps retrying at 1h.
     /// Returns true if the daemon should shut down.
     fn handle_failure_retry(&self, retry: &mut RetryState, alert_method: &str) -> bool {
         let backoff = retry.next_backoff();
         retry.record_failure();
-        if let Some(backoff) = backoff {
+        // Send alert once when we first hit max_retries
+        if retry.attempt == retry.max_retries {
             eprintln!(
-                "Daemon: retry {}/{} in {}s",
-                retry.attempt,
-                retry.max_retries,
-                backoff.as_secs()
+                "Daemon: {} retries failed, sending alert. Will keep retrying.",
+                retry.max_retries
             );
-            return self.sleep_or_shutdown(backoff);
+            self.send_retry_alert(alert_method);
         }
-        eprintln!(
-            "Daemon: {} retries failed, sending alert. Will keep retrying.",
-            retry.max_retries
-        );
-        self.send_retry_alert(alert_method);
-        retry.reset();
-        self.sleep_or_shutdown(Duration::from_secs(60))
+        eprintln!("Daemon: retry {} in {}s", retry.attempt, backoff.as_secs());
+        self.sleep_or_shutdown(backoff)
     }
 
     /// Send a system alert when retries are exhausted.
@@ -866,25 +872,36 @@ mod tests {
     #[test]
     fn test_backoff_sequence() {
         let mut state = RetryState::new(5, 1);
-        // 5s, 10s, 20s, 40s, 80s, exhausted
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(5)));
+        // 5s, 10s, 20s, 40s, 80s, then keeps going capped at 3600s
+        assert_eq!(state.next_backoff(), Duration::from_secs(5));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(10)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(10));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(20)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(20));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(40)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(40));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(80)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(80));
 
+        // Past max_retries — still returns backoff, capped at 3600s
         state.record_failure();
         assert_eq!(state.attempt, 5);
-        assert_eq!(state.next_backoff(), None);
+        assert_eq!(state.next_backoff(), Duration::from_secs(160));
         assert!(state.exhausted());
+    }
+
+    #[test]
+    fn test_backoff_caps_at_one_hour() {
+        let mut state = RetryState::new(20, 1);
+        for _ in 0..15 {
+            state.record_failure();
+        }
+        // 5 * 2^15 = 163840 > 3600, so capped
+        assert_eq!(state.next_backoff(), Duration::from_secs(3600));
     }
 
     #[test]
@@ -900,10 +917,90 @@ mod tests {
     }
 
     #[test]
-    fn test_backoff_zero_retries() {
-        let state = RetryState::new(0, 1);
-        assert_eq!(state.next_backoff(), None);
-        assert!(state.exhausted());
+    fn test_backoff_exact_sequence() {
+        let mut retry = RetryState::new(20, 1);
+        let expected = [5, 10, 20, 40, 80, 160, 320, 640, 1280, 2560, 3600, 3600];
+        for (i, &secs) in expected.iter().enumerate() {
+            assert_eq!(
+                retry.next_backoff(),
+                Duration::from_secs(secs),
+                "Backoff at attempt {i} should be {secs}s"
+            );
+            retry.record_failure();
+        }
+    }
+
+    #[test]
+    fn test_backoff_cap_never_exceeds_3600() {
+        let mut retry = RetryState::new(100, 1);
+        for _ in 0..100 {
+            let backoff = retry.next_backoff();
+            assert!(
+                backoff <= Duration::from_secs(3600),
+                "Backoff should never exceed 3600s, got {:?}",
+                backoff
+            );
+            retry.record_failure();
+        }
+    }
+
+    #[test]
+    fn test_rotate_provider_single_provider() {
+        let mut retry = RetryState::new(5, 1);
+        // With only 1 provider, rotate always returns true (can't rotate)
+        assert!(
+            retry.rotate_provider(),
+            "Single provider should always wrap"
+        );
+        assert_eq!(retry.provider_index, 0);
+    }
+
+    #[test]
+    fn test_rotate_provider_advances_and_wraps() {
+        let mut retry = RetryState::new(5, 3);
+        assert_eq!(retry.provider_index, 0);
+
+        assert!(!retry.rotate_provider(), "Should not wrap: 0->1");
+        assert_eq!(retry.provider_index, 1);
+
+        assert!(!retry.rotate_provider(), "Should not wrap: 1->2");
+        assert_eq!(retry.provider_index, 2);
+
+        assert!(retry.rotate_provider(), "Should wrap: 2->0");
+        assert_eq!(retry.provider_index, 0);
+    }
+
+    #[test]
+    fn test_reset_clears_attempt_and_provider() {
+        let mut retry = RetryState::new(5, 3);
+        retry.record_failure();
+        retry.record_failure();
+        retry.rotate_provider(); // index = 1, attempt reset to 0 by rotate
+        retry.record_failure(); // attempt = 1
+        assert_eq!(retry.attempt, 1);
+        assert_eq!(retry.provider_index, 1);
+
+        retry.reset();
+        assert_eq!(retry.attempt, 0);
+        assert_eq!(
+            retry.provider_index, 0,
+            "Provider index should be reset to 0"
+        );
+    }
+
+    #[test]
+    fn test_exhausted_boundary() {
+        let mut retry = RetryState::new(3, 1);
+        assert!(!retry.exhausted(), "Should not be exhausted at attempt 0");
+        retry.record_failure();
+        assert!(!retry.exhausted(), "Should not be exhausted at attempt 1");
+        retry.record_failure();
+        assert!(!retry.exhausted(), "Should not be exhausted at attempt 2");
+        retry.record_failure();
+        assert!(
+            retry.exhausted(),
+            "Should be exhausted at attempt 3 (== max_retries)"
+        );
     }
 
     #[test]
