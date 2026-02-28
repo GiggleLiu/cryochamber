@@ -187,3 +187,65 @@ fn test_mock_multi_session_lifecycle() {
         "Should have at least 3 sessions, found {session_count}"
     );
 }
+
+#[test]
+fn test_mock_ipc_all_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "ipc-all.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan complete"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+
+    // Verify all IPC commands were logged
+    assert!(log.contains("note: \"Starting IPC test\""), "Missing note in log: {log}");
+    assert!(log.contains("reply:"), "Missing reply in log: {log}");
+    assert!(log.contains("alert:"), "Missing alert in log: {log}");
+    assert!(log.contains("plan complete"), "Missing plan complete: {log}");
+
+    // Verify outbox message was written
+    let outbox = dir.path().join("messages/outbox");
+    if outbox.exists() {
+        let files: Vec<_> = fs::read_dir(&outbox).unwrap().filter_map(|e| e.ok()).collect();
+        assert!(!files.is_empty(), "Outbox should have a reply message");
+    }
+}
+
+#[test]
+fn test_mock_crash_then_succeed() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "crash-then-succeed.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(30)),
+        "Daemon should exit after retry succeeds"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    // First session should fail, second should succeed
+    assert!(
+        log.contains("agent exited without hibernate"),
+        "First session should crash: {log}"
+    );
+    assert!(
+        log.contains("plan complete"),
+        "Second session should complete: {log}"
+    );
+}
