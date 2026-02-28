@@ -115,3 +115,17 @@ fn test_spawn_agent_with_empty_env_vars() {
     let mut child = child.unwrap();
     let _ = child.wait();
 }
+
+#[test]
+fn test_resolve_mock_agent() {
+    // "mock" should resolve to "sh" running "scenario.sh"
+    let cmd = cryochamber::agent::build_command("mock", "test prompt").unwrap();
+    let program = format!("{:?}", cmd);
+    assert!(program.contains("sh"), "mock should resolve to sh: {program}");
+}
+
+#[test]
+fn test_mock_agent_program() {
+    let program = cryochamber::agent::agent_program("mock").unwrap();
+    assert_eq!(program, "sh");
+}

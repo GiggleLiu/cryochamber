@@ -11,6 +11,8 @@ enum AgentKind {
     Opencode,
     /// Codex: `codex exec [flags] <prompt>`
     Codex,
+    /// Mock agent: `sh scenario.sh <prompt>` for testing
+    Mock,
     /// Custom agent: `<program> [args] <prompt>` (prompt as positional arg)
     Custom,
 }
@@ -53,6 +55,7 @@ fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
             }
             Ok((AgentKind::Codex, program.clone(), full_args))
         }
+        "mock" => Ok((AgentKind::Mock, "sh".to_string(), vec!["scenario.sh".to_string()])),
         _ => Ok((AgentKind::Custom, program.clone(), args)),
     }
 }
@@ -119,7 +122,7 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
         AgentKind::Claude => {
             cmd.arg("-p");
         }
-        AgentKind::Opencode | AgentKind::Codex | AgentKind::Custom => {}
+        AgentKind::Opencode | AgentKind::Codex | AgentKind::Custom | AgentKind::Mock => {}
     }
     cmd.arg(prompt);
 
