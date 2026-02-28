@@ -5,58 +5,61 @@ You wake up, do work, then hibernate until the next session.
 
 ## Session Workflow
 
-Every session, follow these steps in order:
+Execute these steps in order. **Do not skip or reorder steps.**
 
-1. **Read `plan.md`** — your objectives and task list.
-2. **Check TODOs** — run `cryo-agent todo list` for pending tasks.
-3. **Check your prompt** for new messages and previous session log.
-4. **Do the work** described in your task.
-5. **Update TODOs** — mark completed items with `cryo-agent todo done <id>`.
-6. **Leave notes** for your future self: `cryo-agent note "what I did and what's next"`
-7. **Hibernate** — either schedule the next wake or mark the plan complete.
+### Step 1: Orient
 
-## How to Hibernate
+- Read `plan.md` for your objectives and task list.
+- Run `cryo-agent todo list` for pending tasks.
+- Check your prompt for inbox messages and previous session log.
 
-You MUST call one of these before your session ends. If you don't, the daemon treats it as a crash.
+### Step 2: Work
 
-### Schedule next wake (more work to do)
+- Do the work described in your plan.
+- Reply to any inbox messages: `cryo-agent reply "response text"`
+- Update TODOs as you go: `cryo-agent todo done <id>`
 
+### Step 3: Record
+
+- Leave notes for your future self: `cryo-agent note "what I did and what's next"`
+- Set up a dead-man switch if needed: `cryo-agent alert <action> <target> "message"`
+
+### Step 4: Hibernate (LAST action — nothing after this)
+
+Pick ONE of the following. **This must be your final tool call. Do not run any commands after it.** The daemon cannot archive messages or schedule the next wake until your process exits.
+
+**More work to do:**
 ```
-# 1. Compute a future time
-cryo-agent time "+30 minutes"    # prints e.g. 2026-02-24T15:30
-
-# 2. Hibernate with that time
-cryo-agent hibernate --wake 2026-02-24T15:30 --summary "Finished task 2, task 3 next"
+cryo-agent hibernate --wake <TIME> --summary "what I did, what's next"
 ```
 
-### Mark plan complete (all done)
-
+**All done:**
 ```
 cryo-agent hibernate --complete --summary "All tasks finished"
 ```
 
-### Report partial progress or failure
-
+**Blocked or failed:**
 ```
-# Partial progress (exit 1) — daemon will wake you again
-cryo-agent hibernate --wake 2026-02-25T09:00 --exit 1 --summary "Blocked on API access"
-
-# Failure (exit 2)
-cryo-agent hibernate --wake 2026-02-25T09:00 --exit 2 --summary "Build broken, needs human help"
+cryo-agent hibernate --wake <TIME> --exit 1 --summary "Blocked on X"
 ```
 
-## Deciding When to Wake
+Use `cryo-agent time "+30 minutes"` to compute the `<TIME>` value before hibernating.
 
-- **Waiting on external event** (CI, review, deploy): wake in 15-30 minutes to check.
-- **Multi-step plan, next step ready**: wake in 1-2 minutes (just long enough to save context).
-- **Time-sensitive deadline**: compute exact time with `cryo-agent time "+2 hours"`.
-- **Nothing to do until tomorrow**: `cryo-agent time "+1 day"`.
+## Wake Time Guidelines
 
-## Other Commands
+| Situation | Wake interval |
+|-----------|--------------|
+| Waiting on external event (CI, review) | 15–30 minutes |
+| Multi-step plan, next step ready | 1–2 minutes |
+| Time-sensitive deadline | exact time via `cryo-agent time` |
+| Nothing to do until tomorrow | `cryo-agent time "+1 day"` |
+
+## Command Reference
 
 ```
 cryo-agent note "text"                        # Leave a note for next session
 cryo-agent send "message"                     # Send message to human (outbox)
+cryo-agent reply "message"                    # Reply to inbox messages
 cryo-agent receive                            # Read inbox messages from human
 cryo-agent alert <action> <target> "message"  # Dead-man switch (fires if you don't wake on time)
 cryo-agent todo add "text"                    # Add a TODO item
@@ -64,17 +67,8 @@ cryo-agent todo add "text" --at 2026-03-05    # Add with scheduled time
 cryo-agent todo list                          # List all TODO items
 cryo-agent todo done <id>                     # Mark item as done
 cryo-agent todo remove <id>                   # Remove an item
-```
-
-## Time Utility
-
-Always use `cryo-agent time` for timestamps — never guess or hardcode times:
-
-```
-cryo-agent time                   # current time in ISO8601
-cryo-agent time "+1 day"          # 1 day from now
-cryo-agent time "+2 hours"        # 2 hours from now
-cryo-agent time "+30 minutes"     # 30 minutes from now
+cryo-agent time                               # Current time in ISO8601
+cryo-agent time "+1 day"                      # Relative time computation
 ```
 
 ## Key Facts
@@ -82,4 +76,5 @@ cryo-agent time "+30 minutes"     # 30 minutes from now
 - **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
 - **Notes survive across sessions.** Use `cryo-agent note` liberally — it's your memory.
 - **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.
-- **Delayed wakes happen.** If the machine was suspended, you'll see a system notice in your prompt. Adjust accordingly.
+- **Delayed wakes happen.** If the machine was suspended, you'll see a system notice. Adjust accordingly.
+- **Hibernate is terminal.** Nothing you do after hibernate will take effect. Put all work before it.
