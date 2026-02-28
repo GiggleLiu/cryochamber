@@ -66,15 +66,39 @@ fn test_build_prompt_delayed_wake() {
 
 #[test]
 fn test_spawn_agent_fire_and_forget() {
-    let mut child = cryochamber::agent::spawn_agent("echo", "hello", None).unwrap();
+    let mut child = cryochamber::agent::spawn_agent("echo", "hello", None, &std::collections::HashMap::new()).unwrap();
     let exit = child.wait().unwrap();
     assert!(exit.success());
 }
 
 #[test]
 fn test_spawn_agent_empty_command() {
-    let result = cryochamber::agent::spawn_agent("", "test prompt", None);
+    let result = cryochamber::agent::spawn_agent("", "test prompt", None, &std::collections::HashMap::new());
     assert!(result.is_err());
     let err = result.err().unwrap().to_string();
     assert!(err.contains("empty"), "Expected 'empty' in error: {err}");
+}
+
+#[test]
+fn test_spawn_agent_with_env_vars() {
+    use std::collections::HashMap;
+
+    let mut env = HashMap::new();
+    env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
+
+    let child = cryochamber::agent::spawn_agent("echo", "hello", None, &env);
+    assert!(child.is_ok());
+    let mut child = child.unwrap();
+    let _ = child.wait();
+}
+
+#[test]
+fn test_spawn_agent_with_empty_env_vars() {
+    use std::collections::HashMap;
+    let env = HashMap::new();
+
+    let child = cryochamber::agent::spawn_agent("echo", "hello", None, &env);
+    assert!(child.is_ok());
+    let mut child = child.unwrap();
+    let _ = child.wait();
 }

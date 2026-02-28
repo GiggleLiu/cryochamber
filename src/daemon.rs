@@ -301,7 +301,14 @@ impl Daemon {
                 cryo_state.next_wake = None;
                 let _ = state::save_state(&self.state_path, &cryo_state);
 
-                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref()) {
+                // Build provider env for this session
+                let provider_env: std::collections::HashMap<String, String> = if config.providers.is_empty() {
+                    std::collections::HashMap::new()
+                } else {
+                    config.providers[retry.provider_index].env.clone()
+                };
+
+                match self.run_one_session(&config, &cryo_state, &server, delayed_wake.as_deref(), &provider_env) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
@@ -415,6 +422,7 @@ impl Daemon {
         cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
+        provider_env: &std::collections::HashMap<String, String>,
     ) -> Result<SessionLoopOutcome> {
         let agent_cmd = config.agent.clone();
 
@@ -461,7 +469,7 @@ impl Daemon {
             .open(crate::log::agent_log_path(&self.dir))?;
 
         // Spawn agent with stdout/stderr redirected to cryo-agent.log
-        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file))?;
+        let mut child = crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
         let child_pid = child.id();
         let spawn_time = std::time::Instant::now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
