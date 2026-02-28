@@ -14,6 +14,7 @@ pub mod service;
 pub mod session;
 pub mod socket;
 pub mod state;
+pub mod todo;
 pub mod web;
 pub mod zulip_sync;
 

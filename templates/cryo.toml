@@ -42,3 +42,7 @@ watch_inbox = true
 # [[providers]]
 # name = "openai"
 # env = { OPENAI_API_KEY = "sk-...", OPENAI_BASE_URL = "https://api.openai.com/v1" }
+#
+# [[providers]]
+# name = "opencode"
+# env = { OPENCODE_PROVIDER = "anthropic", OPENCODE_MODEL = "claude-sonnet-4-20250514", ANTHROPIC_API_KEY = "sk-ant-..." }

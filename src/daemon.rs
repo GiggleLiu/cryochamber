@@ -22,6 +22,9 @@ use crate::config::CryoConfig;
 use crate::fallback::FallbackAction;
 use crate::state::{self, CryoState};
 
+/// Format for persisting `next_wake` in timer.json (minute precision, no seconds).
+const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
+
 use crate::process::send_signal;
 
 /// Events the daemon responds to.
@@ -53,14 +56,11 @@ impl RetryState {
     }
 
     /// Calculate backoff duration for current attempt.
-    /// Returns None if max retries exceeded.
-    /// Doubles each time: 5s, 10s, 20s, 40s, 80s, 160s, ...
-    pub fn next_backoff(&self) -> Option<Duration> {
-        if self.attempt >= self.max_retries {
-            return None;
-        }
+    /// Doubles each time: 5s, 10s, 20s, ..., capped at 3600s (1 hour).
+    /// Always returns a duration (retries indefinitely with backoff).
+    pub fn next_backoff(&self) -> Duration {
         let secs = 5u64.checked_shl(self.attempt).unwrap_or(3600).min(3600);
-        Some(Duration::from_secs(secs))
+        Duration::from_secs(secs)
     }
 
     pub fn record_failure(&mut self) {
@@ -134,6 +134,61 @@ fn terminate_child(child: &mut std::process::Child, pid: u32) {
         send_signal(pid, libc::SIGKILL);
     }
     let _ = child.wait(); // reap to prevent zombie
+}
+
+/// Compute how long to sleep given optional wake and report deadlines.
+fn compute_sleep_timeout(
+    wake_deadline: Option<NaiveDateTime>,
+    report_deadline: Option<NaiveDateTime>,
+    now: NaiveDateTime,
+) -> Duration {
+    let to_duration =
+        |dt: NaiveDateTime| -> Duration { (dt - now).to_std().unwrap_or(Duration::ZERO) };
+    match (
+        wake_deadline.map(&to_duration),
+        report_deadline.map(&to_duration),
+    ) {
+        (Some(w), Some(r)) => w.min(r),
+        (Some(w), None) => w,
+        (None, Some(r)) => r,
+        (None, None) => Duration::from_secs(3600),
+    }
+}
+
+/// Restore the initial `(next_wake, run_now)` pair from persisted state.
+///
+/// - If `next_wake` is persisted and in the future → wait (don't run now).
+/// - If `next_wake` is persisted and in the past → run now (delayed wake check will fire).
+/// - If no `next_wake` → run immediately (fresh start).
+fn restore_wake_state(
+    state: &state::CryoState,
+    now: NaiveDateTime,
+) -> (Option<NaiveDateTime>, bool) {
+    let next_wake = state
+        .next_wake
+        .as_ref()
+        .and_then(|s| NaiveDateTime::parse_from_str(s, WAKE_TIME_FMT).ok());
+    let run_now = match next_wake {
+        Some(w) => now >= w,
+        None => true,
+    };
+    (next_wake, run_now)
+}
+
+/// Check if the scheduled wake time is significantly in the past (machine suspend).
+/// Returns `Some(delay_description)` if delayed by more than 5 minutes.
+fn detect_delayed_wake(scheduled: NaiveDateTime, now: NaiveDateTime) -> Option<String> {
+    let delay = now - scheduled;
+    if delay > chrono::Duration::minutes(5) {
+        let delay_str = if delay.num_hours() > 0 {
+            format!("{}h {}m", delay.num_hours(), delay.num_minutes() % 60)
+        } else {
+            format!("{}m", delay.num_minutes())
+        };
+        Some(delay_str)
+    } else {
+        None
+    }
 }
 
 /// The persistent daemon process.
@@ -258,11 +313,10 @@ impl Daemon {
 
         let provider_count = config.providers.len();
         let mut retry = RetryState::new(config.max_retries, provider_count);
-        let mut next_wake: Option<NaiveDateTime> = None;
+        // Restore persisted next_wake from state (survives daemon restart).
+        let (mut next_wake, mut run_now) =
+            restore_wake_state(&cryo_state, Local::now().naive_local());
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
-
-        // First session: run immediately
-        let mut run_now = true;
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -277,25 +331,17 @@ impl Daemon {
                 // (e.g. computer was sleeping), notify the agent instead of failing.
                 let delayed_wake = next_wake.and_then(|wake| {
                     let now = Local::now().naive_local();
-                    let delay = now - wake;
-                    if delay > chrono::Duration::minutes(5) {
+                    detect_delayed_wake(wake, now).map(|delay_str| {
                         // Cancel premature fallback — the session is about to run
                         pending_fallback = None;
-                        let delay_str = if delay.num_hours() > 0 {
-                            format!("{}h {}m", delay.num_hours(), delay.num_minutes() % 60)
-                        } else {
-                            format!("{}m", delay.num_minutes())
-                        };
-                        Some(format!(
+                        format!(
                             "DELAYED WAKE: This session was scheduled for {} but is running {} late \
                              (the host machine was likely suspended or powered off). \
                              Check whether time-sensitive tasks need adjustment.",
-                            wake.format("%Y-%m-%dT%H:%M"),
+                            wake.format(WAKE_TIME_FMT),
                             delay_str,
-                        ))
-                    } else {
-                        None
-                    }
+                        )
+                    })
                 });
                 let saved_wake = next_wake.take();
 
@@ -337,7 +383,7 @@ impl Daemon {
                                 retry.reset();
                                 next_wake = Some(wake_time);
                                 cryo_state.next_wake =
-                                    Some(wake_time.format("%Y-%m-%dT%H:%M").to_string());
+                                    Some(wake_time.format(WAKE_TIME_FMT).to_string());
                                 let _ = state::save_state(&self.state_path, &cryo_state);
                                 pending_fallback =
                                     fallback.map(|fb| (wake_time + chrono::Duration::hours(1), fb));
@@ -425,21 +471,8 @@ impl Daemon {
             }
 
             // Wait for next event
-            let timeout = {
-                let now = Local::now().naive_local();
-                let wake_timeout = next_wake.map(|w| w - now);
-                let report_timeout = next_report_time.map(|r| r - now);
-                let min_timeout = match (wake_timeout, report_timeout) {
-                    (Some(w), Some(r)) => Some(w.min(r)),
-                    (Some(w), None) => Some(w),
-                    (None, Some(r)) => Some(r),
-                    (None, None) => None,
-                };
-                match min_timeout {
-                    Some(d) => d.to_std().unwrap_or(Duration::ZERO),
-                    None => Duration::from_secs(3600),
-                }
-            };
+            let timeout =
+                compute_sleep_timeout(next_wake, next_report_time, Local::now().naive_local());
 
             match rx.recv_timeout(timeout) {
                 Ok(DaemonEvent::InboxChanged) => {
@@ -549,6 +582,13 @@ impl Daemon {
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 terminate_child(&mut child, child_pid);
+                if !inbox_filenames.is_empty() {
+                    let _ = crate::message::archive_messages(&self.dir, &inbox_filenames);
+                }
+                if let Some(outcome) = hibernate_outcome {
+                    logger.finish("daemon shutdown — using agent's hibernate outcome")?;
+                    return Ok(outcome);
+                }
                 logger.finish("daemon shutdown — agent terminated")?;
                 return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
             }
@@ -558,6 +598,13 @@ impl Daemon {
                 if std::time::Instant::now() >= d {
                     eprintln!("Daemon: session timeout ({timeout_secs}s) — killing agent");
                     terminate_child(&mut child, child_pid);
+                    if !inbox_filenames.is_empty() {
+                        let _ = crate::message::archive_messages(&self.dir, &inbox_filenames);
+                    }
+                    if let Some(outcome) = hibernate_outcome {
+                        logger.finish("session timeout — using agent's hibernate outcome")?;
+                        return Ok(outcome);
+                    }
                     logger.finish("session timeout — agent killed")?;
                     return Ok(SessionLoopOutcome::ValidationFailed { quick_exit: false });
                 }
@@ -587,10 +634,8 @@ impl Daemon {
                                 ))?;
                                 hibernate_outcome = Some(SessionLoopOutcome::PlanComplete);
                             } else if let Some(wake_str) = &wake {
-                                match chrono::NaiveDateTime::parse_from_str(
-                                    wake_str,
-                                    "%Y-%m-%dT%H:%M",
-                                ) {
+                                match chrono::NaiveDateTime::parse_from_str(wake_str, WAKE_TIME_FMT)
+                                {
                                     Ok(wake_time) => {
                                         logger.log_event(&format!(
                                             "hibernate: wake={wake_str}, exit={exit_code}, summary=\"{summary_str}\""
@@ -750,27 +795,22 @@ impl Daemon {
         }
     }
 
-    /// Handle a failure by retrying with backoff or sending an alert when exhausted.
+    /// Handle a failure by retrying with exponential backoff (5s, 10s, ..., 1h cap).
+    /// Sends an alert once when max_retries is reached, then keeps retrying at 1h.
     /// Returns true if the daemon should shut down.
     fn handle_failure_retry(&self, retry: &mut RetryState, alert_method: &str) -> bool {
         let backoff = retry.next_backoff();
         retry.record_failure();
-        if let Some(backoff) = backoff {
+        // Send alert once when we first hit max_retries
+        if retry.attempt == retry.max_retries {
             eprintln!(
-                "Daemon: retry {}/{} in {}s",
-                retry.attempt,
-                retry.max_retries,
-                backoff.as_secs()
+                "Daemon: {} retries failed, sending alert. Will keep retrying.",
+                retry.max_retries
             );
-            return self.sleep_or_shutdown(backoff);
+            self.send_retry_alert(alert_method);
         }
-        eprintln!(
-            "Daemon: {} retries failed, sending alert. Will keep retrying.",
-            retry.max_retries
-        );
-        self.send_retry_alert(alert_method);
-        retry.reset();
-        self.sleep_or_shutdown(Duration::from_secs(60))
+        eprintln!("Daemon: retry {} in {}s", retry.attempt, backoff.as_secs());
+        self.sleep_or_shutdown(backoff)
     }
 
     /// Send a system alert when retries are exhausted.
@@ -866,25 +906,36 @@ mod tests {
     #[test]
     fn test_backoff_sequence() {
         let mut state = RetryState::new(5, 1);
-        // 5s, 10s, 20s, 40s, 80s, exhausted
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(5)));
+        // 5s, 10s, 20s, 40s, 80s, then keeps going capped at 3600s
+        assert_eq!(state.next_backoff(), Duration::from_secs(5));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(10)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(10));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(20)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(20));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(40)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(40));
 
         state.record_failure();
-        assert_eq!(state.next_backoff(), Some(Duration::from_secs(80)));
+        assert_eq!(state.next_backoff(), Duration::from_secs(80));
 
+        // Past max_retries — still returns backoff, capped at 3600s
         state.record_failure();
         assert_eq!(state.attempt, 5);
-        assert_eq!(state.next_backoff(), None);
+        assert_eq!(state.next_backoff(), Duration::from_secs(160));
         assert!(state.exhausted());
+    }
+
+    #[test]
+    fn test_backoff_caps_at_one_hour() {
+        let mut state = RetryState::new(20, 1);
+        for _ in 0..15 {
+            state.record_failure();
+        }
+        // 5 * 2^15 = 163840 > 3600, so capped
+        assert_eq!(state.next_backoff(), Duration::from_secs(3600));
     }
 
     #[test]
@@ -900,10 +951,90 @@ mod tests {
     }
 
     #[test]
-    fn test_backoff_zero_retries() {
-        let state = RetryState::new(0, 1);
-        assert_eq!(state.next_backoff(), None);
-        assert!(state.exhausted());
+    fn test_backoff_exact_sequence() {
+        let mut retry = RetryState::new(20, 1);
+        let expected = [5, 10, 20, 40, 80, 160, 320, 640, 1280, 2560, 3600, 3600];
+        for (i, &secs) in expected.iter().enumerate() {
+            assert_eq!(
+                retry.next_backoff(),
+                Duration::from_secs(secs),
+                "Backoff at attempt {i} should be {secs}s"
+            );
+            retry.record_failure();
+        }
+    }
+
+    #[test]
+    fn test_backoff_cap_never_exceeds_3600() {
+        let mut retry = RetryState::new(100, 1);
+        for _ in 0..100 {
+            let backoff = retry.next_backoff();
+            assert!(
+                backoff <= Duration::from_secs(3600),
+                "Backoff should never exceed 3600s, got {:?}",
+                backoff
+            );
+            retry.record_failure();
+        }
+    }
+
+    #[test]
+    fn test_rotate_provider_single_provider() {
+        let mut retry = RetryState::new(5, 1);
+        // With only 1 provider, rotate always returns true (can't rotate)
+        assert!(
+            retry.rotate_provider(),
+            "Single provider should always wrap"
+        );
+        assert_eq!(retry.provider_index, 0);
+    }
+
+    #[test]
+    fn test_rotate_provider_advances_and_wraps() {
+        let mut retry = RetryState::new(5, 3);
+        assert_eq!(retry.provider_index, 0);
+
+        assert!(!retry.rotate_provider(), "Should not wrap: 0->1");
+        assert_eq!(retry.provider_index, 1);
+
+        assert!(!retry.rotate_provider(), "Should not wrap: 1->2");
+        assert_eq!(retry.provider_index, 2);
+
+        assert!(retry.rotate_provider(), "Should wrap: 2->0");
+        assert_eq!(retry.provider_index, 0);
+    }
+
+    #[test]
+    fn test_reset_clears_attempt_and_provider() {
+        let mut retry = RetryState::new(5, 3);
+        retry.record_failure();
+        retry.record_failure();
+        retry.rotate_provider(); // index = 1, attempt reset to 0 by rotate
+        retry.record_failure(); // attempt = 1
+        assert_eq!(retry.attempt, 1);
+        assert_eq!(retry.provider_index, 1);
+
+        retry.reset();
+        assert_eq!(retry.attempt, 0);
+        assert_eq!(
+            retry.provider_index, 0,
+            "Provider index should be reset to 0"
+        );
+    }
+
+    #[test]
+    fn test_exhausted_boundary() {
+        let mut retry = RetryState::new(3, 1);
+        assert!(!retry.exhausted(), "Should not be exhausted at attempt 0");
+        retry.record_failure();
+        assert!(!retry.exhausted(), "Should not be exhausted at attempt 1");
+        retry.record_failure();
+        assert!(!retry.exhausted(), "Should not be exhausted at attempt 2");
+        retry.record_failure();
+        assert!(
+            retry.exhausted(),
+            "Should be exhausted at attempt 3 (== max_retries)"
+        );
     }
 
     #[test]
@@ -945,5 +1076,160 @@ mod tests {
         // This may or may not fire depending on platform — just don't assert it MUST fire
         // The key is that create events DO fire (tested above)
         let _ = event; // suppress unused warning
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_both() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let wake = now + chrono::Duration::seconds(60);
+        let report = now + chrono::Duration::seconds(30);
+        let timeout = compute_sleep_timeout(Some(wake), Some(report), now);
+        assert_eq!(
+            timeout,
+            Duration::from_secs(30),
+            "Should pick earlier (report)"
+        );
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_wake_only() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let wake = now + chrono::Duration::seconds(120);
+        let timeout = compute_sleep_timeout(Some(wake), None, now);
+        assert_eq!(timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_report_only() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let report = now + chrono::Duration::seconds(45);
+        let timeout = compute_sleep_timeout(None, Some(report), now);
+        assert_eq!(timeout, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_neither() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let timeout = compute_sleep_timeout(None, None, now);
+        assert_eq!(timeout, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_delayed_wake_under_threshold() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let scheduled = now - chrono::Duration::minutes(4);
+        assert!(
+            detect_delayed_wake(scheduled, now).is_none(),
+            "4 min delay should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_delayed_wake_over_threshold() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let scheduled = now - chrono::Duration::minutes(6);
+        let result = detect_delayed_wake(scheduled, now);
+        assert!(result.is_some(), "6 min delay should be flagged");
+        assert_eq!(result.unwrap(), "6m");
+    }
+
+    fn make_state(next_wake: Option<&str>) -> state::CryoState {
+        state::CryoState {
+            session_number: 1,
+            pid: None,
+            retry_count: 0,
+            next_wake: next_wake.map(String::from),
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+        }
+    }
+
+    #[test]
+    fn test_restore_wake_state_no_persisted_wake() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let state = make_state(None);
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert!(next_wake.is_none());
+        assert!(run_now, "No persisted wake → run immediately");
+    }
+
+    #[test]
+    fn test_restore_wake_state_future_wake() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(8, 0, 0)
+            .unwrap();
+        let state = make_state(Some("2026-03-01T09:00"));
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert_eq!(
+            next_wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap()
+        );
+        assert!(!run_now, "Wake in future → wait");
+    }
+
+    #[test]
+    fn test_restore_wake_state_past_wake() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let state = make_state(Some("2026-03-01T09:00"));
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert!(next_wake.is_some(), "Should parse persisted wake");
+        assert!(
+            run_now,
+            "Wake in past → run now (delayed wake check will fire)"
+        );
+    }
+
+    #[test]
+    fn test_restore_wake_state_exact_wake_time() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
+        let state = make_state(Some("2026-03-01T09:00"));
+        let (_, run_now) = restore_wake_state(&state, now);
+        assert!(run_now, "Exactly at wake time → run now");
+    }
+
+    #[test]
+    fn test_restore_wake_state_invalid_format() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let state = make_state(Some("not-a-date"));
+        let (next_wake, run_now) = restore_wake_state(&state, now);
+        assert!(next_wake.is_none(), "Invalid format → treated as no wake");
+        assert!(run_now, "Invalid format → run immediately");
     }
 }

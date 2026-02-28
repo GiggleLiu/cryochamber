@@ -5,6 +5,7 @@ use std::path::Path;
 
 use cryochamber::message;
 use cryochamber::socket::{self, Request};
+use cryochamber::todo::TodoList;
 
 #[derive(Parser)]
 #[command(name = "cryo-agent", about = "Cryochamber agent IPC commands")]
@@ -61,6 +62,35 @@ enum Commands {
         /// Offset from now (e.g. "+30 minutes", "+2 hours", "+1 day")
         offset: Option<String>,
     },
+    /// Manage TODO items across sessions
+    Todo {
+        #[command(subcommand)]
+        action: TodoAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TodoAction {
+    /// Add a new TODO item
+    Add {
+        /// Task description
+        text: String,
+        /// Scheduled time (ISO8601)
+        #[arg(long)]
+        at: Option<String>,
+    },
+    /// List all TODO items
+    List,
+    /// Mark a TODO item as done
+    Done {
+        /// Item ID
+        id: u32,
+    },
+    /// Remove a TODO item
+    Remove {
+        /// Item ID
+        id: u32,
+    },
 }
 
 /// Send a request to the daemon and print the response. Bail on failure.
@@ -114,6 +144,7 @@ fn main() -> Result<()> {
         ),
         Commands::Receive => cmd_receive(&dir),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
+        Commands::Todo { action } => cmd_todo(&dir, action),
     }
 }
 
@@ -171,5 +202,32 @@ fn cmd_time(offset: Option<&str>) -> Result<()> {
     };
 
     println!("{}", target.format("%Y-%m-%dT%H:%M"));
+    Ok(())
+}
+
+fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {
+    let path = dir.join("todo.json");
+    let mut list = TodoList::load(&path)?;
+
+    match action {
+        TodoAction::Add { text, at } => {
+            let id = list.add(text, at);
+            list.save(&path)?;
+            println!("Added todo #{id}");
+        }
+        TodoAction::List => {
+            println!("{}", list.display());
+        }
+        TodoAction::Done { id } => {
+            list.done(id)?;
+            list.save(&path)?;
+            println!("Marked todo #{id} as done");
+        }
+        TodoAction::Remove { id } => {
+            list.remove(id)?;
+            list.save(&path)?;
+            println!("Removed todo #{id}");
+        }
+    }
     Ok(())
 }

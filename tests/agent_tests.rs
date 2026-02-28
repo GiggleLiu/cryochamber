@@ -94,8 +94,7 @@ fn test_spawn_agent_with_env_vars() {
     env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
 
     let mut child =
-        cryochamber::agent::spawn_agent("printenv", "TEST_CRYO_KEY", Some(log_file), &env)
-            .unwrap();
+        cryochamber::agent::spawn_agent("printenv", "TEST_CRYO_KEY", Some(log_file), &env).unwrap();
     let status = child.wait().unwrap();
     assert!(status.success());
 
@@ -115,4 +114,21 @@ fn test_spawn_agent_with_empty_env_vars() {
     assert!(child.is_ok());
     let mut child = child.unwrap();
     let _ = child.wait();
+}
+
+#[test]
+fn test_resolve_mock_agent() {
+    // "mock" should resolve to "sh" running "scenario.sh"
+    let cmd = cryochamber::agent::build_command("mock", "test prompt").unwrap();
+    let program = format!("{:?}", cmd);
+    assert!(
+        program.contains("sh"),
+        "mock should resolve to sh: {program}"
+    );
+}
+
+#[test]
+fn test_mock_agent_program() {
+    let program = cryochamber::agent::agent_program("mock").unwrap();
+    assert_eq!(program, "sh");
 }
