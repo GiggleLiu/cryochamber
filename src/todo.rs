@@ -79,6 +79,25 @@ impl TodoList {
         Ok(())
     }
 
+    /// Format the list for display.
+    pub fn display(&self) -> String {
+        if self.items.is_empty() {
+            return "No todos.".to_string();
+        }
+        self.items
+            .iter()
+            .map(|item| {
+                let check = if item.done { "x" } else { " " };
+                let at_suffix = match &item.at {
+                    Some(at) => format!(" (at: {at})"),
+                    None => String::new(),
+                };
+                format!("{}. [{}] {}{}", item.id, check, item.text, at_suffix)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Remove item. Returns error if ID not found.
     pub fn remove(&mut self, id: u32) -> Result<()> {
         let pos = self

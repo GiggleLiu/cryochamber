@@ -1,3 +1,4 @@
+use assert_cmd::Command;
 use cryochamber::todo::TodoList;
 
 #[test]
@@ -142,4 +143,113 @@ fn test_id_auto_increment_after_remove() {
     list.remove(1).unwrap(); // remove A (id=1)
     let id = list.add("C".to_string(), None);
     assert_eq!(id, 3, "ID should be max(existing)+1, not reuse removed IDs");
+}
+
+fn agent_cmd() -> Command {
+    #[allow(deprecated)]
+    Command::cargo_bin("cryo-agent").unwrap()
+}
+
+#[test]
+fn test_cli_todo_add_and_list() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "add", "Submit paper"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Added todo #1"));
+
+    agent_cmd()
+        .args(["todo", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("1. [ ] Submit paper"));
+}
+
+#[test]
+fn test_cli_todo_add_with_at() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "add", "Check status", "--at", "2026-03-05T14:00"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    agent_cmd()
+        .args(["todo", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("(at: 2026-03-05T14:00)"));
+}
+
+#[test]
+fn test_cli_todo_done() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "add", "Task"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    agent_cmd()
+        .args(["todo", "done", "1"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Marked todo #1 as done"));
+
+    agent_cmd()
+        .args(["todo", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("1. [x] Task"));
+}
+
+#[test]
+fn test_cli_todo_remove() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "add", "Task"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    agent_cmd()
+        .args(["todo", "remove", "1"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Removed todo #1"));
+
+    agent_cmd()
+        .args(["todo", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No todos"));
+}
+
+#[test]
+fn test_cli_todo_done_nonexistent() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "done", "99"])
+        .current_dir(dir.path())
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_cli_todo_list_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No todos"));
 }
