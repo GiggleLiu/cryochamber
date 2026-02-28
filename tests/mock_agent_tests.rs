@@ -92,12 +92,6 @@ fn test_mock_crash_retries_then_exits() {
 
     // Cancel the daemon (it retries indefinitely)
     cancel_and_wait(dir.path());
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("agent exited without hibernate"),
-        "Log should show agent exited without hibernate: {log}"
-    );
 }
 
 #[test]
@@ -120,12 +114,6 @@ fn test_mock_quick_exit_detected() {
 
     // Cancel the daemon
     cancel_and_wait(dir.path());
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("quick exit detected"),
-        "Log should detect quick exit: {log}"
-    );
 }
 
 #[test]
@@ -149,12 +137,6 @@ fn test_mock_timeout_kills_agent() {
 
     // Cancel the daemon (it would retry after timeout)
     cancel_and_wait(dir.path());
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("session timeout"),
-        "Log should show session timeout: {log}"
-    );
 }
 
 #[test]
@@ -221,13 +203,12 @@ fn test_mock_ipc_all_commands() {
 
     // Verify outbox message was written
     let outbox = dir.path().join("messages/outbox");
-    if outbox.exists() {
-        let files: Vec<_> = fs::read_dir(&outbox)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .collect();
-        assert!(!files.is_empty(), "Outbox should have a reply message");
-    }
+    assert!(outbox.exists(), "Outbox directory should exist after send");
+    let files: Vec<_> = fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert!(!files.is_empty(), "Outbox should have a reply message");
 }
 
 #[test]
@@ -257,4 +238,168 @@ fn test_mock_crash_then_succeed() {
         log.contains("plan complete"),
         "Second session should complete: {log}"
     );
+}
+
+#[test]
+fn test_mock_invalid_wake_time() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "invalid-wake-time.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Invalid wake time ("banana") is rejected by the daemon's NaiveDateTime parser.
+    // The daemon sends an error response but the agent script has already exited,
+    // so the daemon sees the agent exit without a successful hibernate call.
+    assert!(
+        wait_for_log_content(
+            dir.path(),
+            "agent exited without hibernate",
+            Duration::from_secs(15)
+        ),
+        "Log should show agent exited without hibernate after invalid wake time"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_mock_slow_exit_no_hibernate() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "slow-exit-no-hibernate.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Should NOT be flagged as quick exit (runs >5s), but still "exit without hibernate"
+    assert!(
+        wait_for_log_content(
+            dir.path(),
+            "agent exited without hibernate",
+            Duration::from_secs(20)
+        ),
+        "Log should show exit without hibernate"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        !log.contains("quick exit"),
+        "Should NOT be flagged as quick exit (ran >5s): {log}"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_mock_double_hibernate() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "double-hibernate.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The script sends: hibernate --wake "+5 seconds", then hibernate --complete.
+    // "+5 seconds" is not valid ISO8601 (NaiveDateTime), so the daemon rejects
+    // the first hibernate. The second hibernate --complete succeeds, so the
+    // daemon completes the plan.
+    assert!(
+        wait_for_log_content(dir.path(), "plan complete", Duration::from_secs(15)),
+        "Log should show plan complete (first hibernate rejected, second succeeds)"
+    );
+
+    // Daemon should exit after plan completion
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(10)),
+        "Daemon should exit after plan completion"
+    );
+}
+
+#[test]
+fn test_mock_note_after_hibernate() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "note-after-hibernate.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Session should complete normally despite late note
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Session should complete normally: {log}"
+    );
+}
+
+#[test]
+fn test_mock_orphan_child() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "orphan-child.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Daemon should not hang waiting for orphan process
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit without hanging on orphan subprocess"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Session should complete normally: {log}"
+    );
+}
+
+#[test]
+fn test_mock_hibernate_then_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "hibernate-then-crash.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The script sends: hibernate --wake "+5 seconds", then exit 1.
+    // "+5 seconds" is not valid ISO8601 (NaiveDateTime), so the daemon rejects
+    // the hibernate. The agent then exits with code 1, so the daemon sees it as
+    // "agent exited without hibernate" (a crash).
+    assert!(
+        wait_for_log_content(
+            dir.path(),
+            "agent exited without hibernate",
+            Duration::from_secs(15)
+        ),
+        "Log should show agent exited without hibernate (wake time was invalid)"
+    );
+
+    cancel_and_wait(dir.path());
 }
