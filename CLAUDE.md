@@ -101,10 +101,12 @@ make check-service # verify OS service install/uninstall lifecycle (launchd/syst
 - `README.md` — Project overview, quickstart, CLI commands, and admin CLI
 - `Makefile` — Dev targets (`check`, `build`, `test`, `run-plan`, `check-round-trip`, etc.)
 - `templates/` — Single source of truth for agent protocol, template plan, and cryo.toml config template
-- `docs/plans/` — Design documents and implementation plans
+- `docs/plans/` — Design documents (key design decisions only)
 - `docs/reports/` — Code review reports
 - `examples/` — Showcase examples (chess-by-mail, conference-chair, mars-mission)
 
 ## Commit Convention
 
 Conventional commits: `feat:`, `test:`, `docs:`, `chore:`, `fix:`
+
+Do not commit implementation plans. Design documents should only be committed when they contain a key design decision.

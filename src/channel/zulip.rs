@@ -142,14 +142,14 @@ impl ZulipClient {
     }
 
     /// GET /api/v1/messages -- fetch messages from a stream since anchor.
-    /// Returns (messages, found_newest).
+    /// Returns (messages, found_newest, raw_max_id).
     pub fn get_messages(
         &self,
         stream_id: u64,
         anchor: &str,
         num_after: u32,
         skip_email: Option<&str>,
-    ) -> Result<(Vec<Message>, bool)> {
+    ) -> Result<(Vec<Message>, bool, Option<u64>)> {
         let narrow = format!(r#"[{{"operator":"stream","operand":{}}}]"#, stream_id);
         let num_after_str = num_after.to_string();
         let json = self.get(
@@ -177,7 +177,9 @@ impl ZulipClient {
                 ("content", content),
             ],
         )?;
-        let msg_id = json["id"].as_u64().unwrap_or(0);
+        let msg_id = json["id"]
+            .as_u64()
+            .context("send_message: response JSON missing numeric 'id' field")?;
         Ok(msg_id)
     }
 
@@ -198,7 +200,7 @@ impl ZulipClient {
         let mut newest_id = last_message_id;
 
         loop {
-            let (messages, found_newest) =
+            let (messages, found_newest, raw_max_id) =
                 self.get_messages(stream_id, &anchor, 1000, skip_email)?;
 
             for msg in &messages {
@@ -216,18 +218,16 @@ impl ZulipClient {
                 crate::message::write_message(work_dir, "inbox", msg)?;
             }
 
-            if found_newest || messages.is_empty() {
+            if found_newest {
                 break;
             }
 
-            // Paginate: next anchor is the last message ID
-            if let Some(last) = messages.last() {
-                if let Some(id_str) = last.metadata.get("zulip_message_id") {
-                    anchor = id_str.clone();
-                } else {
-                    break;
-                }
+            // Advance cursor using raw max ID (before filtering),
+            // so we don't get stuck when all messages are filtered out.
+            if let Some(max_id) = raw_max_id {
+                anchor = max_id.to_string();
             } else {
+                // Empty raw page — no more messages
                 break;
             }
         }
@@ -251,18 +251,28 @@ pub fn parse_get_stream_id_response(json: &serde_json::Value) -> Result<u64> {
 }
 
 /// Parse GET /messages response. Filters out messages from `skip_email` if provided.
-/// Returns (messages, found_newest).
+/// Returns (filtered_messages, found_newest, raw_max_id).
+/// `raw_max_id` is the highest message ID in the raw response (before filtering),
+/// used for cursor advancement even when all messages are filtered out.
 pub fn parse_get_messages_response(
     json: &serde_json::Value,
     skip_email: Option<&str>,
-) -> Result<(Vec<Message>, bool)> {
+) -> Result<(Vec<Message>, bool, Option<u64>)> {
     let found_newest = json["found_newest"].as_bool().unwrap_or(false);
     let msgs = json["messages"]
         .as_array()
         .context("Missing messages array")?;
 
+    let mut raw_max_id: Option<u64> = None;
     let mut messages = Vec::new();
     for msg in msgs {
+        let msg_id = msg["id"].as_u64().unwrap_or(0);
+
+        // Track highest raw ID before filtering
+        if msg_id > 0 {
+            raw_max_id = Some(raw_max_id.map_or(msg_id, |prev| prev.max(msg_id)));
+        }
+
         let sender_email = msg["sender_email"].as_str().unwrap_or("");
         if let Some(skip) = skip_email {
             if sender_email == skip {
@@ -270,7 +280,6 @@ pub fn parse_get_messages_response(
             }
         }
 
-        let msg_id = msg["id"].as_u64().unwrap_or(0);
         let sender_name = msg["sender_full_name"]
             .as_str()
             .unwrap_or("unknown")
@@ -280,7 +289,7 @@ pub fn parse_get_messages_response(
         let ts_unix = msg["timestamp"].as_i64().unwrap_or(0);
         let timestamp = chrono::DateTime::from_timestamp(ts_unix, 0)
             .map(|dt| dt.naive_utc())
-            .unwrap_or_else(|| chrono::Local::now().naive_local());
+            .unwrap_or_default();
 
         let mut metadata = BTreeMap::from([("source".to_string(), "zulip".to_string())]);
         if msg_id > 0 {
@@ -296,7 +305,7 @@ pub fn parse_get_messages_response(
         });
     }
 
-    Ok((messages, found_newest))
+    Ok((messages, found_newest, raw_max_id))
 }
 
 /// Simple base64 encoding (no external dependency needed).

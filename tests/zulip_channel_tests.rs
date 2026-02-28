@@ -101,7 +101,7 @@ fn test_parse_get_messages_response() {
         "found_newest": true,
         "found_oldest": false
     });
-    let (messages, found_newest) =
+    let (messages, found_newest, raw_max_id) =
         parse_get_messages_response(&json, Some("bot@example.com")).unwrap();
     // Should filter out bot's own message
     assert_eq!(messages.len(), 1);
@@ -116,6 +116,8 @@ fn test_parse_get_messages_response() {
         Some(&"100".to_string())
     );
     assert!(found_newest);
+    // Raw max ID should be 101 (the bot message), not 100 (the filtered result)
+    assert_eq!(raw_max_id, Some(101));
 }
 
 #[test]
@@ -127,9 +129,10 @@ fn test_parse_get_messages_response_empty() {
         "found_newest": true,
         "found_oldest": true
     });
-    let (messages, found_newest) = parse_get_messages_response(&json, None).unwrap();
+    let (messages, found_newest, raw_max_id) = parse_get_messages_response(&json, None).unwrap();
     assert!(messages.is_empty());
     assert!(found_newest);
+    assert_eq!(raw_max_id, None);
 }
 
 #[test]
@@ -152,7 +155,49 @@ fn test_parse_get_messages_no_self_filter() {
         "found_newest": false,
         "found_oldest": false
     });
-    let (messages, found_newest) = parse_get_messages_response(&json, None).unwrap();
+    let (messages, found_newest, raw_max_id) = parse_get_messages_response(&json, None).unwrap();
     assert_eq!(messages.len(), 1);
     assert!(!found_newest);
+    assert_eq!(raw_max_id, Some(100));
+}
+
+#[test]
+fn test_parse_get_messages_cursor_advances_when_all_filtered() {
+    // When all messages are from the skip_email sender, the filtered messages
+    // list is empty but raw_max_id still tracks the highest ID for cursor advancement.
+    let json = serde_json::json!({
+        "result": "success",
+        "msg": "",
+        "messages": [
+            {
+                "id": 200,
+                "sender_id": 42,
+                "sender_email": "bot@example.com",
+                "sender_full_name": "Bot",
+                "content": "Bot message 1",
+                "subject": "topic",
+                "timestamp": 1740700000,
+                "type": "stream"
+            },
+            {
+                "id": 201,
+                "sender_id": 42,
+                "sender_email": "bot@example.com",
+                "sender_full_name": "Bot",
+                "content": "Bot message 2",
+                "subject": "topic",
+                "timestamp": 1740700060,
+                "type": "stream"
+            }
+        ],
+        "found_newest": false,
+        "found_oldest": false
+    });
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, Some("bot@example.com")).unwrap();
+    // All messages filtered out
+    assert!(messages.is_empty());
+    assert!(!found_newest);
+    // But raw_max_id advances to 201 so pagination can continue
+    assert_eq!(raw_max_id, Some(201));
 }
