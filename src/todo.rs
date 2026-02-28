@@ -10,7 +10,12 @@ pub struct TodoItem {
     pub done: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,
+    #[serde(default = "default_created")]
     pub created: String,
+}
+
+fn default_created() -> String {
+    "unknown".to_string()
 }
 
 /// A list of todo items with load/save persistence.

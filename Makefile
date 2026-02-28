@@ -329,7 +329,7 @@ check-service: build
 
 # Run mock agent scenario tests (no external agent required)
 check-mock:
-	cargo test mock_agent -- --nocapture
+	cargo test --test mock_agent_tests -- --nocapture --test-threads=1
 
 # Build mdbook documentation
 book:

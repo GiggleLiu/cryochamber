@@ -1,3 +1,3 @@
 #!/bin/sh
-nohup sleep 999 >/dev/null 2>&1 &
+nohup sleep 10 >/dev/null 2>&1 &
 cryo-agent hibernate --complete
