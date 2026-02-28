@@ -117,3 +117,33 @@ Process:
 2. Present to user — highlight non-default values and explain why each was chosen
 3. If Zulip or GitHub sync chosen, note that `cryo-zulip init` / `cryo-gh init` will run in Phase 3
 4. Write the file
+
+## Phase 3: Validate
+
+Three layers, in order. On failure: stop, report what failed, suggest fixes, let user retry that layer.
+
+### Layer 1: File validation
+
+- Verify `plan.md` exists and contains Goal and Tasks sections
+- Verify `cryo.toml` parses correctly (run `cryo init` and check for errors)
+- Verify the agent command is on PATH (e.g. `which opencode`)
+
+### Layer 2: External tool validation
+
+- For each external tool referenced in `plan.md`: run a smoke test
+  - Scripts: verify they exist and execute (e.g. `uv run chess_engine.py board`)
+  - APIs: verify endpoints are reachable (e.g. `curl -sf https://... > /dev/null`)
+  - Env vars: verify required variables are set and non-empty
+- If provider rotation configured: validate each provider's env vars
+
+### Layer 3: Live smoke test
+
+1. Run `cryo init && cryo start`
+2. Wait for the first session to complete (watch `cryo.log` for agent start → hibernate)
+3. If sync channel configured:
+   - Zulip: run `cryo-zulip init --config <path> --stream <name>` and verify connection
+   - GitHub: run `cryo-gh init --repo <repo>` and verify connection
+4. Run `cryo cancel` to clean up
+5. Report: session count, any errors in `cryo.log`, agent exit status
+
+On success: "Your cryo application is ready. Run `cryo start` to begin."
