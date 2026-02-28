@@ -231,4 +231,90 @@ mod tests {
 
         handle.join().unwrap();
     }
+
+    #[test]
+    fn test_accept_empty_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let server = SocketServer::bind(&sock_path).unwrap();
+        server.set_nonblocking(false).unwrap();
+
+        let handle = std::thread::spawn({
+            let sock_path = sock_path.clone();
+            move || {
+                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+                use std::io::Write;
+                stream.write_all(b"\n").unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let result = server.accept_one().unwrap();
+        assert!(result.is_none(), "Empty line should return None");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_accept_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let server = SocketServer::bind(&sock_path).unwrap();
+        server.set_nonblocking(false).unwrap();
+
+        let handle = std::thread::spawn({
+            let sock_path = sock_path.clone();
+            move || {
+                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+                use std::io::Write;
+                stream.write_all(b"{not json\n").unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let result = server.accept_one();
+        assert!(result.is_err(), "Malformed JSON should return error");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_accept_unknown_fields_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let server = SocketServer::bind(&sock_path).unwrap();
+        server.set_nonblocking(false).unwrap();
+
+        let handle = std::thread::spawn({
+            let sock_path = sock_path.clone();
+            move || {
+                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+                use std::io::{BufRead, BufReader, Write};
+                // Note request with an extra unknown field
+                let json = r#"{"cmd":"note","text":"hello","unknown_field":42}"#;
+                stream.write_all(json.as_bytes()).unwrap();
+                stream.write_all(b"\n").unwrap();
+                stream.flush().unwrap();
+                // Read response
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+            }
+        });
+
+        let result = server.accept_one();
+        // serde ignores unknown fields by default (no deny_unknown_fields set)
+        match result {
+            Ok(Some((req, responder))) => {
+                assert!(matches!(req, Request::Note { text } if text == "hello"));
+                responder
+                    .respond(&Response {
+                        ok: true,
+                        message: "ok".to_string(),
+                    })
+                    .unwrap();
+            }
+            Ok(None) => panic!("Should not return None for valid JSON with extra fields"),
+            Err(e) => panic!("Should not error for unknown fields: {e}"),
+        }
+        handle.join().unwrap();
+    }
 }
