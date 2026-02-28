@@ -127,3 +127,63 @@ fn test_mock_quick_exit_detected() {
         "Log should detect quick exit: {log}"
     );
 }
+
+#[test]
+fn test_mock_timeout_kills_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "timeout.sh");
+
+    // Set short timeout so test doesn't take forever
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "3"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Wait for the timeout event in the log
+    assert!(
+        wait_for_log_content(dir.path(), "session timeout", Duration::from_secs(15)),
+        "Log should show session timeout"
+    );
+
+    // Cancel the daemon (it would retry after timeout)
+    cancel_and_wait(dir.path());
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("session timeout"),
+        "Log should show session timeout: {log}"
+    );
+}
+
+#[test]
+fn test_mock_multi_session_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "multi-session.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Should complete after 3 sessions (with ~2s wake intervals)
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(30)),
+        "Daemon should exit after plan completion"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("plan complete"),
+        "Log should show plan complete: {log}"
+    );
+    // Should have at least 3 session markers
+    let session_count = log.matches("CRYO SESSION").count();
+    assert!(
+        session_count >= 3,
+        "Should have at least 3 sessions, found {session_count}"
+    );
+}
