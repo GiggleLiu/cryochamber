@@ -8,10 +8,12 @@ You wake up, do work, then hibernate until the next session.
 Every session, follow these steps in order:
 
 1. **Read `plan.md`** — your objectives and task list.
-2. **Check your prompt** for new messages and previous session log.
-3. **Do the work** described in your task.
-4. **Leave notes** for your future self: `cryo-agent note "what I did and what's next"`
-5. **Hibernate** — either schedule the next wake or mark the plan complete.
+2. **Check TODOs** — run `cryo-agent todo list` for pending tasks.
+3. **Check your prompt** for new messages and previous session log.
+4. **Do the work** described in your task.
+5. **Update TODOs** — mark completed items with `cryo-agent todo done <id>`.
+6. **Leave notes** for your future self: `cryo-agent note "what I did and what's next"`
+7. **Hibernate** — either schedule the next wake or mark the plan complete.
 
 ## How to Hibernate
 
@@ -57,6 +59,11 @@ cryo-agent note "text"                        # Leave a note for next session
 cryo-agent send "message"                     # Send message to human (outbox)
 cryo-agent receive                            # Read inbox messages from human
 cryo-agent alert <action> <target> "message"  # Dead-man switch (fires if you don't wake on time)
+cryo-agent todo add "text"                    # Add a TODO item
+cryo-agent todo add "text" --at 2026-03-05    # Add with scheduled time
+cryo-agent todo list                          # List all TODO items
+cryo-agent todo done <id>                     # Mark item as done
+cryo-agent todo remove <id>                   # Remove an item
 ```
 
 ## Time Utility
