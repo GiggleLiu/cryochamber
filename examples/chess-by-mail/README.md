@@ -2,7 +2,7 @@
 
 Play correspondence chess against an AI agent, powered by cryochamber.
 
-The AI polls for your moves on a configurable interval. If you're away too long, it goes to sleep — send a move and wake it when you're ready to continue.
+The AI adapts to your pace — respond fast and it checks back quickly, take your time and it relaxes too. If you're away too long, it gradually slows down — send a move and wake it when you're ready to continue.
 
 ## Why Cryochamber
 
@@ -62,5 +62,4 @@ To stop: `cryo cancel && cryo-zulip unsync`
 
 Edit `plan.md` to change:
 - Which color the AI plays (default: black)
-- Check interval (default: 10 minutes; set to `1 minute` for a fast demo)
-- Patience threshold (default: 5 checks before sleeping)
+- Check interval (adaptive: mirrors your response speed, from 5 seconds to 1 day)
