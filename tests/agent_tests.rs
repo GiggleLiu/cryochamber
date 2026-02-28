@@ -121,7 +121,10 @@ fn test_resolve_mock_agent() {
     // "mock" should resolve to "sh" running "scenario.sh"
     let cmd = cryochamber::agent::build_command("mock", "test prompt").unwrap();
     let program = format!("{:?}", cmd);
-    assert!(program.contains("sh"), "mock should resolve to sh: {program}");
+    assert!(
+        program.contains("sh"),
+        "mock should resolve to sh: {program}"
+    );
 }
 
 #[test]

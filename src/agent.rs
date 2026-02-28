@@ -55,7 +55,11 @@ fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
             }
             Ok((AgentKind::Codex, program.clone(), full_args))
         }
-        "mock" => Ok((AgentKind::Mock, "sh".to_string(), vec!["scenario.sh".to_string()])),
+        "mock" => Ok((
+            AgentKind::Mock,
+            "sh".to_string(),
+            vec!["scenario.sh".to_string()],
+        )),
         _ => Ok((AgentKind::Custom, program.clone(), args)),
     }
 }

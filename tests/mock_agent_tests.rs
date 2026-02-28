@@ -208,15 +208,24 @@ fn test_mock_ipc_all_commands() {
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
 
     // Verify all IPC commands were logged
-    assert!(log.contains("note: \"Starting IPC test\""), "Missing note in log: {log}");
+    assert!(
+        log.contains("note: \"Starting IPC test\""),
+        "Missing note in log: {log}"
+    );
     assert!(log.contains("reply:"), "Missing reply in log: {log}");
     assert!(log.contains("alert:"), "Missing alert in log: {log}");
-    assert!(log.contains("plan complete"), "Missing plan complete: {log}");
+    assert!(
+        log.contains("plan complete"),
+        "Missing plan complete: {log}"
+    );
 
     // Verify outbox message was written
     let outbox = dir.path().join("messages/outbox");
     if outbox.exists() {
-        let files: Vec<_> = fs::read_dir(&outbox).unwrap().filter_map(|e| e.ok()).collect();
+        let files: Vec<_> = fs::read_dir(&outbox)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
         assert!(!files.is_empty(), "Outbox should have a reply message");
     }
 }
