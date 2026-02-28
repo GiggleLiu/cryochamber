@@ -98,3 +98,22 @@ After all questions:
 Reference existing examples for plan.md structure:
 - `examples/mr-lazy/plan.md` — simple periodic task
 - `examples/chess-by-mail/plan.md` — adaptive event-driven task
+
+## Phase 2: Configure cryo.toml
+
+Generate from Phase 1 answers. No new questions — everything maps directly.
+
+| Brainstorm answer | cryo.toml field |
+|---|---|
+| AI agent (Q7) | `agent` |
+| Retry strategy (Q6) | `max_retries`, `max_session_duration` |
+| Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
+| Sync channel (Q9) | `web_host`, `web_port` |
+| Reports (Q10) | `report_time`, `report_interval` |
+| Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
+
+Process:
+1. Generate `cryo.toml` with values filled in and commented explanations
+2. Present to user — highlight non-default values and explain why each was chosen
+3. If Zulip or GitHub sync chosen, note that `cryo-zulip init` / `cryo-gh init` will run in Phase 3
+4. Write the file
