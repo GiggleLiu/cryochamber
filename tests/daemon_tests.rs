@@ -6,10 +6,12 @@ fn test_retry_state_provider_rotation_advances() {
     let mut retry = RetryState::new(5, 3); // 3 providers
     assert_eq!(retry.provider_index, 0);
 
-    retry.rotate_provider();
+    let wrapped = retry.rotate_provider();
+    assert!(!wrapped);
     assert_eq!(retry.provider_index, 1);
 
-    retry.rotate_provider();
+    let wrapped = retry.rotate_provider();
+    assert!(!wrapped);
     assert_eq!(retry.provider_index, 2);
 }
 

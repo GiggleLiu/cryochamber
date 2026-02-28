@@ -49,7 +49,7 @@ make copilot-review # request Copilot code review on current PR
 
 | Binary | Purpose |
 |--------|---------|
-| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
+| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `web`, `daemon` |
 | `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `send`, `receive`, `alert`, `time` (sends commands to daemon via socket; `receive` and `time` are local) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |

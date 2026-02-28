@@ -101,7 +101,7 @@ enum Commands {
         #[arg(long)]
         port: Option<u16>,
         /// Run in foreground instead of installing a service
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stop")]
         foreground: bool,
         /// Stop the web service
         #[arg(long)]

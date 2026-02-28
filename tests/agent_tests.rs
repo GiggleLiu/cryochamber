@@ -86,13 +86,24 @@ fn test_spawn_agent_empty_command() {
 fn test_spawn_agent_with_env_vars() {
     use std::collections::HashMap;
 
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("agent.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+
     let mut env = HashMap::new();
     env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
 
-    let child = cryochamber::agent::spawn_agent("echo", "hello", None, &env);
-    assert!(child.is_ok());
-    let mut child = child.unwrap();
-    let _ = child.wait();
+    let mut child =
+        cryochamber::agent::spawn_agent("printenv", "TEST_CRYO_KEY", Some(log_file), &env)
+            .unwrap();
+    let status = child.wait().unwrap();
+    assert!(status.success());
+
+    let output = std::fs::read_to_string(&log_path).unwrap();
+    assert!(
+        output.contains("test_value_123"),
+        "Expected env var in output: {output}"
+    );
 }
 
 #[test]

@@ -307,18 +307,10 @@ impl Daemon {
                 let _ = state::save_state(&self.state_path, &cryo_state);
 
                 // Build provider env for this session
+                let active_provider = config.providers.get(retry.provider_index);
                 let provider_env: std::collections::HashMap<String, String> =
-                    if config.providers.is_empty() {
-                        std::collections::HashMap::new()
-                    } else {
-                        config.providers[retry.provider_index].env.clone()
-                    };
-
-                let provider_name = if config.providers.is_empty() {
-                    None
-                } else {
-                    Some(config.providers[retry.provider_index].name.as_str())
-                };
+                    active_provider.map(|p| p.env.clone()).unwrap_or_default();
+                let provider_name = active_provider.map(|p| p.name.as_str());
 
                 match self.run_one_session(
                     &config,
@@ -367,16 +359,27 @@ impl Daemon {
                                     };
 
                                 if should_rotate {
-                                    let old_name =
-                                        config.providers[retry.provider_index].name.clone();
+                                    let old_name = config
+                                        .providers
+                                        .get(retry.provider_index)
+                                        .map(|p| p.name.as_str())
+                                        .unwrap_or("unknown");
                                     let wrapped = retry.rotate_provider();
-                                    let new_name = &config.providers[retry.provider_index].name;
+                                    let new_name = config
+                                        .providers
+                                        .get(retry.provider_index)
+                                        .map(|p| p.name.as_str())
+                                        .unwrap_or("unknown");
                                     eprintln!(
                                         "Daemon: rotating provider: {} -> {} (reason: {})",
                                         old_name,
                                         new_name,
                                         if quick_exit { "quick-exit" } else { "failure" },
                                     );
+
+                                    // Persist immediately so `cryo status` reflects the change
+                                    cryo_state.provider_index = Some(retry.provider_index);
+                                    let _ = state::save_state(&self.state_path, &cryo_state);
 
                                     if wrapped {
                                         // All providers tried — apply backoff before next cycle

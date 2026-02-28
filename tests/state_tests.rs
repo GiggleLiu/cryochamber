@@ -172,6 +172,7 @@ fn test_none_overrides_not_serialized() {
     assert!(!json.contains("max_session_duration_override"));
     assert!(!json.contains("next_wake"));
     assert!(!json.contains("last_report_time"));
+    assert!(!json.contains("provider_index"));
 }
 
 #[test]
@@ -223,4 +224,28 @@ fn test_next_wake_roundtrip() {
     // Verify it appears in JSON
     let json = std::fs::read_to_string(&state_path).unwrap();
     assert!(json.contains("next_wake"));
+}
+
+#[test]
+fn test_provider_index_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+        next_wake: None,
+        last_report_time: None,
+        provider_index: Some(2),
+    };
+    save_state(&state_path, &state).unwrap();
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    assert_eq!(loaded.provider_index, Some(2));
+
+    // Verify it appears in JSON
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(json.contains("provider_index"));
 }
