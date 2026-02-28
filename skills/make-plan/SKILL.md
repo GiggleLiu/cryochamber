@@ -126,7 +126,7 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
 - Verify `plan.md` exists and contains Goal and Tasks sections
 - Verify `cryo.toml` parses correctly (run `cryo init` and check for errors)
 - Verify the agent command is on PATH (e.g. `which opencode`)
-- Verify the AI agent can actually respond: run a minimal smoke test (e.g. `echo "reply OK" | opencode run` or `claude -p "reply OK"`) and check that it produces output without errors. This catches misconfigured API keys, missing credentials, or broken agent installations.
+- Verify the AI agent can actually respond: run `cryo start`, watch `cryo.log` for the first session to start, and confirm the agent produces output. Then `cryo cancel` to clean up. This tests with the actual provider env vars from `cryo.toml`, catching misconfigured API keys or broken agent installations.
 
 ### Layer 2: External tool validation
 

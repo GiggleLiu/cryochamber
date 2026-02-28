@@ -55,17 +55,14 @@ cryo log              # look for error messages or missing "agent hibernated"
 cat cryo-agent.log    # raw agent output — useful for API errors or crashes
 ```
 
-To verify the agent can respond at all, run a quick smoke test:
+To verify the agent can respond, start a single session and check the log:
 
 ```bash
-# For opencode:
-echo "Reply OK" | opencode run
-
-# For claude:
-claude -p "Reply OK"
+cryo start && cryo watch      # watch the first session
+cryo cancel                   # stop after verifying
 ```
 
-If this fails, check your API keys and agent installation.
+If the agent exits immediately or shows API errors in `cryo-agent.log`, check your API keys in `cryo.toml`.
 
 ## Files
 
