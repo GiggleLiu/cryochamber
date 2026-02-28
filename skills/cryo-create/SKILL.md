@@ -1,87 +1,187 @@
 ---
 name: cryo-create
-description: Use when the user wants to create a new cryochamber application, set up a scheduled agent task, or scaffold a cryo project. Also when user says "cryo init", "new cryo app", or asks about plan.md and cryo.toml setup
+description: Use when the user wants to create a new cryochamber application, set up a scheduled agent task, or scaffold a cryo project with plan.md and cryo.toml
 ---
 
 # Creating a Cryochamber Application
 
 ## Overview
 
-Guide users through creating a cryo app via conversational Q&A. Three phases: brainstorm the plan, configure cryo.toml, validate everything works. Assumes cryo CLI is on PATH.
+Guide users through creating a cryochamber application via conversational Q&A. Three phases: brainstorm the plan, configure cryo.toml, validate everything works.
 
-## Process
-
-1. Brainstorm (Q1-Q10) -> Draft plan.md -> User approves (or revise)
-2. Generate cryo.toml -> User approves (or revise)
-3. Validate: Files -> Tools -> Smoke test -> Ready
+Assumes cryo CLI is installed and on PATH.
 
 ## Phase 1: Brainstorm the Plan
 
 Ask questions **one at a time**. Suggest answers based on the task. Multiple choice where possible.
 
-**Q1. What's the task?** Open-ended: "What should the agent do each session?"
+### Q1. What's the task?
 
-**Q2. Schedule pattern.** Suggest based on Q1:
-- **Periodic** — every N minutes/hours (monitoring, scraping)
-- **Event-driven** — react to inbox (human input)
-- **Adaptive** — adjust pace based on activity (games, polling)
-- **Interactive schedule table** — co-create a multi-step schedule row by row (conferences, editorial calendars)
+Open-ended: "What should the agent do each session?"
 
-**Q3. External tools.** Suggest likely tools based on task. Skip if clearly none needed.
+### Q2. Schedule pattern
 
-**Q4. Human interaction.** Recommend based on task: No interaction (autonomous) | One-way (agent sends reports, recommended) | Two-way (human sends data)
+Suggest based on Q1, then ask:
+- **Periodic** (every N minutes/hours) — monitoring, scraping, reminders
+- **Event-driven** (react to inbox messages) — responding to human input
+- **Adaptive** (adjust pace based on activity) — correspondence games, polling
+- **Interactive schedule table** — build a multi-step schedule collaboratively (e.g. "Day 1: send CFP, Day 7: remind reviewers, Day 14: collect results"). Good for conference organizing, editorial calendars, multi-phase projects. Co-create the table with the user row by row.
 
-**Q5. Persistent state.** What to remember across sessions? Suggest counters, progress, timestamps. Warn: `cryo-agent note` is the only cross-session memory.
+### Q3. External tools
 
-**Q6. Failure & retry.** Suggest `max_retries` (default 5, retries continue every 60s after exhaustion) and `max_session_duration` (default 0 is dangerous — suggest 60-300s).
+Analyze the task and suggest likely tools (e.g. "this sounds like it needs a web scraper — would curl or a Python script work?"). **Skip if the task clearly needs no external tools.**
 
-**Q7. AI agent & providers.** Agent command: opencode (default) | claude | codex | custom. Multiple API keys? Walk through `[[providers]]` entries + rotation strategy: `quick-exit` (recommended) | `any-failure` | `never`.
+### Q4. Human interaction
 
-**Q8. Delayed wake.** If agent wakes 5+ min late, how to react? Suggest: Adjust and continue (recommended) | Alert human (time-sensitive) | Abort | Ignore.
+Recommend based on task:
+- **No interaction** (autonomous) — monitoring, automation
+- **One-way** (agent sends reports) — scraping, summarization (Recommended for most tasks)
+- **Two-way** (human sends commands/data) — games, collaborative planning
 
-**Q9. Sync channel.** Zulip (recommended, walk through zuliprc + stream) | GitHub Discussions (repo + category) | Web UI (`cryo web`, pick port) | None.
+### Q5. Persistent state
 
-**Q10. Periodic reports.** Daily summaries? Set `report_time` + `report_interval`, or skip.
+What does the agent need to remember across sessions? Suggest based on task (counters, progress markers, data snapshots, timestamps). Warn: `cryo-agent note` is the **only** cross-session memory.
+
+### Q6. Failure & retry strategy
+
+What if the agent crashes or hangs? Suggest based on task:
+- `max_retries`: how many retries (default 5). Note: after exhaustion, retries continue every 60s.
+- `max_session_duration`: timeout in seconds. **Default 0 (no timeout) is dangerous for tasks that can hang.** Suggest 60–300s based on task complexity.
+
+### Q7. AI agent & providers
+
+Which agent command?
+- **opencode** (default) — headless coding agent
+- **claude** — Anthropic's Claude CLI
+- **codex** — OpenAI's Codex CLI
+- **custom** — any command
+
+Then: do you have multiple API keys or providers to rotate between?
+- If yes: walk through `[[providers]]` entries. Each needs a `name` and `env` map (e.g. `ANTHROPIC_API_KEY`). Suggest rotation strategy:
+  - `quick-exit` (recommended) — rotate only on <5s exit (likely bad key)
+  - `any-failure` — rotate on any crash
+  - `never` (default)
+- If no: skip, single provider is fine.
+
+### Q8. Delayed wake reaction
+
+If the machine was suspended and the agent wakes 5+ minutes late, how should it react? Suggest based on task:
+- **Adjust and continue** (recommended for most) — recalculate deadlines, skip missed steps, catch up
+- **Alert the human** — send a message about the delay, then proceed (recommended for time-sensitive tasks)
+- **Abort the session** — exit with error, let human decide
+- **Ignore** — treat as normal wake
+
+### Q9. Notification & sync channel
+
+How should the agent communicate with the user?
+- **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval.
+- **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
+- **Web UI only** — simplest, local browser via `cryo web`. Pick a port.
+- **None** — agent runs silently, check logs manually.
+
+### Q10. Periodic reports
+
+Want daily/hourly health summaries as desktop notifications?
+- If yes: set `report_time` (e.g. "09:00") and `report_interval` (hours, e.g. 24 for daily).
+- If no: skip (disabled by default).
 
 ### Output
 
-Draft `plan.md` with Goal, Tasks, Configuration, Notes. Include schedule table if applicable, delayed wake handling in Tasks, persistent state in Notes. Present for approval, then write.
+After all questions:
+1. Draft `plan.md` with **Goal**, **Tasks**, **Configuration**, and **Notes** sections
+2. For interactive schedule tables: embed the schedule as a markdown table in Tasks
+3. Include delayed wake handling instructions in Tasks
+4. Include persistent state strategy in Notes
+5. Present draft to user for approval/edits
+6. Write the file
 
-Reference: `examples/mr-lazy/plan.md` (periodic), `examples/chess-by-mail/plan.md` (adaptive).
+Reference existing examples for plan.md structure:
+- `examples/mr-lazy/plan.md` — simple periodic task
+- `examples/chess-by-mail/plan.md` — adaptive event-driven task
 
 ## Phase 2: Configure cryo.toml
 
-Map Phase 1 answers directly — no new questions.
+Generate from Phase 1 answers. No new questions — everything maps directly.
 
-| Answer | cryo.toml field |
+| Brainstorm answer | cryo.toml field |
 |---|---|
-| Agent (Q7) | `agent` |
-| Retry (Q6) | `max_retries`, `max_session_duration` |
-| Interaction (Q4) | `watch_inbox` (two-way -> true) |
-| Channel (Q9) | `web_host`, `web_port` |
+| AI agent (Q7) | `agent` |
+| Retry strategy (Q6) | `max_retries`, `max_session_duration` |
+| Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
+| Sync channel (Q9) | `web_host`, `web_port` |
 | Reports (Q10) | `report_time`, `report_interval` |
-| Providers (Q7) | `rotate_on`, `[[providers]]` |
-| Delayed wake (Q8) | in plan.md, not cryo.toml |
+| Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 
-Present config with commented explanations. Note if sync init needed in Phase 3. Write the file.
+Process:
+1. Generate `cryo.toml` with values filled in and commented explanations
+2. Present to user — highlight non-default values and explain why each was chosen
+3. If Zulip or GitHub sync chosen, note that `cryo-zulip init` / `cryo-gh init` will run in Phase 3
+4. Write the file
 
 ## Phase 3: Validate
 
-Three layers, in order. On failure: stop, suggest fixes, retry that layer.
+Three layers, in order. On failure: stop, report what failed, suggest fixes, let user retry that layer.
 
-1. **Files** — plan.md has Goal + Tasks, cryo.toml parses, agent on PATH
-2. **Tools** — smoke test each external tool in plan.md (scripts run, APIs reachable, env vars set, provider keys valid)
-3. **Smoke test** — `cryo init && cryo start`, wait for first session (check cryo.log), init sync channel if configured, `cryo cancel`
+### Layer 1: File validation
+
+- Verify `plan.md` exists and contains Goal and Tasks sections
+- Verify `cryo.toml` parses correctly (run `cryo init` and check for errors)
+- Verify the agent command is on PATH (e.g. `which opencode`)
+
+### Layer 2: External tool validation
+
+- For each external tool referenced in `plan.md`: run a smoke test
+  - Scripts: verify they exist and execute (e.g. `uv run chess_engine.py board`)
+  - APIs: verify endpoints are reachable (e.g. `curl -sf https://... > /dev/null`)
+  - Env vars: verify required variables are set and non-empty
+- If provider rotation configured: validate each provider's env vars
+
+### Layer 3: Live smoke test
+
+1. Run `cryo init && cryo start`
+2. Wait for the first session to complete (watch `cryo.log` for agent start → hibernate)
+3. If sync channel configured:
+   - Zulip: run `cryo-zulip init --config <path> --stream <name>` and verify connection
+   - GitHub: run `cryo-gh init --repo <repo>` and verify connection
+4. Run `cryo cancel` to clean up
+5. Report: session count, any errors in `cryo.log`, agent exit status
 
 On success: "Your cryo application is ready. Run `cryo start` to begin."
+
+## Process Flow
+
+```dot
+digraph cryo_create {
+    "Q1-Q10: Brainstorm" [shape=box];
+    "Draft plan.md" [shape=box];
+    "User approves?" [shape=diamond];
+    "Generate cryo.toml" [shape=box];
+    "User approves config?" [shape=diamond];
+    "Layer 1: Files" [shape=box];
+    "Layer 2: Tools" [shape=box];
+    "Layer 3: Smoke test" [shape=box];
+    "Ready" [shape=doublecircle];
+
+    "Q1-Q10: Brainstorm" -> "Draft plan.md";
+    "Draft plan.md" -> "User approves?";
+    "User approves?" -> "Draft plan.md" [label="revise"];
+    "User approves?" -> "Generate cryo.toml" [label="yes"];
+    "Generate cryo.toml" -> "User approves config?";
+    "User approves config?" -> "Generate cryo.toml" [label="revise"];
+    "User approves config?" -> "Layer 1: Files" [label="yes"];
+    "Layer 1: Files" -> "Layer 2: Tools";
+    "Layer 2: Tools" -> "Layer 3: Smoke test";
+    "Layer 3: Smoke test" -> "Ready";
+}
+```
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---|---|
-| No `max_session_duration` — hangs forever | Set timeout (60-300s) |
-| Hardcoded timestamps | Use `cryo-agent time "+N minutes"` |
-| No persistent state — forgets everything | Use `cryo-agent note` |
-| Missing hibernation — treated as crash | Every path ends with `cryo-agent hibernate` |
-| `watch_inbox = false` with two-way | Set `watch_inbox = true` |
-| Provider env vars not set | Validate in Phase 3 |
+| No `max_session_duration` — agent hangs forever | Always set a timeout (60–300s) |
+| Hardcoded timestamps in plan.md | Always use `cryo-agent time "+N minutes"` |
+| No persistent state strategy — agent forgets everything | Use `cryo-agent note` for all cross-session state |
+| Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |
+| `watch_inbox = false` with two-way interaction | Set `watch_inbox = true` for event-driven tasks |
+| Provider env vars not set | Validate in Phase 3 before starting |
