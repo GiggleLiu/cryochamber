@@ -94,8 +94,7 @@ fn test_spawn_agent_with_env_vars() {
     env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
 
     let mut child =
-        cryochamber::agent::spawn_agent("printenv", "TEST_CRYO_KEY", Some(log_file), &env)
-            .unwrap();
+        cryochamber::agent::spawn_agent("printenv", "TEST_CRYO_KEY", Some(log_file), &env).unwrap();
     let status = child.wait().unwrap();
     assert!(status.success());
 

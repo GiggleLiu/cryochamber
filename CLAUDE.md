@@ -100,6 +100,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - `timer.json` — runtime state only (session number, PID lock, retry count, CLI overrides)
 - `cryo.log` — append-only structured event log
 - `cryo-agent.log` — agent stdout/stderr (raw tool-call output)
+- `todo.json` — per-project TODO items for agent task tracking
 - `messages/inbox/` — incoming messages for the agent
 - `messages/outbox/` — outgoing messages (fallback alerts)
 - `messages/inbox/archive/` — processed inbox messages
