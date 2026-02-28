@@ -1,0 +1,776 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Cryochamber</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Hibernation chamber for AI agents">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-0ca1fefc.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-4931a835.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Cryochamber</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/GiggleLiu/cryochamber" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cryochamber"><a class="header" href="#cryochamber">Cryochamber</a></h1>
+<p><strong>Cryochamber</strong> is a hibernation chamber for AI agents (Claude, OpenCode, Codex). It hibernates an AI agent between sessions and wakes it at the right time — not on a fixed schedule. The agent checks the plan and log, completes a task, and decides when to wake next. Cryochamber empowers AI agents to run tasks that span days, weeks, or even years, like interstellar travelers in stasis.</p>
+<p>Our goal is to automate long-running activities that are too irregular for cron. A conference deadline slips because submissions are low. A space probe’s next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about <em>when</em> to wake and <em>what</em> to do next, with a persistent daemon that manages the lifecycle.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How It Works</a></h2>
+<pre><code class="language-text">cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate → sleep
+                                                                                    ↓
+                  inbox message → (immediate wake) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
+                                                                                    ↓
+                                  (wake time reached) ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+                                       ↓
+                                  run agent → agent calls cryo-agent hibernate → ...
+</code></pre>
+<p><strong>The daemon</strong> (cryochamber) handles lifecycle: sleeping until wake time, watching the inbox for reactive wake, enforcing session timeout, retrying on failure, and executing fallback alerts if something goes wrong.</p>
+<p><strong>The agent</strong> (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates with the daemon via <code>cryo-agent</code> CLI commands over a Unix domain socket.</p>
+<p><strong>Sessions</strong> are the unit of work. Each session gets the plan, any new inbox messages, and the previous session’s event log as context. The agent uses <code>cryo-agent note</code> to leave memory for future sessions.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li>Rust toolchain (<a href="https://rustup.rs">rustup.rs</a>)</li>
+<li><a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a></li>
+<li>macOS or Linux</li>
+</ul>
+<h2 id="install"><a class="header" href="#install">Install</a></h2>
+<pre><code class="language-bash">cargo install --path .
+claude skill install --path skills/make-plan
+</code></pre>
+<p>This installs the <code>cryo</code> CLI and the <code>make-plan</code> skill for Claude Code.</p>
+<h2 id="create-a-project-with-make-plan-recommended"><a class="header" href="#create-a-project-with-make-plan-recommended">Create a Project with <code>/make-plan</code> (Recommended)</a></h2>
+<p>The fastest way to set up a cryochamber application is through the <code>/make-plan</code> skill. Open Claude Code and type <code>/make-plan</code>. The skill guides you through four phases:</p>
+<ol>
+<li><strong>Brainstorm</strong> — answer questions about your task, schedule, tools, messaging, and providers</li>
+<li><strong>Configure</strong> — generates <code>plan.md</code> and <code>cryo.toml</code> from your answers</li>
+<li><strong>Validate</strong> — tests the agent, verifies files, and runs a smoke test</li>
+<li><strong>Start</strong> — optionally starts the daemon immediately</li>
+</ol>
+<p>The skill handles everything: writing the plan, configuring the agent, setting up Zulip or GitHub sync, and verifying the agent can respond. When it finishes, your project is ready to run.</p>
+<h2 id="manual-setup"><a class="header" href="#manual-setup">Manual Setup</a></h2>
+<p>If you prefer to set up without Claude Code:</p>
+<h3 id="initialize-a-project"><a class="header" href="#initialize-a-project">Initialize a Project</a></h3>
+<pre><code class="language-bash">mkdir my-project &amp;&amp; cd my-project
+cryo init                      # for opencode (writes AGENTS.md + cryo.toml + README.md)
+cryo init --agent claude       # for Claude Code (writes CLAUDE.md + cryo.toml + README.md)
+</code></pre>
+<h3 id="edit-the-generated-files"><a class="header" href="#edit-the-generated-files">Edit the Generated Files</a></h3>
+<p>Write your task plan in <code>plan.md</code> — describe the goal, step-by-step tasks, and notes about persistent state. See the <a href="#mr-lazy">Mr. Lazy</a> and <a href="#chess-by-mail">Chess by Mail</a> examples for reference.</p>
+<p>Review <code>cryo.toml</code> and adjust the agent command, retry policy, and inbox settings as needed.</p>
+<h3 id="start-the-daemon"><a class="header" href="#start-the-daemon">Start the Daemon</a></h3>
+<pre><code class="language-bash">cryo start                                                    # start the daemon
+cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
+cryo-zulip sync
+cryo-gh init --repo owner/repo                                # if using GitHub Discussions
+cryo-gh sync
+cryo web                                                      # if using the web UI
+cryo watch                                                    # follow the live log
+</code></pre>
+<h2 id="what-happens"><a class="header" href="#what-happens">What Happens</a></h2>
+<ol>
+<li>Cryochamber installs an OS service (launchd/systemd) that <strong>survives reboots</strong></li>
+<li>The daemon runs your agent with the plan and a task prompt</li>
+<li>The agent does its work and calls <code>cryo-agent hibernate</code> to schedule the next wake</li>
+<li>The daemon sleeps until the next wake time and repeats</li>
+<li>New messages in <code>messages/inbox/</code> wake the daemon immediately</li>
+</ol>
+<p>Session events are logged to <code>cryo.log</code>. Monitor progress with <code>cryo watch</code>. Check state with <code>cryo status</code>.</p>
+<h2 id="verify-its-working"><a class="header" href="#verify-its-working">Verify It’s Working</a></h2>
+<p>After starting, confirm the first session completes:</p>
+<pre><code class="language-bash">cryo status    # should show "Daemon: running" with session number and PID
+cryo watch     # follow the live log — look for "agent hibernated" to confirm success
+</code></pre>
+<p>Here’s what a successful session looks like in <code>cryo.log</code>:</p>
+<pre><code>--- CRYO SESSION 1 | 2026-02-25T01:13:12Z ---
+task: Continue the plan
+agent: opencode
+inbox: 0 messages
+[01:13:12] agent started (pid 75159)
+[01:13:50] hibernate: wake=2026-02-25T01:16, exit=0,
+           summary="Completed first task, scheduling next check"
+[01:14:00] agent exited (code 0)
+[01:14:00] session complete
+--- CRYO END ---
+</code></pre>
+<h2 id="day-to-day-usage"><a class="header" href="#day-to-day-usage">Day-to-Day Usage</a></h2>
+<pre><code class="language-bash">cryo status          # quick health check
+cryo log             # read full session history
+cryo web             # visual overview in the browser
+cryo send "message"  # send a message to the agent's inbox
+cryo receive         # read messages the agent sent you
+cryo wake            # force an immediate wake
+cryo restart         # restart the daemon
+cryo cancel          # stop the daemon and clean up
+cryo ps              # list all running daemons
+</code></pre>
+<h2 id="example-run"><a class="header" href="#example-run">Example Run</a></h2>
+<p>The <a href="https://github.com/GiggleLiu/cryochamber/tree/main/examples/mr-lazy"><code>examples/mr-lazy/</code></a> example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.</p>
+<pre><code class="language-bash">cd examples/mr-lazy &amp;&amp; cryo init &amp;&amp; cryo start &amp;&amp; cryo watch
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
+<p><code>cryo init</code> creates a <code>cryo.toml</code> file with project settings:</p>
+<pre><code class="language-toml"># cryo.toml — Cryochamber project configuration
+agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
+max_retries = 1           # Max retry attempts on agent failure (1 = no retry)
+max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
+watch_inbox = true        # Watch inbox for reactive wake
+
+# Web UI host and port (for `cryo web`)
+# web_host = "127.0.0.1"
+# web_port = 3945
+</code></pre>
+<h2 id="fields"><a class="header" href="#fields">Fields</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>agent</code></td><td><code>"opencode"</code></td><td>Agent command to run. Use <code>"claude"</code> for Claude Code, <code>"codex"</code> for Codex.</td></tr>
+<tr><td><code>max_retries</code></td><td><code>1</code></td><td>Max retry attempts on agent failure. <code>1</code> means no retry.</td></tr>
+<tr><td><code>max_session_duration</code></td><td><code>0</code></td><td>Session timeout in seconds. <code>0</code> disables timeout.</td></tr>
+<tr><td><code>watch_inbox</code></td><td><code>true</code></td><td>Watch <code>messages/inbox/</code> for new files and wake immediately.</td></tr>
+<tr><td><code>web_host</code></td><td><code>"127.0.0.1"</code></td><td>Host for <code>cryo web</code> to listen on. Use <code>"0.0.0.0"</code> for remote access only behind an authenticated, TLS-terminating proxy.</td></tr>
+<tr><td><code>web_port</code></td><td><code>3945</code></td><td>Port for <code>cryo web</code> to listen on.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI Overrides</a></h2>
+<p>CLI flags to <code>cryo start</code> override config values for that session:</p>
+<pre><code class="language-bash">cryo start --agent claude             # override agent
+cryo start --max-retries 3            # override retries
+cryo start --max-session-duration 3600  # override timeout
+</code></pre>
+<p>These overrides are stored in <code>timer.json</code> (runtime state) and do not modify <code>cryo.toml</code>.</p>
+<h2 id="config-vs-state"><a class="header" href="#config-vs-state">Config vs State</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Purpose</th><th>Persists</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryo.toml</code></td><td>Project configuration (checked into git)</td><td>Yes</td></tr>
+<tr><td><code>timer.json</code></td><td>Runtime state (session number, PID lock, CLI overrides)</td><td>No (ephemeral)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="commands"><a class="header" href="#commands">Commands</a></h1>
+<h2 id="operator-cryo"><a class="header" href="#operator-cryo">Operator (<code>cryo</code>)</a></h2>
+<pre><code class="language-bash">cryo init [--agent &lt;cmd&gt;]           # Initialize working directory (writes cryo.toml)
+cryo start [--agent &lt;cmd&gt;]          # Start the daemon (reads cryo.toml for config)
+cryo start --max-retries 3          # Override max retries from cryo.toml
+cryo start --max-session-duration 3600  # Override session timeout from cryo.toml
+cryo status                         # Show current state
+cryo ps [--kill-all]                # List (or kill) all running daemons
+cryo restart                        # Kill running daemon and restart
+cryo cancel                         # Stop the daemon and remove state
+cryo watch [--all]                  # Watch session log in real-time
+cryo log                            # Print session log
+cryo send "&lt;message&gt;"               # Send a message to the agent's inbox
+cryo receive                        # Read messages from the agent's outbox
+cryo wake ["message"]               # Send a wake message to the daemon's inbox
+cryo web [--host &lt;ip&gt;] [--port &lt;n&gt;] # Open browser chat UI
+cryo clean [--force]                # Remove runtime files (logs, state, messages)
+</code></pre>
+<h2 id="agent-ipc-cryo-agent"><a class="header" href="#agent-ipc-cryo-agent">Agent IPC (<code>cryo-agent</code>)</a></h2>
+<p>These commands are used by the AI agent to communicate with the daemon. They send JSON messages over a Unix domain socket.</p>
+<pre><code class="language-bash">cryo-agent hibernate --wake &lt;ISO8601&gt;  # Schedule next wake
+cryo-agent hibernate --complete        # Mark plan as complete
+cryo-agent note "text"                 # Leave a note for next session
+cryo-agent send "message"             # Send message to human (writes to outbox)
+cryo-agent receive                     # Read inbox messages from human
+cryo-agent time "+30 minutes"          # Compute a future timestamp
+cryo-agent alert &lt;action&gt; &lt;target&gt; "msg"  # Set dead-man switch
+</code></pre>
+<h2 id="github-sync-cryo-gh"><a class="header" href="#github-sync-cryo-gh">GitHub Sync (<code>cryo-gh</code>)</a></h2>
+<p>Sync messages with a GitHub Discussion board for remote monitoring and two-way messaging. See the <a href="#github-discussion-sync">GitHub Sync</a> page for commands, setup, and workflow.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="web-ui"><a class="header" href="#web-ui">Web UI</a></h1>
+<p><code>cryo web</code> starts a local web server with a chat interface for sending messages to your agent and monitoring its activity.</p>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<pre><code class="language-bash">cryo web                         # default: http://127.0.0.1:3945
+cryo web --port 8080             # custom port
+cryo web --host 0.0.0.0          # listen on all interfaces (see warning below)
+</code></pre>
+<blockquote>
+<p><strong>Warning:</strong> The web UI has no authentication. Binding to <code>0.0.0.0</code> exposes all endpoints (status, messages, wake) to the network. Only do this behind an authenticated, TLS-terminating reverse proxy.</p>
+</blockquote>
+<p>Or configure in <code>cryo.toml</code>:</p>
+<pre><code class="language-toml">web_host = "127.0.0.1"
+web_port = 3945
+</code></pre>
+<h2 id="features"><a class="header" href="#features">Features</a></h2>
+<ul>
+<li><strong>Chat interface</strong> — Send messages to the agent’s inbox and see outbox replies</li>
+<li><strong>Status bar</strong> — Shows daemon status (running/stopped), session number, and agent name</li>
+<li><strong>Wake button</strong> — Force the daemon to wake immediately (sends SIGUSR1)</li>
+<li><strong>Live log</strong> — Toggle the log panel to see <code>cryo.log</code> events in real-time</li>
+<li><strong>Real-time updates</strong> — Server-Sent Events (SSE) stream new messages, status changes, and log lines as they happen</li>
+<li><strong>Polling fallback</strong> — Periodic polling ensures messages from the daemon are never missed</li>
+</ul>
+<h2 id="api-endpoints"><a class="header" href="#api-endpoints">API Endpoints</a></h2>
+<p>The web server exposes a JSON API:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>/</code></td><td>GET</td><td>Chat UI (HTML)</td></tr>
+<tr><td><code>/api/status</code></td><td>GET</td><td>Daemon status (running, session, agent, log tail)</td></tr>
+<tr><td><code>/api/messages</code></td><td>GET</td><td>All messages (inbox + archived inbox + outbox), sorted by time</td></tr>
+<tr><td><code>/api/send</code></td><td>POST</td><td>Send a message to inbox (<code>{ "body": "...", "from": "...", "subject": "..." }</code>)</td></tr>
+<tr><td><code>/api/wake</code></td><td>POST</td><td>Wake the daemon (<code>{ "message": "..." }</code>)</td></tr>
+<tr><td><code>/api/events</code></td><td>GET</td><td>SSE stream (events: <code>message</code>, <code>status</code>, <code>log</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="github-discussion-sync"><a class="header" href="#github-discussion-sync">GitHub Discussion Sync</a></h1>
+<p><code>cryo-gh</code> bridges a cryochamber project with a GitHub Discussion, enabling remote monitoring and two-way messaging. Discussion comments become inbox messages for the agent; outbox messages from the agent become Discussion comments.</p>
+<h2 id="prerequisites-1"><a class="header" href="#prerequisites-1">Prerequisites</a></h2>
+<ul>
+<li><a href="https://cli.github.com">GitHub CLI</a> (<code>gh</code>) installed and authenticated (<code>gh auth login</code>)</li>
+<li>A GitHub repository where you have write access</li>
+<li>An initialized cryochamber project (<code>cryo init</code>)</li>
+</ul>
+<h2 id="commands-1"><a class="header" href="#commands-1">Commands</a></h2>
+<pre><code class="language-bash">cryo-gh init --repo owner/repo   # Create a Discussion and write gh-sync.json
+cryo-gh sync [--interval 30]     # Start background sync daemon
+cryo-gh unsync                   # Stop the sync daemon
+cryo-gh pull                     # One-shot: pull new comments → inbox
+cryo-gh push                     # One-shot: push latest session log → Discussion
+cryo-gh status                   # Show sync configuration
+</code></pre>
+<h2 id="how-sync-works"><a class="header" href="#how-sync-works">How Sync Works</a></h2>
+<p><code>cryo-gh sync</code> spawns a background daemon (just like <code>cryo start</code> does). It does two things in a loop:</p>
+<p><strong>Discussion → Inbox</strong> (pull direction): Polls the GitHub Discussion for new comments every <code>--interval</code> seconds (default: 30). New comments are written to <code>messages/inbox/</code> where the daemon picks them up on the next session.</p>
+<p><strong>Outbox → Discussion</strong> (push direction): Watches <code>messages/outbox/</code> for new files. When the agent sends a message (via <code>cryo-agent send</code>), the sync daemon posts it as a Discussion comment and archives the file to <code>messages/outbox/archive/</code>.</p>
+<pre><code class="language-text">GitHub Discussion                  Local filesystem
+─────────────────                  ─────────────────
+New comment        ──(pull)──→     messages/inbox/       → agent reads on wake
+                   ←─(push)──     messages/outbox/      ← agent writes via cryo-agent send
+</code></pre>
+<p>The sync is managed as a system service (launchd on macOS, systemd on Linux) that <strong>survives reboots</strong>. Logs go to <code>cryo-gh-sync.log</code>.</p>
+<h2 id="recommended-workflow"><a class="header" href="#recommended-workflow">Recommended Workflow</a></h2>
+<h3 id="1-initialize-the-project"><a class="header" href="#1-initialize-the-project">1. Initialize the project</a></h3>
+<pre><code class="language-bash">cryo init --agent claude
+# edit plan.md with your task
+</code></pre>
+<h3 id="2-link-to-github"><a class="header" href="#2-link-to-github">2. Link to GitHub</a></h3>
+<pre><code class="language-bash">cryo-gh init --repo owner/repo
+</code></pre>
+<p>This creates a Discussion in the repository (enabling Discussions automatically if needed) and writes <code>gh-sync.json</code> with the Discussion number and node ID.</p>
+<h3 id="3-start-the-daemon-and-sync"><a class="header" href="#3-start-the-daemon-and-sync">3. Start the daemon and sync</a></h3>
+<pre><code class="language-bash">cryo start
+cryo-gh sync
+</code></pre>
+<p>Both run as background daemons. Monitor with <code>cryo watch</code>.</p>
+<h3 id="4-send-messages-from-github"><a class="header" href="#4-send-messages-from-github">4. Send messages from GitHub</a></h3>
+<p>Post a comment on the Discussion from the GitHub web UI or mobile app. The sync daemon picks it up within 30 seconds and writes it to <code>messages/inbox/</code>. The daemon wakes the agent on the next session (or immediately if <code>watch_inbox = true</code>).</p>
+<h3 id="5-read-agent-replies-on-github"><a class="header" href="#5-read-agent-replies-on-github">5. Read agent replies on GitHub</a></h3>
+<p>When the agent calls <code>cryo-agent send "message"</code>, the outbox file is detected immediately by the sync watcher and posted as a Discussion comment.</p>
+<h3 id="6-stop"><a class="header" href="#6-stop">6. Stop</a></h3>
+<pre><code class="language-bash">cryo-gh unsync   # stop sync daemon
+cryo cancel      # stop cryo daemon
+</code></pre>
+<h2 id="one-shot-usage"><a class="header" href="#one-shot-usage">One-Shot Usage</a></h2>
+<p>For manual or scripted use without the sync daemon:</p>
+<pre><code class="language-bash">cryo-gh pull    # fetch new Discussion comments into inbox
+cryo-gh push    # post the latest session log to the Discussion
+</code></pre>
+<h2 id="rate-limits"><a class="header" href="#rate-limits">Rate Limits</a></h2>
+<p>The sync daemon uses the <code>gh</code> CLI which makes authenticated GitHub API requests. At the default 30-second interval, this is ~120 requests/hour — well within GitHub’s 5,000 requests/hour limit for authenticated users.</p>
+<h2 id="files"><a class="header" href="#files">Files</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gh-sync.json</code></td><td>Sync state: repo, Discussion number/ID, cursor</td></tr>
+<tr><td><code>cryo-gh-sync.log</code></td><td>Sync daemon log output</td></tr>
+<tr><td><code>messages/inbox/</code></td><td>Incoming messages (from Discussion comments)</td></tr>
+<tr><td><code>messages/outbox/</code></td><td>Outgoing messages (posted to Discussion)</td></tr>
+<tr><td><code>messages/outbox/archive/</code></td><td>Posted outbox messages (archived after sync)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="zulip-sync"><a class="header" href="#zulip-sync">Zulip Sync</a></h1>
+<p><code>cryo-zulip</code> bridges a cryochamber project with a Zulip stream, enabling remote monitoring and two-way messaging. Stream messages become inbox messages for the agent; outbox messages from the agent are posted back to the stream.</p>
+<h2 id="prerequisites-2"><a class="header" href="#prerequisites-2">Prerequisites</a></h2>
+<ul>
+<li>A Zulip server with a bot account</li>
+<li>A <code>zuliprc</code> file with bot credentials (standard Zulip INI format with <code>[api]</code> section containing <code>email</code>, <code>key</code>, <code>site</code>)</li>
+<li>A Zulip stream accessible by the bot</li>
+<li>An initialized cryochamber project (<code>cryo init</code>)</li>
+</ul>
+<h2 id="commands-2"><a class="header" href="#commands-2">Commands</a></h2>
+<pre><code class="language-bash">cryo-zulip init --config ~/.zuliprc --stream my-stream  # Validate credentials, resolve stream, write zulip-sync.json
+cryo-zulip init --config ~/.zuliprc --stream my-stream --topic mychannel  # Custom topic (default: "cryochamber")
+cryo-zulip sync [--interval 30]                         # Start background sync daemon
+cryo-zulip unsync                                       # Stop the sync daemon
+cryo-zulip pull                                         # One-shot: pull new messages → inbox
+cryo-zulip push                                         # One-shot: push latest session log → stream
+cryo-zulip status                                       # Show sync configuration
+</code></pre>
+<h2 id="how-sync-works-1"><a class="header" href="#how-sync-works-1">How Sync Works</a></h2>
+<p><code>cryo-zulip sync</code> spawns a background daemon (just like <code>cryo start</code> does). It does two things in a loop:</p>
+<p><strong>Stream → Inbox</strong> (pull direction): Polls the Zulip stream for new messages every <code>--interval</code> seconds (default: 30). New messages are written to <code>messages/inbox/</code> where the cryo daemon picks them up on the next session. The bot’s own messages are filtered out to prevent echo loops.</p>
+<p><strong>Outbox → Stream</strong> (push direction): Watches <code>messages/outbox/</code> for new files. When the agent sends a message (via <code>cryo-agent send</code>), the sync daemon posts it to the Zulip stream and archives the file to <code>messages/outbox/archive/</code>.</p>
+<pre><code class="language-text">Zulip Stream                      Local filesystem
+────────────                      ─────────────────
+New message        ──(pull)──→    messages/inbox/       → agent reads on wake
+                   ←─(push)──    messages/outbox/      ← agent writes via cryo-agent send
+</code></pre>
+<p>The sync is managed as a system service (launchd on macOS, systemd on Linux) that <strong>survives reboots</strong>. Logs go to <code>cryo-zulip-sync.log</code>.</p>
+<h2 id="recommended-workflow-1"><a class="header" href="#recommended-workflow-1">Recommended Workflow</a></h2>
+<h3 id="1-initialize-the-project-1"><a class="header" href="#1-initialize-the-project-1">1. Initialize the project</a></h3>
+<pre><code class="language-bash">cryo init --agent claude
+# edit plan.md with your task
+</code></pre>
+<h3 id="2-link-to-zulip"><a class="header" href="#2-link-to-zulip">2. Link to Zulip</a></h3>
+<pre><code class="language-bash">cryo-zulip init --config ~/.zuliprc --stream my-stream
+</code></pre>
+<p>This validates the bot credentials, resolves the stream ID, and writes <code>zulip-sync.json</code>. The zuliprc is copied to <code>.cryo/zuliprc</code> for use by the sync daemon.</p>
+<h3 id="3-start-the-daemon-and-sync-1"><a class="header" href="#3-start-the-daemon-and-sync-1">3. Start the daemon and sync</a></h3>
+<pre><code class="language-bash">cryo start
+cryo-zulip sync
+</code></pre>
+<p>Both run as background daemons. Monitor with <code>cryo watch</code>.</p>
+<h3 id="4-send-messages-from-zulip"><a class="header" href="#4-send-messages-from-zulip">4. Send messages from Zulip</a></h3>
+<p>Post a message in the Zulip stream from the web UI or mobile app. The sync daemon picks it up within 30 seconds and writes it to <code>messages/inbox/</code>. The cryo daemon wakes the agent on the next session (or immediately if <code>watch_inbox = true</code>).</p>
+<h3 id="5-read-agent-replies-on-zulip"><a class="header" href="#5-read-agent-replies-on-zulip">5. Read agent replies on Zulip</a></h3>
+<p>When the agent calls <code>cryo-agent send "message"</code>, the outbox file is detected immediately by the sync watcher and posted to the Zulip stream.</p>
+<h3 id="6-stop-1"><a class="header" href="#6-stop-1">6. Stop</a></h3>
+<pre><code class="language-bash">cryo-zulip unsync   # stop sync daemon
+cryo cancel         # stop cryo daemon
+</code></pre>
+<h2 id="one-shot-usage-1"><a class="header" href="#one-shot-usage-1">One-Shot Usage</a></h2>
+<p>For manual or scripted use without the sync daemon:</p>
+<pre><code class="language-bash">cryo-zulip pull    # fetch new stream messages into inbox
+cryo-zulip push    # post the latest session log to the stream
+</code></pre>
+<h2 id="example-chess-by-mail-over-zulip"><a class="header" href="#example-chess-by-mail-over-zulip">Example: Chess by Mail over Zulip</a></h2>
+<p>Play correspondence chess against an AI agent, sending moves from the Zulip web UI:</p>
+<pre><code class="language-bash">cd examples/chess-by-mail
+cryo-zulip init --config ~/.zuliprc --stream chess-game
+cryo init &amp;&amp; cryo start
+cryo-zulip sync --interval 30
+# Send your moves as messages in the Zulip stream!
+</code></pre>
+<p>See <a href="#chess-by-mail">Chess by Mail</a> for the full example.</p>
+<h2 id="files-1"><a class="header" href="#files-1">Files</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>zulip-sync.json</code></td><td>Sync state: site, stream, stream ID, bot email, cursor</td></tr>
+<tr><td><code>.cryo/zuliprc</code></td><td>Bot credentials (copied from user’s zuliprc on init)</td></tr>
+<tr><td><code>cryo-zulip-sync.log</code></td><td>Sync daemon log output</td></tr>
+<tr><td><code>messages/inbox/</code></td><td>Incoming messages (from Zulip stream)</td></tr>
+<tr><td><code>messages/outbox/</code></td><td>Outgoing messages (posted to Zulip stream)</td></tr>
+<tr><td><code>messages/outbox/archive/</code></td><td>Posted outbox messages (archived after sync)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
+<h2 id="what-happens-if-my-computer-sleeps-or-reboots"><a class="header" href="#what-happens-if-my-computer-sleeps-or-reboots">What happens if my computer sleeps or reboots?</a></h2>
+<p><strong>Sleep:</strong> The daemon process is suspended along with everything else. When your machine wakes up, the daemon resumes and detects that the scheduled wake time has passed. It runs the session immediately and includes a “DELAYED WAKE” notice in the agent’s prompt with the original scheduled time and how late the session is.</p>
+<p><strong>Reboot:</strong> The daemon is installed as an OS service (launchd on macOS, systemd on Linux) and restarts automatically after reboot. Set <code>CRYO_NO_SERVICE=1</code> before <code>cryo start</code> to disable this and use a plain background process instead.</p>
+<h2 id="how-do-i-manually-wake-a-sleeping-daemon"><a class="header" href="#how-do-i-manually-wake-a-sleeping-daemon">How do I manually wake a sleeping daemon?</a></h2>
+<p>Use <code>cryo wake</code> to send a message to the daemon’s inbox. You can include a message: <code>cryo wake "Please check the latest PR"</code>. If inbox watching is enabled (the default), the daemon wakes immediately. You can also use <code>cryo send --wake</code> for the same effect. If inbox watching is disabled, <code>cryo wake</code> sends a SIGUSR1 signal to force the daemon awake. If no daemon is running, the message is queued for the next <code>cryo start</code>.</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="error-cryotoml-not-found"><a class="header" href="#error-cryotoml-not-found"><code>Error: cryo.toml not found</code></a></h3>
+<p>You haven’t initialized the project. Run <code>cryo init</code> first.</p>
+<h3 id="error-planmd-not-found"><a class="header" href="#error-planmd-not-found"><code>Error: plan.md not found</code></a></h3>
+<p><code>cryo start</code> requires a <code>plan.md</code> in the working directory. Create one or run <code>cryo init</code> to generate a template.</p>
+<h3 id="error-agent-command-opencode-not-found-on-path"><a class="header" href="#error-agent-command-opencode-not-found-on-path"><code>Error: agent command 'opencode' not found on PATH</code></a></h3>
+<p>The configured agent isn’t installed. Either install it or change the agent:</p>
+<pre><code class="language-bash">cryo start --agent claude       # use a different agent
+# or edit cryo.toml: agent = "claude"
+</code></pre>
+<h3 id="error-daemon-already-running"><a class="header" href="#error-daemon-already-running"><code>Error: daemon already running</code></a></h3>
+<p>A daemon is already active for this project. Check with <code>cryo status</code>, or stop it with <code>cryo cancel</code> before starting a new one.</p>
+<h3 id="error-connection-refused-from-cryo-agent-commands"><a class="header" href="#error-connection-refused-from-cryo-agent-commands"><code>Error: connection refused</code> (from <code>cryo-agent</code> commands)</a></h3>
+<p>The daemon isn’t running. The <code>cryo-agent</code> CLI needs a running daemon to communicate with via the Unix socket. Start the daemon with <code>cryo start</code>.</p>
+<h3 id="cryo-status-shows-stale-pid"><a class="header" href="#cryo-status-shows-stale-pid"><code>cryo status</code> shows “stale PID”</a></h3>
+<p>The daemon process died without cleaning up. Run <code>cryo cancel</code> to clear the stale state, then <code>cryo start</code> again.</p>
+<h3 id="agent-keeps-crashing-retries-exhausted"><a class="header" href="#agent-keeps-crashing-retries-exhausted">Agent keeps crashing (retries exhausted)</a></h3>
+<p>Check <code>cryo-agent.log</code> for the agent’s raw output. Common causes:</p>
+<ul>
+<li>Agent hitting rate limits (add <code>max_session_duration</code> to throttle)</li>
+<li>Missing dependencies in the project</li>
+<li>Agent doesn’t understand the <code>cryo-agent</code> protocol (check the generated AGENTS.md/CLAUDE.md)</li>
+</ul>
+<h3 id="cryo-gh-gh-command-not-found"><a class="header" href="#cryo-gh-gh-command-not-found"><code>cryo-gh</code>: <code>gh: command not found</code></a></h3>
+<p>Install the <a href="https://cli.github.com">GitHub CLI</a> and authenticate: <code>gh auth login</code>.</p>
+<h3 id="cryo-gh-no-gh-syncjson-found"><a class="header" href="#cryo-gh-no-gh-syncjson-found"><code>cryo-gh</code>: <code>no gh-sync.json found</code></a></h3>
+<p>Run <code>cryo-gh init --repo owner/repo</code> to create a Discussion and initialize sync state.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="mr-lazy"><a class="header" href="#mr-lazy">Mr. Lazy</a></h1>
+<p>The laziest cryochamber example: an AI agent that refuses to get out of bed.</p>
+<p>Every time cryochamber wakes Mr. Lazy, he rolls a die — 25% chance he actually gets up. Otherwise, he delivers a dramatic, unique complaint and hits snooze for a few more minutes. Repeat until he finally rolls a 4.</p>
+<p><strong>Demonstrates:</strong> repeated wake cycles, <code>cryo-agent time</code> for scheduling, <code>cryo-agent note</code> for cross-session memory, probabilistic plan completion.</p>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<pre><code class="language-bash">cd examples/mr-lazy
+cryo init &amp;&amp; cryo start
+cryo web   # open the browser chat UI (port 3946)
+</code></pre>
+<p>Or use the Makefile target (runs in daemon mode, Ctrl-C to stop):</p>
+<pre><code class="language-bash">make check-agent
+</code></pre>
+<h2 id="what-youll-see"><a class="header" href="#what-youll-see">What You’ll See</a></h2>
+<pre><code>Session 1: "What is the point of consciousness this early? It's only 09:15..."
+  → cryo-agent hibernate --wake 2026-03-08T09:18
+
+Session 2: "No hobbit ever woke up before second breakfast... and it's 09:18."
+  → cryo-agent hibernate --wake 2026-03-08T09:22
+
+Session 3: "Fine. FINE. I'm up. Are you happy now?"
+  → cryo-agent hibernate --complete --summary "Mr. Lazy finally got out of bed"
+</code></pre>
+<p>Use <code>cryo cancel</code> if you can’t wait for Mr. Lazy to roll a 4.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="chess-by-mail"><a class="header" href="#chess-by-mail">Chess by Mail</a></h1>
+<p>Play correspondence chess against an AI agent, powered by cryochamber.</p>
+<p>The AI polls for your moves on a configurable interval. If you’re away too long, it goes to sleep — send a move and wake it when you’re ready to continue.</p>
+<h2 id="why-cryochamber"><a class="header" href="#why-cryochamber">Why Cryochamber</a></h2>
+<p>A cron job can’t do this because:</p>
+<ul>
+<li>The AI decides when to stop checking (adaptive patience, not fixed schedule)</li>
+<li>Wake-up from deep sleep is event-driven (your next move), not time-driven</li>
+<li>Board state and strategy notes persist across arbitrarily long gaps</li>
+<li>Multiple moves can accumulate; the AI processes them all on wake</li>
+</ul>
+<h2 id="prerequisites-3"><a class="header" href="#prerequisites-3">Prerequisites</a></h2>
+<ul>
+<li><a href="https://docs.astral.sh/uv/">uv</a> (the chess engine script uses uv for dependency management)</li>
+</ul>
+<h2 id="quick-start-1"><a class="header" href="#quick-start-1">Quick Start</a></h2>
+<pre><code class="language-bash">cd examples/chess-by-mail
+cryo init &amp;&amp; cryo start
+cryo web   # open the browser chat UI (port 3947)
+</code></pre>
+<h2 id="playing"><a class="header" href="#playing">Playing</a></h2>
+<pre><code class="language-bash"># Send a move (algebraic or coordinate notation)
+cryo send "e2e4"
+cryo send "Nf3" --wake  # wake the AI immediately
+
+# Or use the web UI
+cryo web
+</code></pre>
+<h2 id="how-it-works-1"><a class="header" href="#how-it-works-1">How It Works</a></h2>
+<p>The AI uses <code>chess_engine.py</code> (powered by <code>python-chess</code> via uv) for all chess operations. After each move, the AI recommends 3 candidate moves for you with tactical explanations.</p>
+<h2 id="playing-via-zulip"><a class="header" href="#playing-via-zulip">Playing via Zulip</a></h2>
+<p>You can play from the Zulip web UI instead of the terminal by connecting a Zulip stream. See <a href="#zulip-sync">Zulip Sync</a> for full setup details.</p>
+<pre><code class="language-bash">cd examples/chess-by-mail
+cryo-zulip init --config ~/.zuliprc --stream chess-game
+cryo init &amp;&amp; cryo start
+cryo-zulip sync --interval 30
+</code></pre>
+<p>Now send your moves as messages in the Zulip stream. The sync daemon delivers them to the agent’s inbox and posts replies back to the stream.</p>
+<p>To stop: <code>cryo cancel &amp;&amp; cryo-zulip unsync</code></p>
+<h2 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h2>
+<p>Edit <code>plan.md</code> to change:</p>
+<ul>
+<li>Which color the AI plays (default: black)</li>
+<li>Check interval (default: 10 minutes; set to <code>1 minute</code> for a fast demo)</li>
+<li>Patience threshold (default: 5 checks before sleeping)</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
+<h2 id="core-loop"><a class="header" href="#core-loop">Core Loop</a></h2>
+<p><code>cmd_start()</code> → spawn <code>cryo daemon</code> → event loop: spawn agent → listen on socket server for IPC commands → sleep until wake time or inbox event → run session → …</p>
+<h2 id="binaries"><a class="header" href="#binaries">Binaries</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Binary</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryo</code></td><td>Operator CLI — <code>init</code>, <code>start</code>, <code>status</code>, <code>cancel</code>, <code>log</code>, <code>watch</code>, <code>send</code>, <code>receive</code>, <code>wake</code>, <code>ps</code>, <code>restart</code>, <code>daemon</code></td></tr>
+<tr><td><code>cryo-agent</code></td><td>Agent IPC CLI — <code>hibernate</code>, <code>note</code>, <code>send</code>, <code>receive</code>, <code>alert</code>, <code>time</code> (sends commands to daemon via socket; <code>receive</code> and <code>time</code> are local)</td></tr>
+<tr><td><code>cryo-gh</code></td><td>GitHub sync CLI — <code>init</code>, <code>pull</code>, <code>push</code>, <code>sync</code>, <code>unsync</code>, <code>status</code> (manages Discussion-based messaging via OS service)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="modules"><a class="header" href="#modules">Modules</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Module</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>socket</code></td><td>Unix domain socket IPC — message types (<code>Request</code>/<code>Response</code>), client (<code>send_request</code>), server (<code>SocketServer</code>).</td></tr>
+<tr><td><code>config</code></td><td>TOML persistence for project config (<code>cryo.toml</code>). <code>CryoConfig</code> struct, load/save, <code>apply_overrides</code> merges CLI overrides from state.</td></tr>
+<tr><td><code>state</code></td><td>JSON persistence to <code>timer.json</code> — runtime-only state (session number, PID lock, CLI overrides). PID-based locking via <code>libc::kill(pid, 0)</code>.</td></tr>
+<tr><td><code>log</code></td><td>Session log manager. Sessions delimited by <code>--- CRYO SESSION N ---</code> / <code>--- CRYO END ---</code>. <code>EventLogger</code> writes timestamped events (agent start, notes, hibernate, exit).</td></tr>
+<tr><td><code>protocol</code></td><td>Loads templates from <code>templates/</code> via <code>include_str!</code> (protocol, plan, cryo.toml). Written by <code>init</code>/<code>start</code>.</td></tr>
+<tr><td><code>agent</code></td><td>Builds lightweight prompt with task + session context, spawns agent subprocess (stdout/stderr redirected to <code>cryo-agent.log</code>).</td></tr>
+<tr><td><code>process</code></td><td>Process management utilities: <code>send_signal</code>, <code>terminate_pid</code>, <code>spawn_daemon</code>.</td></tr>
+<tr><td><code>daemon</code></td><td>Persistent event loop: socket server for agent IPC, watches <code>messages/inbox/</code> via <code>notify</code>, handles SIGUSR1 for forced wake, enforces session timeout, <code>EventLogger</code> for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend).</td></tr>
+<tr><td><code>message</code></td><td>File-based inbox/outbox message system. Inbox messages included in agent prompt on wake.</td></tr>
+<tr><td><code>fallback</code></td><td>Dead-man switch: writes alerts to <code>messages/outbox/</code> for external delivery.</td></tr>
+<tr><td><code>channel</code></td><td>Channel abstraction. Submodules: <code>file</code> (local inbox/outbox), <code>github</code> (Discussions via GraphQL).</td></tr>
+<tr><td><code>registry</code></td><td>PID file registry for tracking running daemons. Uses <code>$XDG_RUNTIME_DIR/cryo/</code> (fallback <code>~/.cryo/daemons/</code>). Auto-cleans stale entries.</td></tr>
+<tr><td><code>service</code></td><td>OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by <code>cryo start</code> and <code>cryo-gh sync</code> for reboot-persistent daemons. <code>CRYO_NO_SERVICE=1</code> disables (falls back to direct spawn).</td></tr>
+<tr><td><code>web</code></td><td>Axum-based web server with chat UI, REST API, and SSE for real-time updates.</td></tr>
+<tr><td><code>gh_sync</code></td><td>GitHub Discussion sync state persistence (<code>gh-sync.json</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="key-design-decisions"><a class="header" href="#key-design-decisions">Key Design Decisions</a></h2>
+<ul>
+<li><strong>Daemon mode</strong>: <code>cryo start</code> installs an OS service (launchd on macOS, systemd on Linux) that survives reboots. The daemon sleeps until the scheduled wake time, watches <code>messages/inbox/</code> for reactive wake, and enforces session timeout. Set <code>CRYO_NO_SERVICE=1</code> to fall back to direct background process spawn.</li>
+<li><strong>Socket-based IPC</strong>: The agent communicates with the daemon via <code>cryo-agent</code> CLI subcommands (<code>hibernate</code>, <code>note</code>, <code>send</code>, <code>alert</code>), which send JSON messages over a Unix domain socket. <code>receive</code> and <code>time</code> are local (no daemon needed).</li>
+<li><strong>Fire-and-forget agent</strong>: The daemon spawns the agent and redirects its stdout/stderr to <code>cryo-agent.log</code>. All structured communication flows through the socket.</li>
+<li><strong>SIGUSR1 wake</strong>: <code>cryo wake</code> and <code>cryo send --wake</code> send SIGUSR1 to the daemon PID, which works regardless of <code>watch_inbox</code> setting. The daemon’s signal-forwarding thread converts this into an <code>InboxChanged</code> event.</li>
+<li><strong>Config/state split</strong>: <code>cryo.toml</code> is the project config (agent, retries, timeout, watch_inbox) created by <code>cryo init</code>. <code>timer.json</code> is runtime-only state (session number, PID, retry count, CLI overrides). CLI flags to <code>cryo start</code> are stored as optional overrides in <code>timer.json</code>.</li>
+<li><strong>Graceful degradation</strong>: If the agent exits without calling <code>cryo-agent hibernate</code>, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.</li>
+<li><strong>Default agent</strong>: The CLI defaults to <code>opencode run</code> as the agent command (headless mode, not the TUI).</li>
+</ul>
+<h2 id="files-created-at-runtime"><a class="header" href="#files-created-at-runtime">Files Created at Runtime</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>timer.json</code></td><td>Runtime state (session number, PID lock, retry count, CLI overrides)</td></tr>
+<tr><td><code>cryo.log</code></td><td>Append-only structured event log</td></tr>
+<tr><td><code>cryo-agent.log</code></td><td>Agent stdout/stderr (raw tool-call output)</td></tr>
+<tr><td><code>messages/inbox/</code></td><td>Incoming messages for the agent</td></tr>
+<tr><td><code>messages/outbox/</code></td><td>Outgoing messages (fallback alerts)</td></tr>
+<tr><td><code>messages/inbox/archive/</code></td><td>Processed inbox messages</td></tr>
+<tr><td><code>.cryo/cryo.sock</code></td><td>Unix domain socket for agent-daemon IPC</td></tr>
+<tr><td><code>gh-sync.json</code></td><td>GitHub Discussion sync state (if configured)</td></tr>
+<tr><td><code>cryo-gh-sync.log</code></td><td>GitHub sync daemon log output (if configured)</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>
