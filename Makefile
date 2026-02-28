@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli book book-serve book-deploy copilot-review
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli book book-serve book-deploy copilot-review release
 
 # Default target
 help:
@@ -28,6 +28,7 @@ help:
 	@echo "  book-serve   - Serve mdbook locally with live reload"
 	@echo "  book-deploy  - Deploy mdbook to GitHub Pages (gh-pages branch)"
 	@echo "  copilot-review - Request Copilot code review on current PR"
+	@echo "  release V=x.y.z - Tag and push a release (triggers CI publish)"
 
 # Build the project
 build:
@@ -349,6 +350,21 @@ book-deploy: book
 	git push --force origin gh-pages; \
 	rm -rf "$$TMPDIR"; \
 	echo "=== Deployed to gh-pages ==="
+
+# Tag and push a release (triggers CI publish to crates.io)
+# Usage: make release V=x.y.z
+release:
+ifndef V
+	$(error Usage: make release V=x.y.z)
+endif
+	@echo "Releasing v$(V)..."
+	sed -i 's/^version = ".*"/version = "$(V)"/' Cargo.toml
+	cargo check
+	git add Cargo.toml
+	git commit -m "release: v$(V)"
+	git tag -a "v$(V)" -m "Release v$(V)"
+	git push origin main --tags
+	@echo "v$(V) pushed — CI will publish to crates.io"
 
 # Request Copilot code review on the current PR
 # Requires: gh extension install ChrisCarini/gh-copilot-review

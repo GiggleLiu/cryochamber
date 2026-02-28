@@ -37,6 +37,7 @@ make book           # build mdbook documentation (auto-installs mdbook)
 make book-serve     # serve mdbook locally with live reload
 make book-deploy    # deploy mdbook to GitHub Pages (gh-pages branch)
 make copilot-review # request Copilot code review on current PR
+make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 ```
 
 ## Architecture
@@ -92,6 +93,7 @@ make copilot-review # request Copilot code review on current PR
 - `cryo.toml` — project configuration (agent, max_retries, max_session_duration, watch_inbox)
 - `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `plan.md` — template plan file
+- `README.md` — quickstart guide for the project (service commands, messaging channels)
 
 ### Files Created at Runtime (per project directory)
 

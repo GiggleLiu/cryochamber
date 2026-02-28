@@ -216,6 +216,12 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         println!("  plan.md (exists, kept)");
     }
 
+    if protocol::write_readme(&dir)? {
+        println!("  README.md (created)");
+    } else {
+        println!("  README.md (exists, kept)");
+    }
+
     message::ensure_dirs(&dir)?;
 
     println!("\nCryochamber initialized. Next steps:");
