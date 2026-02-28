@@ -122,6 +122,10 @@ Main documentation lives in the mdbook at `docs/src/` (published to [giggleliu.g
 - `docs/reports/` — Code review reports
 - `examples/` — Showcase examples (chess-by-mail, mr-lazy)
 
+## Skills
+
+- `skills/make-plan/SKILL.md` — Claude Code skill that guides users through creating a new cryochamber application (plan.md + cryo.toml) via conversational Q&A. Install with `claude skill install --path skills/make-plan`, invoke with `/make-plan`.
+
 ## Commit Convention
 
 Conventional commits: `feat:`, `test:`, `docs:`, `chore:`, `fix:`

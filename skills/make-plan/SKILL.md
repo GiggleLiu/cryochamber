@@ -1,5 +1,5 @@
 ---
-name: cryo-create
+name: make-plan
 description: Use when the user wants to create a new cryochamber application, set up a scheduled agent task, or scaffold a cryo project with plan.md and cryo.toml
 ---
 
@@ -7,7 +7,7 @@ description: Use when the user wants to create a new cryochamber application, se
 
 ## Overview
 
-Guide users through creating a cryochamber application via conversational Q&A. Three phases: brainstorm the plan, configure cryo.toml, validate everything works.
+Guide users through creating a cryochamber application via conversational Q&A. Four phases: brainstorm the plan, configure cryo.toml, validate everything works, optionally start.
 
 Assumes cryo CLI is installed and on PATH.
 
@@ -46,7 +46,6 @@ What does the agent need to remember across sessions? Suggest based on task (cou
 
 What if the agent crashes or hangs? Suggest based on task:
 - `max_retries`: how many retries (default 5). Note: after exhaustion, retries continue every 60s.
-- `max_session_duration`: timeout in seconds. **Default 0 (no timeout) is dangerous for tasks that can hang.** Suggest 60–300s based on task complexity.
 
 ### Q7. AI agent & providers
 
@@ -60,7 +59,7 @@ Then: do you have multiple API keys or providers to rotate between?
 - If yes: walk through `[[providers]]` entries. Each needs a `name` and `env` map (e.g. `ANTHROPIC_API_KEY`). Suggest rotation strategy:
   - `quick-exit` (recommended) — rotate only on <5s exit (likely bad key)
   - `any-failure` — rotate on any crash
-  - `never` (default)
+- If the user wants to set up providers later: skip for now and in Phase 4 tell them how to configure `[[providers]]` and `rotate_on` in `cryo.toml`.
 - If no: skip, single provider is fine.
 
 ### Q8. Delayed wake reaction
@@ -76,7 +75,7 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 How should the agent communicate with the user?
 - **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval.
 - **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
-- **Web UI only** — simplest, local browser via `cryo web`. Pick a port.
+- **Web UI only** — simplest, local browser via `cryo web`. Auto-detect an available port: start from the default (3945), check if the port is in use (e.g. `ss -tlnp | grep :3945`), increment by 1 until a free port is found, then confirm the chosen port with the user.
 - **None** — agent runs silently, check logs manually.
 
 ### Q10. Periodic reports
@@ -106,7 +105,7 @@ Generate from Phase 1 answers. No new questions — everything maps directly.
 | Brainstorm answer | cryo.toml field |
 |---|---|
 | AI agent (Q7) | `agent` |
-| Retry strategy (Q6) | `max_retries`, `max_session_duration` |
+| Retry strategy (Q6) | `max_retries` |
 | Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
 | Sync channel (Q9) | `web_host`, `web_port` |
 | Reports (Q10) | `report_time`, `report_interval` |
@@ -127,6 +126,7 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
 - Verify `plan.md` exists and contains Goal and Tasks sections
 - Verify `cryo.toml` parses correctly (run `cryo init` and check for errors)
 - Verify the agent command is on PATH (e.g. `which opencode`)
+- Verify the AI agent can actually respond: run a minimal smoke test (e.g. `echo "reply OK" | opencode run` or `claude -p "reply OK"`) and check that it produces output without errors. This catches misconfigured API keys, missing credentials, or broken agent installations.
 
 ### Layer 2: External tool validation
 
@@ -146,7 +146,28 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
 4. Run `cryo cancel` to clean up
 5. Report: session count, any errors in `cryo.log`, agent exit status
 
-On success: "Your cryo application is ready. Run `cryo start` to begin."
+On success: "Your cryo application is ready."
+
+## Phase 4: Start
+
+Ask the user if they want to start the plan immediately.
+
+- If yes: run `cryo start` (and `cryo-zulip sync` / `cryo-gh sync` if a sync channel was configured). Report the status with `cryo status`.
+- If no: print instructions for starting later (`cryo start`, sync commands if applicable, `cryo watch`).
+
+If the user deferred provider setup in Q7, remind them how to configure it:
+- Edit `cryo.toml` and add `rotate_on = "quick-exit"` (or `"any-failure"`)
+- Add `[[providers]]` entries with `name` and `env` map, e.g.:
+  ```toml
+  [[providers]]
+  name = "key-1"
+  env = { ANTHROPIC_API_KEY = "sk-ant-..." }
+
+  [[providers]]
+  name = "key-2"
+  env = { OPENAI_API_KEY = "sk-...", OPENAI_BASE_URL = "https://..." }
+  ```
+- Warn: add `cryo.toml` to `.gitignore` if it contains API keys.
 
 ## Process Flow
 
@@ -157,9 +178,11 @@ digraph cryo_create {
     "User approves?" [shape=diamond];
     "Generate cryo.toml" [shape=box];
     "User approves config?" [shape=diamond];
-    "Layer 1: Files" [shape=box];
+    "Layer 1: Files + Agent" [shape=box];
     "Layer 2: Tools" [shape=box];
     "Layer 3: Smoke test" [shape=box];
+    "Start now?" [shape=diamond];
+    "Start services" [shape=box];
     "Ready" [shape=doublecircle];
 
     "Q1-Q10: Brainstorm" -> "Draft plan.md";
@@ -168,10 +191,13 @@ digraph cryo_create {
     "User approves?" -> "Generate cryo.toml" [label="yes"];
     "Generate cryo.toml" -> "User approves config?";
     "User approves config?" -> "Generate cryo.toml" [label="revise"];
-    "User approves config?" -> "Layer 1: Files" [label="yes"];
-    "Layer 1: Files" -> "Layer 2: Tools";
+    "User approves config?" -> "Layer 1: Files + Agent" [label="yes"];
+    "Layer 1: Files + Agent" -> "Layer 2: Tools";
     "Layer 2: Tools" -> "Layer 3: Smoke test";
-    "Layer 3: Smoke test" -> "Ready";
+    "Layer 3: Smoke test" -> "Start now?";
+    "Start now?" -> "Start services" [label="yes"];
+    "Start now?" -> "Ready" [label="no"];
+    "Start services" -> "Ready";
 }
 ```
 
@@ -179,7 +205,6 @@ digraph cryo_create {
 
 | Mistake | Fix |
 |---|---|
-| No `max_session_duration` — agent hangs forever | Always set a timeout (60–300s) |
 | Hardcoded timestamps in plan.md | Always use `cryo-agent time "+N minutes"` |
 | No persistent state strategy — agent forgets everything | Use `cryo-agent note` for all cross-session state |
 | Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |

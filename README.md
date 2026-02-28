@@ -41,6 +41,16 @@ Cryochamber supports external messaging channels that sync between a remote serv
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 
+## Claude Code Skill
+
+This repo includes a `make-plan` skill for Claude Code that guides you through creating a new cryochamber application via conversational Q&A. To install it:
+
+```bash
+claude skill install --path skills/make-plan
+```
+
+Then invoke it with `/make-plan` in Claude Code.
+
 ## Documentation
 
 Full documentation is available at **[giggleliu.github.io/cryochamber](https://giggleliu.github.io/cryochamber/)** or build locally:
