@@ -133,6 +133,42 @@ fn terminate_child(child: &mut std::process::Child, pid: u32) {
     let _ = child.wait(); // reap to prevent zombie
 }
 
+/// Compute how long to sleep given optional wake and report deadlines.
+fn compute_sleep_timeout(
+    wake_deadline: Option<NaiveDateTime>,
+    report_deadline: Option<NaiveDateTime>,
+    now: NaiveDateTime,
+) -> Duration {
+    let to_duration = |dt: NaiveDateTime| -> Duration {
+        (dt - now).to_std().unwrap_or(Duration::ZERO)
+    };
+    match (wake_deadline.map(&to_duration), report_deadline.map(&to_duration)) {
+        (Some(w), Some(r)) => w.min(r),
+        (Some(w), None) => w,
+        (None, Some(r)) => r,
+        (None, None) => Duration::from_secs(3600),
+    }
+}
+
+/// Check if the scheduled wake time is significantly in the past (machine suspend).
+/// Returns `Some(delay_description)` if delayed by more than 5 minutes.
+fn detect_delayed_wake(
+    scheduled: NaiveDateTime,
+    now: NaiveDateTime,
+) -> Option<String> {
+    let delay = now - scheduled;
+    if delay > chrono::Duration::minutes(5) {
+        let delay_str = if delay.num_hours() > 0 {
+            format!("{}h {}m", delay.num_hours(), delay.num_minutes() % 60)
+        } else {
+            format!("{}m", delay.num_minutes())
+        };
+        Some(delay_str)
+    } else {
+        None
+    }
+}
+
 /// The persistent daemon process.
 pub struct Daemon {
     dir: PathBuf,
@@ -274,25 +310,17 @@ impl Daemon {
                 // (e.g. computer was sleeping), notify the agent instead of failing.
                 let delayed_wake = next_wake.and_then(|wake| {
                     let now = Local::now().naive_local();
-                    let delay = now - wake;
-                    if delay > chrono::Duration::minutes(5) {
+                    detect_delayed_wake(wake, now).map(|delay_str| {
                         // Cancel premature fallback — the session is about to run
                         pending_fallback = None;
-                        let delay_str = if delay.num_hours() > 0 {
-                            format!("{}h {}m", delay.num_hours(), delay.num_minutes() % 60)
-                        } else {
-                            format!("{}m", delay.num_minutes())
-                        };
-                        Some(format!(
+                        format!(
                             "DELAYED WAKE: This session was scheduled for {} but is running {} late \
                              (the host machine was likely suspended or powered off). \
                              Check whether time-sensitive tasks need adjustment.",
                             wake.format("%Y-%m-%dT%H:%M"),
                             delay_str,
-                        ))
-                    } else {
-                        None
-                    }
+                        )
+                    })
                 });
                 let saved_wake = next_wake.take();
 
@@ -422,21 +450,11 @@ impl Daemon {
             }
 
             // Wait for next event
-            let timeout = {
-                let now = Local::now().naive_local();
-                let wake_timeout = next_wake.map(|w| w - now);
-                let report_timeout = next_report_time.map(|r| r - now);
-                let min_timeout = match (wake_timeout, report_timeout) {
-                    (Some(w), Some(r)) => Some(w.min(r)),
-                    (Some(w), None) => Some(w),
-                    (None, Some(r)) => Some(r),
-                    (None, None) => None,
-                };
-                match min_timeout {
-                    Some(d) => d.to_std().unwrap_or(Duration::ZERO),
-                    None => Duration::from_secs(3600),
-                }
-            };
+            let timeout = compute_sleep_timeout(
+                next_wake,
+                next_report_time,
+                Local::now().naive_local(),
+            );
 
             match rx.recv_timeout(timeout) {
                 Ok(DaemonEvent::InboxChanged) => {
@@ -1042,5 +1060,74 @@ mod tests {
         // This may or may not fire depending on platform — just don't assert it MUST fire
         // The key is that create events DO fire (tested above)
         let _ = event; // suppress unused warning
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_both() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let wake = now + chrono::Duration::seconds(60);
+        let report = now + chrono::Duration::seconds(30);
+        let timeout = compute_sleep_timeout(Some(wake), Some(report), now);
+        assert_eq!(timeout, Duration::from_secs(30), "Should pick earlier (report)");
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_wake_only() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let wake = now + chrono::Duration::seconds(120);
+        let timeout = compute_sleep_timeout(Some(wake), None, now);
+        assert_eq!(timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_report_only() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let report = now + chrono::Duration::seconds(45);
+        let timeout = compute_sleep_timeout(None, Some(report), now);
+        assert_eq!(timeout, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn test_compute_sleep_timeout_neither() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let timeout = compute_sleep_timeout(None, None, now);
+        assert_eq!(timeout, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_delayed_wake_under_threshold() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let scheduled = now - chrono::Duration::minutes(4);
+        assert!(
+            detect_delayed_wake(scheduled, now).is_none(),
+            "4 min delay should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_delayed_wake_over_threshold() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let scheduled = now - chrono::Duration::minutes(6);
+        let result = detect_delayed_wake(scheduled, now);
+        assert!(result.is_some(), "6 min delay should be flagged");
+        assert_eq!(result.unwrap(), "6m");
     }
 }
