@@ -78,6 +78,17 @@ fn test_done_nonexistent_id_returns_error() {
 }
 
 #[test]
+fn test_done_already_done_is_idempotent() {
+    let mut list = TodoList::new();
+    list.add("Task".to_string(), None);
+    list.done(1).unwrap();
+    assert!(list.items()[0].done);
+    // Calling done again should succeed silently
+    list.done(1).unwrap();
+    assert!(list.items()[0].done);
+}
+
+#[test]
 fn test_remove_deletes_item() {
     let mut list = TodoList::new();
     list.add("A".to_string(), None);

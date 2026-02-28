@@ -139,10 +139,12 @@ fn compute_sleep_timeout(
     report_deadline: Option<NaiveDateTime>,
     now: NaiveDateTime,
 ) -> Duration {
-    let to_duration = |dt: NaiveDateTime| -> Duration {
-        (dt - now).to_std().unwrap_or(Duration::ZERO)
-    };
-    match (wake_deadline.map(&to_duration), report_deadline.map(&to_duration)) {
+    let to_duration =
+        |dt: NaiveDateTime| -> Duration { (dt - now).to_std().unwrap_or(Duration::ZERO) };
+    match (
+        wake_deadline.map(&to_duration),
+        report_deadline.map(&to_duration),
+    ) {
         (Some(w), Some(r)) => w.min(r),
         (Some(w), None) => w,
         (None, Some(r)) => r,
@@ -152,10 +154,7 @@ fn compute_sleep_timeout(
 
 /// Check if the scheduled wake time is significantly in the past (machine suspend).
 /// Returns `Some(delay_description)` if delayed by more than 5 minutes.
-fn detect_delayed_wake(
-    scheduled: NaiveDateTime,
-    now: NaiveDateTime,
-) -> Option<String> {
+fn detect_delayed_wake(scheduled: NaiveDateTime, now: NaiveDateTime) -> Option<String> {
     let delay = now - scheduled;
     if delay > chrono::Duration::minutes(5) {
         let delay_str = if delay.num_hours() > 0 {
@@ -450,11 +449,8 @@ impl Daemon {
             }
 
             // Wait for next event
-            let timeout = compute_sleep_timeout(
-                next_wake,
-                next_report_time,
-                Local::now().naive_local(),
-            );
+            let timeout =
+                compute_sleep_timeout(next_wake, next_report_time, Local::now().naive_local());
 
             match rx.recv_timeout(timeout) {
                 Ok(DaemonEvent::InboxChanged) => {
@@ -1071,7 +1067,11 @@ mod tests {
         let wake = now + chrono::Duration::seconds(60);
         let report = now + chrono::Duration::seconds(30);
         let timeout = compute_sleep_timeout(Some(wake), Some(report), now);
-        assert_eq!(timeout, Duration::from_secs(30), "Should pick earlier (report)");
+        assert_eq!(
+            timeout,
+            Duration::from_secs(30),
+            "Should pick earlier (report)"
+        );
     }
 
     #[test]
