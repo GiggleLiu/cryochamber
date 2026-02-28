@@ -38,13 +38,17 @@ pub enum DaemonEvent {
 pub struct RetryState {
     pub attempt: u32,
     pub max_retries: u32,
+    pub provider_index: usize,
+    provider_count: usize,
 }
 
 impl RetryState {
-    pub fn new(max_retries: u32) -> Self {
+    pub fn new(max_retries: u32, provider_count: usize) -> Self {
         Self {
             attempt: 0,
             max_retries,
+            provider_index: 0,
+            provider_count,
         }
     }
 
@@ -65,10 +69,22 @@ impl RetryState {
 
     pub fn reset(&mut self) {
         self.attempt = 0;
+        self.provider_index = 0;
     }
 
     pub fn exhausted(&self) -> bool {
         self.attempt >= self.max_retries
+    }
+
+    /// Advance to the next provider. Returns true if we wrapped back to index 0
+    /// (all providers have been tried in this cycle). Resets retry attempt counter.
+    pub fn rotate_provider(&mut self) -> bool {
+        if self.provider_count <= 1 {
+            return true; // can't rotate with 0 or 1 provider
+        }
+        self.provider_index = (self.provider_index + 1) % self.provider_count;
+        self.attempt = 0;
+        self.provider_index == 0 // wrapped
     }
 }
 
@@ -238,7 +254,8 @@ impl Daemon {
             eprintln!("Daemon: next report at {}", nrt.format("%Y-%m-%d %H:%M"));
         }
 
-        let mut retry = RetryState::new(config.max_retries);
+        let provider_count = config.providers.len();
+        let mut retry = RetryState::new(config.max_retries, provider_count);
         let mut next_wake: Option<NaiveDateTime> = None;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 
@@ -777,7 +794,7 @@ mod tests {
 
     #[test]
     fn test_backoff_sequence() {
-        let mut state = RetryState::new(5);
+        let mut state = RetryState::new(5, 1);
         // 5s, 10s, 20s, 40s, 80s, exhausted
         assert_eq!(state.next_backoff(), Some(Duration::from_secs(5)));
 
@@ -801,7 +818,7 @@ mod tests {
 
     #[test]
     fn test_backoff_reset() {
-        let mut state = RetryState::new(3);
+        let mut state = RetryState::new(3, 1);
         state.record_failure();
         state.record_failure();
         assert_eq!(state.attempt, 2);
@@ -813,7 +830,7 @@ mod tests {
 
     #[test]
     fn test_backoff_zero_retries() {
-        let state = RetryState::new(0);
+        let state = RetryState::new(0, 1);
         assert_eq!(state.next_backoff(), None);
         assert!(state.exhausted());
     }
