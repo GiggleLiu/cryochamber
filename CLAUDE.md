@@ -33,6 +33,7 @@ make check-agent    # quick agent smoke test (AGENT=opencode|claude)
 make check-round-trip # full round-trip test with mr-lazy
 make check-gh       # verify GitHub Discussion sync (REPO=owner/repo)
 make check-service  # verify OS service install/uninstall lifecycle (launchd/systemd)
+make check-mock     # run mock agent integration tests (no external agent required)
 make book           # build mdbook documentation (auto-installs mdbook)
 make book-serve     # serve mdbook locally with live reload
 make book-deploy    # deploy mdbook to GitHub Pages (gh-pages branch)

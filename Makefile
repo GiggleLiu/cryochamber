@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
 
 # Default target
 help:
@@ -23,6 +23,7 @@ help:
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
 	@echo "  check-gh     - Verify GitHub Discussion sync (requires gh auth)"
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
+	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
 	@echo "  book         - Build mdbook documentation"
 	@echo "  book-serve   - Serve mdbook locally with live reload"
@@ -325,6 +326,10 @@ check-service: build
 	echo "  # After reboot, verify:"; \
 	echo "  #   macOS:  launchctl list | grep com.cryo"; \
 	echo "  #   Linux:  systemctl --user status com.cryo.daemon.*"
+
+# Run mock agent scenario tests (no external agent required)
+check-mock:
+	cargo test mock_agent -- --nocapture
 
 # Build mdbook documentation
 book:
