@@ -147,3 +147,41 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
 5. Report: session count, any errors in `cryo.log`, agent exit status
 
 On success: "Your cryo application is ready. Run `cryo start` to begin."
+
+## Process Flow
+
+```dot
+digraph cryo_create {
+    "Q1-Q10: Brainstorm" [shape=box];
+    "Draft plan.md" [shape=box];
+    "User approves?" [shape=diamond];
+    "Generate cryo.toml" [shape=box];
+    "User approves config?" [shape=diamond];
+    "Layer 1: Files" [shape=box];
+    "Layer 2: Tools" [shape=box];
+    "Layer 3: Smoke test" [shape=box];
+    "Ready" [shape=doublecircle];
+
+    "Q1-Q10: Brainstorm" -> "Draft plan.md";
+    "Draft plan.md" -> "User approves?";
+    "User approves?" -> "Draft plan.md" [label="revise"];
+    "User approves?" -> "Generate cryo.toml" [label="yes"];
+    "Generate cryo.toml" -> "User approves config?";
+    "User approves config?" -> "Generate cryo.toml" [label="revise"];
+    "User approves config?" -> "Layer 1: Files" [label="yes"];
+    "Layer 1: Files" -> "Layer 2: Tools";
+    "Layer 2: Tools" -> "Layer 3: Smoke test";
+    "Layer 3: Smoke test" -> "Ready";
+}
+```
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---|---|
+| No `max_session_duration` — agent hangs forever | Always set a timeout (60–300s) |
+| Hardcoded timestamps in plan.md | Always use `cryo-agent time "+N minutes"` |
+| No persistent state strategy — agent forgets everything | Use `cryo-agent note` for all cross-session state |
+| Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |
+| `watch_inbox = false` with two-way interaction | Set `watch_inbox = true` for event-driven tasks |
+| Provider env vars not set | Validate in Phase 3 before starting |
