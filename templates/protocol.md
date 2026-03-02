@@ -70,8 +70,7 @@ cryo-agent send "message"                     # Send message to human (outbox)
 cryo-agent reply "message"                    # Reply to inbox messages
 cryo-agent receive                            # Read inbox messages from human
 cryo-agent alert <action> <target> "message"  # Dead-man switch (fires if you don't wake on time)
-cryo-agent todo add "text"                    # Add a TODO item
-cryo-agent todo add "text" --at 2026-03-05    # Add with scheduled time
+cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required)
 cryo-agent todo list                          # List all TODO items
 cryo-agent todo done <id>                     # Mark item as done
 cryo-agent todo remove <id>                   # Remove an item
@@ -81,6 +80,7 @@ cryo-agent time "+1 day"                      # Relative time computation
 
 ## Key Facts
 
+- **TODO list drives your schedule.** The daemon wakes at the earliest pending TODO's `at` time.
 - **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
 - **Notes survive across sessions.** Use `cryo-agent note` liberally — it's your memory.
 - **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.
