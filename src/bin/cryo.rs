@@ -403,6 +403,17 @@ fn cmd_status() -> Result<()> {
                 }
             );
             println!("Session: {}", st.session_number);
+
+            // Show next wake time from TODO list
+            let todo_path = dir.join("todo.json");
+            if let Ok(list) = cryochamber::todo::TodoList::load(&todo_path) {
+                if let Some(wake) = list.next_wake_time() {
+                    println!("Next wake: {wake}");
+                } else {
+                    println!("Next wake: idle (no pending TODOs)");
+                }
+            }
+
             if let Some(pid) = st.pid {
                 println!("PID: {pid}");
             }
