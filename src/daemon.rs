@@ -334,7 +334,10 @@ impl Daemon {
                 // (e.g. computer was sleeping), notify the agent instead of failing.
                 // Skip this check for inbox-triggered wakes — the agent should handle
                 // the user's message without a spurious delay warning.
-                let delayed_wake = if is_inbox_wake { None } else { next_wake.and_then(|wake| {
+                let delayed_wake = if is_inbox_wake {
+                    None
+                } else {
+                    next_wake.and_then(|wake| {
                     let now = Local::now().naive_local();
                     detect_delayed_wake(wake, now).map(|delay_str| {
                         // Cancel premature fallback — the session is about to run
@@ -347,7 +350,8 @@ impl Daemon {
                             delay_str,
                         )
                     })
-                }) };
+                })
+                };
                 let saved_wake = next_wake.take();
 
                 cryo_state.session_number += 1;
@@ -713,6 +717,12 @@ impl Daemon {
                                     });
                                 }
                             }
+                        }
+                        _ => {
+                            let _ = responder.respond(&crate::socket::Response {
+                                ok: false,
+                                message: "Unknown command".into(),
+                            });
                         }
                     }
                 }

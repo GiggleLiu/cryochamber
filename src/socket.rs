@@ -25,6 +25,17 @@ pub enum Request {
     Reply {
         text: String,
     },
+    TodoAdd {
+        text: String,
+        at: String,
+    },
+    TodoDone {
+        id: u32,
+    },
+    TodoRemove {
+        id: u32,
+    },
+    TodoList,
 }
 
 /// Response from daemon to CLI.
@@ -316,5 +327,39 @@ mod tests {
             Err(e) => panic!("Should not error for unknown fields: {e}"),
         }
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_todo_add_request_serialization() {
+        let req = Request::TodoAdd {
+            text: "Check CI".into(),
+            at: "2026-03-02T14:00".into(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"cmd\":\"todo_add\""));
+        assert!(json.contains("\"text\":\"Check CI\""));
+        assert!(json.contains("\"at\":\"2026-03-02T14:00\""));
+    }
+
+    #[test]
+    fn test_todo_done_request_serialization() {
+        let req = Request::TodoDone { id: 3 };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"cmd\":\"todo_done\""));
+        assert!(json.contains("\"id\":3"));
+    }
+
+    #[test]
+    fn test_todo_remove_request_serialization() {
+        let req = Request::TodoRemove { id: 5 };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"cmd\":\"todo_remove\""));
+    }
+
+    #[test]
+    fn test_todo_list_request_serialization() {
+        let req = Request::TodoList;
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"cmd\":\"todo_list\""));
     }
 }
