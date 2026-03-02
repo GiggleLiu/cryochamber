@@ -685,11 +685,121 @@ impl Daemon {
                                 }
                             }
                         }
-                        _ => {
-                            let _ = responder.respond(&crate::socket::Response {
-                                ok: false,
-                                message: "Unknown command".into(),
-                            });
+                        crate::socket::Request::TodoAdd { text, at } => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(mut list) => {
+                                    let id = list.add(text.clone(), at.clone());
+                                    match list.save(&todo_path) {
+                                        Ok(()) => {
+                                            logger.log_event(&format!(
+                                                "todo add: #{id} \"{text}\" at {at}"
+                                            ))?;
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: true,
+                                                message: format!("Added todo #{id}"),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: false,
+                                                message: format!("Failed to save todo: {e}"),
+                                            });
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoDone { id } => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(mut list) => match list.done(id) {
+                                    Ok(()) => match list.save(&todo_path) {
+                                        Ok(()) => {
+                                            logger.log_event(&format!("todo done: #{id}"))?;
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: true,
+                                                message: format!("Marked todo #{id} as done"),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: false,
+                                                message: format!("Failed to save todo: {e}"),
+                                            });
+                                        }
+                                    },
+                                    Err(e) => {
+                                        let _ = responder.respond(&crate::socket::Response {
+                                            ok: false,
+                                            message: format!("{e}"),
+                                        });
+                                    }
+                                },
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoRemove { id } => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(mut list) => match list.remove(id) {
+                                    Ok(()) => match list.save(&todo_path) {
+                                        Ok(()) => {
+                                            logger.log_event(&format!("todo remove: #{id}"))?;
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: true,
+                                                message: format!("Removed todo #{id}"),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: false,
+                                                message: format!("Failed to save todo: {e}"),
+                                            });
+                                        }
+                                    },
+                                    Err(e) => {
+                                        let _ = responder.respond(&crate::socket::Response {
+                                            ok: false,
+                                            message: format!("{e}"),
+                                        });
+                                    }
+                                },
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoList => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(list) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: true,
+                                        message: list.display(),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
                         }
                     }
                 }
