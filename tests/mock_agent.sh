@@ -13,7 +13,9 @@ fi
 
 # Default: hibernate --complete
 if [ "$MOCK_AGENT_COMPLETE" = "false" ] && [ -n "$MOCK_AGENT_WAKE" ]; then
-    "$CRYO_AGENT_BIN" hibernate --wake "$MOCK_AGENT_WAKE" --summary "${MOCK_AGENT_SUMMARY:-continuing}" 2>/dev/null || true
+    # Add a TODO with the wake time, then hibernate (not complete)
+    "$CRYO_AGENT_BIN" todo add "scheduled wake" --at "$MOCK_AGENT_WAKE" 2>/dev/null || true
+    "$CRYO_AGENT_BIN" hibernate --summary "${MOCK_AGENT_SUMMARY:-continuing}" 2>/dev/null || true
 else
     "$CRYO_AGENT_BIN" hibernate --complete --summary "${MOCK_AGENT_SUMMARY:-mock done}" 2>/dev/null || true
 fi

@@ -25,8 +25,9 @@ cryo clean [--force]                # Remove runtime files (logs, state, message
 These commands are used by the AI agent to communicate with the daemon. They send JSON messages over a Unix domain socket.
 
 ```bash
-cryo-agent hibernate --wake <ISO8601>  # Schedule next wake
-cryo-agent hibernate --complete        # Mark plan as complete
+cryo-agent hibernate --summary "..."   # End session (more work to do)
+cryo-agent hibernate --complete        # End session (plan done)
+cryo-agent todo add "text" --at <TIME> # Schedule next wake via TODO
 cryo-agent note "text"                 # Leave a note for next session
 cryo-agent send "message"             # Send message to human (writes to outbox)
 cryo-agent receive                     # Read inbox messages from human

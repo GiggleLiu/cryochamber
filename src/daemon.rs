@@ -22,7 +22,7 @@ use crate::config::CryoConfig;
 use crate::fallback::FallbackAction;
 use crate::state::{self, CryoState};
 
-/// Format for persisting `next_wake` in timer.json (minute precision, no seconds).
+/// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 
 use crate::process::send_signal;
@@ -117,13 +117,8 @@ impl InboxWatcher {
 /// What the daemon should do after a session completes.
 pub enum SessionLoopOutcome {
     PlanComplete,
-    Hibernate {
-        wake_time: NaiveDateTime,
-        fallback: Option<FallbackAction>,
-    },
-    ValidationFailed {
-        quick_exit: bool,
-    },
+    Hibernate { fallback: Option<FallbackAction> },
+    ValidationFailed { quick_exit: bool },
 }
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
@@ -155,24 +150,26 @@ fn compute_sleep_timeout(
     }
 }
 
-/// Restore the initial `(next_wake, run_now)` pair from persisted state.
-///
-/// - If `next_wake` is persisted and in the future → wait (don't run now).
-/// - If `next_wake` is persisted and in the past → run now (delayed wake check will fire).
-/// - If no `next_wake` → run immediately (fresh start).
-fn restore_wake_state(
-    state: &state::CryoState,
-    now: NaiveDateTime,
-) -> (Option<NaiveDateTime>, bool) {
-    let next_wake = state
-        .next_wake
-        .as_ref()
-        .and_then(|s| NaiveDateTime::parse_from_str(s, WAKE_TIME_FMT).ok());
-    let run_now = match next_wake {
-        Some(w) => now >= w,
-        None => true,
-    };
-    (next_wake, run_now)
+/// Compute the next wake time from the TODO list.
+/// Iterates all pending TODOs, parses each `at` field, and returns the earliest
+/// valid timestamp. Invalid or unparseable entries are skipped with a warning.
+fn next_wake_from_todos(dir: &Path) -> Option<NaiveDateTime> {
+    let path = dir.join("todo.json");
+    let list = crate::todo::TodoList::load(&path).ok()?;
+    list.items()
+        .iter()
+        .filter(|i| !i.done && !i.at.is_empty())
+        .filter_map(|i| {
+            let parsed = NaiveDateTime::parse_from_str(&i.at, WAKE_TIME_FMT);
+            if parsed.is_err() {
+                eprintln!(
+                    "Daemon: Skipping TODO #{} with invalid at value: {:?}",
+                    i.id, i.at
+                );
+            }
+            parsed.ok()
+        })
+        .min()
 }
 
 /// Check if the scheduled wake time is significantly in the past (machine suspend).
@@ -313,9 +310,10 @@ impl Daemon {
 
         let provider_count = config.providers.len();
         let mut retry = RetryState::new(config.max_retries, provider_count);
-        // Restore persisted next_wake from state (survives daemon restart).
-        let (mut next_wake, mut run_now) =
-            restore_wake_state(&cryo_state, Local::now().naive_local());
+        // Derive next wake from TODO list.
+        let mut next_wake = next_wake_from_todos(&self.dir);
+        let mut run_now = cryo_state.session_number == 0
+            || next_wake.is_some_and(|w| Local::now().naive_local() >= w);
         let mut inbox_wake = false;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 
@@ -334,7 +332,10 @@ impl Daemon {
                 // (e.g. computer was sleeping), notify the agent instead of failing.
                 // Skip this check for inbox-triggered wakes — the agent should handle
                 // the user's message without a spurious delay warning.
-                let delayed_wake = if is_inbox_wake { None } else { next_wake.and_then(|wake| {
+                let delayed_wake = if is_inbox_wake {
+                    None
+                } else {
+                    next_wake.and_then(|wake| {
                     let now = Local::now().naive_local();
                     detect_delayed_wake(wake, now).map(|delay_str| {
                         // Cancel premature fallback — the session is about to run
@@ -347,11 +348,9 @@ impl Daemon {
                             delay_str,
                         )
                     })
-                }) };
-                let saved_wake = next_wake.take();
-
+                })
+                };
                 cryo_state.session_number += 1;
-                cryo_state.next_wake = None;
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
                 }
@@ -381,24 +380,24 @@ impl Daemon {
                                 eprintln!("Daemon: plan complete. Shutting down.");
                                 break;
                             }
-                            SessionLoopOutcome::Hibernate {
-                                wake_time,
-                                fallback,
-                            } => {
+                            SessionLoopOutcome::Hibernate { fallback } => {
                                 retry.reset();
-                                next_wake = Some(wake_time);
-                                cryo_state.next_wake =
-                                    Some(wake_time.format(WAKE_TIME_FMT).to_string());
+                                next_wake = next_wake_from_todos(&self.dir);
                                 let _ = state::save_state(&self.state_path, &cryo_state);
-                                pending_fallback =
-                                    fallback.map(|fb| (wake_time + chrono::Duration::hours(1), fb));
-                                eprintln!(
-                                    "Daemon: next wake at {}",
-                                    wake_time.format("%Y-%m-%d %H:%M")
-                                );
+                                pending_fallback = next_wake
+                                    .map(|w| (w + chrono::Duration::hours(1), fallback))
+                                    .and_then(|(deadline, fb)| fb.map(|f| (deadline, f)));
+                                if let Some(w) = next_wake {
+                                    eprintln!(
+                                        "Daemon: next wake at {}",
+                                        w.format("%Y-%m-%d %H:%M")
+                                    );
+                                } else {
+                                    eprintln!("Daemon: no pending TODOs, idling");
+                                }
                             }
                             SessionLoopOutcome::ValidationFailed { quick_exit } => {
-                                next_wake = saved_wake;
+                                next_wake = next_wake_from_todos(&self.dir);
 
                                 // Check if we should rotate provider
                                 let should_rotate = !config.providers.is_empty()
@@ -454,7 +453,7 @@ impl Daemon {
                     }
                     Err(e) => {
                         cryo_state.session_number -= 1;
-                        next_wake = saved_wake;
+                        next_wake = next_wake_from_todos(&self.dir);
                         eprintln!("Daemon: session failed: {e}");
                         if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
                             break;
@@ -539,11 +538,26 @@ impl Daemon {
         // List inbox filenames for logging (agent reads files itself)
         let inbox_filenames: Vec<String> = crate::message::list_inbox(&self.dir)?;
 
-        // Build prompt (slim — agent reads cryo.log and inbox files directly)
+        // Load TODO list for agent prompt
+        let todo_path = self.dir.join("todo.json");
+        let todo_display = match crate::todo::TodoList::load(&todo_path) {
+            Ok(list) => list.display(),
+            Err(err) => {
+                eprintln!(
+                    "Daemon: Error loading TODO list from {}: {}",
+                    todo_path.display(),
+                    err
+                );
+                format!("Error loading TODO list ({}). Please check todo.json.", err)
+            }
+        };
+
+        // Build prompt with task context and TODO list
         let agent_config = crate::agent::AgentConfig {
             session_number: cryo_state.session_number,
             task: task.clone(),
             delayed_wake: delayed_wake.map(|s| s.to_string()),
+            todo_list: todo_display,
         };
         let prompt = crate::agent::build_prompt(&agent_config);
 
@@ -631,7 +645,6 @@ impl Daemon {
                             });
                         }
                         crate::socket::Request::Hibernate {
-                            wake,
                             complete,
                             exit_code,
                             summary,
@@ -642,26 +655,13 @@ impl Daemon {
                                     "hibernate: plan complete, exit={exit_code}, summary=\"{summary_str}\""
                                 ))?;
                                 hibernate_outcome = Some(SessionLoopOutcome::PlanComplete);
-                            } else if let Some(wake_str) = &wake {
-                                match chrono::NaiveDateTime::parse_from_str(wake_str, WAKE_TIME_FMT)
-                                {
-                                    Ok(wake_time) => {
-                                        logger.log_event(&format!(
-                                            "hibernate: wake={wake_str}, exit={exit_code}, summary=\"{summary_str}\""
-                                        ))?;
-                                        hibernate_outcome = Some(SessionLoopOutcome::Hibernate {
-                                            wake_time,
-                                            fallback: pending_fallback.take(),
-                                        });
-                                    }
-                                    Err(e) => {
-                                        let _ = responder.respond(&crate::socket::Response {
-                                            ok: false,
-                                            message: format!("Invalid wake time: {e}"),
-                                        });
-                                        continue;
-                                    }
-                                }
+                            } else {
+                                logger.log_event(&format!(
+                                    "hibernate: exit={exit_code}, summary=\"{summary_str}\""
+                                ))?;
+                                hibernate_outcome = Some(SessionLoopOutcome::Hibernate {
+                                    fallback: pending_fallback.take(),
+                                });
                             }
                             let _ = responder.respond(&crate::socket::Response {
                                 ok: true,
@@ -710,6 +710,122 @@ impl Daemon {
                                     let _ = responder.respond(&crate::socket::Response {
                                         ok: false,
                                         message: format!("Failed to write reply: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoAdd { text, at } => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(mut list) => {
+                                    let id = list.add(text.clone(), at.clone());
+                                    match list.save(&todo_path) {
+                                        Ok(()) => {
+                                            logger.log_event(&format!(
+                                                "todo add: #{id} \"{text}\" at {at}"
+                                            ))?;
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: true,
+                                                message: format!("Added todo #{id}"),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: false,
+                                                message: format!("Failed to save todo: {e}"),
+                                            });
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoDone { id } => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(mut list) => match list.done(id) {
+                                    Ok(()) => match list.save(&todo_path) {
+                                        Ok(()) => {
+                                            logger.log_event(&format!("todo done: #{id}"))?;
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: true,
+                                                message: format!("Marked todo #{id} as done"),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: false,
+                                                message: format!("Failed to save todo: {e}"),
+                                            });
+                                        }
+                                    },
+                                    Err(e) => {
+                                        let _ = responder.respond(&crate::socket::Response {
+                                            ok: false,
+                                            message: format!("{e}"),
+                                        });
+                                    }
+                                },
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoRemove { id } => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(mut list) => match list.remove(id) {
+                                    Ok(()) => match list.save(&todo_path) {
+                                        Ok(()) => {
+                                            logger.log_event(&format!("todo remove: #{id}"))?;
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: true,
+                                                message: format!("Removed todo #{id}"),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            let _ = responder.respond(&crate::socket::Response {
+                                                ok: false,
+                                                message: format!("Failed to save todo: {e}"),
+                                            });
+                                        }
+                                    },
+                                    Err(e) => {
+                                        let _ = responder.respond(&crate::socket::Response {
+                                            ok: false,
+                                            message: format!("{e}"),
+                                        });
+                                    }
+                                },
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        crate::socket::Request::TodoList => {
+                            let todo_path = self.dir.join("todo.json");
+                            match crate::todo::TodoList::load(&todo_path) {
+                                Ok(list) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: true,
+                                        message: list.display(),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = responder.respond(&crate::socket::Response {
+                                        ok: false,
+                                        message: format!("Failed to load todo list: {e}"),
                                     });
                                 }
                             }
@@ -1160,85 +1276,91 @@ mod tests {
         assert_eq!(result.unwrap(), "6m");
     }
 
-    fn make_state(next_wake: Option<&str>) -> state::CryoState {
-        state::CryoState {
-            session_number: 1,
-            pid: None,
-            retry_count: 0,
-            next_wake: next_wake.map(String::from),
-            agent_override: None,
-            max_retries_override: None,
-            max_session_duration_override: None,
-            last_report_time: None,
-            provider_index: None,
-        }
-    }
-
     #[test]
-    fn test_restore_wake_state_no_persisted_wake() {
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap();
-        let state = make_state(None);
-        let (next_wake, run_now) = restore_wake_state(&state, now);
-        assert!(next_wake.is_none());
-        assert!(run_now, "No persisted wake → run immediately");
-    }
-
-    #[test]
-    fn test_restore_wake_state_future_wake() {
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(8, 0, 0)
-            .unwrap();
-        let state = make_state(Some("2026-03-01T09:00"));
-        let (next_wake, run_now) = restore_wake_state(&state, now);
+    fn test_next_wake_from_todos_picks_earliest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        list.add("later".into(), "2026-03-02T16:00".into());
+        list.add("earlier".into(), "2026-03-02T14:00".into());
+        list.save(&path).unwrap();
+        let wake = next_wake_from_todos(dir.path());
         assert_eq!(
-            next_wake.unwrap(),
-            chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
                 .unwrap()
-                .and_hms_opt(9, 0, 0)
+                .and_hms_opt(14, 0, 0)
                 .unwrap()
-        );
-        assert!(!run_now, "Wake in future → wait");
-    }
-
-    #[test]
-    fn test_restore_wake_state_past_wake() {
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap();
-        let state = make_state(Some("2026-03-01T09:00"));
-        let (next_wake, run_now) = restore_wake_state(&state, now);
-        assert!(next_wake.is_some(), "Should parse persisted wake");
-        assert!(
-            run_now,
-            "Wake in past → run now (delayed wake check will fire)"
         );
     }
 
     #[test]
-    fn test_restore_wake_state_exact_wake_time() {
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(9, 0, 0)
-            .unwrap();
-        let state = make_state(Some("2026-03-01T09:00"));
-        let (_, run_now) = restore_wake_state(&state, now);
-        assert!(run_now, "Exactly at wake time → run now");
+    fn test_next_wake_from_todos_none_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert!(wake.is_none());
     }
 
     #[test]
-    fn test_restore_wake_state_invalid_format() {
-        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap();
-        let state = make_state(Some("not-a-date"));
-        let (next_wake, run_now) = restore_wake_state(&state, now);
-        assert!(next_wake.is_none(), "Invalid format → treated as no wake");
-        assert!(run_now, "Invalid format → run immediately");
+    fn test_next_wake_from_todos_skips_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        let id = list.add("done".into(), "2026-03-02T10:00".into());
+        list.done(id).unwrap();
+        list.save(&path).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert!(wake.is_none());
+    }
+
+    #[test]
+    fn test_next_wake_from_todos_skips_invalid_and_picks_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        // Invalid at value that sorts before valid ones
+        list.add("bad format".into(), "2026-03-02 10:00".into());
+        // Valid at value
+        list.add("valid task".into(), "2026-03-02T14:00".into());
+        list.save(&path).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert_eq!(
+            wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
+                .unwrap()
+                .and_hms_opt(14, 0, 0)
+                .unwrap(),
+            "Should skip invalid entry and pick valid one"
+        );
+    }
+
+    #[test]
+    fn test_next_wake_from_todos_skips_empty_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        // Simulate legacy items with empty `at` (from serde default)
+        let content = r#"[{"id":1,"text":"legacy item","done":false,"created":"unknown"},{"id":2,"text":"scheduled","done":false,"at":"2026-03-02T14:00","created":"unknown"}]"#;
+        std::fs::write(&path, content).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert_eq!(
+            wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
+                .unwrap()
+                .and_hms_opt(14, 0, 0)
+                .unwrap(),
+            "Should skip empty at and pick the valid one"
+        );
+    }
+
+    #[test]
+    fn test_next_wake_from_todos_all_invalid_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        list.add("bad1".into(), "not-a-date".into());
+        list.add("bad2".into(), "also-bad".into());
+        list.save(&path).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert!(wake.is_none(), "All invalid entries should yield None");
     }
 }

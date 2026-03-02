@@ -24,13 +24,23 @@ Execute these steps in order. **Do not skip or reorder steps.**
 - Leave notes for your future self: `cryo-agent note "what I did and what's next"`
 - Set up a dead-man switch if needed: `cryo-agent alert <action> <target> "message"`
 
-### Step 4: Hibernate (LAST action — nothing after this)
+### Step 4: Schedule next wake via TODO
+
+Based on what happened in this session and the plan, update the TODO list. Add a TODO item with a scheduled time for your next task. The daemon derives its next wake from the earliest pending TODO.
+
+```
+cryo-agent todo add "description of next task" --at <TIME>
+```
+
+Use `cryo-agent time "+30 minutes"` to compute the `<TIME>` value.
+
+### Step 5: Hibernate (LAST action — nothing after this)
 
 Pick ONE of the following. **This must be your final tool call. Do not run any commands after it.** The daemon cannot archive messages or schedule the next wake until your process exits.
 
 **More work to do:**
 ```
-cryo-agent hibernate --wake <TIME> --summary "what I did, what's next"
+cryo-agent hibernate --summary "what I did, what's next"
 ```
 
 **All done:**
@@ -40,10 +50,8 @@ cryo-agent hibernate --complete --summary "All tasks finished"
 
 **Blocked or failed:**
 ```
-cryo-agent hibernate --wake <TIME> --exit 1 --summary "Blocked on X"
+cryo-agent hibernate --exit 1 --summary "Blocked on X"
 ```
-
-Use `cryo-agent time "+30 minutes"` to compute the `<TIME>` value before hibernating.
 
 ## Wake Time Guidelines
 
@@ -62,8 +70,7 @@ cryo-agent send "message"                     # Send message to human (outbox)
 cryo-agent reply "message"                    # Reply to inbox messages
 cryo-agent receive                            # Read inbox messages from human
 cryo-agent alert <action> <target> "message"  # Dead-man switch (fires if you don't wake on time)
-cryo-agent todo add "text"                    # Add a TODO item
-cryo-agent todo add "text" --at 2026-03-05    # Add with scheduled time
+cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required)
 cryo-agent todo list                          # List all TODO items
 cryo-agent todo done <id>                     # Mark item as done
 cryo-agent todo remove <id>                   # Remove an item
@@ -73,6 +80,7 @@ cryo-agent time "+1 day"                      # Relative time computation
 
 ## Key Facts
 
+- **TODO list drives your schedule.** The daemon wakes at the earliest pending TODO's `at` time.
 - **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
 - **Notes survive across sessions.** Use `cryo-agent note` liberally — it's your memory.
 - **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.

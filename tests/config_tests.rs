@@ -65,7 +65,7 @@ fn test_apply_overrides_all() {
         agent_override: Some("claude".to_string()),
         max_retries_override: Some(10),
         max_session_duration_override: Some(7200),
-        next_wake: None,
+
         last_report_time: None,
         provider_index: None,
     };
@@ -94,7 +94,7 @@ fn test_apply_overrides_none_keeps_config() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
-        next_wake: None,
+
         last_report_time: None,
         provider_index: None,
     };
@@ -125,7 +125,7 @@ fn test_apply_overrides_partial() {
         agent_override: Some("claude".to_string()),
         max_retries_override: None,
         max_session_duration_override: None,
-        next_wake: None,
+
         last_report_time: None,
         provider_index: None,
     };

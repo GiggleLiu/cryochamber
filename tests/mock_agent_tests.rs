@@ -278,16 +278,16 @@ fn test_mock_invalid_wake_time() {
         .assert()
         .success();
 
-    // Invalid wake time ("banana") is rejected by the daemon's NaiveDateTime parser.
-    // The daemon sends an error response but the agent script has already exited,
-    // so the daemon sees the agent exit without a successful hibernate call.
+    // The agent adds a TODO with "banana" as the time, then hibernates.
+    // The hibernate succeeds, but "banana" is unparseable as NaiveDateTime,
+    // so next_wake_from_todos returns None and the daemon idles.
     assert!(
         wait_for_log_content(
             dir.path(),
-            "agent exited without hibernate",
+            "no pending TODOs, idling",
             Duration::from_secs(15)
         ),
-        "Log should show agent exited without hibernate after invalid wake time"
+        "Daemon should idle since 'banana' is not a valid wake time"
     );
 
     cancel_and_wait(dir.path());
@@ -336,10 +336,8 @@ fn test_mock_double_hibernate() {
         .assert()
         .success();
 
-    // The script sends: hibernate --wake "+5 seconds", then hibernate --complete.
-    // "+5 seconds" is not valid ISO8601 (NaiveDateTime), so the daemon rejects
-    // the first hibernate. The second hibernate --complete succeeds, so the
-    // daemon completes the plan.
+    // The script sends two hibernate commands: first without --complete, then
+    // with --complete. The daemon takes the last one, so the plan completes.
     assert!(
         wait_for_log_content(dir.path(), "plan complete", Duration::from_secs(15)),
         "Log should show plan complete (first hibernate rejected, second succeeds)"
@@ -414,17 +412,12 @@ fn test_mock_hibernate_then_crash() {
         .assert()
         .success();
 
-    // The script sends: hibernate --wake "+5 seconds", then exit 1.
-    // "+5 seconds" is not valid ISO8601 (NaiveDateTime), so the daemon rejects
-    // the hibernate. The agent then exits with code 1, so the daemon sees it as
-    // "agent exited without hibernate" (a crash).
+    // The script sends: hibernate (not complete), then exit 1.
+    // The daemon accepts the hibernate, so despite the non-zero exit code,
+    // the session completes with the hibernate outcome.
     assert!(
-        wait_for_log_content(
-            dir.path(),
-            "agent exited without hibernate",
-            Duration::from_secs(15)
-        ),
-        "Log should show agent exited without hibernate (wake time was invalid)"
+        wait_for_log_content(dir.path(), "session complete", Duration::from_secs(15)),
+        "Log should show session complete (hibernate accepted despite crash)"
     );
 
     cancel_and_wait(dir.path());
@@ -949,9 +942,7 @@ fn test_invalid_report_time_warns() {
 fn write_inbox_message(dir: &std::path::Path, filename: &str, body: &str) {
     let inbox = dir.join("messages").join("inbox");
     fs::create_dir_all(&inbox).unwrap();
-    let content = format!(
-        "---\nfrom: test-user\nsubject: test\n---\n{body}"
-    );
+    let content = format!("---\nfrom: test-user\nsubject: test\n---\n{body}");
     fs::write(inbox.join(filename), content).unwrap();
 }
 
@@ -992,10 +983,7 @@ fn test_inbox_wake_coalesces_multiple_events() {
     );
 
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("plan complete"),
-        "Plan should complete: {log}"
-    );
+    assert!(log.contains("plan complete"), "Plan should complete: {log}");
 
     // Only ONE session should have run (events coalesced)
     let session_count = log.matches("CRYO SESSION").count();
@@ -1031,9 +1019,9 @@ fn test_inbox_wake_no_delayed_wake_notice() {
         .assert()
         .success();
 
-    // Wait for session 1 to hibernate (it logs "hibernate: wake=...")
+    // Wait for session 1 to hibernate (logs "hibernate: exit=...")
     assert!(
-        wait_for_log_content(dir.path(), "hibernate: wake=", Duration::from_secs(10)),
+        wait_for_log_content(dir.path(), "hibernate: exit=", Duration::from_secs(10)),
         "Session 1 should hibernate with past wake time"
     );
 
@@ -1048,10 +1036,7 @@ fn test_inbox_wake_no_delayed_wake_notice() {
     );
 
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("plan complete"),
-        "Plan should complete: {log}"
-    );
+    assert!(log.contains("plan complete"), "Plan should complete: {log}");
 
     // The key assertion: no "delayed wake" notice should appear.
     // Session 2 was triggered by inbox (InboxChanged queued during session 1),

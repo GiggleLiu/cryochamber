@@ -34,10 +34,12 @@ fn test_build_prompt_with_context() {
         session_number: 3,
         task: "Continue work".to_string(),
         delayed_wake: None,
+        todo_list: "1. [ ] Review PR (at: 2026-03-02T14:00)".to_string(),
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
-    assert!(prompt.contains("cryo.log"));
+    assert!(prompt.contains("TODO List"));
+    assert!(prompt.contains("Review PR"));
 }
 
 #[test]
@@ -52,7 +54,7 @@ fn test_state_roundtrip() {
         agent_override: Some("opencode".to_string()),
         max_retries_override: Some(3),
         max_session_duration_override: Some(1800),
-        next_wake: None,
+
         last_report_time: None,
         provider_index: None,
     };

@@ -85,19 +85,27 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
         .flatten()
         .unwrap_or_default();
 
-    let (running, session, agent, next_wake) =
-        match state::load_state(&state::state_path(dir)).ok().flatten() {
-            Some(st) => {
-                let is_running = state::is_locked(&st);
-                let effective_agent = st
-                    .agent_override
-                    .as_deref()
-                    .unwrap_or(&cfg.agent)
-                    .to_string();
-                (is_running, st.session_number, effective_agent, st.next_wake)
-            }
-            None => (false, 0, cfg.agent.clone(), None),
-        };
+    let (running, session, agent) = match state::load_state(&state::state_path(dir)).ok().flatten()
+    {
+        Some(st) => {
+            let is_running = state::is_locked(&st);
+            let effective_agent = st
+                .agent_override
+                .as_deref()
+                .unwrap_or(&cfg.agent)
+                .to_string();
+            (is_running, st.session_number, effective_agent)
+        }
+        None => (false, 0, cfg.agent.clone()),
+    };
+
+    // Derive next wake from TODO list
+    let next_wake: Option<String> = {
+        let todo_path = dir.join("todo.json");
+        crate::todo::TodoList::load(&todo_path)
+            .ok()
+            .and_then(|list| list.next_wake_time().map(String::from))
+    };
 
     let log_file = log::log_path(dir);
 
@@ -430,6 +438,35 @@ mod tests {
         let status = &resp.0;
         assert_eq!(status["running"], false);
         assert_eq!(status["session"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_status_with_todo_wake() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write a todo.json with a pending item that has a wake time
+        let todo_path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        list.add("future task".into(), "2099-12-31T23:59".into());
+        list.save(&todo_path).unwrap();
+
+        // Write minimal cryo.toml
+        let config = crate::config::CryoConfig::default();
+        let config_path = dir.path().join("cryo.toml");
+        crate::config::save_config(&config_path, &config).unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_status(State(Arc::new(state))).await;
+        let status = &resp.0;
+        // next_wake should be present and contain the TODO's at time
+        let next_wake = status["next_wake"].as_str().unwrap();
+        assert!(
+            next_wake.contains("2099-12-31T23:59"),
+            "Status should show TODO-derived wake time, got: {next_wake}"
+        );
     }
 
     #[tokio::test]

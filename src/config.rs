@@ -206,7 +206,7 @@ mod tests {
             agent_override: Some("claude".to_string()),
             max_retries_override: Some(10),
             max_session_duration_override: Some(300),
-            next_wake: None,
+
             last_report_time: None,
             provider_index: None,
         };
@@ -227,7 +227,7 @@ mod tests {
             agent_override: None,
             max_retries_override: None,
             max_session_duration_override: None,
-            next_wake: None,
+
             last_report_time: None,
             provider_index: None,
         };

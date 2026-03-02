@@ -24,10 +24,12 @@ make check-agent
 
 ```
 Session 1: "What is the point of consciousness this early? It's only 09:15..."
-  → cryo-agent hibernate --wake 2026-03-08T09:18
+  → cryo-agent todo add "complain again" --at 2026-03-08T09:18
+  → cryo-agent hibernate --summary "Too early, going back to sleep"
 
 Session 2: "No hobbit ever woke up before second breakfast... and it's 09:18."
-  → cryo-agent hibernate --wake 2026-03-08T09:22
+  → cryo-agent todo add "maybe get up" --at 2026-03-08T09:22
+  → cryo-agent hibernate --summary "Still not ready, snoozing again"
 
 Session 3: "Fine. FINE. I'm up. Are you happy now?"
   → cryo-agent hibernate --complete --summary "Mr. Lazy finally got out of bed"

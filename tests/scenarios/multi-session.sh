@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mock agent: hibernates with short wake, completes on session 3.
+# Mock agent: hibernates with short wake via TODO, completes on session 3.
 # Tests: multi-session lifecycle through plan completion.
 # Uses a counter file to track sessions across invocations.
 
@@ -21,7 +21,9 @@ if [ "$COUNT" -ge 3 ]; then
     cryo-agent note "Session $COUNT: completing plan"
     cryo-agent hibernate --complete --summary "Plan completed after $COUNT sessions"
 else
-    WAKE=$(cryo-agent time "+2 seconds")
+    # Use current time (immediate wake) since we want the daemon to wake ASAP
+    WAKE=$(cryo-agent time)
     cryo-agent note "Session $COUNT: work in progress"
-    cryo-agent hibernate --wake "$WAKE" --summary "Session $COUNT done, more to do"
+    cryo-agent todo add "next session" --at "$WAKE"
+    cryo-agent hibernate --summary "Session $COUNT done, more to do"
 fi
