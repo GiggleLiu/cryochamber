@@ -74,6 +74,7 @@ pub struct AgentConfig {
     pub session_number: u32,
     pub task: String,
     pub delayed_wake: Option<String>,
+    pub todo_list: String,
 }
 
 pub fn build_prompt(config: &AgentConfig) -> String {
@@ -98,20 +99,26 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 
 {task}
 
+## TODO List
+
+{todo_list}
+
 ## Context
 
-- Read cryo.log for previous session history
 - Check messages/inbox/ for new messages
 
 ## Reminders
 
-- Use `cryo-agent hibernate` to end your session (--complete if plan is done)
+- Use `cryo-agent todo add "text" --at TIME` to schedule work
+- Use `cryo-agent todo done <id>` to mark tasks complete
+- Use `cryo-agent hibernate` to end your session (--complete when plan is done)
 - Use `cryo-agent note` to leave context for your next session
 - Read plan.md before starting work
 "#,
         session_number = config.session_number,
         delayed = delayed_section,
         task = config.task,
+        todo_list = config.todo_list,
     )
 }
 

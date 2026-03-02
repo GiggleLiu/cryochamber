@@ -524,11 +524,18 @@ impl Daemon {
         // List inbox filenames for logging (agent reads files itself)
         let inbox_filenames: Vec<String> = crate::message::list_inbox(&self.dir)?;
 
-        // Build prompt (slim — agent reads cryo.log and inbox files directly)
+        // Load TODO list for agent prompt
+        let todo_path = self.dir.join("todo.json");
+        let todo_display = crate::todo::TodoList::load(&todo_path)
+            .map(|l| l.display())
+            .unwrap_or_else(|_| "No todos.".to_string());
+
+        // Build prompt with task context and TODO list
         let agent_config = crate::agent::AgentConfig {
             session_number: cryo_state.session_number,
             task: task.clone(),
             delayed_wake: delayed_wake.map(|s| s.to_string()),
+            todo_list: todo_display,
         };
         let prompt = crate::agent::build_prompt(&agent_config);
 
