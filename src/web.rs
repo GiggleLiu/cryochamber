@@ -85,19 +85,27 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
         .flatten()
         .unwrap_or_default();
 
-    let (running, session, agent, next_wake) =
-        match state::load_state(&state::state_path(dir)).ok().flatten() {
-            Some(st) => {
-                let is_running = state::is_locked(&st);
-                let effective_agent = st
-                    .agent_override
-                    .as_deref()
-                    .unwrap_or(&cfg.agent)
-                    .to_string();
-                (is_running, st.session_number, effective_agent, st.next_wake)
-            }
-            None => (false, 0, cfg.agent.clone(), None),
-        };
+    let (running, session, agent) = match state::load_state(&state::state_path(dir)).ok().flatten()
+    {
+        Some(st) => {
+            let is_running = state::is_locked(&st);
+            let effective_agent = st
+                .agent_override
+                .as_deref()
+                .unwrap_or(&cfg.agent)
+                .to_string();
+            (is_running, st.session_number, effective_agent)
+        }
+        None => (false, 0, cfg.agent.clone()),
+    };
+
+    // Derive next wake from TODO list
+    let next_wake: Option<String> = {
+        let todo_path = dir.join("todo.json");
+        crate::todo::TodoList::load(&todo_path)
+            .ok()
+            .and_then(|list| list.next_wake_time().map(String::from))
+    };
 
     let log_file = log::log_path(dir);
 

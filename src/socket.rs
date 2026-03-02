@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
     Hibernate {
-        wake: Option<String>,
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
@@ -136,7 +135,6 @@ mod tests {
     #[test]
     fn test_serialize_hibernate_request() {
         let req = Request::Hibernate {
-            wake: Some("2026-03-08T09:00".to_string()),
             complete: false,
             exit_code: 0,
             summary: Some("Done".to_string()),

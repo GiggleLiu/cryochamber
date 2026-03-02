@@ -17,9 +17,6 @@ pub struct CryoState {
     pub max_retries_override: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_session_duration_override: Option<u64>,
-    /// Scheduled next wake time (ISO 8601 format), set by daemon on hibernate.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_wake: Option<String>,
 
     /// Last time a periodic report was sent, stored as an ISO 8601 local time
     /// string without timezone offset (from `Local::now().naive_local()`).
@@ -117,7 +114,7 @@ mod tests {
             session_number: 1,
             pid: Some(pid),
             retry_count: 0,
-            next_wake: None,
+
             agent_override: None,
             max_retries_override: None,
             max_session_duration_override: None,
@@ -133,7 +130,7 @@ mod tests {
             session_number: 1,
             pid: None,
             retry_count: 0,
-            next_wake: None,
+
             agent_override: None,
             max_retries_override: None,
             max_session_duration_override: None,
@@ -149,7 +146,7 @@ mod tests {
             session_number: 1,
             pid: Some(std::process::id()),
             retry_count: 0,
-            next_wake: None,
+
             agent_override: None,
             max_retries_override: None,
             max_session_duration_override: None,

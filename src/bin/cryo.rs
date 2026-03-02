@@ -293,7 +293,6 @@ fn cmd_start(
         agent_override,
         max_retries_override,
         max_session_duration_override,
-        next_wake: None,
         last_report_time: None,
         provider_index: None,
     };
