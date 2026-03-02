@@ -22,7 +22,7 @@ use crate::config::CryoConfig;
 use crate::fallback::FallbackAction;
 use crate::state::{self, CryoState};
 
-/// Format for persisting `next_wake` in timer.json (minute precision, no seconds).
+/// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 
 use crate::process::send_signal;

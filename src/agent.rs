@@ -105,7 +105,7 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 
 ## Reminders
 
-- Use `cryo-agent hibernate` to end your session (--wake or --complete)
+- Use `cryo-agent hibernate` to end your session (--complete if plan is done)
 - Use `cryo-agent note` to leave context for your next session
 - Read plan.md before starting work
 "#,

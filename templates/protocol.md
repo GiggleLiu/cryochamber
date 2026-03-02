@@ -24,13 +24,23 @@ Execute these steps in order. **Do not skip or reorder steps.**
 - Leave notes for your future self: `cryo-agent note "what I did and what's next"`
 - Set up a dead-man switch if needed: `cryo-agent alert <action> <target> "message"`
 
-### Step 4: Hibernate (LAST action — nothing after this)
+### Step 4: Schedule next wake via TODO
+
+Add a TODO item with a scheduled time. The daemon derives its next wake from the earliest pending TODO.
+
+```
+cryo-agent todo add "description of next task" --at <TIME>
+```
+
+Use `cryo-agent time "+30 minutes"` to compute the `<TIME>` value.
+
+### Step 5: Hibernate (LAST action — nothing after this)
 
 Pick ONE of the following. **This must be your final tool call. Do not run any commands after it.** The daemon cannot archive messages or schedule the next wake until your process exits.
 
 **More work to do:**
 ```
-cryo-agent hibernate --wake <TIME> --summary "what I did, what's next"
+cryo-agent hibernate --summary "what I did, what's next"
 ```
 
 **All done:**
@@ -40,10 +50,8 @@ cryo-agent hibernate --complete --summary "All tasks finished"
 
 **Blocked or failed:**
 ```
-cryo-agent hibernate --wake <TIME> --exit 1 --summary "Blocked on X"
+cryo-agent hibernate --exit 1 --summary "Blocked on X"
 ```
-
-Use `cryo-agent time "+30 minutes"` to compute the `<TIME>` value before hibernating.
 
 ## Wake Time Guidelines
 
