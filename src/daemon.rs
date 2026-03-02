@@ -151,11 +151,25 @@ fn compute_sleep_timeout(
 }
 
 /// Compute the next wake time from the TODO list.
+/// Iterates all pending TODOs, parses each `at` field, and returns the earliest
+/// valid timestamp. Invalid or unparseable entries are skipped with a warning.
 fn next_wake_from_todos(dir: &Path) -> Option<NaiveDateTime> {
     let path = dir.join("todo.json");
     let list = crate::todo::TodoList::load(&path).ok()?;
-    let wake_str = list.next_wake_time()?;
-    NaiveDateTime::parse_from_str(wake_str, WAKE_TIME_FMT).ok()
+    list.items()
+        .iter()
+        .filter(|i| !i.done && !i.at.is_empty())
+        .filter_map(|i| {
+            let parsed = NaiveDateTime::parse_from_str(&i.at, WAKE_TIME_FMT);
+            if parsed.is_err() {
+                eprintln!(
+                    "Daemon: Skipping TODO #{} with invalid at value: {:?}",
+                    i.id, i.at
+                );
+            }
+            parsed.ok()
+        })
+        .min()
 }
 
 /// Check if the scheduled wake time is significantly in the past (machine suspend).
@@ -526,9 +540,17 @@ impl Daemon {
 
         // Load TODO list for agent prompt
         let todo_path = self.dir.join("todo.json");
-        let todo_display = crate::todo::TodoList::load(&todo_path)
-            .map(|l| l.display())
-            .unwrap_or_else(|_| "No todos.".to_string());
+        let todo_display = match crate::todo::TodoList::load(&todo_path) {
+            Ok(list) => list.display(),
+            Err(err) => {
+                eprintln!(
+                    "Daemon: Error loading TODO list from {}: {}",
+                    todo_path.display(),
+                    err
+                );
+                format!("Error loading TODO list ({}). Please check todo.json.", err)
+            }
+        };
 
         // Build prompt with task context and TODO list
         let agent_config = crate::agent::AgentConfig {
@@ -1289,5 +1311,56 @@ mod tests {
         list.save(&path).unwrap();
         let wake = next_wake_from_todos(dir.path());
         assert!(wake.is_none());
+    }
+
+    #[test]
+    fn test_next_wake_from_todos_skips_invalid_and_picks_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        // Invalid at value that sorts before valid ones
+        list.add("bad format".into(), "2026-03-02 10:00".into());
+        // Valid at value
+        list.add("valid task".into(), "2026-03-02T14:00".into());
+        list.save(&path).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert_eq!(
+            wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
+                .unwrap()
+                .and_hms_opt(14, 0, 0)
+                .unwrap(),
+            "Should skip invalid entry and pick valid one"
+        );
+    }
+
+    #[test]
+    fn test_next_wake_from_todos_skips_empty_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        // Simulate legacy items with empty `at` (from serde default)
+        let content = r#"[{"id":1,"text":"legacy item","done":false,"created":"unknown"},{"id":2,"text":"scheduled","done":false,"at":"2026-03-02T14:00","created":"unknown"}]"#;
+        std::fs::write(&path, content).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert_eq!(
+            wake.unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
+                .unwrap()
+                .and_hms_opt(14, 0, 0)
+                .unwrap(),
+            "Should skip empty at and pick the valid one"
+        );
+    }
+
+    #[test]
+    fn test_next_wake_from_todos_all_invalid_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        list.add("bad1".into(), "not-a-date".into());
+        list.add("bad2".into(), "also-bad".into());
+        list.save(&path).unwrap();
+        let wake = next_wake_from_todos(dir.path());
+        assert!(wake.is_none(), "All invalid entries should yield None");
     }
 }

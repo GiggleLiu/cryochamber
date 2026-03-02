@@ -8,6 +8,7 @@ pub struct TodoItem {
     pub id: u32,
     pub text: String,
     pub done: bool,
+    #[serde(default)]
     pub at: String,
     #[serde(default = "default_created")]
     pub created: String,
@@ -99,10 +100,11 @@ impl TodoList {
     }
 
     /// Return the earliest `at` among pending (not done) items, if any.
+    /// Skips items with empty `at` (e.g. legacy items missing the field).
     pub fn next_wake_time(&self) -> Option<&str> {
         self.items
             .iter()
-            .filter(|i| !i.done)
+            .filter(|i| !i.done && !i.at.is_empty())
             .map(|i| i.at.as_str())
             .min()
     }
@@ -154,5 +156,30 @@ mod tests {
     fn test_next_wake_time_none_when_empty() {
         let list = TodoList::new();
         assert!(list.next_wake_time().is_none());
+    }
+
+    #[test]
+    fn test_backward_compat_missing_at_field() {
+        // Legacy JSON without the `at` field should deserialize with default empty string
+        let json = r#"[{"id":1,"text":"old item","done":false,"created":"unknown"}]"#;
+        let items: Vec<TodoItem> = serde_json::from_str(json).unwrap();
+        assert_eq!(items[0].at, "", "Missing at should default to empty string");
+    }
+
+    #[test]
+    fn test_next_wake_time_skips_empty_at() {
+        let mut list = TodoList::new();
+        // Simulate a legacy item with empty `at`
+        list.items.push(TodoItem {
+            id: 1,
+            text: "legacy".into(),
+            done: false,
+            at: "".into(),
+            created: "unknown".into(),
+        });
+        list.add("scheduled".into(), "2026-03-02T14:00".into());
+        // next_wake_time should skip empty `at` and return the scheduled item
+        let wake = list.next_wake_time();
+        assert_eq!(wake, Some("2026-03-02T14:00"));
     }
 }

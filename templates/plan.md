@@ -18,7 +18,7 @@ After 3 sessions, declare your journey complete.
 5. Otherwise:
    - Compute a wake time 2 minutes from now: `cryo-agent time "+2 minutes"`
    - Add a TODO: `cryo-agent todo add "next greeting" --at <time>`
-   - Run `cryo-agent hibernate --summary "See you soon!"`
+   - Run `cryo-agent hibernate --summary "Session successful: <what was done>. Next: <what to do>"`
 
 ## Notes
 

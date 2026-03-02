@@ -26,7 +26,7 @@ Execute these steps in order. **Do not skip or reorder steps.**
 
 ### Step 4: Schedule next wake via TODO
 
-Add a TODO item with a scheduled time. The daemon derives its next wake from the earliest pending TODO.
+Based on what happened in this session and the plan, update the TODO list. Add a TODO item with a scheduled time for your next task. The daemon derives its next wake from the earliest pending TODO.
 
 ```
 cryo-agent todo add "description of next task" --at <TIME>

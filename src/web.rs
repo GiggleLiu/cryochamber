@@ -441,6 +441,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_status_with_todo_wake() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write a todo.json with a pending item that has a wake time
+        let todo_path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        list.add("future task".into(), "2099-12-31T23:59".into());
+        list.save(&todo_path).unwrap();
+
+        // Write minimal cryo.toml
+        let config = crate::config::CryoConfig::default();
+        let config_path = dir.path().join("cryo.toml");
+        crate::config::save_config(&config_path, &config).unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_status(State(Arc::new(state))).await;
+        let status = &resp.0;
+        // next_wake should be present and contain the TODO's at time
+        let next_wake = status["next_wake"].as_str().unwrap();
+        assert!(
+            next_wake.contains("2099-12-31T23:59"),
+            "Status should show TODO-derived wake time, got: {next_wake}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_get_messages_empty() {
         let dir = tempfile::tempdir().unwrap();
         crate::message::ensure_dirs(dir.path()).unwrap();
