@@ -172,106 +172,61 @@ fn agent_cmd() -> Command {
     Command::cargo_bin("cryo-agent").unwrap()
 }
 
+// CLI TODO tests — since TODO ops now go through the daemon socket,
+// these tests verify the no-daemon (connection error) behavior.
+
 #[test]
-fn test_cli_todo_add_and_list() {
+fn test_cli_todo_add_requires_at() {
     let dir = tempfile::tempdir().unwrap();
+    // --at is now required; omitting it should fail at CLI parse level
     agent_cmd()
         .args(["todo", "add", "Submit paper"])
         .current_dir(dir.path())
         .assert()
-        .success()
-        .stdout(predicates::str::contains("Added todo #1"));
+        .failure()
+        .stderr(predicates::str::contains("--at"));
+}
 
+#[test]
+fn test_cli_todo_add_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "add", "Submit paper", "--at", "2026-03-05T14:00"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Cannot connect"));
+}
+
+#[test]
+fn test_cli_todo_list_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
     agent_cmd()
         .args(["todo", "list"])
         .current_dir(dir.path())
         .assert()
-        .success()
-        .stdout(predicates::str::contains("1. [ ] Submit paper"));
+        .failure()
+        .stderr(predicates::str::contains("Cannot connect"));
 }
 
 #[test]
-fn test_cli_todo_add_with_at() {
+fn test_cli_todo_done_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["todo", "add", "Check status", "--at", "2026-03-05T14:00"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    agent_cmd()
-        .args(["todo", "list"])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("(at: 2026-03-05T14:00)"));
-}
-
-#[test]
-fn test_cli_todo_done() {
-    let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["todo", "add", "Task"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
     agent_cmd()
         .args(["todo", "done", "1"])
         .current_dir(dir.path())
         .assert()
-        .success()
-        .stdout(predicates::str::contains("Marked todo #1 as done"));
-
-    agent_cmd()
-        .args(["todo", "list"])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("1. [x] Task"));
+        .failure()
+        .stderr(predicates::str::contains("Cannot connect"));
 }
 
 #[test]
-fn test_cli_todo_remove() {
+fn test_cli_todo_remove_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["todo", "add", "Task"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
     agent_cmd()
         .args(["todo", "remove", "1"])
         .current_dir(dir.path())
         .assert()
-        .success()
-        .stdout(predicates::str::contains("Removed todo #1"));
-
-    agent_cmd()
-        .args(["todo", "list"])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("No todos"));
-}
-
-#[test]
-fn test_cli_todo_done_nonexistent() {
-    let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["todo", "done", "99"])
-        .current_dir(dir.path())
-        .assert()
-        .failure();
-}
-
-#[test]
-fn test_cli_todo_list_empty() {
-    let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["todo", "list"])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("No todos"));
+        .failure()
+        .stderr(predicates::str::contains("Cannot connect"));
 }

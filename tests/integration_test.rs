@@ -52,7 +52,7 @@ fn test_state_roundtrip() {
         agent_override: Some("opencode".to_string()),
         max_retries_override: Some(3),
         max_session_duration_override: Some(1800),
-        next_wake: None,
+
         last_report_time: None,
         provider_index: None,
     };

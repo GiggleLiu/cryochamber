@@ -5,7 +5,6 @@ use std::path::Path;
 
 use cryochamber::message;
 use cryochamber::socket::{self, Request};
-use cryochamber::todo::TodoList;
 
 #[derive(Parser)]
 #[command(name = "cryo-agent", about = "Cryochamber agent IPC commands")]
@@ -18,9 +17,6 @@ struct Cli {
 enum Commands {
     /// End session and schedule next wake
     Hibernate {
-        /// Wake time in ISO8601 format
-        #[arg(long)]
-        wake: Option<String>,
         /// Mark plan as complete (no more wakes)
         #[arg(long)]
         complete: bool,
@@ -75,9 +71,9 @@ enum TodoAction {
     Add {
         /// Task description
         text: String,
-        /// Scheduled time (ISO8601)
+        /// Scheduled time (ISO8601) — required
         #[arg(long)]
-        at: Option<String>,
+        at: String,
     },
     /// List all TODO items
     List,
@@ -110,24 +106,17 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Hibernate {
-            wake,
             complete,
             exit,
             summary,
-        } => {
-            if !complete && wake.is_none() {
-                anyhow::bail!("Either --wake or --complete is required");
-            }
-            send(
-                &dir,
-                &Request::Hibernate {
-                    wake,
-                    complete,
-                    exit_code: exit,
-                    summary,
-                },
-            )
-        }
+        } => send(
+            &dir,
+            &Request::Hibernate {
+                complete,
+                exit_code: exit,
+                summary,
+            },
+        ),
         Commands::Note { text } => send(&dir, &Request::Note { text }),
         Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
         Commands::Alert {
@@ -206,28 +195,10 @@ fn cmd_time(offset: Option<&str>) -> Result<()> {
 }
 
 fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {
-    let path = dir.join("todo.json");
-    let mut list = TodoList::load(&path)?;
-
     match action {
-        TodoAction::Add { text, at } => {
-            let id = list.add(text, at);
-            list.save(&path)?;
-            println!("Added todo #{id}");
-        }
-        TodoAction::List => {
-            println!("{}", list.display());
-        }
-        TodoAction::Done { id } => {
-            list.done(id)?;
-            list.save(&path)?;
-            println!("Marked todo #{id} as done");
-        }
-        TodoAction::Remove { id } => {
-            list.remove(id)?;
-            list.save(&path)?;
-            println!("Removed todo #{id}");
-        }
+        TodoAction::Add { text, at } => send(dir, &Request::TodoAdd { text, at }),
+        TodoAction::List => send(dir, &Request::TodoList),
+        TodoAction::Done { id } => send(dir, &Request::TodoDone { id }),
+        TodoAction::Remove { id } => send(dir, &Request::TodoRemove { id }),
     }
-    Ok(())
 }

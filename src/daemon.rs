@@ -299,7 +299,7 @@ impl Daemon {
         // Derive next wake from TODO list.
         let mut next_wake = next_wake_from_todos(&self.dir);
         let mut run_now = cryo_state.session_number == 0
-            || next_wake.map_or(false, |w| Local::now().naive_local() >= w);
+            || next_wake.is_some_and(|w| Local::now().naive_local() >= w);
         let mut inbox_wake = false;
         let mut pending_fallback: Option<(NaiveDateTime, FallbackAction)> = None;
 

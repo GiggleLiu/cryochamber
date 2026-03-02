@@ -687,7 +687,7 @@ fn test_session_logs_inbox_filenames() {
 fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
     agent_cmd()
-        .args(["hibernate", "--wake", "2099-01-01T00:00"])
+        .args(["hibernate", "--complete"])
         .current_dir(dir.path())
         .assert()
         .failure()
@@ -703,14 +703,4 @@ fn test_agent_note_no_daemon() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Cannot connect"));
-}
-
-#[test]
-fn test_agent_hibernate_requires_wake_or_complete() {
-    let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["hibernate"])
-        .current_dir(dir.path())
-        .assert()
-        .failure();
 }
