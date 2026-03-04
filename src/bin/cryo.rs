@@ -234,14 +234,9 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
 /// Check that the agent command is supported and the binary exists on PATH.
 fn validate_agent_command(agent_cmd: &str) -> Result<()> {
     let program = cryochamber::agent::agent_program(agent_cmd)?;
-    let status = std::process::Command::new("which")
-        .arg(&program)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        _ => anyhow::bail!(
+    match which::which(&program) {
+        Ok(_) => Ok(()),
+        Err(_) => anyhow::bail!(
             "Agent command '{}' not found. Verify it is installed and on your PATH.",
             program
         ),

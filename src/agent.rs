@@ -164,7 +164,8 @@ pub fn spawn_agent(
     if let Ok(exe) = std::env::current_exe() {
         if let Some(bin_dir) = exe.parent() {
             let path = std::env::var("PATH").unwrap_or_default();
-            let new_path = format!("{}:{}", bin_dir.display(), path);
+            let sep = if cfg!(windows) { ";" } else { ":" };
+            let new_path = format!("{}{sep}{path}", bin_dir.display());
             cmd.env("PATH", new_path);
         }
     }
