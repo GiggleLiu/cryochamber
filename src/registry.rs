@@ -5,7 +5,7 @@
 //! on startup and removes the file on clean exit. `cryo ps` reads the directory
 //! to list all known daemons. Stale entries (dead PIDs) are auto-cleaned on read.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -18,18 +18,9 @@ pub struct DaemonEntry {
 }
 
 /// Return the registry directory, creating it if needed.
-///
-/// Prefers `$XDG_RUNTIME_DIR/cryo/` (auto-cleaned on reboot by the OS),
-/// falls back to `~/.cryo/daemons/`.
+/// Delegates to the platform layer for OS-specific paths.
 fn registry_dir() -> Result<PathBuf> {
-    let dir = if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(runtime).join("cryo")
-    } else {
-        let home = std::env::var("HOME").context("HOME not set")?;
-        PathBuf::from(home).join(".cryo").join("daemons")
-    };
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
+    crate::platform::registry::registry_dir()
 }
 
 /// Stable filename for a given working directory.
