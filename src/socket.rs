@@ -110,6 +110,7 @@ mod tests {
         assert!(json.contains("done with phase 1"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_socket_path() {
         let dir = std::path::Path::new("/tmp/test-cryo");
@@ -166,6 +167,7 @@ mod tests {
         handle.join().unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_accept_empty_line() {
         use std::os::unix::net::UnixStream;
@@ -188,6 +190,7 @@ mod tests {
         handle.join().unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_accept_malformed_json() {
         use std::os::unix::net::UnixStream;
@@ -210,6 +213,7 @@ mod tests {
         handle.join().unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_accept_unknown_fields_ignored() {
         use std::os::unix::net::UnixStream;
