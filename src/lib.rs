@@ -6,6 +6,7 @@ pub mod fallback;
 pub mod gh_sync;
 pub mod log;
 pub mod message;
+pub mod platform;
 pub mod process;
 pub mod protocol;
 pub mod registry;
