@@ -25,7 +25,6 @@ use crate::state::{self, CryoState};
 /// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 
-use crate::process::send_signal;
 
 /// Events the daemon responds to.
 #[derive(Debug, PartialEq)]
@@ -123,12 +122,7 @@ pub enum SessionLoopOutcome {
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
 fn terminate_child(child: &mut std::process::Child, pid: u32) {
-    send_signal(pid, libc::SIGTERM);
-    std::thread::sleep(Duration::from_secs(2));
-    if child.try_wait().ok().flatten().is_none() {
-        send_signal(pid, libc::SIGKILL);
-    }
-    let _ = child.wait(); // reap to prevent zombie
+    crate::platform::process::terminate_child(child, pid);
 }
 
 /// Compute how long to sleep given optional wake and report deadlines.

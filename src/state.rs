@@ -55,13 +55,7 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
 
 pub fn is_locked(state: &CryoState) -> bool {
     if let Some(pid) = state.pid {
-        let ret = unsafe { libc::kill(pid as i32, 0) };
-        if ret == 0 {
-            return true;
-        }
-        // EPERM means process exists but we lack permission — still locked
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        errno == libc::EPERM
+        crate::platform::process::is_alive(pid)
     } else {
         false
     }

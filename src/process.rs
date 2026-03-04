@@ -4,14 +4,7 @@ use std::path::Path;
 
 /// Send a signal to a process. Returns true if delivered, false on failure.
 pub fn send_signal(pid: u32, signal: i32) -> bool {
-    let ret = unsafe { libc::kill(pid as i32, signal) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        eprintln!("Warning: failed to send signal {signal} to PID {pid}: {err}");
-        false
-    } else {
-        true
-    }
+    crate::platform::process::send_signal(pid, signal)
 }
 
 /// Send SIGUSR1 to the daemon to force an immediate wake.
@@ -29,26 +22,7 @@ pub fn signal_daemon_wake(dir: &Path) -> bool {
 
 /// Send SIGTERM to a process, wait for it to exit, escalate to SIGKILL if needed.
 pub fn terminate_pid(pid: u32) -> Result<()> {
-    println!("Sending SIGTERM to process {pid}...");
-    send_signal(pid, libc::SIGTERM);
-
-    // Poll for up to 5 seconds
-    for _ in 0..50 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        let ret = unsafe { libc::kill(pid as i32, 0) };
-        if ret != 0 {
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if errno != libc::EPERM {
-                return Ok(()); // process is gone
-            }
-        }
-    }
-
-    // Escalate to SIGKILL
-    println!("Process {pid} did not exit, sending SIGKILL...");
-    send_signal(pid, libc::SIGKILL);
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    Ok(())
+    crate::platform::process::terminate(pid)
 }
 
 /// Spawn the daemon subprocess in the background.
