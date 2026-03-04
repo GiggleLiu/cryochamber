@@ -29,7 +29,11 @@ pub fn install(
             &label,
             &format!("binPath={}", bin_path),
             "start=auto",
-            &format!("DisplayName=Cryochamber {} ({})", label_prefix, dir.display()),
+            &format!(
+                "DisplayName=Cryochamber {} ({})",
+                label_prefix,
+                dir.display()
+            ),
         ])
         .status()
         .context("Failed to run sc.exe create")?;

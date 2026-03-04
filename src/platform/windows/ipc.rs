@@ -3,16 +3,12 @@ use std::path::{Path, PathBuf};
 
 use crate::socket::{Request, Response};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
-    ERROR_PIPE_BUSY,
+    CloseHandle, GetLastError, ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
 };
-use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
-};
+use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
-    PIPE_ACCESS_DUPLEX, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_ACCESS_DUPLEX,
+    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::IO::FlushFileBuffers;
 
@@ -137,11 +133,16 @@ impl IpcServer {
             let err = unsafe { GetLastError() };
             // ERROR_PIPE_CONNECTED (535) means client already connected before we called
             if err != 535 {
-                anyhow::bail!("ConnectNamedPipe failed: {}", std::io::Error::from_raw_os_error(err as i32));
+                anyhow::bail!(
+                    "ConnectNamedPipe failed: {}",
+                    std::io::Error::from_raw_os_error(err as i32)
+                );
             }
         }
 
-        let reader = PipeReader { handle: self.handle };
+        let reader = PipeReader {
+            handle: self.handle,
+        };
         let mut buf_reader = BufReader::new(reader);
         let mut line = String::new();
         buf_reader.read_line(&mut line)?;
@@ -177,7 +178,10 @@ impl IpcServer {
             SetNamedPipeHandleState(self.handle, &mode, std::ptr::null(), std::ptr::null())
         };
         if ok == 0 {
-            anyhow::bail!("SetNamedPipeHandleState failed: {}", std::io::Error::last_os_error());
+            anyhow::bail!(
+                "SetNamedPipeHandleState failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
         Ok(())
     }
@@ -223,14 +227,18 @@ pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
     let mut payload = serde_json::to_string(request)?;
     payload.push('\n');
     write_to_handle(handle, payload.as_bytes())?;
-    unsafe { FlushFileBuffers(handle); }
+    unsafe {
+        FlushFileBuffers(handle);
+    }
 
     let reader = PipeReader { handle };
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
     buf_reader.read_line(&mut line)?;
 
-    unsafe { CloseHandle(handle); }
+    unsafe {
+        CloseHandle(handle);
+    }
 
     let response: Response = serde_json::from_str(line.trim())?;
     Ok(response)

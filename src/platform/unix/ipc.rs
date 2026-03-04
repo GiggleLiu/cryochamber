@@ -111,9 +111,7 @@ mod tests {
             text: "test".into(),
         };
         let dir_path = dir.path().to_owned();
-        let handle = std::thread::spawn(move || {
-            send_request(&dir_path, &request).unwrap()
-        });
+        let handle = std::thread::spawn(move || send_request(&dir_path, &request).unwrap());
 
         let (req, responder) = server.accept_one().unwrap().unwrap();
         assert!(matches!(req, Request::Note { .. }));

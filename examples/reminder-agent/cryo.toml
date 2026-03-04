@@ -1,0 +1,17 @@
+# cryo.toml — Daily Reminder Agent
+
+# Agent command
+agent = "opencode run"
+
+# Max retry attempts on agent failure (0 = no retry)
+max_retries = 5
+
+# Session timeout in seconds (0 = no timeout)
+max_session_duration = 0
+
+# Watch inbox for reactive wake (two-way interaction with user)
+watch_inbox = true
+
+# Web UI host and port (for `cryo web`)
+web_host = "127.0.0.1"
+web_port = 3947

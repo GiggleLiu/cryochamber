@@ -8,10 +8,8 @@ use std::time::Duration;
 
 /// Register SIGTERM and SIGINT handlers on a shared shutdown flag.
 pub fn register_shutdown_handler(shutdown: Arc<AtomicBool>) -> Result<()> {
-    flag::register(SIGTERM, Arc::clone(&shutdown))
-        .context("Failed to register SIGTERM handler")?;
-    flag::register(SIGINT, Arc::clone(&shutdown))
-        .context("Failed to register SIGINT handler")?;
+    flag::register(SIGTERM, Arc::clone(&shutdown)).context("Failed to register SIGTERM handler")?;
+    flag::register(SIGINT, Arc::clone(&shutdown)).context("Failed to register SIGINT handler")?;
     Ok(())
 }
 

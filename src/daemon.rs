@@ -23,7 +23,6 @@ use crate::state::{self, CryoState};
 /// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 
-
 /// Events the daemon responds to.
 #[derive(Debug, PartialEq)]
 pub enum DaemonEvent {
