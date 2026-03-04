@@ -10,8 +10,6 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDateTime};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use signal_hook::consts::{SIGINT, SIGTERM, SIGUSR1};
-use signal_hook::flag;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -207,12 +205,8 @@ impl Daemon {
     /// Run the daemon event loop. Blocks until SIGTERM or plan completion.
     pub fn run(&self) -> Result<()> {
         // Register signal handlers
-        flag::register(SIGTERM, Arc::clone(&self.shutdown))
-            .context("Failed to register SIGTERM handler")?;
-        flag::register(SIGINT, Arc::clone(&self.shutdown))
-            .context("Failed to register SIGINT handler")?;
-        flag::register(SIGUSR1, Arc::clone(&self.wake_requested))
-            .context("Failed to register SIGUSR1 handler")?;
+        crate::platform::signal::register_shutdown_handler(Arc::clone(&self.shutdown))?;
+        crate::platform::signal::register_wake_handler(Arc::clone(&self.wake_requested))?;
 
         let mut cryo_state =
             state::load_state(&self.state_path)?.context("No cryochamber state found")?;
@@ -268,19 +262,14 @@ impl Daemon {
 
         // Spawn a thread that forwards signals to the event channel,
         // so recv_timeout() unblocks immediately on SIGTERM/SIGINT/SIGUSR1.
-        let shutdown_flag = Arc::clone(&self.shutdown);
-        let wake_flag = Arc::clone(&self.wake_requested);
-        let signal_tx = tx;
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(250));
-            if shutdown_flag.load(Ordering::Relaxed) {
-                let _ = signal_tx.send(DaemonEvent::Shutdown);
-                break;
-            }
-            if wake_flag.swap(false, Ordering::Relaxed) {
-                let _ = signal_tx.send(DaemonEvent::InboxChanged);
-            }
-        });
+        crate::platform::signal::spawn_signal_forwarder(
+            Arc::clone(&self.shutdown),
+            Arc::clone(&self.wake_requested),
+            tx,
+            DaemonEvent::Shutdown,
+            || DaemonEvent::InboxChanged,
+            &self.dir,
+        );
 
         // Compute next report time
         let last_report = cryo_state

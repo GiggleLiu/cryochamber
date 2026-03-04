@@ -241,8 +241,7 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     eprintln!("Zulip sync daemon started (PID {})", std::process::id());
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
-    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))?;
+    cryochamber::platform::signal::register_shutdown_handler(Arc::clone(&shutdown))?;
 
     use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel();
