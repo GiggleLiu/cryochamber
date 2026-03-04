@@ -1,10 +1,8 @@
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Request from CLI to daemon via Unix socket.
+/// Request from CLI to daemon via IPC.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
@@ -44,88 +42,16 @@ pub struct Response {
     pub message: String,
 }
 
-/// Returns the socket path for a project directory.
+// --- Delegate to platform layer ---
+pub use crate::platform::ipc::{send_request, IpcResponder, IpcServer};
+
+/// Backwards-compatible type aliases.
+pub type SocketServer = IpcServer;
+pub type Responder = IpcResponder;
+
+/// Returns the IPC endpoint path for a project directory.
 pub fn socket_path(dir: &Path) -> PathBuf {
-    dir.join(".cryo").join("cryo.sock")
-}
-
-/// Send a request to the daemon and return the response.
-pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
-    let path = socket_path(dir);
-    let mut stream = UnixStream::connect(&path).map_err(|e| {
-        anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display())
-    })?;
-
-    let mut payload = serde_json::to_string(request)?;
-    payload.push('\n');
-    stream.write_all(payload.as_bytes())?;
-    stream.flush()?;
-
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let response: Response = serde_json::from_str(line.trim())?;
-    Ok(response)
-}
-
-/// Server side of the Unix socket. Daemon creates this on startup.
-pub struct SocketServer {
-    listener: UnixListener,
-}
-
-/// Handle to send a response back to the client.
-pub struct Responder {
-    stream: UnixStream,
-}
-
-impl Responder {
-    pub fn respond(mut self, response: &Response) -> anyhow::Result<()> {
-        let mut payload = serde_json::to_string(response)?;
-        payload.push('\n');
-        self.stream.write_all(payload.as_bytes())?;
-        self.stream.flush()?;
-        Ok(())
-    }
-}
-
-impl SocketServer {
-    /// Bind to the given socket path. Removes stale socket if present.
-    pub fn bind(path: &Path) -> anyhow::Result<Self> {
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        let listener = UnixListener::bind(path)?;
-        Ok(Self { listener })
-    }
-
-    /// Accept one connection, parse the request, return it with a responder.
-    pub fn accept_one(&self) -> anyhow::Result<Option<(Request, Responder)>> {
-        let (stream, _) = self.listener.accept()?;
-        let mut reader = BufReader::new(stream.try_clone()?);
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        if line.trim().is_empty() {
-            return Ok(None);
-        }
-        let request: Request = serde_json::from_str(line.trim())?;
-        Ok(Some((request, Responder { stream })))
-    }
-
-    /// Set the listener to non-blocking mode.
-    pub fn set_nonblocking(&self, nonblocking: bool) -> anyhow::Result<()> {
-        self.listener.set_nonblocking(nonblocking)?;
-        Ok(())
-    }
-
-    /// Get a reference to the raw listener (for polling in daemon event loop).
-    pub fn listener(&self) -> &UnixListener {
-        &self.listener
-    }
-
-    /// Remove the socket file.
-    pub fn cleanup(path: &Path) {
-        let _ = std::fs::remove_file(path);
-    }
+    crate::platform::ipc::ipc_endpoint_path(dir)
 }
 
 #[cfg(test)]
@@ -204,11 +130,10 @@ mod tests {
     #[test]
     fn test_socket_server_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let sock = socket_path(dir.path());
-        std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dir.path().join(".cryo")).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let server = SocketServer::bind(&sock).unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
 
         // Spawn server handler in a thread
         let handle = std::thread::spawn(move || {
@@ -243,19 +168,19 @@ mod tests {
 
     #[test]
     fn test_accept_empty_line() {
+        use std::os::unix::net::UnixStream;
+
         let dir = tempfile::tempdir().unwrap();
-        let sock_path = dir.path().join("test.sock");
-        let server = SocketServer::bind(&sock_path).unwrap();
+        std::fs::create_dir_all(dir.path().join(".cryo")).unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
         server.set_nonblocking(false).unwrap();
 
-        let handle = std::thread::spawn({
-            let sock_path = sock_path.clone();
-            move || {
-                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
-                use std::io::Write;
-                stream.write_all(b"\n").unwrap();
-                stream.flush().unwrap();
-            }
+        let sock_path = socket_path(dir.path());
+        let handle = std::thread::spawn(move || {
+            let mut stream = UnixStream::connect(&sock_path).unwrap();
+            use std::io::Write;
+            stream.write_all(b"\n").unwrap();
+            stream.flush().unwrap();
         });
 
         let result = server.accept_one().unwrap();
@@ -265,19 +190,19 @@ mod tests {
 
     #[test]
     fn test_accept_malformed_json() {
+        use std::os::unix::net::UnixStream;
+
         let dir = tempfile::tempdir().unwrap();
-        let sock_path = dir.path().join("test.sock");
-        let server = SocketServer::bind(&sock_path).unwrap();
+        std::fs::create_dir_all(dir.path().join(".cryo")).unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
         server.set_nonblocking(false).unwrap();
 
-        let handle = std::thread::spawn({
-            let sock_path = sock_path.clone();
-            move || {
-                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
-                use std::io::Write;
-                stream.write_all(b"{not json\n").unwrap();
-                stream.flush().unwrap();
-            }
+        let sock_path = socket_path(dir.path());
+        let handle = std::thread::spawn(move || {
+            let mut stream = UnixStream::connect(&sock_path).unwrap();
+            use std::io::Write;
+            stream.write_all(b"{not json\n").unwrap();
+            stream.flush().unwrap();
         });
 
         let result = server.accept_one();
@@ -287,26 +212,26 @@ mod tests {
 
     #[test]
     fn test_accept_unknown_fields_ignored() {
+        use std::os::unix::net::UnixStream;
+
         let dir = tempfile::tempdir().unwrap();
-        let sock_path = dir.path().join("test.sock");
-        let server = SocketServer::bind(&sock_path).unwrap();
+        std::fs::create_dir_all(dir.path().join(".cryo")).unwrap();
+        let server = SocketServer::bind(dir.path()).unwrap();
         server.set_nonblocking(false).unwrap();
 
-        let handle = std::thread::spawn({
-            let sock_path = sock_path.clone();
-            move || {
-                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
-                use std::io::{BufRead, BufReader, Write};
-                // Note request with an extra unknown field
-                let json = r#"{"cmd":"note","text":"hello","unknown_field":42}"#;
-                stream.write_all(json.as_bytes()).unwrap();
-                stream.write_all(b"\n").unwrap();
-                stream.flush().unwrap();
-                // Read response
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-            }
+        let sock_path = socket_path(dir.path());
+        let handle = std::thread::spawn(move || {
+            let mut stream = UnixStream::connect(&sock_path).unwrap();
+            use std::io::{BufRead, BufReader, Write};
+            // Note request with an extra unknown field
+            let json = r#"{"cmd":"note","text":"hello","unknown_field":42}"#;
+            stream.write_all(json.as_bytes()).unwrap();
+            stream.write_all(b"\n").unwrap();
+            stream.flush().unwrap();
+            // Read response
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
         });
 
         let result = server.accept_one();

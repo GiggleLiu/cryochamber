@@ -234,14 +234,14 @@ impl Daemon {
         cryo_state.pid = Some(std::process::id());
         state::save_state(&self.state_path, &cryo_state)?;
 
-        // Create .cryo/ directory and bind socket server
+        // Create .cryo/ directory and bind IPC server
         let sock_path = crate::socket::socket_path(&self.dir);
         if let Some(parent) = sock_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let server = crate::socket::SocketServer::bind(&sock_path)?;
+        let server = crate::socket::SocketServer::bind(&self.dir)?;
         server.set_nonblocking(true)?;
-        eprintln!("Daemon: socket listening at {}", sock_path.display());
+        eprintln!("Daemon: IPC listening at {}", sock_path.display());
 
         // Register in global daemon registry (with socket path)
         if let Err(e) = crate::registry::register(&self.dir, Some(&sock_path)) {
@@ -501,7 +501,7 @@ impl Daemon {
             eprintln!("Daemon: failed to save final state: {e}");
         }
         crate::registry::unregister(&self.dir);
-        crate::socket::SocketServer::cleanup(&sock_path);
+        crate::socket::SocketServer::cleanup(&self.dir);
         eprintln!("Daemon: exited cleanly");
 
         Ok(())
