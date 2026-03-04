@@ -13,7 +13,7 @@ Our goal is to automate long-running activities that are too irregular for cron.
 
 ## Quick Start
 
-**Prerequisites:** Rust toolchain ([rustup.rs](https://rustup.rs)), an AI coding agent ([OpenCode](https://github.com/opencode-ai/opencode), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex)), macOS or Linux.
+**Prerequisites:** Rust toolchain ([rustup.rs](https://rustup.rs)), an AI coding agent ([OpenCode](https://github.com/opencode-ai/opencode), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex)), macOS, Linux, or Windows.
 
 ### 1. Install cryochamber
 

@@ -4,7 +4,7 @@
 
 - Rust toolchain ([rustup.rs](https://rustup.rs))
 - An AI coding agent: [OpenCode](https://github.com/opencode-ai/opencode) (default), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex)
-- macOS or Linux
+- macOS, Linux, or Windows
 
 ## Install
 
