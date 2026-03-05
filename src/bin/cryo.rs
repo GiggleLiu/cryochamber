@@ -94,13 +94,30 @@ enum Commands {
     },
     /// Open a web chat UI for messaging and waking the agent
     Web {
-        /// Port to listen on
-        #[arg(long, default_value = "3945")]
-        port: u16,
+        /// Host to listen on (overrides cryo.toml web_host)
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to listen on (overrides cryo.toml web_port)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Run in foreground instead of installing a service
+        #[arg(long, conflicts_with = "stop")]
+        foreground: bool,
+        /// Stop the web service
+        #[arg(long)]
+        stop: bool,
     },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
+    /// Internal: run the web server (called by OS service)
+    #[command(hide = true)]
+    WebDaemon {
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        port: u16,
+    },
 }
 
 fn main() -> Result<()> {
@@ -127,8 +144,14 @@ fn main() -> Result<()> {
             wake,
         } => cmd_send(&body, &from, subject.as_deref(), wake),
         Commands::Wake { message } => cmd_wake(message.as_deref()),
-        Commands::Web { port } => cmd_web(port),
+        Commands::Web {
+            host,
+            port,
+            foreground,
+            stop,
+        } => cmd_web(host, port, foreground, stop),
         Commands::Daemon => cmd_daemon(),
+        Commands::WebDaemon { host, port } => cmd_web_daemon(host, port),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
             action,
@@ -141,7 +164,9 @@ fn main() -> Result<()> {
                 target,
                 message,
             };
-            fb.execute(&dir)
+            let config = cryochamber::config::load_config(&cryochamber::config::config_path(&dir))?
+                .unwrap_or_default();
+            fb.execute(&dir, &config.fallback_alert)
         }
     }
 }
@@ -191,6 +216,12 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         println!("  plan.md (exists, kept)");
     }
 
+    if protocol::write_readme(&dir)? {
+        println!("  README.md (created)");
+    } else {
+        println!("  README.md (exists, kept)");
+    }
+
     message::ensure_dirs(&dir)?;
 
     println!("\nCryochamber initialized. Next steps:");
@@ -203,14 +234,9 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
 /// Check that the agent command is supported and the binary exists on PATH.
 fn validate_agent_command(agent_cmd: &str) -> Result<()> {
     let program = cryochamber::agent::agent_program(agent_cmd)?;
-    let status = std::process::Command::new("which")
-        .arg(&program)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        _ => anyhow::bail!(
+    match which::which(&program) {
+        Ok(_) => Ok(()),
+        Err(_) => anyhow::bail!(
             "Agent command '{}' not found. Verify it is installed and on your PATH.",
             program
         ),
@@ -262,6 +288,8 @@ fn cmd_start(
         agent_override,
         max_retries_override,
         max_session_duration_override,
+        last_report_time: None,
+        provider_index: None,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
@@ -290,7 +318,7 @@ fn cmd_start(
         }
     }
 
-    println!("Use `cryo watch` to follow progress.");
+    println!("Use `cryo watch` or `cryo web` to follow progress.");
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -302,12 +330,49 @@ fn cmd_daemon() -> Result<()> {
     daemon.run()
 }
 
-fn cmd_web(port: u16) -> Result<()> {
+fn cmd_web(host: Option<String>, port: Option<u16>, foreground: bool, stop: bool) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     require_valid_project(&dir)?;
 
+    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
+    let host = host.unwrap_or(cfg.web_host);
+    let port = port.unwrap_or(cfg.web_port);
+
+    if stop {
+        if cryochamber::service::uninstall("web", &dir)? {
+            println!("Web service stopped and removed.");
+        } else {
+            println!("No web service installed for this directory.");
+        }
+        return Ok(());
+    }
+
+    if foreground {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(cryochamber::web::serve(dir, &host, port))
+    } else {
+        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
+        let port_str = port.to_string();
+        let log_path = dir.join("cryo-web.log");
+        cryochamber::service::install(
+            "web",
+            &dir,
+            &exe,
+            &["web-daemon", "--host", &host, "--port", &port_str],
+            &log_path,
+            true,
+        )?;
+        println!("Web UI service installed: http://{}:{}", host, port);
+        println!("Log: cryo-web.log");
+        println!("Survives reboot. Stop with: cryo web --stop");
+        Ok(())
+    }
+}
+
+fn cmd_web_daemon(host: String, port: u16) -> Result<()> {
+    let dir = cryochamber::work_dir()?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::web::serve(dir, port))
+    rt.block_on(cryochamber::web::serve(dir, &host, port))
 }
 
 fn cmd_status() -> Result<()> {
@@ -333,6 +398,17 @@ fn cmd_status() -> Result<()> {
                 }
             );
             println!("Session: {}", st.session_number);
+
+            // Show next wake time from TODO list
+            let todo_path = dir.join("todo.json");
+            if let Ok(list) = cryochamber::todo::TodoList::load(&todo_path) {
+                if let Some(wake) = list.next_wake_time() {
+                    println!("Next wake: {wake}");
+                } else {
+                    println!("Next wake: idle (no pending TODOs)");
+                }
+            }
+
             if let Some(pid) = st.pid {
                 println!("PID: {pid}");
             }
@@ -342,6 +418,17 @@ fn cmd_status() -> Result<()> {
             println!("Agent: {effective_agent}");
             if st.agent_override.is_some() {
                 println!("  (override; cryo.toml has \"{}\")", cfg.agent);
+            }
+            if !cfg.providers.is_empty() {
+                let idx = st.provider_index.unwrap_or(0);
+                if let Some(provider) = cfg.providers.get(idx) {
+                    println!(
+                        "Provider: {} ({}/{})",
+                        provider.name,
+                        idx + 1,
+                        cfg.providers.len()
+                    );
+                }
             }
             let effective_timeout = st
                 .max_session_duration_override
@@ -369,12 +456,14 @@ fn cmd_restart() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let cryo_state = require_live_daemon(&dir)?;
 
-    // Uninstall old service
+    // Uninstall old service (systemd/launchd stop may already kill the process)
     let _ = cryochamber::service::uninstall("daemon", &dir);
 
-    // Kill existing daemon process
-    if let Some(pid) = cryo_state.pid {
-        cryochamber::process::terminate_pid(pid)?;
+    // Kill existing daemon process only if still alive after service removal
+    if state::is_locked(&cryo_state) {
+        if let Some(pid) = cryo_state.pid {
+            cryochamber::process::terminate_pid(pid)?;
+        }
     }
 
     // Clear PID, keep session_number and overrides
@@ -389,7 +478,7 @@ fn cmd_restart() -> Result<()> {
     cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
 
     println!("Restarted (service reinstalled).");
-    println!("Use `cryo watch` to follow progress.");
+    println!("Use `cryo watch` or `cryo web` to follow progress.");
     Ok(())
 }
 
@@ -475,6 +564,12 @@ fn cmd_clean(force: bool) -> Result<()> {
     if cryochamber::service::uninstall("gh-sync", &dir)? {
         println!("Removed gh-sync service.");
     }
+    if cryochamber::service::uninstall("zulip-sync", &dir)? {
+        println!("Removed zulip-sync service.");
+    }
+    if cryochamber::service::uninstall("web", &dir)? {
+        println!("Removed web service.");
+    }
 
     // Kill daemon process if still running
     let sp = state::state_path(&dir);
@@ -494,6 +589,9 @@ fn cmd_clean(force: bool) -> Result<()> {
         "cryo-agent.log",
         "cryo-gh-sync.log",
         "gh-sync.json",
+        "cryo-zulip-sync.log",
+        "zulip-sync.json",
+        "cryo-web.log",
     ];
     for name in &runtime_files {
         let path = dir.join(name);
@@ -550,14 +648,7 @@ fn is_daemon_running(dir: &std::path::Path) -> bool {
 /// Send SIGUSR1 to the daemon to force an immediate wake.
 /// Returns true if the signal was delivered successfully.
 fn signal_daemon_wake(dir: &std::path::Path) -> bool {
-    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
-        if let Some(pid) = st.pid {
-            if state::is_locked(&st) {
-                return cryochamber::process::send_signal(pid, libc::SIGUSR1);
-            }
-        }
-    }
-    false
+    cryochamber::process::signal_daemon_wake(dir)
 }
 
 /// After writing an inbox message, notify the daemon and print status.

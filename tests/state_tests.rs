@@ -13,6 +13,9 @@ fn test_save_and_load_state() {
         agent_override: Some("opencode test".to_string()),
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -43,6 +46,9 @@ fn test_lock_mechanism() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -62,6 +68,9 @@ fn test_is_locked_dead_process() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
     assert!(!is_locked(&state));
 }
@@ -76,8 +85,21 @@ fn test_is_locked_no_pid() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
     assert!(!is_locked(&state));
+}
+
+#[test]
+fn test_load_empty_state_returns_none() {
+    // Empty file should return None (handles truncate-then-write race)
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    std::fs::write(&state_path, "").unwrap();
+    let loaded = load_state(&state_path).unwrap();
+    assert!(loaded.is_none());
 }
 
 #[test]
@@ -116,6 +138,9 @@ fn test_override_fields_roundtrip() {
         agent_override: Some("claude".to_string()),
         max_retries_override: Some(5),
         max_session_duration_override: Some(1800),
+
+        last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -136,10 +161,66 @@ fn test_none_overrides_not_serialized() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
     assert!(!json.contains("agent_override"));
     assert!(!json.contains("max_retries_override"));
     assert!(!json.contains("max_session_duration_override"));
+    assert!(!json.contains("last_report_time"));
+    assert!(!json.contains("provider_index"));
+}
+
+#[test]
+fn test_last_report_time_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+
+        last_report_time: Some("2026-02-28T09:00:00".to_string()),
+        provider_index: None,
+    };
+    save_state(&state_path, &state).unwrap();
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    assert_eq!(
+        loaded.last_report_time,
+        Some("2026-02-28T09:00:00".to_string())
+    );
+
+    // Verify it appears in JSON
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(json.contains("last_report_time"));
+}
+
+#[test]
+fn test_provider_index_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: Some(2),
+    };
+    save_state(&state_path, &state).unwrap();
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    assert_eq!(loaded.provider_index, Some(2));
+
+    // Verify it appears in JSON
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(json.contains("provider_index"));
 }

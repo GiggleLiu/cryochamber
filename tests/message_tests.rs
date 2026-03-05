@@ -1,8 +1,8 @@
 // tests/message_tests.rs
 use chrono::NaiveDateTime;
 use cryochamber::message::{
-    archive_messages, ensure_dirs, message_to_markdown, parse_message, read_inbox, write_message,
-    Message,
+    archive_messages, ensure_dirs, list_inbox, message_to_markdown, parse_message, read_inbox,
+    read_inbox_archive, write_message, Message,
 };
 use std::collections::BTreeMap;
 
@@ -195,6 +195,35 @@ fn test_empty_subject_same_content_same_hash() {
 }
 
 #[test]
+fn test_read_inbox_archive_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    // Non-existent archive dir returns empty
+    assert!(read_inbox_archive(dir.path()).unwrap().is_empty());
+    // Existing but empty archive dir also returns empty
+    ensure_dirs(dir.path()).unwrap();
+    assert!(read_inbox_archive(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn test_read_inbox_archive_after_archiving() {
+    let dir = tempfile::tempdir().unwrap();
+    let msg = make_message("human", "Archived", "Old message", "2026-02-23T09:00:00");
+    write_message(dir.path(), "inbox", &msg).unwrap();
+
+    let inbox = read_inbox(dir.path()).unwrap();
+    assert_eq!(inbox.len(), 1);
+    let filename = inbox[0].0.clone();
+
+    archive_messages(dir.path(), std::slice::from_ref(&filename)).unwrap();
+    assert!(read_inbox(dir.path()).unwrap().is_empty());
+
+    let archived = read_inbox_archive(dir.path()).unwrap();
+    assert_eq!(archived.len(), 1);
+    assert_eq!(archived[0].1.from, "human");
+    assert_eq!(archived[0].1.subject, "Archived");
+}
+
+#[test]
 fn test_filename_no_colons() {
     let dir = tempfile::tempdir().unwrap();
     let msg = make_message("human", "Test", "Body", "2026-02-23T10:30:00");
@@ -205,4 +234,45 @@ fn test_filename_no_colons() {
         "Filename should not contain colons: {filename}"
     );
     assert!(filename.starts_with("2026-02-23T10-30-00"));
+}
+
+#[test]
+fn test_list_inbox_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(list_inbox(dir.path()).unwrap().is_empty());
+
+    ensure_dirs(dir.path()).unwrap();
+    assert!(list_inbox(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn test_list_inbox_returns_filenames() {
+    let dir = tempfile::tempdir().unwrap();
+    let msg1 = make_message("alice", "First", "Hello", "2026-02-23T08:00:00");
+    let msg2 = make_message("bob", "Second", "World", "2026-02-23T09:00:00");
+    write_message(dir.path(), "inbox", &msg1).unwrap();
+    write_message(dir.path(), "inbox", &msg2).unwrap();
+
+    let filenames = list_inbox(dir.path()).unwrap();
+    assert_eq!(filenames.len(), 2);
+    assert!(filenames[0].ends_with(".md"));
+    assert!(filenames[1].ends_with(".md"));
+    // Sorted by filename (timestamp order)
+    assert!(filenames[0] < filenames[1]);
+}
+
+#[test]
+fn test_list_inbox_ignores_non_md_files() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_dirs(dir.path()).unwrap();
+
+    let inbox = dir.path().join("messages/inbox");
+    std::fs::write(inbox.join("note.txt"), "not a message").unwrap();
+    std::fs::write(inbox.join("data.json"), "{}").unwrap();
+    let msg = make_message("human", "Real", "Message", "2026-02-23T10:00:00");
+    write_message(dir.path(), "inbox", &msg).unwrap();
+
+    let filenames = list_inbox(dir.path()).unwrap();
+    assert_eq!(filenames.len(), 1);
+    assert!(filenames[0].ends_with(".md"));
 }

@@ -6,14 +6,18 @@ pub mod fallback;
 pub mod gh_sync;
 pub mod log;
 pub mod message;
+pub mod platform;
 pub mod process;
 pub mod protocol;
 pub mod registry;
+pub mod report;
 pub mod service;
 pub mod session;
 pub mod socket;
 pub mod state;
+pub mod todo;
 pub mod web;
+pub mod zulip_sync;
 
 pub fn work_dir() -> anyhow::Result<std::path::PathBuf> {
     let dir = std::env::current_dir().context("Failed to get current directory")?;

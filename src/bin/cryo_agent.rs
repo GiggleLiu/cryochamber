@@ -17,9 +17,6 @@ struct Cli {
 enum Commands {
     /// End session and schedule next wake
     Hibernate {
-        /// Wake time in ISO8601 format
-        #[arg(long)]
-        wake: Option<String>,
         /// Mark plan as complete (no more wakes)
         #[arg(long)]
         complete: bool,
@@ -61,6 +58,35 @@ enum Commands {
         /// Offset from now (e.g. "+30 minutes", "+2 hours", "+1 day")
         offset: Option<String>,
     },
+    /// Manage TODO items across sessions
+    Todo {
+        #[command(subcommand)]
+        action: TodoAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TodoAction {
+    /// Add a new TODO item
+    Add {
+        /// Task description
+        text: String,
+        /// Scheduled time (ISO8601) — required
+        #[arg(long)]
+        at: String,
+    },
+    /// List all TODO items
+    List,
+    /// Mark a TODO item as done
+    Done {
+        /// Item ID
+        id: u32,
+    },
+    /// Remove a TODO item
+    Remove {
+        /// Item ID
+        id: u32,
+    },
 }
 
 /// Send a request to the daemon and print the response. Bail on failure.
@@ -80,24 +106,17 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Hibernate {
-            wake,
             complete,
             exit,
             summary,
-        } => {
-            if !complete && wake.is_none() {
-                anyhow::bail!("Either --wake or --complete is required");
-            }
-            send(
-                &dir,
-                &Request::Hibernate {
-                    wake,
-                    complete,
-                    exit_code: exit,
-                    summary,
-                },
-            )
-        }
+        } => send(
+            &dir,
+            &Request::Hibernate {
+                complete,
+                exit_code: exit,
+                summary,
+            },
+        ),
         Commands::Note { text } => send(&dir, &Request::Note { text }),
         Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
         Commands::Alert {
@@ -114,6 +133,7 @@ fn main() -> Result<()> {
         ),
         Commands::Receive => cmd_receive(&dir),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
+        Commands::Todo { action } => cmd_todo(&dir, action),
     }
 }
 
@@ -172,4 +192,13 @@ fn cmd_time(offset: Option<&str>) -> Result<()> {
 
     println!("{}", target.format("%Y-%m-%dT%H:%M"));
     Ok(())
+}
+
+fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {
+    match action {
+        TodoAction::Add { text, at } => send(dir, &Request::TodoAdd { text, at }),
+        TodoAction::List => send(dir, &Request::TodoList),
+        TodoAction::Done { id } => send(dir, &Request::TodoDone { id }),
+        TodoAction::Remove { id } => send(dir, &Request::TodoRemove { id }),
+    }
 }

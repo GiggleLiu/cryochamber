@@ -31,15 +31,15 @@ fn test_event_log_full_cycle() {
 #[test]
 fn test_build_prompt_with_context() {
     let config = cryochamber::agent::AgentConfig {
-        log_content: Some("Previous session info".to_string()),
         session_number: 3,
         task: "Continue work".to_string(),
-        inbox_messages: vec![],
         delayed_wake: None,
+        todo_list: "1. [ ] Review PR (at: 2026-03-02T14:00)".to_string(),
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
-    assert!(prompt.contains("Previous session info"));
+    assert!(prompt.contains("TODO List"));
+    assert!(prompt.contains("Review PR"));
 }
 
 #[test]
@@ -54,6 +54,9 @@ fn test_state_roundtrip() {
         agent_override: Some("opencode".to_string()),
         max_retries_override: Some(3),
         max_session_duration_override: Some(1800),
+
+        last_report_time: None,
+        provider_index: None,
     };
     save_state(&state_path, &state).unwrap();
 

@@ -54,6 +54,29 @@ pub fn build_router(project_dir: PathBuf) -> Router {
         .with_state(state)
 }
 
+/// Format a duration in milliseconds as a human-readable relative string.
+/// Negative or zero values mean the time has passed.
+pub fn format_relative_time(diff_ms: i64) -> String {
+    if diff_ms <= 0 {
+        return "now".to_string();
+    }
+    let mins = diff_ms / 60_000;
+    let hours = diff_ms / 3_600_000;
+    let days = diff_ms / 86_400_000;
+
+    if mins < 1 {
+        "<1m".to_string()
+    } else if hours < 1 {
+        format!("{mins}m")
+    } else if days < 1 {
+        let rem_m = (diff_ms % 3_600_000) / 60_000;
+        format!("{hours}h {rem_m}m")
+    } else {
+        let rem_h = (diff_ms % 86_400_000) / 3_600_000;
+        format!("{days}d {rem_h}h")
+    }
+}
+
 async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
     let dir = &state.project_dir;
 
@@ -76,16 +99,44 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
         None => (false, 0, cfg.agent.clone()),
     };
 
-    let log_tail = log::read_latest_session(&log::log_path(dir))
+    // Derive next wake from TODO list
+    let next_wake: Option<String> = {
+        let todo_path = dir.join("todo.json");
+        crate::todo::TodoList::load(&todo_path)
+            .ok()
+            .and_then(|list| list.next_wake_time().map(String::from))
+    };
+
+    let log_file = log::log_path(dir);
+
+    let log_tail = log::read_current_session(&log_file)
         .ok()
         .flatten()
         .unwrap_or_default();
+
+    let notes = log::parse_latest_session_notes(&log_file).unwrap_or_default();
+
+    let task = log::parse_latest_session_task(&log_file).ok().flatten();
+
+    // Fall back to parsing wake time from log if timer.json hasn't been updated yet
+    let effective_wake =
+        next_wake.or_else(|| log::parse_latest_session_wake(&log_file).ok().flatten());
+
+    let next_wake_rel = effective_wake.as_deref().and_then(|w| {
+        let wake = chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok()?;
+        let now = chrono::Local::now().naive_local();
+        let diff_ms = (wake - now).num_milliseconds();
+        Some(format!("{w} ({})", format_relative_time(diff_ms)))
+    });
 
     Json(json!({
         "running": running,
         "session": session,
         "agent": agent,
         "log_tail": log_tail,
+        "next_wake": next_wake_rel,
+        "notes": notes,
+        "task": task,
     }))
 }
 
@@ -94,6 +145,14 @@ async fn get_messages(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     let mut all_messages: Vec<Value> = Vec::new();
 
+    // Include archived inbox messages (already processed by agent)
+    if let Ok(archived) = message::read_inbox_archive(dir) {
+        for (_filename, msg) in archived {
+            all_messages.push(message_to_json(&msg, "inbox"));
+        }
+    }
+
+    // Include pending inbox messages (not yet processed)
     if let Ok(inbox) = message::read_inbox(dir) {
         for (_filename, msg) in inbox {
             all_messages.push(message_to_json(&msg, "inbox"));
@@ -139,14 +198,7 @@ async fn post_send(
 ) -> Json<Value> {
     let dir = &state.project_dir;
     let from = req.from.as_deref().unwrap_or("human");
-    let subject = req.subject.unwrap_or_else(|| {
-        let end = req.body.len().min(50);
-        let mut e = end;
-        while e > 0 && !req.body.is_char_boundary(e) {
-            e -= 1;
-        }
-        req.body[..e].to_string()
-    });
+    let subject = req.subject.unwrap_or_default();
 
     let msg = message::Message {
         from: from.to_string(),
@@ -338,17 +390,10 @@ pub fn spawn_watchers(project_dir: &Path, tx: tokio::sync::broadcast::Sender<Sse
 }
 
 fn signal_daemon(dir: &std::path::Path) -> bool {
-    if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
-        if let Some(pid) = st.pid {
-            if state::is_locked(&st) {
-                return crate::process::send_signal(pid, libc::SIGUSR1);
-            }
-        }
-    }
-    false
+    crate::process::signal_daemon_wake(dir)
 }
 
-pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
+pub async fn serve(project_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
     // Ensure message dirs exist
     crate::message::ensure_dirs(&project_dir)?;
 
@@ -369,7 +414,7 @@ pub async fn serve(project_dir: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/events", get(get_events))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{host}:{port}");
     println!("Cryochamber web UI: http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
@@ -393,6 +438,35 @@ mod tests {
         let status = &resp.0;
         assert_eq!(status["running"], false);
         assert_eq!(status["session"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_status_with_todo_wake() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write a todo.json with a pending item that has a wake time
+        let todo_path = dir.path().join("todo.json");
+        let mut list = crate::todo::TodoList::new();
+        list.add("future task".into(), "2099-12-31T23:59".into());
+        list.save(&todo_path).unwrap();
+
+        // Write minimal cryo.toml
+        let config = crate::config::CryoConfig::default();
+        let config_path = dir.path().join("cryo.toml");
+        crate::config::save_config(&config_path, &config).unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_status(State(Arc::new(state))).await;
+        let status = &resp.0;
+        // next_wake should be present and contain the TODO's at time
+        let next_wake = status["next_wake"].as_str().unwrap();
+        assert!(
+            next_wake.contains("2099-12-31T23:59"),
+            "Status should show TODO-derived wake time, got: {next_wake}"
+        );
     }
 
     #[tokio::test]
@@ -454,6 +528,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_messages_includes_archived_inbox() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+
+        // Write inbox message then archive it
+        let msg = crate::message::Message {
+            from: "human".to_string(),
+            subject: "Old".to_string(),
+            body: "Archived msg".to_string(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 2, 25)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            metadata: std::collections::BTreeMap::new(),
+        };
+        crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
+        let inbox = crate::message::read_inbox(dir.path()).unwrap();
+        let filename = inbox[0].0.clone();
+        crate::message::archive_messages(dir.path(), std::slice::from_ref(&filename)).unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_messages(State(Arc::new(state))).await;
+        let msgs: Vec<serde_json::Value> = serde_json::from_value(resp.0).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["direction"], "inbox");
+        assert_eq!(msgs[0]["body"], "Archived msg");
+    }
+
+    #[tokio::test]
     async fn test_post_send_creates_inbox_message() {
         let dir = tempfile::tempdir().unwrap();
         crate::message::ensure_dirs(dir.path()).unwrap();
@@ -509,5 +616,39 @@ mod tests {
 
         assert!(matches!(rx1.recv().await.unwrap(), SseEvent::StatusChange));
         assert!(matches!(rx2.recv().await.unwrap(), SseEvent::StatusChange));
+    }
+
+    #[test]
+    fn test_format_relative_time_now() {
+        assert_eq!(format_relative_time(0), "now");
+        assert_eq!(format_relative_time(-5000), "now");
+    }
+
+    #[test]
+    fn test_format_relative_time_seconds() {
+        assert_eq!(format_relative_time(30_000), "<1m");
+        assert_eq!(format_relative_time(59_999), "<1m");
+    }
+
+    #[test]
+    fn test_format_relative_time_minutes() {
+        assert_eq!(format_relative_time(60_000), "1m");
+        assert_eq!(format_relative_time(300_000), "5m");
+        assert_eq!(format_relative_time(3_540_000), "59m");
+    }
+
+    #[test]
+    fn test_format_relative_time_hours() {
+        assert_eq!(format_relative_time(3_600_000), "1h 0m");
+        assert_eq!(format_relative_time(5_400_000), "1h 30m");
+        assert_eq!(format_relative_time(7_200_000), "2h 0m");
+        assert_eq!(format_relative_time(82_800_000), "23h 0m");
+    }
+
+    #[test]
+    fn test_format_relative_time_days() {
+        assert_eq!(format_relative_time(86_400_000), "1d 0h");
+        assert_eq!(format_relative_time(90_000_000), "1d 1h");
+        assert_eq!(format_relative_time(172_800_000), "2d 0h");
     }
 }

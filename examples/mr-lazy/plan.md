@@ -27,7 +27,7 @@ the same complaint twice. Draw inspiration from:
 4. Deliver a creative, unique complaint about being woken up.
    Reference the current time and how unreasonable it is.
 5. Compute the wake time using `cryo-agent time "+<N> minutes"`.
-6. Run `cryo-agent hibernate --wake <time>` to schedule the next wake.
+6. Run `cryo-agent todo add "next task" --at <time>` then `cryo-agent hibernate --summary "..."`.
 
 ## Notes
 

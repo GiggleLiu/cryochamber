@@ -6,7 +6,7 @@ use cryochamber::state::CryoState;
 fn test_config_defaults() {
     let config = CryoConfig::default();
     assert_eq!(config.agent, "opencode");
-    assert_eq!(config.max_retries, 1);
+    assert_eq!(config.max_retries, 5);
     assert_eq!(config.max_session_duration, 0);
     assert!(config.watch_inbox);
 }
@@ -21,6 +21,7 @@ fn test_config_roundtrip() {
         max_retries: 5,
         max_session_duration: 3600,
         watch_inbox: false,
+        ..Default::default()
     };
 
     save_config(&path, &config).unwrap();
@@ -49,7 +50,7 @@ fn test_config_partial_toml_uses_defaults() {
 
     let loaded = load_config(&path).unwrap().unwrap();
     assert_eq!(loaded.agent, "codex");
-    assert_eq!(loaded.max_retries, 1); // default
+    assert_eq!(loaded.max_retries, 5); // default
     assert_eq!(loaded.max_session_duration, 0); // default
     assert!(loaded.watch_inbox); // default
 }
@@ -64,6 +65,9 @@ fn test_apply_overrides_all() {
         agent_override: Some("claude".to_string()),
         max_retries_override: Some(10),
         max_session_duration_override: Some(7200),
+
+        last_report_time: None,
+        provider_index: None,
     };
 
     config.apply_overrides(&state);
@@ -77,10 +81,10 @@ fn test_apply_overrides_all() {
 fn test_apply_overrides_none_keeps_config() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
-
         max_retries: 3,
         max_session_duration: 1800,
         watch_inbox: true,
+        ..Default::default()
     };
 
     let state = CryoState {
@@ -90,6 +94,9 @@ fn test_apply_overrides_none_keeps_config() {
         agent_override: None,
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
 
     config.apply_overrides(&state);
@@ -105,10 +112,10 @@ fn test_apply_overrides_none_keeps_config() {
 fn test_apply_overrides_partial() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
-
         max_retries: 3,
         max_session_duration: 1800,
         watch_inbox: true,
+        ..Default::default()
     };
 
     let state = CryoState {
@@ -118,6 +125,9 @@ fn test_apply_overrides_partial() {
         agent_override: Some("claude".to_string()),
         max_retries_override: None,
         max_session_duration_override: None,
+
+        last_report_time: None,
+        provider_index: None,
     };
 
     config.apply_overrides(&state);
@@ -157,4 +167,63 @@ fn test_config_path() {
         config_path(dir),
         std::path::PathBuf::from("/some/project/cryo.toml")
     );
+}
+
+#[test]
+fn test_rotate_on_default_is_never() {
+    let config = CryoConfig::default();
+    assert_eq!(config.rotate_on, cryochamber::config::RotateOn::Never);
+    assert!(config.providers.is_empty());
+}
+
+#[test]
+fn test_config_with_providers_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+
+    let toml_content = r#"
+agent = "opencode"
+rotate_on = "quick-exit"
+
+[[providers]]
+name = "anthropic"
+env = { ANTHROPIC_API_KEY = "sk-ant-test" }
+
+[[providers]]
+name = "openai"
+env = { OPENAI_API_KEY = "sk-test", OPENAI_BASE_URL = "https://api.openai.com/v1" }
+"#;
+    std::fs::write(&path, toml_content).unwrap();
+    let loaded = load_config(&path).unwrap().unwrap();
+
+    assert_eq!(loaded.rotate_on, cryochamber::config::RotateOn::QuickExit);
+    assert_eq!(loaded.providers.len(), 2);
+    assert_eq!(loaded.providers[0].name, "anthropic");
+    assert_eq!(
+        loaded.providers[0].env.get("ANTHROPIC_API_KEY").unwrap(),
+        "sk-ant-test"
+    );
+    assert_eq!(loaded.providers[1].name, "openai");
+    assert_eq!(loaded.providers[1].env.len(), 2);
+}
+
+#[test]
+fn test_config_without_providers_backward_compatible() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+    std::fs::write(&path, "agent = \"opencode\"\n").unwrap();
+
+    let loaded = load_config(&path).unwrap().unwrap();
+    assert_eq!(loaded.rotate_on, cryochamber::config::RotateOn::Never);
+    assert!(loaded.providers.is_empty());
+}
+
+#[test]
+fn test_rotate_on_any_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+    std::fs::write(&path, "agent = \"opencode\"\nrotate_on = \"any-failure\"\n").unwrap();
+
+    let loaded = load_config(&path).unwrap().unwrap();
+    assert_eq!(loaded.rotate_on, cryochamber::config::RotateOn::AnyFailure);
 }
