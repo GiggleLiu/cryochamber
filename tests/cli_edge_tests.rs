@@ -115,9 +115,14 @@ fn test_start_while_running() {
     let dir = tempfile::tempdir().unwrap();
     init_project(dir.path());
 
+    #[cfg(unix)]
+    let sleep_agent = "/bin/sh -c 'sleep 30'";
+    #[cfg(windows)]
+    let sleep_agent = "cmd /c ping -n 31 127.0.0.1 >nul";
+
     // Start first daemon (use sleep as a long-running agent that won't exit)
     cryo_bin()
-        .args(["start", "--agent", "/bin/sh -c 'sleep 30'"])
+        .args(["start", "--agent", sleep_agent])
         .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
@@ -128,7 +133,7 @@ fn test_start_while_running() {
 
     // Try to start again — should fail with "already running"
     cryo_bin()
-        .args(["start", "--agent", "/bin/sh -c 'sleep 30'"])
+        .args(["start", "--agent", sleep_agent])
         .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
@@ -145,7 +150,13 @@ fn test_start_stale_pid_lock() {
     init_project(dir.path());
 
     // Spawn a process that exits immediately to get a dead PID
+    #[cfg(unix)]
     let mut child = std::process::Command::new("true").spawn().unwrap();
+    #[cfg(windows)]
+    let mut child = std::process::Command::new("cmd")
+        .args(["/c", "exit", "0"])
+        .spawn()
+        .unwrap();
     let dead_pid = child.id();
     child.wait().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -161,9 +172,14 @@ fn test_start_stale_pid_lock() {
     )
     .unwrap();
 
+    #[cfg(unix)]
+    let sleep_agent = "/bin/sh -c 'sleep 30'";
+    #[cfg(windows)]
+    let sleep_agent = "cmd /c ping -n 31 127.0.0.1 >nul";
+
     // Start should succeed — stale lock overridden (is_locked returns false for dead PID)
     cryo_bin()
-        .args(["start", "--agent", "/bin/sh -c 'sleep 30'"])
+        .args(["start", "--agent", sleep_agent])
         .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()

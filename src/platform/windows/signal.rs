@@ -3,9 +3,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
-use windows_sys::Win32::Foundation::CloseHandle;
+use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Threading::{
-    CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, WAIT_OBJECT_0,
+    CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
 };
 
 /// Global shutdown flag, set by the console ctrl handler.
@@ -57,7 +57,7 @@ pub fn signal_wake(dir: &Path) -> bool {
     let name = event_name(dir);
     unsafe {
         let handle = OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr());
-        if handle == 0 {
+        if handle.is_null() {
             return false;
         }
         let ok = SetEvent(handle);
@@ -79,7 +79,7 @@ pub fn spawn_signal_forwarder<E: Send + 'static>(
     std::thread::spawn(move || {
         // Create a named event for wake signaling
         let event_handle = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
-        if event_handle == 0 {
+        if event_handle.is_null() {
             eprintln!(
                 "Warning: failed to create wake event: {}",
                 std::io::Error::last_os_error()

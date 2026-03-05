@@ -1,16 +1,23 @@
-use std::io::{BufRead, BufReader, Read, Write};
+use std::cell::Cell;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use crate::socket::{Request, Response};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, GENERIC_READ, GENERIC_WRITE,
 };
-use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, OPEN_EXISTING,
+};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_ACCESS_DUPLEX,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
     PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows_sys::Win32::System::IO::FlushFileBuffers;
+
+// PIPE_ACCESS_DUPLEX = 0x00000003 (not exported by windows_sys 0.59 from Pipes module)
+const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
+// PIPE_NOWAIT = 0x00000001
+const PIPE_NOWAIT: u32 = 0x00000001;
 
 fn pipe_name(dir: &Path) -> String {
     let hash = crate::service::dir_hash(dir);
@@ -24,22 +31,21 @@ fn to_wide(s: &str) -> Vec<u16> {
 /// Server side of IPC via named pipes. Daemon creates this on startup.
 pub struct IpcServer {
     pipe_name: String,
-    handle: isize,
+    handle: Cell<HANDLE>,
 }
 
 /// Handle to send a response back to the client.
 pub struct IpcResponder {
-    handle: isize,
+    handle: HANDLE,
 }
 
 /// Wrapper to implement Read for a raw HANDLE.
 struct PipeReader {
-    handle: isize,
+    handle: HANDLE,
 }
 
 impl Read for PipeReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        use windows_sys::Win32::Storage::FileSystem::ReadFile;
         let mut bytes_read: u32 = 0;
         let ok = unsafe {
             ReadFile(
@@ -58,8 +64,7 @@ impl Read for PipeReader {
     }
 }
 
-fn write_to_handle(handle: isize, data: &[u8]) -> std::io::Result<()> {
-    use windows_sys::Win32::Storage::FileSystem::WriteFile;
+fn write_to_handle(handle: HANDLE, data: &[u8]) -> std::io::Result<()> {
     let mut written: u32 = 0;
     let ok = unsafe {
         WriteFile(
@@ -98,11 +103,11 @@ impl IpcServer {
         let handle = Self::create_pipe_instance(&name)?;
         Ok(Self {
             pipe_name: name,
-            handle,
+            handle: Cell::new(handle),
         })
     }
 
-    fn create_pipe_instance(name: &str) -> anyhow::Result<isize> {
+    fn create_pipe_instance(name: &str) -> anyhow::Result<HANDLE> {
         let wide = to_wide(name);
         let handle = unsafe {
             CreateNamedPipeW(
@@ -128,7 +133,8 @@ impl IpcServer {
 
     /// Accept one connection, parse the request, return it with a responder.
     pub fn accept_one(&self) -> anyhow::Result<Option<(Request, IpcResponder)>> {
-        let ok = unsafe { ConnectNamedPipe(self.handle, std::ptr::null_mut()) };
+        let current = self.handle.get();
+        let ok = unsafe { ConnectNamedPipe(current, std::ptr::null_mut()) };
         if ok == 0 {
             let err = unsafe { GetLastError() };
             // ERROR_PIPE_CONNECTED (535) means client already connected before we called
@@ -140,42 +146,37 @@ impl IpcServer {
             }
         }
 
-        let reader = PipeReader {
-            handle: self.handle,
-        };
+        let reader = PipeReader { handle: current };
         let mut buf_reader = BufReader::new(reader);
         let mut line = String::new();
         buf_reader.read_line(&mut line)?;
 
         if line.trim().is_empty() {
             unsafe {
-                DisconnectNamedPipe(self.handle);
+                DisconnectNamedPipe(current);
             }
             return Ok(None);
         }
 
         let request: Request = serde_json::from_str(line.trim())?;
 
-        // Create a new pipe instance for the next connection, give current to responder
-        let old_handle = self.handle;
+        // Create a new pipe instance for the next connection, give current to responder.
+        // Use Cell for interior mutability — safe because IpcServer is single-threaded.
         let new_handle = Self::create_pipe_instance(&self.pipe_name)?;
-        // Safety: we swap the handle in-place. The old handle goes to the responder.
-        let self_mut = unsafe { &mut *(self as *const Self as *mut Self) };
-        self_mut.handle = new_handle;
+        self.handle.set(new_handle);
 
-        Ok(Some((request, IpcResponder { handle: old_handle })))
+        Ok(Some((request, IpcResponder { handle: current })))
     }
 
     /// Set non-blocking mode. Named pipes use PIPE_NOWAIT for this.
     pub fn set_nonblocking(&self, nonblocking: bool) -> anyhow::Result<()> {
-        use windows_sys::Win32::System::Pipes::SetNamedPipeHandleState;
         let mode: u32 = if nonblocking {
-            PIPE_READMODE_BYTE | 0x00000001 // PIPE_NOWAIT
+            PIPE_READMODE_BYTE | PIPE_NOWAIT
         } else {
             PIPE_READMODE_BYTE | PIPE_WAIT
         };
         let ok = unsafe {
-            SetNamedPipeHandleState(self.handle, &mode, std::ptr::null(), std::ptr::null())
+            SetNamedPipeHandleState(self.handle.get(), &mode, std::ptr::null(), std::ptr::null())
         };
         if ok == 0 {
             anyhow::bail!(
@@ -192,10 +193,15 @@ impl IpcServer {
     }
 }
 
+// Safety: Windows HANDLEs are kernel objects that can be used from any thread.
+// Cell<HANDLE> is not Send by default due to the raw pointer, but the underlying
+// Windows named pipe handle is safe to transfer between threads.
+unsafe impl Send for IpcServer {}
+
 impl Drop for IpcServer {
     fn drop(&mut self) {
         unsafe {
-            CloseHandle(self.handle);
+            CloseHandle(self.handle.get());
         }
     }
 }
@@ -213,7 +219,7 @@ pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
             std::ptr::null(),
             OPEN_EXISTING,
             0,
-            0,
+            std::ptr::null_mut(),
         )
     };
     if handle == INVALID_HANDLE_VALUE {

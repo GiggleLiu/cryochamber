@@ -9,7 +9,7 @@ use windows_sys::Win32::System::Threading::{
 pub fn is_alive(pid: u32) -> bool {
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle == 0 {
+        if handle.is_null() {
             return false;
         }
         let mut exit_code: u32 = 0;
@@ -41,7 +41,7 @@ pub fn terminate(pid: u32) -> Result<()> {
 pub fn force_kill(pid: u32) -> Result<()> {
     unsafe {
         let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
-        if handle == 0 {
+        if handle.is_null() {
             anyhow::bail!("Failed to open process {pid} for termination");
         }
         let ok = TerminateProcess(handle, 1);

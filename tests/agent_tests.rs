@@ -71,8 +71,13 @@ fn test_build_prompt_delayed_wake() {
 
 #[test]
 fn test_spawn_agent_fire_and_forget() {
+    #[cfg(unix)]
+    let cmd = "echo";
+    #[cfg(windows)]
+    let cmd = "cmd /c echo hello";
+
     let mut child =
-        cryochamber::agent::spawn_agent("echo", "hello", None, &std::collections::HashMap::new())
+        cryochamber::agent::spawn_agent(cmd, "hello", None, &std::collections::HashMap::new())
             .unwrap();
     let exit = child.wait().unwrap();
     assert!(exit.success());
@@ -88,6 +93,7 @@ fn test_spawn_agent_empty_command() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_spawn_agent_with_env_vars() {
     use std::collections::HashMap;
 
@@ -111,11 +117,46 @@ fn test_spawn_agent_with_env_vars() {
 }
 
 #[test]
+#[cfg(windows)]
+fn test_spawn_agent_with_env_vars() {
+    use std::collections::HashMap;
+
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("agent.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+
+    let mut env = HashMap::new();
+    env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
+
+    // On Windows use cmd /c set to print env vars
+    let mut child = cryochamber::agent::spawn_agent(
+        "cmd /c set TEST_CRYO_KEY",
+        "",
+        Some(log_file),
+        &env,
+    )
+    .unwrap();
+    let status = child.wait().unwrap();
+    assert!(status.success());
+
+    let output = std::fs::read_to_string(&log_path).unwrap();
+    assert!(
+        output.contains("test_value_123"),
+        "Expected env var in output: {output}"
+    );
+}
+
+#[test]
 fn test_spawn_agent_with_empty_env_vars() {
     use std::collections::HashMap;
     let env = HashMap::new();
 
-    let child = cryochamber::agent::spawn_agent("echo", "hello", None, &env);
+    #[cfg(unix)]
+    let cmd = "echo";
+    #[cfg(windows)]
+    let cmd = "cmd /c echo hello";
+
+    let child = cryochamber::agent::spawn_agent(cmd, "hello", None, &env);
     assert!(child.is_ok());
     let mut child = child.unwrap();
     let _ = child.wait();

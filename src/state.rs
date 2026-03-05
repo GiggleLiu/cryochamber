@@ -98,7 +98,13 @@ mod tests {
     #[test]
     fn test_is_locked_stale_pid() {
         // Spawn a child, wait for it to exit, use its PID
+        #[cfg(unix)]
         let mut child = std::process::Command::new("true").spawn().unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "exit", "0"])
+            .spawn()
+            .unwrap();
         let pid = child.id();
         child.wait().unwrap();
         // Small delay to ensure the process is fully reaped
