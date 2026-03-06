@@ -57,6 +57,9 @@ enum Commands {
     Time {
         /// Offset from now (e.g. "+30 minutes", "+2 hours", "+1 day")
         offset: Option<String>,
+        /// Daily time (e.g. "13:00")
+        #[arg(long)]
+        daily: Option<String>,
     },
     /// Manage TODO items across sessions
     Todo {
@@ -132,7 +135,7 @@ fn main() -> Result<()> {
             },
         ),
         Commands::Receive => cmd_receive(&dir),
-        Commands::Time { offset } => cmd_time(offset.as_deref()),
+        Commands::Time { offset, daily } => cmd_time(offset.as_deref(), daily.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),
     }
 }
@@ -158,35 +161,55 @@ fn cmd_receive(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_time(offset: Option<&str>) -> Result<()> {
+fn cmd_time(offset: Option<&str>, daily: Option<&str>) -> Result<()> {
     use chrono::Local;
 
     let now = Local::now();
 
-    let target = match offset {
-        None => now,
-        Some(s) => {
-            let s = s.trim().trim_start_matches('+');
-            let parts: Vec<&str> = s.splitn(2, ' ').collect();
-            if parts.len() != 2 {
-                anyhow::bail!(
-                    "Invalid offset format. Use e.g. \"+30 minutes\", \"+2 hours\", \"+1 day\""
-                );
-            }
-            let n: i64 = parts[0]
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid number: {}", parts[0]))?;
-            let unit = parts[1].trim_end_matches('s'); // "minutes" -> "minute"
-            let duration = match unit {
-                "minute" | "min" => chrono::Duration::minutes(n),
-                "hour" | "hr" => chrono::Duration::hours(n),
-                "day" => chrono::Duration::days(n),
-                "week" => chrono::Duration::weeks(n),
-                _ => {
-                    anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks.")
+    let target = if let Some(time_str) = daily {
+        let parts: Vec<&str> = time_str.split(':').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("Invalid daily time format. Use HH:MM (e.g. \"13:00\")");
+        }
+        let hour: u32 = parts[0].parse()
+            .map_err(|_| anyhow::anyhow!("Invalid hour: {}", parts[0]))?;
+        let minute: u32 = parts[1].parse()
+            .map_err(|_| anyhow::anyhow!("Invalid minute: {}", parts[1]))?;
+
+        let today = now.date_naive().and_hms_opt(hour, minute, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid time: {}:{}", hour, minute))?;
+
+        if now.naive_local() >= today {
+            today + chrono::Duration::days(1)
+        } else {
+            today
+        }
+    } else {
+        match offset {
+            None => now.naive_local(),
+            Some(s) => {
+                let s = s.trim().trim_start_matches('+');
+                let parts: Vec<&str> = s.splitn(2, ' ').collect();
+                if parts.len() != 2 {
+                    anyhow::bail!(
+                        "Invalid offset format. Use e.g. \"+30 minutes\", \"+2 hours\", \"+1 day\""
+                    );
                 }
-            };
-            now + duration
+                let n: i64 = parts[0]
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("Invalid number: {}", parts[0]))?;
+                let unit = parts[1].trim_end_matches('s');
+                let duration = match unit {
+                    "minute" | "min" => chrono::Duration::minutes(n),
+                    "hour" | "hr" => chrono::Duration::hours(n),
+                    "day" => chrono::Duration::days(n),
+                    "week" => chrono::Duration::weeks(n),
+                    _ => {
+                        anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks.")
+                    }
+                };
+                (now + duration).naive_local()
+            }
         }
     };
 
