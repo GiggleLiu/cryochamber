@@ -96,4 +96,44 @@ mod tests {
     fn test_send_signal_to_nonexistent() {
         assert!(!send_signal(4_000_000, 0));
     }
+
+    #[test]
+    fn test_force_kill_nonexistent_pid_returns_err() {
+        let result = force_kill(4_000_000);
+        assert!(result.is_err(), "force_kill on nonexistent PID should return Err");
+        assert!(result.unwrap_err().to_string().contains("SIGKILL"));
+    }
+
+    #[test]
+    fn test_terminate_child_kills_sleeping_process() {
+        // Spawn a long-lived child process
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("failed to spawn sleep — is 'sleep' available?");
+        let pid = child.id();
+
+        // Sanity: child should be alive before we terminate it
+        assert!(is_alive(pid), "Child should be alive before terminate_child");
+
+        terminate_child(&mut child, pid);
+
+        // After termination, the child should no longer be alive
+        assert!(!is_alive(pid), "Child should be dead after terminate_child");
+    }
+
+    #[test]
+    fn test_terminate_kills_sleeping_process() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("failed to spawn sleep");
+        let pid = child.id();
+
+        terminate(pid).expect("terminate should not error");
+        // Reap to avoid zombie
+        let _ = child.wait();
+
+        assert!(!is_alive(pid), "Process should be dead after terminate()");
+    }
 }

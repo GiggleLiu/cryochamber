@@ -237,7 +237,10 @@ fn validate_agent_command(agent_cmd: &str) -> Result<()> {
     match which::which(&program) {
         Ok(_) => Ok(()),
         Err(_) => anyhow::bail!(
-            "Agent command '{}' not found. Verify it is installed and on your PATH.",
+            "Agent command '{}' not found.\n\n\
+             Install it with:\n  \
+             npm install -g opencode-ai\n\n\
+             Or edit cryo.toml to use a different agent (claude, aider, etc.)",
             program
         ),
     }
@@ -326,6 +329,22 @@ fn cmd_start(
 
 fn cmd_daemon() -> Result<()> {
     let dir = cryochamber::work_dir()?;
+
+    // Set up panic handler to log crashes
+    let log_path = dir.join("cryo.log");
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let msg = format!("PANIC: {}", panic_info);
+        eprintln!("{}", msg);
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "{}", msg)
+            });
+    }));
+
     let daemon = cryochamber::daemon::Daemon::new(dir);
     daemon.run()
 }

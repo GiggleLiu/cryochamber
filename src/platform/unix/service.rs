@@ -3,7 +3,7 @@ use std::path::Path;
 
 /// Escape XML special characters for safe embedding in plist <string> elements.
 #[cfg(target_os = "macos")]
-fn xml_escape(s: &str) -> String {
+pub(crate) fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -266,4 +266,58 @@ pub fn uninstall(_label_prefix: &str, _dir: &Path) -> Result<bool> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn is_installed(_label_prefix: &str, _dir: &Path) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── xml_escape (macOS only) ───────────────────────────────────────────────
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_xml_escape_ampersand() {
+        assert_eq!(xml_escape("a&b"), "a&amp;b");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_xml_escape_angle_brackets() {
+        assert_eq!(xml_escape("<tag>"), "&lt;tag&gt;");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_xml_escape_quotes() {
+        assert_eq!(xml_escape("say \"hi\" & 'bye'"), "say &quot;hi&quot; &amp; &apos;bye&apos;");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_xml_escape_no_special_chars() {
+        assert_eq!(xml_escape("normal text"), "normal text");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_xml_escape_empty() {
+        assert_eq!(xml_escape(""), "");
+    }
+
+    // ── is_installed — false when no service file exists ─────────────────────
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_is_installed_returns_false_when_no_plist() {
+        let dir = tempfile::tempdir().unwrap();
+        // No plist has been written, so is_installed must return false
+        assert!(!is_installed("test-label-that-does-not-exist", dir.path()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_is_installed_returns_false_when_no_unit_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_installed("test-label-that-does-not-exist", dir.path()));
+    }
 }

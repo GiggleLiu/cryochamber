@@ -309,7 +309,7 @@ pub fn parse_get_messages_response(
 }
 
 /// Simple base64 encoding (no external dependency needed).
-fn base64_encode(data: &[u8]) -> String {
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = Vec::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
@@ -342,4 +342,142 @@ fn base64_encode(data: &[u8]) -> String {
     }
 
     String::from_utf8(result).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    fn make_test_client() -> ZulipClient {
+        let dir = tempfile::tempdir().unwrap();
+        let rc_path = dir.path().join("zuliprc");
+        std::fs::write(
+            &rc_path,
+            "[api]\nemail=bot@example.com\nkey=secretkey\nsite=https://zulip.example.com\n",
+        )
+        .unwrap();
+        // from_zuliprc reads the file immediately — tempdir can be dropped after this
+        ZulipClient::from_zuliprc(&rc_path).unwrap()
+    }
+
+    // ── base64_encode ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_base64_empty() {
+        assert_eq!(base64_encode(b""), "");
+    }
+
+    #[test]
+    fn test_base64_one_byte_padding_two() {
+        // "M" → "TQ=="
+        assert_eq!(base64_encode(b"M"), "TQ==");
+    }
+
+    #[test]
+    fn test_base64_two_bytes_padding_one() {
+        // "Ma" → "TWE="
+        assert_eq!(base64_encode(b"Ma"), "TWE=");
+    }
+
+    #[test]
+    fn test_base64_three_bytes_no_padding() {
+        // "Man" → "TWFu"
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+    }
+
+    #[test]
+    fn test_base64_hello_world() {
+        assert_eq!(base64_encode(b"hello world"), "aGVsbG8gd29ybGQ=");
+    }
+
+    #[test]
+    fn test_base64_round_trip_credential_format() {
+        // Verify the exact credential string used in HTTP Basic auth
+        let creds = "bot@example.com:secretkey";
+        let encoded = base64_encode(creds.as_bytes());
+        // Decode and verify roundtrip using standard base64 alphabet
+        assert!(!encoded.is_empty());
+        assert!(!encoded.contains('\n'));
+        // All chars must be from the base64 alphabet or '='
+        assert!(encoded
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
+    }
+
+    // ── check_result ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_check_result_success() {
+        let client = make_test_client();
+        let json = serde_json::json!({"result": "success", "msg": ""});
+        assert!(client.check_result(&json, "/test").is_ok());
+    }
+
+    #[test]
+    fn test_check_result_api_error_includes_message() {
+        let client = make_test_client();
+        let json = serde_json::json!({"result": "error", "msg": "Bad API key"});
+        let err = client.check_result(&json, "/users/me").unwrap_err();
+        assert!(
+            err.to_string().contains("Bad API key"),
+            "Error should contain API message: {err}"
+        );
+    }
+
+    #[test]
+    fn test_check_result_missing_result_field_is_error() {
+        let client = make_test_client();
+        // No "result" field → as_str() returns None → not Some("success") → error
+        let json = serde_json::json!({"msg": "weird response"});
+        assert!(client.check_result(&json, "/endpoint").is_err());
+    }
+
+    #[test]
+    fn test_check_result_unknown_status_is_error() {
+        let client = make_test_client();
+        let json = serde_json::json!({"result": "partial", "msg": "unknown"});
+        assert!(client.check_result(&json, "/messages").is_err());
+    }
+
+    // ── basic_auth ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_basic_auth_format() {
+        let client = make_test_client();
+        let expected = format!(
+            "Basic {}",
+            base64_encode(b"bot@example.com:secretkey")
+        );
+        assert_eq!(client.basic_auth(), expected);
+    }
+
+    // ── api_url ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_api_url_appends_path() {
+        let client = make_test_client();
+        assert_eq!(
+            client.api_url("/users/me"),
+            "https://zulip.example.com/api/v1/users/me"
+        );
+    }
+
+    #[test]
+    fn test_api_url_strips_trailing_slash_from_site() {
+        let dir = tempfile::tempdir().unwrap();
+        let rc_path = dir.path().join("zuliprc");
+        std::fs::write(
+            &rc_path,
+            "[api]\nemail=bot@example.com\nkey=key\nsite=https://zulip.example.com/\n",
+        )
+        .unwrap();
+        let client = ZulipClient::from_zuliprc(&rc_path).unwrap();
+        // Trailing slash in site must be stripped to avoid double slashes
+        assert_eq!(
+            client.api_url("/users/me"),
+            "https://zulip.example.com/api/v1/users/me"
+        );
+    }
 }

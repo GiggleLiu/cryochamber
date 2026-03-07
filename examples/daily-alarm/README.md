@@ -1,19 +1,6 @@
-# {{project_name}}
+# daily-alarm
 
 A [cryochamber](https://github.com/GiggleLiu/cryochamber) application.
-
-## Prerequisites
-
-Before starting, ensure you have an AI agent CLI installed. The default agent in `cryo.toml` is `opencode`. Install it with:
-
-```bash
-npm install -g opencode-ai    # OpenCode (free tier available)
-```
-
-Or use another agent by editing `cryo.toml`:
-- `claude` - Claude Desktop CLI
-- `aider` - Aider CLI
-- Custom agent command of your choice
 
 ## Start the Service
 

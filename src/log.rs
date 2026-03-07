@@ -647,6 +647,131 @@ mod tests {
         assert!(parse_session_header("random text").is_none());
     }
 
+    // ── session_count ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_session_count_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        assert_eq!(session_count(&path).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_session_count_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(session_count(&path).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_session_count_multiple_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        EventLogger::begin(&path, 1, "t1", "agent", &[])
+            .unwrap()
+            .finish("done")
+            .unwrap();
+        EventLogger::begin(&path, 2, "t2", "agent", &[])
+            .unwrap()
+            .finish("done")
+            .unwrap();
+        EventLogger::begin(&path, 3, "t3", "agent", &[])
+            .unwrap()
+            .finish("done")
+            .unwrap();
+        assert_eq!(session_count(&path).unwrap(), 3);
+    }
+
+    #[test]
+    fn test_session_count_single_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let mut logger = EventLogger::begin(&path, 1, "task", "agent", &[]).unwrap();
+        logger.log_event("something").unwrap();
+        logger.finish("complete").unwrap();
+        assert_eq!(session_count(&path).unwrap(), 1);
+    }
+
+    // ── parse_latest_session_notes backward-scan ──────────────────────────────
+
+    #[test]
+    fn test_parse_notes_scans_backward_across_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        // Session 1 has a note, session 2 does not
+        let mut logger = EventLogger::begin(&path, 1, "task1", "agent", &[]).unwrap();
+        logger.log_event("note: \"from session 1\"").unwrap();
+        logger.finish("complete").unwrap();
+        EventLogger::begin(&path, 2, "task2", "agent", &[])
+            .unwrap()
+            .finish("complete")
+            .unwrap();
+        // parse_latest_session_notes scans backward — session 2 has no notes,
+        // so it should fall back to session 1's notes
+        let notes = parse_latest_session_notes(&path).unwrap();
+        assert_eq!(notes, vec!["from session 1".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_notes_latest_session_takes_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        // Both sessions have notes — should return most recent session's notes
+        {
+            let mut logger = EventLogger::begin(&path, 1, "t1", "agent", &[]).unwrap();
+            logger.log_event("note: \"old note\"").unwrap();
+            logger.finish("done").unwrap();
+        }
+        {
+            let mut logger = EventLogger::begin(&path, 2, "t2", "agent", &[]).unwrap();
+            logger.log_event("note: \"new note\"").unwrap();
+            logger.finish("done").unwrap();
+        }
+        let notes = parse_latest_session_notes(&path).unwrap();
+        assert_eq!(notes, vec!["new note".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_notes_no_sessions_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let notes = parse_latest_session_notes(&path).unwrap();
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn test_read_current_session_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        assert!(read_current_session(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_read_current_session_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        std::fs::write(&path, "   \n").unwrap();
+        assert!(read_current_session(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_read_latest_session_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        assert!(read_latest_session(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_read_latest_session_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        std::fs::write(&path, "").unwrap();
+        assert!(read_latest_session(&path).unwrap().is_none());
+    }
+
+    // ── parse_latest_session_filters_by_date ─────────────────────────────────
+
     #[test]
     fn test_parse_sessions_since_filters_by_date() {
         let dir = tempfile::tempdir().unwrap();

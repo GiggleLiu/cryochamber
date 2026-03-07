@@ -11,7 +11,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
-    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 
 // PIPE_ACCESS_DUPLEX = 0x00000003 (not exported by windows_sys 0.59 from Pipes module)
@@ -109,12 +109,14 @@ impl IpcServer {
 
     fn create_pipe_instance(name: &str) -> anyhow::Result<HANDLE> {
         let wide = to_wide(name);
+        // Use 254 instead of PIPE_UNLIMITED_INSTANCES to avoid Windows limits
+        const MAX_INSTANCES: u32 = 254;
         let handle = unsafe {
             CreateNamedPipeW(
                 wide.as_ptr(),
                 PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                PIPE_UNLIMITED_INSTANCES,
+                MAX_INSTANCES,
                 4096,
                 4096,
                 0,
@@ -211,43 +213,59 @@ pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
     let name = pipe_name(dir);
     let wide = to_wide(&name);
 
-    let handle = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        anyhow::bail!(
-            "Cannot connect to daemon pipe at {}: {}",
-            name,
-            std::io::Error::last_os_error()
-        );
+    // Retry up to 3 times if pipe is busy
+    let mut last_error = None;
+    for attempt in 0..3 {
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+
+        if handle != INVALID_HANDLE_VALUE {
+            // Success, send request
+            let mut payload = serde_json::to_string(request)?;
+            payload.push('\n');
+            write_to_handle(handle, payload.as_bytes())?;
+            unsafe {
+                FlushFileBuffers(handle);
+            }
+
+            let reader = PipeReader { handle };
+            let mut buf_reader = BufReader::new(reader);
+            let mut line = String::new();
+            buf_reader.read_line(&mut line)?;
+
+            unsafe {
+                CloseHandle(handle);
+            }
+
+            let response: Response = serde_json::from_str(line.trim())?;
+            return Ok(response);
+        }
+
+        let err = std::io::Error::last_os_error();
+        last_error = Some(err);
+
+        // If pipe is busy (ERROR_PIPE_BUSY = 231), wait and retry
+        if unsafe { GetLastError() } == 231 && attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1) as u64));
+            continue;
+        }
+        break;
     }
 
-    let mut payload = serde_json::to_string(request)?;
-    payload.push('\n');
-    write_to_handle(handle, payload.as_bytes())?;
-    unsafe {
-        FlushFileBuffers(handle);
-    }
-
-    let reader = PipeReader { handle };
-    let mut buf_reader = BufReader::new(reader);
-    let mut line = String::new();
-    buf_reader.read_line(&mut line)?;
-
-    unsafe {
-        CloseHandle(handle);
-    }
-
-    let response: Response = serde_json::from_str(line.trim())?;
-    Ok(response)
+    anyhow::bail!(
+        "Cannot connect to daemon pipe at {}: {}",
+        name,
+        last_error.unwrap()
+    );
 }
 
 /// Return the IPC endpoint path for a project directory.

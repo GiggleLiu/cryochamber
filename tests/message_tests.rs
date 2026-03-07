@@ -2,7 +2,7 @@
 use chrono::NaiveDateTime;
 use cryochamber::message::{
     archive_messages, ensure_dirs, list_inbox, message_to_markdown, parse_message, read_inbox,
-    read_inbox_archive, write_message, Message,
+    read_inbox_archive, read_outbox, write_message, Message,
 };
 use std::collections::BTreeMap;
 
@@ -259,6 +259,97 @@ fn test_list_inbox_returns_filenames() {
     assert!(filenames[1].ends_with(".md"));
     // Sorted by filename (timestamp order)
     assert!(filenames[0] < filenames[1]);
+}
+
+// ── read_outbox ───────────────────────────────────────────────────────────────
+
+#[test]
+fn test_read_outbox_missing_dir_returns_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    // No outbox directory created
+    let messages = read_outbox(dir.path()).unwrap();
+    assert!(messages.is_empty());
+}
+
+#[test]
+fn test_read_outbox_empty_dir_returns_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_dirs(dir.path()).unwrap();
+    let messages = read_outbox(dir.path()).unwrap();
+    assert!(messages.is_empty());
+}
+
+#[test]
+fn test_read_outbox_returns_messages_sorted() {
+    let dir = tempfile::tempdir().unwrap();
+    let msg1 = make_message("agent", "Reply A", "First reply", "2026-02-23T08:00:00");
+    let msg2 = make_message("agent", "Reply B", "Second reply", "2026-02-23T09:00:00");
+    write_message(dir.path(), "outbox", &msg1).unwrap();
+    write_message(dir.path(), "outbox", &msg2).unwrap();
+
+    let messages = read_outbox(dir.path()).unwrap();
+    assert_eq!(messages.len(), 2);
+    // Sorted by filename (timestamp order)
+    assert_eq!(messages[0].1.subject, "Reply A");
+    assert_eq!(messages[1].1.subject, "Reply B");
+}
+
+#[test]
+fn test_read_outbox_ignores_non_md_files() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_dirs(dir.path()).unwrap();
+
+    let outbox = dir.path().join("messages/outbox");
+    std::fs::write(outbox.join("ignored.txt"), "not a message").unwrap();
+    std::fs::write(outbox.join("data.json"), "{}").unwrap();
+
+    let msg = make_message("agent", "Real reply", "Body", "2026-02-23T10:00:00");
+    write_message(dir.path(), "outbox", &msg).unwrap();
+
+    let messages = read_outbox(dir.path()).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].1.subject, "Real reply");
+}
+
+#[test]
+fn test_read_outbox_skips_malformed_files() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_dirs(dir.path()).unwrap();
+
+    let outbox = dir.path().join("messages/outbox");
+    // Write a malformed .md file (no frontmatter)
+    std::fs::write(outbox.join("bad-message.md"), "no frontmatter here").unwrap();
+
+    // Valid message alongside the malformed one
+    let msg = make_message("agent", "Good reply", "Body", "2026-02-23T10:00:00");
+    write_message(dir.path(), "outbox", &msg).unwrap();
+
+    // Should skip the malformed file and return only the valid message
+    let messages = read_outbox(dir.path()).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].1.subject, "Good reply");
+}
+
+// ── read_inbox_archive with malformed file ────────────────────────────────────
+
+#[test]
+fn test_read_inbox_archive_skips_malformed_files() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_dirs(dir.path()).unwrap();
+
+    let archive = dir.path().join("messages/inbox/archive");
+    // Write a malformed .md file
+    std::fs::write(archive.join("broken.md"), "not valid markdown frontmatter").unwrap();
+
+    // Valid archived message
+    let msg = make_message("human", "Archived ok", "Body", "2026-02-23T10:00:00");
+    // Write directly to archive
+    let content = cryochamber::message::message_to_markdown(&msg);
+    std::fs::write(archive.join("2026-02-23T10-00-00_archived-ok.md"), content).unwrap();
+
+    let archived = read_inbox_archive(dir.path()).unwrap();
+    assert_eq!(archived.len(), 1);
+    assert_eq!(archived[0].1.subject, "Archived ok");
 }
 
 #[test]

@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"F:\\\\AI-project\\\\cryochamber-1\\\\cryochamber-report-zh.typ\":*)",
+      "Bash(\"F:\\\\AI-project\\\\cryochamber-1\\\\cryochamber-report-en.typ\":*)",
+      "Bash(typst:*)",
+      "Bash(ls:*)",
+      "Bash(\"F:\\\\AI-project\\\\cryochamber-1\\\\cryochamber-showcase-zh.typ\":*)",
+      "Bash(\"F:\\\\AI-project\\\\cryochamber-1\\\\cryochamber-showcase-en.typ\":*)",
+      "Bash(cryo start:*)",
+      "Bash(cargo install:*)",
+      "Bash(CRYO_NO_SERVICE=1 cryo start:*)",
+      "Bash(cryo status:*)",
+      "Bash(cryo restart:*)",
+      "Bash(cryo ps:*)",
+      "Bash(cryo wake:*)",
+      "Bash(cryo-agent hibernate:*)",
+      "Bash(python:*)",
+      "Bash(cryo-agent:*)",
+      "Bash(taskkill:*)",
+      "Bash(cryo cancel:*)",
+      "Bash(cryo send:*)",
+      "Bash(cryo web:*)",
+      "Bash(CRYO_NO_SERVICE=1 cryo web:*)",
+      "Bash(sed:*)",
+      "Bash(timeout 10 cryo watch:*)",
+      "Bash(claude:*)",
+      "Bash(PATH=\"/c/nvm4w/nodejs:$PATH\" CRYO_NO_SERVICE=1 cryo start:*)",
+      "Bash(cp:*)",
+      "Bash(mktemp:*)",
+      "Bash(cryo init:*)",
+      "Bash(pip install:*)",
+      "Bash(pip show:*)",
+      "Bash(npm install:*)",
+      "Bash(npm search:*)",
+      "WebSearch"
+    ]
+  }
+}

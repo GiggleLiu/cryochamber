@@ -1,0 +1,13 @@
+# Cryochamber 配置文件
+
+# Agent 命令（使用你喜欢的 AI agent）
+agent = "python demo-agent.py"
+
+# 最大重试次数
+max_retries = 3
+
+# 单次会话最大时长（秒）
+max_session_duration = 1800
+
+# 是否监听 inbox 目录
+watch_inbox = true

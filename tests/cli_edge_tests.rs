@@ -286,6 +286,143 @@ fn test_receive_malformed_message() {
         .success(); // should not crash on malformed messages
 }
 
+// --- cryo ps ---
+
+#[test]
+fn test_ps_no_daemons() {
+    // cryo ps lists running daemons; with none running it exits 0
+    cryo_bin()
+        .args(["ps"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No cryo daemons running"));
+}
+
+// --- cryo log ---
+
+#[test]
+fn test_log_no_log_file() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+
+    cryo_bin()
+        .args(["log"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No log file found"));
+}
+
+#[test]
+fn test_log_shows_log_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+    fs::write(
+        dir.path().join("cryo.log"),
+        "--- CRYO SESSION 1 ---\ntask: hello\n--- CRYO END ---\n",
+    )
+    .unwrap();
+
+    cryo_bin()
+        .args(["log"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("hello"));
+}
+
+// --- cryo receive ---
+
+#[test]
+fn test_receive_empty_outbox() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+
+    cryo_bin()
+        .args(["receive"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("No messages in outbox"));
+}
+
+// --- cryo clean --force ---
+
+#[test]
+fn test_clean_force_removes_runtime_files() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+
+    // Create some runtime files that clean should remove
+    fs::write(dir.path().join("cryo.log"), "session data").unwrap();
+    fs::write(
+        dir.path().join("timer.json"),
+        r#"{"session_number":1}"#,
+    )
+    .unwrap();
+    let messages_dir = dir.path().join("messages");
+    fs::create_dir_all(messages_dir.join("inbox")).unwrap();
+
+    cryo_bin()
+        .args(["clean", "--force"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        !dir.path().join("cryo.log").exists(),
+        "cryo.log should be removed by clean"
+    );
+    assert!(
+        !dir.path().join("timer.json").exists(),
+        "timer.json should be removed by clean"
+    );
+    assert!(
+        !dir.path().join("messages").exists(),
+        "messages/ directory should be removed by clean"
+    );
+}
+
+// --- cryo status with provider config ---
+
+#[test]
+fn test_status_shows_provider_info() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+
+    // Write a cryo.toml with two providers
+    fs::write(
+        dir.path().join("cryo.toml"),
+        r#"
+agent = "mock"
+
+[[providers]]
+name = "openai"
+env = {OPENAI_API_KEY = "sk-test"}
+
+[[providers]]
+name = "anthropic"
+env = {ANTHROPIC_API_KEY = "sk-test"}
+"#,
+    )
+    .unwrap();
+
+    // Write timer.json pointing at provider index 1 (second provider)
+    fs::write(
+        dir.path().join("timer.json"),
+        r#"{"session_number": 3, "provider_index": 1}"#,
+    )
+    .unwrap();
+
+    cryo_bin()
+        .args(["status"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("anthropic"))
+        .stdout(predicates::str::contains("2/2"));
+}
+
 // --- Time subcommand ---
 
 #[test]

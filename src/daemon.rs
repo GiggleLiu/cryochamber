@@ -353,8 +353,10 @@ impl Daemon {
                     provider_name,
                 ) {
                     Ok(outcome) => {
+                        eprintln!("Daemon: session completed, processing outcome");
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, &cryo_state)?;
+                        eprintln!("Daemon: state saved");
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
                                 retry.reset();
@@ -842,7 +844,9 @@ impl Daemon {
                     }
 
                     if let Some(outcome) = hibernate_outcome {
+                        logger.log_event("about to finish logger")?;
                         logger.finish("session complete")?;
+                        eprintln!("Daemon: logger finished, returning");
                         return Ok(outcome);
                     } else {
                         // Quick-exit detection: agent exited fast without hibernating

@@ -1,0 +1,6 @@
+# Cryochamber 配置文件
+
+agent = "python alarm-agent.py"
+max_retries = 3
+max_session_duration = 300
+watch_inbox = false

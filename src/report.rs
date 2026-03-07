@@ -33,17 +33,38 @@ pub fn generate_report(log_path: &Path, since: NaiveDateTime) -> Result<ReportSu
     })
 }
 
+/// Format a duration in hours as a human-readable period label.
+/// - < 24h  → "Nh"
+/// - < 168h → "Nd"
+/// - ≥ 168h → "Nw"
+pub(crate) fn period_label(hours: u64) -> String {
+    match hours {
+        0..=23 => format!("{hours}h"),
+        24..=167 => format!("{}d", hours / 24),
+        _ => format!("{}w", hours / 168),
+    }
+}
+
 /// Send a desktop notification with the report summary.
+///
+/// Set the environment variable `CRYO_SKIP_DESKTOP_NOTIFY=1` to suppress the
+/// actual desktop popup (useful in CI or headless environments).
 pub fn send_report_notification(summary: &ReportSummary, project_name: &str) -> Result<()> {
-    let period_label = match summary.period_hours {
-        0..=23 => format!("{}h", summary.period_hours),
-        24..=167 => format!("{}d", summary.period_hours / 24),
-        _ => format!("{}w", summary.period_hours / 168),
-    };
+    let period = period_label(summary.period_hours);
     let body = format!(
         "Last {}: {} sessions, {} failed",
-        period_label, summary.total_sessions, summary.failed_sessions,
+        period, summary.total_sessions, summary.failed_sessions,
     );
+
+    // Allow CI / headless environments to exercise this function without a
+    // display server by setting CRYO_SKIP_DESKTOP_NOTIFY=1.
+    if std::env::var("CRYO_SKIP_DESKTOP_NOTIFY").as_deref() == Ok("1") {
+        eprintln!(
+            "[report] skipping desktop notify (CRYO_SKIP_DESKTOP_NOTIFY=1): {body}"
+        );
+        return Ok(());
+    }
+
     let mut notification = notify_rust::Notification::new();
     notification
         .summary(&format!("Cryochamber Report: {}", project_name))
@@ -106,6 +127,69 @@ mod tests {
     use super::*;
     use crate::log::EventLogger;
     use chrono::{Local, Timelike};
+
+    // ── send_report_notification smoke test ───────────────────────────────────
+
+    #[test]
+    fn test_send_report_notification_skipped_in_ci() {
+        // With the env-var guard, the function must return Ok(()) without
+        // trying to open a display server — safe to run in any environment.
+        std::env::set_var("CRYO_SKIP_DESKTOP_NOTIFY", "1");
+        let summary = ReportSummary {
+            total_sessions: 5,
+            failed_sessions: 1,
+            period_hours: 25,
+        };
+        assert!(
+            send_report_notification(&summary, "my-project").is_ok(),
+            "send_report_notification should succeed when CRYO_SKIP_DESKTOP_NOTIFY=1"
+        );
+        std::env::remove_var("CRYO_SKIP_DESKTOP_NOTIFY");
+    }
+
+    #[test]
+    fn test_send_report_notification_zero_sessions() {
+        std::env::set_var("CRYO_SKIP_DESKTOP_NOTIFY", "1");
+        let summary = ReportSummary {
+            total_sessions: 0,
+            failed_sessions: 0,
+            period_hours: 24,
+        };
+        assert!(send_report_notification(&summary, "empty-project").is_ok());
+        std::env::remove_var("CRYO_SKIP_DESKTOP_NOTIFY");
+    }
+
+    // ── period_label ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_period_label_hours() {
+        assert_eq!(period_label(0), "0h");
+        assert_eq!(period_label(1), "1h");
+        assert_eq!(period_label(23), "23h");
+    }
+
+    #[test]
+    fn test_period_label_days() {
+        assert_eq!(period_label(24), "1d");
+        assert_eq!(period_label(48), "2d");
+        assert_eq!(period_label(167), "6d");
+    }
+
+    #[test]
+    fn test_period_label_weeks() {
+        assert_eq!(period_label(168), "1w");
+        assert_eq!(period_label(336), "2w");
+        assert_eq!(period_label(504), "3w");
+    }
+
+    #[test]
+    fn test_period_label_boundaries() {
+        // 23h → hours, 24h → days, 167h → days, 168h → weeks
+        assert_eq!(period_label(23), "23h");
+        assert_eq!(period_label(24), "1d");
+        assert_eq!(period_label(167), "6d");
+        assert_eq!(period_label(168), "1w");
+    }
 
     #[test]
     fn test_generate_report_counts() {
