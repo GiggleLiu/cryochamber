@@ -109,7 +109,11 @@ enum Commands {
     },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
-    Daemon,
+    Daemon {
+        /// Working directory for the daemon
+        #[arg(long)]
+        dir: Option<String>,
+    },
     /// Internal: run the web server (called by OS service)
     #[command(hide = true)]
     WebDaemon {
@@ -150,7 +154,7 @@ fn main() -> Result<()> {
             foreground,
             stop,
         } => cmd_web(host, port, foreground, stop),
-        Commands::Daemon => cmd_daemon(),
+        Commands::Daemon { dir } => cmd_daemon(dir),
         Commands::WebDaemon { host, port } => cmd_web_daemon(host, port),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
@@ -303,7 +307,8 @@ fn cmd_start(
     } else {
         let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
         let log_path = cryochamber::log::log_path(&dir);
-        cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
+        let dir_str = dir.to_string_lossy();
+        cryochamber::service::install("daemon", &dir, &exe, &["daemon", "--dir", &dir_str], &log_path, false)?;
         println!("Cryochamber started (service installed, survives reboot).");
     }
 
@@ -327,8 +332,12 @@ fn cmd_start(
     Ok(())
 }
 
-fn cmd_daemon() -> Result<()> {
-    let dir = cryochamber::work_dir()?;
+fn cmd_daemon(dir_arg: Option<String>) -> Result<()> {
+    let dir = if let Some(d) = dir_arg {
+        std::path::PathBuf::from(d)
+    } else {
+        cryochamber::work_dir()?
+    };
 
     // On Windows, check if we're being launched by SCM
     #[cfg(windows)]
