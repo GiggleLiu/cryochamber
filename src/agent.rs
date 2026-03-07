@@ -183,6 +183,14 @@ pub fn spawn_agent(
         cmd.envs(provider_env);
     }
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+    }
+
     let child = cmd
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to spawn agent: {e}"))?;
