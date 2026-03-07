@@ -330,6 +330,16 @@ fn cmd_start(
 fn cmd_daemon() -> Result<()> {
     let dir = cryochamber::work_dir()?;
 
+    // On Windows, check if we're being launched by SCM
+    #[cfg(windows)]
+    {
+        // Try to run as Windows service first
+        if let Ok(()) = cryochamber::platform::service::run_service(dir.clone()) {
+            return Ok(());
+        }
+        // If service mode fails, fall through to regular daemon mode
+    }
+
     // Set up panic handler to log crashes
     let log_path = dir.join("cryo.log");
     std::panic::set_hook(Box::new(move |panic_info| {

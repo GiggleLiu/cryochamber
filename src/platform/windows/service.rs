@@ -1,5 +1,86 @@
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::ffi::OsString;
+use std::time::Duration;
+use windows_service::{
+    define_windows_service,
+    service::{
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceType,
+    },
+    service_control_handler::{self, ServiceControlHandlerResult},
+    service_dispatcher,
+};
+
+static mut SERVICE_DIR: Option<std::path::PathBuf> = None;
+
+define_windows_service!(ffi_service_main, service_main);
+
+/// Run daemon as a Windows service (called by SCM)
+pub fn run_service(dir: std::path::PathBuf) -> Result<()> {
+    unsafe {
+        SERVICE_DIR = Some(dir);
+    }
+    service_dispatcher::start("cryochamber", ffi_service_main)
+        .context("Failed to start service dispatcher")
+}
+
+fn service_main(_arguments: Vec<OsString>) {
+    if let Err(e) = run_service_impl() {
+        eprintln!("Service error: {}", e);
+    }
+}
+
+fn run_service_impl() -> Result<()> {
+    let dir = unsafe { SERVICE_DIR.as_ref() }
+        .context("Service directory not set")?
+        .clone();
+
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+
+    let event_handler = move |control_event| -> ServiceControlHandlerResult {
+        match control_event {
+            ServiceControl::Stop | ServiceControl::Shutdown => {
+                let _ = shutdown_tx.send(());
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        }
+    };
+
+    let status_handle = service_control_handler::register("cryochamber", event_handler)?;
+
+    status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Running,
+        controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    })?;
+
+    let daemon = crate::daemon::Daemon::new(dir);
+    let daemon_handle = std::thread::spawn(move || daemon.run());
+
+    // Wait for shutdown signal
+    let _ = shutdown_rx.recv();
+
+    status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    })?;
+
+    let _ = daemon_handle.join();
+    Ok(())
+}
+
 
 /// Install and start a Windows service via the Service Control Manager.
 ///
