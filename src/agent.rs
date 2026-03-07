@@ -126,7 +126,15 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
     let (kind, program, args) = resolve_agent(agent_command)?;
 
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(&program);
+        c
+    };
+    #[cfg(not(windows))]
     let mut cmd = Command::new(&program);
+
     cmd.args(&args);
 
     match kind {
