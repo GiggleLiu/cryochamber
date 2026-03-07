@@ -59,9 +59,7 @@ pub fn send_report_notification(summary: &ReportSummary, project_name: &str) -> 
     // Allow CI / headless environments to exercise this function without a
     // display server by setting CRYO_SKIP_DESKTOP_NOTIFY=1.
     if std::env::var("CRYO_SKIP_DESKTOP_NOTIFY").as_deref() == Ok("1") {
-        eprintln!(
-            "[report] skipping desktop notify (CRYO_SKIP_DESKTOP_NOTIFY=1): {body}"
-        );
+        eprintln!("[report] skipping desktop notify (CRYO_SKIP_DESKTOP_NOTIFY=1): {body}");
         return Ok(());
     }
 

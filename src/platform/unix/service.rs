@@ -289,7 +289,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_xml_escape_quotes() {
-        assert_eq!(xml_escape("say \"hi\" & 'bye'"), "say &quot;hi&quot; &amp; &apos;bye&apos;");
+        assert_eq!(
+            xml_escape("say \"hi\" & 'bye'"),
+            "say &quot;hi&quot; &amp; &apos;bye&apos;"
+        );
     }
 
     #[cfg(target_os = "macos")]

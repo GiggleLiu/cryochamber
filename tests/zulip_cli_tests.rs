@@ -176,4 +176,3 @@ fn test_zulip_unsync_no_service() {
         .success()
         .stdout(predicates::str::contains("No sync service"));
 }
-

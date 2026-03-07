@@ -129,13 +129,9 @@ fn test_spawn_agent_with_env_vars() {
     env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
 
     // On Windows use cmd /c set to print env vars
-    let mut child = cryochamber::agent::spawn_agent(
-        "cmd /c set TEST_CRYO_KEY",
-        "",
-        Some(log_file),
-        &env,
-    )
-    .unwrap();
+    let mut child =
+        cryochamber::agent::spawn_agent("cmd /c set TEST_CRYO_KEY", "", Some(log_file), &env)
+            .unwrap();
     let status = child.wait().unwrap();
     assert!(status.success());
 

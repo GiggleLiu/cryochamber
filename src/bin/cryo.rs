@@ -308,7 +308,14 @@ fn cmd_start(
         let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
         let log_path = cryochamber::log::log_path(&dir);
         let dir_str = dir.to_string_lossy();
-        cryochamber::service::install("daemon", &dir, &exe, &["daemon", "--dir", &dir_str], &log_path, false)?;
+        cryochamber::service::install(
+            "daemon",
+            &dir,
+            &exe,
+            &["daemon", "--dir", &dir_str],
+            &log_path,
+            false,
+        )?;
         println!("Cryochamber started (service installed, survives reboot).");
     }
 
@@ -338,16 +345,6 @@ fn cmd_daemon(dir_arg: Option<String>) -> Result<()> {
     } else {
         cryochamber::work_dir()?
     };
-
-    // On Windows, check if we're being launched by SCM
-    #[cfg(windows)]
-    {
-        // Try to run as Windows service first
-        if let Ok(()) = cryochamber::platform::service::run_service(dir.clone()) {
-            return Ok(());
-        }
-        // If service mode fails, fall through to regular daemon mode
-    }
 
     // Set up panic handler to log crashes
     let log_path = dir.join("cryo.log");

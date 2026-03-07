@@ -171,12 +171,16 @@ fn cmd_time(offset: Option<&str>, daily: Option<&str>) -> Result<()> {
         if parts.len() != 2 {
             anyhow::bail!("Invalid daily time format. Use HH:MM (e.g. \"13:00\")");
         }
-        let hour: u32 = parts[0].parse()
+        let hour: u32 = parts[0]
+            .parse()
             .map_err(|_| anyhow::anyhow!("Invalid hour: {}", parts[0]))?;
-        let minute: u32 = parts[1].parse()
+        let minute: u32 = parts[1]
+            .parse()
             .map_err(|_| anyhow::anyhow!("Invalid minute: {}", parts[1]))?;
 
-        let today = now.date_naive().and_hms_opt(hour, minute, 0)
+        let today = now
+            .date_naive()
+            .and_hms_opt(hour, minute, 0)
             .ok_or_else(|| anyhow::anyhow!("Invalid time: {}:{}", hour, minute))?;
 
         if now.naive_local() >= today {
@@ -205,7 +209,9 @@ fn cmd_time(offset: Option<&str>, daily: Option<&str>) -> Result<()> {
                     "day" => chrono::Duration::days(n),
                     "week" => chrono::Duration::weeks(n),
                     _ => {
-                        anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks.")
+                        anyhow::bail!(
+                            "Unknown time unit: {unit}. Use minutes, hours, days, or weeks."
+                        )
                     }
                 };
                 (now + duration).naive_local()

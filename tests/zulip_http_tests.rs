@@ -41,7 +41,10 @@ impl MockServer {
             }
         });
 
-        Self { port, _handle: handle }
+        Self {
+            port,
+            _handle: handle,
+        }
     }
 
     fn port(&self) -> u16 {
@@ -87,9 +90,7 @@ fn make_client(port: u16) -> (ZulipClient, tempfile::TempDir) {
     let rc_path = dir.path().join("zuliprc");
     std::fs::write(
         &rc_path,
-        format!(
-            "[api]\nemail=bot@example.com\nkey=fakekey\nsite=http://127.0.0.1:{port}\n"
-        ),
+        format!("[api]\nemail=bot@example.com\nkey=fakekey\nsite=http://127.0.0.1:{port}\n"),
     )
     .unwrap();
     let client = ZulipClient::from_zuliprc(&rc_path).unwrap();
@@ -112,9 +113,7 @@ fn test_send_message_success() {
 
 #[test]
 fn test_send_message_api_error_returns_err() {
-    let resp = Arc::new(
-        r#"{"result":"error","msg":"Stream not found","id":0}"#.to_string(),
-    );
+    let resp = Arc::new(r#"{"result":"error","msg":"Stream not found","id":0}"#.to_string());
     let server = MockServer::start(resp, 1);
 
     let (client, _dir) = make_client(server.port());
@@ -130,9 +129,8 @@ fn test_send_message_api_error_returns_err() {
 
 #[test]
 fn test_pull_messages_empty_stream() {
-    let resp = Arc::new(
-        r#"{"result":"success","messages":[],"found_newest":true,"msg":""}"#.to_string(),
-    );
+    let resp =
+        Arc::new(r#"{"result":"success","messages":[],"found_newest":true,"msg":""}"#.to_string());
     let server = MockServer::start(resp, 1);
 
     let dir = tempfile::tempdir().unwrap();
@@ -142,7 +140,10 @@ fn test_pull_messages_empty_stream() {
         .pull_messages(1, None, None, dir.path())
         .expect("pull_messages should succeed");
 
-    assert!(newest_id.is_none(), "Empty stream should yield None for newest_id");
+    assert!(
+        newest_id.is_none(),
+        "Empty stream should yield None for newest_id"
+    );
 
     // Inbox directory should be empty (or non-existent)
     let inbox = dir.path().join("messages/inbox");
@@ -150,9 +151,12 @@ fn test_pull_messages_empty_stream() {
         let md: Vec<_> = std::fs::read_dir(&inbox)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |x| x == "md"))
+            .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
             .collect();
-        assert!(md.is_empty(), "No messages should be written to inbox for empty stream");
+        assert!(
+            md.is_empty(),
+            "No messages should be written to inbox for empty stream"
+        );
     }
 }
 
@@ -199,12 +203,15 @@ fn test_pull_messages_self_filtering() {
     let md: Vec<_> = std::fs::read_dir(&inbox)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |x| x == "md"))
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
         .collect();
     assert_eq!(md.len(), 1, "Only the non-self message should reach inbox");
 
     let content = std::fs::read_to_string(md[0].path()).unwrap();
-    assert!(content.contains("Hello agent"), "Inbox should contain human message body");
+    assert!(
+        content.contains("Hello agent"),
+        "Inbox should contain human message body"
+    );
 }
 
 #[test]
@@ -234,7 +241,11 @@ fn test_pull_messages_raw_max_id_advances_even_when_all_filtered() {
         .pull_messages(1, None, Some("bot@example.com"), dir.path())
         .expect("pull_messages should succeed");
 
-    assert_eq!(newest_id, Some(20), "raw_max_id should be 20 even when all messages are filtered");
+    assert_eq!(
+        newest_id,
+        Some(20),
+        "raw_max_id should be 20 even when all messages are filtered"
+    );
 
     // Inbox should have no messages
     let inbox = dir.path().join("messages/inbox");
@@ -242,7 +253,7 @@ fn test_pull_messages_raw_max_id_advances_even_when_all_filtered() {
         let md: Vec<_> = std::fs::read_dir(&inbox)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |x| x == "md"))
+            .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
             .collect();
         assert!(md.is_empty(), "Filtered messages must not reach inbox");
     }

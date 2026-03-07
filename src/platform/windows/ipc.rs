@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::socket::{Request, Response};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, GENERIC_READ, GENERIC_WRITE,
+    CloseHandle, GetLastError, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FlushFileBuffers, ReadFile, WriteFile, OPEN_EXISTING,

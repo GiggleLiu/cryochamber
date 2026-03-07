@@ -100,7 +100,10 @@ mod tests {
     #[test]
     fn test_force_kill_nonexistent_pid_returns_err() {
         let result = force_kill(4_000_000);
-        assert!(result.is_err(), "force_kill on nonexistent PID should return Err");
+        assert!(
+            result.is_err(),
+            "force_kill on nonexistent PID should return Err"
+        );
         assert!(result.unwrap_err().to_string().contains("SIGKILL"));
     }
 
@@ -114,7 +117,10 @@ mod tests {
         let pid = child.id();
 
         // Sanity: child should be alive before we terminate it
-        assert!(is_alive(pid), "Child should be alive before terminate_child");
+        assert!(
+            is_alive(pid),
+            "Child should be alive before terminate_child"
+        );
 
         terminate_child(&mut child, pid);
 

@@ -355,11 +355,7 @@ fn test_clean_force_removes_runtime_files() {
 
     // Create some runtime files that clean should remove
     fs::write(dir.path().join("cryo.log"), "session data").unwrap();
-    fs::write(
-        dir.path().join("timer.json"),
-        r#"{"session_number":1}"#,
-    )
-    .unwrap();
+    fs::write(dir.path().join("timer.json"), r#"{"session_number":1}"#).unwrap();
     let messages_dir = dir.path().join("messages");
     fs::create_dir_all(messages_dir.join("inbox")).unwrap();
 

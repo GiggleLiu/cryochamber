@@ -446,10 +446,7 @@ mod tests {
     #[test]
     fn test_basic_auth_format() {
         let client = make_test_client();
-        let expected = format!(
-            "Basic {}",
-            base64_encode(b"bot@example.com:secretkey")
-        );
+        let expected = format!("Basic {}", base64_encode(b"bot@example.com:secretkey"));
         assert_eq!(client.basic_auth(), expected);
     }
 
