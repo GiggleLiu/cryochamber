@@ -27,13 +27,23 @@ pub fn spawn_daemon(dir: &Path) -> Result<()> {
         .open(dir.join("cryo.log"))
         .context("Failed to open cryo.log")?;
     let err_file = log_file.try_clone().context("Failed to clone log handle")?;
-    std::process::Command::new(&exe)
-        .arg("daemon")
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("daemon")
         .current_dir(dir)
         .stdin(std::process::Stdio::null())
         .stdout(log_file)
-        .stderr(err_file)
-        .spawn()
-        .context("Failed to spawn daemon process")?;
+        .stderr(err_file);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB);
+    }
+
+    cmd.spawn().context("Failed to spawn daemon process")?;
     Ok(())
 }
