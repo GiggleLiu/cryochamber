@@ -38,7 +38,13 @@ pub fn install(
         .status()
         .context("Failed to run sc.exe create")?;
     if !status.success() {
-        anyhow::bail!("sc.exe create failed for service {label}");
+        anyhow::bail!(
+            "Failed to create Windows service (requires administrator privileges).\n\
+             \n\
+             To run without admin rights, use: CRYO_NO_SERVICE=1 cryo start\n\
+             \n\
+             Service name: {label}"
+        );
     }
 
     let status = std::process::Command::new("sc.exe")
