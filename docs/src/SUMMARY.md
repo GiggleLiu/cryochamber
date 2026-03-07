@@ -5,6 +5,7 @@
 # User Guide
 
 - [Getting Started](./getting-started.md)
+- [Windows Guide](./windows-guide.md)
 - [Configuration](./configuration.md)
 - [Commands](./commands.md)
 - [Web UI](./web-ui.md)
