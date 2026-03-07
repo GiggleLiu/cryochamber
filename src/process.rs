@@ -40,8 +40,7 @@ pub fn spawn_daemon(dir: &Path) -> Result<()> {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         const DETACHED_PROCESS: u32 = 0x00000008;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB);
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
     }
 
     cmd.spawn().context("Failed to spawn daemon process")?;

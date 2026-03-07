@@ -187,8 +187,7 @@ pub fn spawn_agent(
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
-        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
     }
 
     let child = cmd

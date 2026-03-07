@@ -123,12 +123,11 @@ fn test_spawn_agent_with_env_vars() {
 
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("agent.log");
-    let log_file = std::fs::File::create(&log_path).unwrap();
 
     let mut env = HashMap::new();
     env.insert("TEST_CRYO_KEY".to_string(), "test_value_123".to_string());
 
-    // On Windows use cmd /c set to print env vars
+    let log_file = std::fs::File::create(&log_path).unwrap();
     let mut child =
         cryochamber::agent::spawn_agent("cmd /c set TEST_CRYO_KEY", "", Some(log_file), &env)
             .unwrap();
