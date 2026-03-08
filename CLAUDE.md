@@ -14,6 +14,12 @@ cargo fmt --all                      # format
 cargo clippy --all-targets -- -D warnings  # lint (warnings are errors)
 ```
 
+### Windows Development Notes
+
+- **Building while daemon runs**: On Windows, `cargo build` fails with "Access Denied" if the daemon is running. Stop it first with `cryo cancel` or kill the process.
+- **Testing without admin**: Use `CRYO_NO_SERVICE=1 cryo start` to run daemon as a background process instead of Windows Service (requires admin).
+- **Wake mechanism**: Windows uses named events (`Local\cryo-wake-{hash}`) instead of Unix signals. The wake signal is always sent by `cryo wake`, triggering `InboxChanged` events in the daemon.
+
 ## Make Targets
 
 ```bash

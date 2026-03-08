@@ -564,16 +564,10 @@ fn signal_daemon_wake(dir: &std::path::Path) -> bool {
 /// When watch_inbox is true, the inotify watcher handles wake — no signal needed.
 /// When watch_inbox is false, send SIGUSR1.
 fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
-    let watch_inbox = config::load_config(&config::config_path(dir))?
-        .map(|c| c.watch_inbox)
-        .unwrap_or(true);
-
     if !is_daemon_running(dir) {
         eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
-    } else if watch_inbox {
-        println!("Daemon will pick it up shortly.");
     } else if signal_daemon_wake(dir) {
-        println!("Wake signal sent. Daemon waking now.");
+        println!("Daemon will pick it up shortly.");
     } else {
         eprintln!("Warning: failed to signal daemon. Message queued for the next session.");
     }
