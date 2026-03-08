@@ -714,3 +714,19 @@ fn test_agent_hibernate_requires_wake_or_complete() {
         .assert()
         .failure();
 }
+
+#[test]
+fn test_wake_without_daemon() {
+    // Test wake when no daemon is running (covers warning branch)
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+    init_dir(dir.path());
+
+    // Wake without starting daemon
+    cmd()
+        .arg("wake")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Warning: no daemon is running"));
+}
