@@ -561,7 +561,7 @@ fn test_wake_signal_wakes_daemon() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Wake signal sent"));
+        .stdout(predicate::str::contains("Daemon will pick it up shortly"));
 
     // Wait for daemon to wake and run the new session
     std::thread::sleep(std::time::Duration::from_secs(2));
