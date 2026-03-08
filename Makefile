@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service cli
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
 
 # Default target
 help:
@@ -16,14 +16,20 @@ help:
 	@echo "  example-clean - Remove auto-generated files from examples"
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
-	@echo "  example      - Run an example (DIR=examples/mr-lazy WATCH=true)"
-	@echo "  example-cancel - Stop a running example (DIR=examples/mr-lazy)"
+	@echo "  example      - Run an example (DIR=examples/mr-lazy or DIR=examples/chess-by-mail)"
+	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
 	@echo "  check-gh     - Verify GitHub Discussion sync (requires gh auth)"
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
+	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
+	@echo "  book         - Build mdbook documentation"
+	@echo "  book-serve   - Serve mdbook locally with live reload"
+	@echo "  book-deploy  - Deploy mdbook to GitHub Pages (gh-pages branch)"
+	@echo "  copilot-review - Request Copilot code review on current PR"
+	@echo "  release V=x.y.z - Tag and push a release (triggers CI publish)"
 
 # Build the project
 build:
@@ -109,18 +115,12 @@ cli:
 # Run an example
 # Usage: make example DIR=examples/mr-lazy
 #        make example DIR=examples/chess-by-mail AGENT=claude
-#        make example DIR=examples/chess-by-mail WATCH=false  # no watch (interactive use)
-DIR ?= examples/mr-lazy
-WATCH ?= true
 example: build
+	@if [ -z "$(DIR)" ]; then echo "Usage: make example DIR=examples/mr-lazy"; exit 1; fi
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
-	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)"; \
-	if [ "$(WATCH)" = "true" ]; then \
-		$(CURDIR)/target/debug/cryo watch --all; \
-	else \
-		echo "Daemon started. Use 'cryo send', 'cryo watch', 'make example-cancel' to interact."; \
-	fi
+	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
+	$(CURDIR)/target/debug/cryo web
 
 # Stop a running example
 # Usage: make example-cancel DIR=examples/chess-by-mail
@@ -326,3 +326,54 @@ check-service: build
 	echo "  # After reboot, verify:"; \
 	echo "  #   macOS:  launchctl list | grep com.cryo"; \
 	echo "  #   Linux:  systemctl --user status com.cryo.daemon.*"
+
+# Run mock agent scenario tests (no external agent required)
+check-mock:
+	cargo test --test mock_agent_tests -- --nocapture --test-threads=1
+
+# Build mdbook documentation
+book:
+	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
+	mdbook build
+
+# Serve mdbook locally with live reload
+book-serve:
+	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
+	mdbook serve --open
+
+# Deploy mdbook to GitHub Pages (gh-pages branch)
+book-deploy: book
+	@echo "=== Deploying to gh-pages ==="
+	@TMPDIR=$$(mktemp -d); \
+	cp -r book/* "$$TMPDIR/"; \
+	cd "$$TMPDIR" && \
+	git init && \
+	git checkout -b gh-pages && \
+	git add -A && \
+	git commit -m "Deploy mdbook" && \
+	git remote add origin "$$(cd "$(CURDIR)" && git remote get-url origin)" && \
+	git push --force origin gh-pages; \
+	rm -rf "$$TMPDIR"; \
+	echo "=== Deployed to gh-pages ==="
+
+# Tag and push a release (triggers CI publish to crates.io)
+# Usage: make release V=x.y.z
+release:
+ifndef V
+	$(error Usage: make release V=x.y.z)
+endif
+	@echo "Releasing v$(V)..."
+	sed -i 's/^version = ".*"/version = "$(V)"/' Cargo.toml
+	cargo check
+	git add Cargo.toml
+	git commit -m "release: v$(V)"
+	git tag -a "v$(V)" -m "Release v$(V)"
+	git push origin main --tags
+	@echo "v$(V) pushed — CI will publish to crates.io"
+
+# Request Copilot code review on the current PR
+# Requires: gh extension install ChrisCarini/gh-copilot-review
+copilot-review:
+	@PR=$$(gh pr view --json number --jq .number 2>/dev/null) || { echo "No PR found for current branch"; exit 1; }; \
+	echo "Requesting Copilot review on PR #$$PR..."; \
+	gh copilot-review $$PR

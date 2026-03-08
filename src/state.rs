@@ -17,6 +17,17 @@ pub struct CryoState {
     pub max_retries_override: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_session_duration_override: Option<u64>,
+
+    /// Last time a periodic report was sent, stored as an ISO 8601 local time
+    /// string without timezone offset (from `Local::now().naive_local()`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_report_time: Option<String>,
+
+    /// Current provider index for rotation (persisted for status display;
+    /// may reflect the last provider used from a previous run until the next
+    /// session updates it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_index: Option<usize>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
@@ -34,6 +45,10 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
         return Ok(None);
     }
     let contents = std::fs::read_to_string(path)?;
+    if contents.trim().is_empty() {
+        // File exists but is empty — likely caught mid-write (truncate-then-write race).
+        return Ok(None);
+    }
     let state: CryoState = serde_json::from_str(&contents)?;
     Ok(Some(state))
 }
@@ -49,5 +64,95 @@ pub fn is_locked(state: &CryoState) -> bool {
         errno == libc::EPERM
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timer.json");
+        std::fs::write(&path, "").unwrap();
+        let result = load_state(&path).unwrap();
+        assert!(result.is_none(), "Empty file should return None");
+    }
+
+    #[test]
+    fn test_load_corrupted_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timer.json");
+        std::fs::write(&path, "{broken").unwrap();
+        let result = load_state(&path);
+        assert!(result.is_err(), "Corrupted JSON should return error");
+    }
+
+    #[test]
+    fn test_load_minimal_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timer.json");
+        std::fs::write(&path, r#"{"session_number": 5}"#).unwrap();
+        let state = load_state(&path).unwrap().unwrap();
+        assert_eq!(state.session_number, 5);
+        assert!(state.pid.is_none(), "pid should default to None");
+        assert_eq!(state.retry_count, 0, "retry_count should default to 0");
+        assert!(state.agent_override.is_none());
+    }
+
+    #[test]
+    fn test_is_locked_stale_pid() {
+        // Spawn a child, wait for it to exit, use its PID
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        // Small delay to ensure the process is fully reaped
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let state = CryoState {
+            session_number: 1,
+            pid: Some(pid),
+            retry_count: 0,
+
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+        };
+        assert!(!is_locked(&state), "Dead PID should not be locked");
+    }
+
+    #[test]
+    fn test_is_locked_no_pid() {
+        let state = CryoState {
+            session_number: 1,
+            pid: None,
+            retry_count: 0,
+
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+        };
+        assert!(!is_locked(&state), "No PID should not be locked");
+    }
+
+    #[test]
+    fn test_is_locked_own_pid() {
+        let state = CryoState {
+            session_number: 1,
+            pid: Some(std::process::id()),
+            retry_count: 0,
+
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+        };
+        assert!(is_locked(&state), "Own PID should be locked");
     }
 }

@@ -3,8 +3,6 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use std::process::Command;
 
-use crate::message::Message;
-
 /// Supported agent types.
 enum AgentKind {
     /// Claude Code: `claude [flags] -p <prompt>`
@@ -13,6 +11,8 @@ enum AgentKind {
     Opencode,
     /// Codex: `codex exec [flags] <prompt>`
     Codex,
+    /// Mock agent: `sh scenario.sh <prompt>` for testing
+    Mock,
     /// Custom agent: `<program> [args] <prompt>` (prompt as positional arg)
     Custom,
 }
@@ -55,6 +55,11 @@ fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
             }
             Ok((AgentKind::Codex, program.clone(), full_args))
         }
+        "mock" => Ok((
+            AgentKind::Mock,
+            "sh".to_string(),
+            vec!["scenario.sh".to_string()],
+        )),
         _ => Ok((AgentKind::Custom, program.clone(), args)),
     }
 }
@@ -66,39 +71,17 @@ pub fn agent_program(agent_cmd: &str) -> Result<String> {
 }
 
 pub struct AgentConfig {
-    pub log_content: Option<String>,
     pub session_number: u32,
     pub task: String,
-    pub inbox_messages: Vec<Message>,
     pub delayed_wake: Option<String>,
+    pub todo_list: String,
 }
 
 pub fn build_prompt(config: &AgentConfig) -> String {
     let current_time = Local::now().format("%Y-%m-%dT%H:%M:%S");
 
-    let history_section = match &config.log_content {
-        Some(log) => format!("\n## Previous Session Log\n\n{log}\n"),
-        None => "\n## Previous Session Log\n\nNo previous sessions.\n".to_string(),
-    };
-
-    let messages_section = if config.inbox_messages.is_empty() {
-        String::new()
-    } else {
-        let count = config.inbox_messages.len();
-        let mut text = format!("\n## New Messages ({count} unread)\n\n");
-        for msg in &config.inbox_messages {
-            let ts = msg.timestamp.format("%Y-%m-%dT%H:%M");
-            text.push_str(&format!("### From: {} ({})\n", msg.from, ts));
-            if !msg.subject.is_empty() {
-                text.push_str(&format!("Subject: {}\n", msg.subject));
-            }
-            text.push_str(&format!("\n{}\n\n---\n\n", msg.body));
-        }
-        text
-    };
-
     let delayed_section = match &config.delayed_wake {
-        Some(notice) => format!("\n## ⚠ System Notice\n\n{notice}\n"),
+        Some(notice) => format!("\n## System Notice\n\n{notice}\n"),
         None => String::new(),
     };
 
@@ -115,18 +98,27 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 ## Your Task
 
 {task}
-{history}{messages}
+
+## TODO List
+
+{todo_list}
+
+## Context
+
+- Check messages/inbox/ for new messages
+
 ## Reminders
 
-- Use `cryo-agent hibernate` to end your session (--wake or --complete)
+- Use `cryo-agent todo add "text" --at TIME` to schedule work
+- Use `cryo-agent todo done <id>` to mark tasks complete
+- Use `cryo-agent hibernate` to end your session (--complete when plan is done)
 - Use `cryo-agent note` to leave context for your next session
 - Read plan.md before starting work
 "#,
         session_number = config.session_number,
         delayed = delayed_section,
         task = config.task,
-        history = history_section,
-        messages = messages_section,
+        todo_list = config.todo_list,
     )
 }
 
@@ -141,7 +133,7 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
         AgentKind::Claude => {
             cmd.arg("-p");
         }
-        AgentKind::Opencode | AgentKind::Codex | AgentKind::Custom => {}
+        AgentKind::Opencode | AgentKind::Codex | AgentKind::Custom | AgentKind::Mock => {}
     }
     cmd.arg(prompt);
 
@@ -160,6 +152,7 @@ pub fn spawn_agent(
     agent_command: &str,
     prompt: &str,
     agent_log: Option<std::fs::File>,
+    provider_env: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<std::process::Child> {
     let mut cmd = build_command(agent_command, prompt)?;
 
@@ -174,6 +167,11 @@ pub fn spawn_agent(
             let new_path = format!("{}:{}", bin_dir.display(), path);
             cmd.env("PATH", new_path);
         }
+    }
+
+    // Inject provider-specific environment variables
+    if !provider_env.is_empty() {
+        cmd.envs(provider_env);
     }
 
     let child = cmd

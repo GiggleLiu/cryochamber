@@ -1,9 +1,33 @@
 // src/config.rs
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::state::CryoState;
+
+/// Controls when the daemon rotates to the next provider on failure.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RotateOn {
+    /// Rotate only on quick-exit (<5s, likely bad API key)
+    QuickExit,
+    /// Rotate on any agent failure
+    AnyFailure,
+    /// Never rotate (default, backward compatible)
+    #[default]
+    Never,
+}
+
+/// A named provider profile with environment variables to inject.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    /// Display name for logging (e.g. "anthropic", "openai")
+    pub name: String,
+    /// Environment variables to set when spawning the agent
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoConfig {
@@ -11,7 +35,7 @@ pub struct CryoConfig {
     #[serde(default = "default_agent")]
     pub agent: String,
 
-    /// Max retry attempts on agent failure (1 = no retry)
+    /// Max retry attempts on agent failure (0 = no retry)
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
@@ -22,6 +46,42 @@ pub struct CryoConfig {
     /// Watch inbox for reactive wake
     #[serde(default = "default_watch_inbox")]
     pub watch_inbox: bool,
+
+    /// Web UI host (default: 127.0.0.1)
+    #[serde(default = "default_web_host")]
+    pub web_host: String,
+
+    /// Web UI port (default: 3945)
+    #[serde(default = "default_web_port")]
+    pub web_port: u16,
+
+    /// Fallback alert method: "notify" (desktop popup), "outbox" (file only), "none"
+    #[serde(default = "default_fallback_alert")]
+    pub fallback_alert: String,
+
+    /// Time of day to send periodic report (HH:MM, local time)
+    #[serde(default = "default_report_time")]
+    pub report_time: String,
+
+    /// Hours between reports (0 = disabled, 24 = daily, 168 = weekly)
+    #[serde(default)]
+    pub report_interval: u64,
+
+    /// When to rotate to the next provider on failure
+    #[serde(default)]
+    pub rotate_on: RotateOn,
+
+    /// Ordered list of provider profiles (env var sets to try)
+    #[serde(default)]
+    pub providers: Vec<ProviderConfig>,
+
+    /// Zulip sync polling interval in seconds (default: 5)
+    #[serde(default = "default_poll_interval")]
+    pub zulip_poll_interval: u64,
+
+    /// GitHub sync polling interval in seconds (default: 5)
+    #[serde(default = "default_poll_interval")]
+    pub gh_poll_interval: u64,
 }
 
 fn default_agent() -> String {
@@ -29,11 +89,31 @@ fn default_agent() -> String {
 }
 
 fn default_max_retries() -> u32 {
-    1
+    5
 }
 
 fn default_watch_inbox() -> bool {
     true
+}
+
+fn default_web_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_web_port() -> u16 {
+    3945
+}
+
+fn default_fallback_alert() -> String {
+    "notify".to_string()
+}
+
+fn default_report_time() -> String {
+    "09:00".to_string()
+}
+
+fn default_poll_interval() -> u64 {
+    5
 }
 
 impl Default for CryoConfig {
@@ -43,6 +123,15 @@ impl Default for CryoConfig {
             max_retries: default_max_retries(),
             max_session_duration: 0,
             watch_inbox: default_watch_inbox(),
+            web_host: default_web_host(),
+            web_port: default_web_port(),
+            fallback_alert: default_fallback_alert(),
+            report_time: default_report_time(),
+            report_interval: 0,
+            rotate_on: RotateOn::default(),
+            providers: Vec::new(),
+            zulip_poll_interval: default_poll_interval(),
+            gh_poll_interval: default_poll_interval(),
         }
     }
 }
@@ -80,4 +169,71 @@ pub fn save_config(path: &Path, config: &CryoConfig) -> Result<()> {
     let toml = toml::to_string_pretty(config)?;
     std::fs::write(path, toml)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_malformed_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.toml");
+        std::fs::write(&path, "this is {{{{ not valid toml").unwrap();
+        let result = load_config(&path);
+        assert!(result.is_err(), "Should return error for malformed TOML");
+    }
+
+    #[test]
+    fn test_load_partial_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.toml");
+        std::fs::write(&path, "agent = \"claude\"\n").unwrap();
+        let config = load_config(&path).unwrap().unwrap();
+        assert_eq!(config.agent, "claude");
+        assert_eq!(config.max_retries, 5, "Should use default max_retries");
+        assert_eq!(config.max_session_duration, 0, "Should use default timeout");
+        assert!(config.watch_inbox, "Should use default watch_inbox");
+    }
+
+    #[test]
+    fn test_apply_overrides_all_fields() {
+        let mut config = CryoConfig::default();
+        let state = crate::state::CryoState {
+            session_number: 1,
+            pid: None,
+            retry_count: 0,
+            agent_override: Some("claude".to_string()),
+            max_retries_override: Some(10),
+            max_session_duration_override: Some(300),
+
+            last_report_time: None,
+            provider_index: None,
+        };
+        config.apply_overrides(&state);
+        assert_eq!(config.agent, "claude");
+        assert_eq!(config.max_retries, 10);
+        assert_eq!(config.max_session_duration, 300);
+    }
+
+    #[test]
+    fn test_apply_overrides_none_fields() {
+        let original = CryoConfig::default();
+        let mut config = CryoConfig::default();
+        let state = crate::state::CryoState {
+            session_number: 1,
+            pid: None,
+            retry_count: 0,
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+
+            last_report_time: None,
+            provider_index: None,
+        };
+        config.apply_overrides(&state);
+        assert_eq!(config.agent, original.agent);
+        assert_eq!(config.max_retries, original.max_retries);
+        assert_eq!(config.max_session_duration, original.max_session_duration);
+    }
 }

@@ -2,7 +2,7 @@
 
 Play correspondence chess against an AI agent, powered by cryochamber.
 
-The AI polls for your moves on a configurable interval. If you're away too long, it goes to sleep — send a move and wake it when you're ready to continue.
+The AI adapts to your pace — respond fast and it checks back quickly, take your time and it relaxes too. If you're away too long, it gradually slows down — send a move and wake it when you're ready to continue.
 
 ## Why Cryochamber
 
@@ -20,7 +20,8 @@ A cron job can't do this because:
 
 ```bash
 cd examples/chess-by-mail
-cryo init && cryo start && cryo watch &
+cryo init && cryo start
+cryo web   # open the browser chat UI (port 3947)
 ```
 
 ## Playing
@@ -30,17 +31,35 @@ cryo init && cryo start && cryo watch &
 cryo send "e2e4"
 cryo send "Nf3" --wake  # wake the AI immediately
 
-# Check the board (shows last session output)
-cryo status
+# Or use the web UI
+cryo web
 ```
 
 ## How It Works
 
 The AI uses `chess_engine.py` (powered by `python-chess` via uv) for all chess operations. After each move, the AI recommends 3 candidate moves for you with tactical explanations.
 
+## Playing via Zulip
+
+You can play from the Zulip web UI instead of the terminal by connecting a Zulip stream:
+
+```bash
+cd examples/chess-by-mail
+
+# Connect to a Zulip stream (requires a zuliprc with bot credentials)
+cryo-zulip init --config ~/.zuliprc --stream chess-game
+
+# Start cryochamber and the Zulip sync daemon
+cryo init && cryo start
+cryo-zulip sync --interval 30
+```
+
+Now send your moves as messages in the Zulip stream. The sync daemon polls for new messages and delivers them to the agent's inbox. The agent's replies are pushed back to the stream.
+
+To stop: `cryo cancel && cryo-zulip unsync`
+
 ## Configuration
 
 Edit `plan.md` to change:
 - Which color the AI plays (default: black)
-- Check interval (default: 10 minutes; set to `1 minute` for a fast demo)
-- Patience threshold (default: 5 checks before sleeping)
+- Check interval (adaptive: mirrors your response speed, from 5 seconds to 1 day)

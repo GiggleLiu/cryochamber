@@ -1,7 +1,12 @@
 [package]
 name = "cryochamber"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
+description = "A hibernation chamber for AI agents — schedule, wake, and manage long-running agent tasks"
+license = "MIT"
+repository = "https://github.com/GiggleLiu/cryochamber"
+keywords = ["ai-agent", "automation", "scheduler", "daemon", "hibernation"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "cryo"
@@ -14,6 +19,10 @@ path = "src/bin/cryo_agent.rs"
 [[bin]]
 name = "cryo-gh"
 path = "src/bin/cryo_gh.rs"
+
+[[bin]]
+name = "cryo-zulip"
+path = "src/bin/cryo_zulip.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -33,6 +42,8 @@ dirs = "6.0.0"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+notify-rust = "4"
+ureq = "3"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"
