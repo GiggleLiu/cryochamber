@@ -63,8 +63,9 @@ pub fn read_inbox(dir: &Path) -> Result<Vec<(String, Message)>> {
     let mut entries: Vec<_> = std::fs::read_dir(&inbox)?
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
+            e.path().extension().is_some_and(|ext| {
+                ext == "md" || ext == "txt" || ext == "text"
+            }) && e.file_type().is_ok_and(|ft| ft.is_file())
         })
         .collect();
 
@@ -101,8 +102,9 @@ pub fn list_inbox(dir: &Path) -> Result<Vec<String>> {
     let mut entries: Vec<_> = std::fs::read_dir(&inbox)?
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
+            e.path().extension().is_some_and(|ext| {
+                ext == "md" || ext == "txt" || ext == "text"
+            }) && e.file_type().is_ok_and(|ft| ft.is_file())
         })
         .collect();
 
@@ -124,8 +126,9 @@ pub fn read_outbox(dir: &Path) -> Result<Vec<(String, Message)>> {
     let mut entries: Vec<_> = std::fs::read_dir(&outbox)?
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
+            e.path().extension().is_some_and(|ext| {
+                ext == "md" || ext == "txt" || ext == "text"
+            }) && e.file_type().is_ok_and(|ft| ft.is_file())
         })
         .collect();
 
@@ -162,8 +165,9 @@ pub fn read_inbox_archive(dir: &Path) -> Result<Vec<(String, Message)>> {
     let mut entries: Vec<_> = std::fs::read_dir(&archive)?
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
+            e.path().extension().is_some_and(|ext| {
+                ext == "md" || ext == "txt" || ext == "text"
+            }) && e.file_type().is_ok_and(|ft| ft.is_file())
         })
         .collect();
 
