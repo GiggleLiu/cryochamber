@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Developer guidance for Claude Code (claude.ai/code) when working on this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 For project overview and usage, see `README.md`.
 
 ## Build & Test
@@ -13,6 +13,12 @@ cargo test test_event_logger         # run a single test by name
 cargo fmt --all                      # format
 cargo clippy --all-targets -- -D warnings  # lint (warnings are errors)
 ```
+
+### Windows Development Notes
+
+- **Building while daemon runs**: On Windows, `cargo build` fails with "Access Denied" if the daemon is running. Stop it first with `cryo cancel` or kill the process.
+- **Testing without admin**: Use `CRYO_NO_SERVICE=1 cryo start` to run daemon as a background process instead of Windows Service (requires admin).
+- **Wake mechanism**: Windows uses named events (`Local\cryo-wake-{hash}`) instead of Unix signals. The wake signal is always sent by `cryo wake`, triggering `InboxChanged` events in the daemon.
 
 ## Make Targets
 
@@ -70,7 +76,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `process` | Process management wrappers: `send_signal`, `terminate_pid`, `spawn_daemon`. Delegates to `platform::process`. |
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
 | `daemon` | Persistent event loop: IPC server for agent commands, watches `messages/inbox/` via `notify`, handles platform wake signals, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend). |
-| `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
+| `message` | File-based inbox/outbox message system. Accepts `.md`, `.txt`, and `.text` files. Inbox messages included in agent prompt on wake. `list_inbox()` filters by extension, `read_inbox()` parses message format. |
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL), `zulip` (Zulip REST API). |
 | `registry` | PID file registry for tracking running daemons. Platform-specific paths via `platform::registry`. Auto-cleans stale entries. |
@@ -86,7 +92,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - **Platform abstraction**: `src/platform/` provides compile-time `#[cfg(unix)]`/`#[cfg(windows)]` dispatch for IPC (Unix sockets vs named pipes), process management (kill vs OpenProcess), signals (SIGUSR1 vs named events), services, and registry paths. No trait objects — zero runtime overhead.
 - **IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `send`, `alert`), which send JSON messages over the platform IPC layer (Unix domain sockets on Unix, named pipes on Windows). `receive` and `time` are local (no daemon needed).
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. All structured communication flows through the socket.
-- **Wake signal**: `cryo wake` and `cryo send --wake` send a platform-specific wake signal (SIGUSR1 on Unix, named event on Windows), which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
+- **Wake signal**: `cryo wake` and `cryo send --wake` send a platform-specific wake signal (SIGUSR1 on Unix, named event on Windows). The signal always triggers an `InboxChanged` event in the daemon's event loop, causing immediate session execution regardless of scheduled wake time.
 - **Config/state split**: `cryo.toml` is the project config (agent, retries, timeout, watch_inbox) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, retry count, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
