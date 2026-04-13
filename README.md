@@ -23,6 +23,20 @@ cargo install cryochamber
 
 This installs `cryo`, `cryo-agent`, `cryo-gh`, and `cryo-zulip` binaries.
 
+### Copy-Paste Onboarding Prompt
+
+If you want your coding agent to set up a new Cryochamber project for you, paste this:
+
+```text
+Set up a new Cryochamber project for me in this directory.
+
+1. If `cryo` is not installed, install it with `cargo install cryochamber` (or `cargo install --path .` if you are already in the cryochamber repo).
+2. If the `make-plan` skill is not installed, install it with `claude skill install --path skills/make-plan`.
+3. Invoke `/make-plan` to create the Cryochamber project and generate the initial plan/config files.
+4. Start the daemon with `cryo start`.
+5. Tell me which files were created or updated, and whether the service started successfully.
+```
+
 ### 2. Write your plan and configure
 
 Edit `plan.md` with your task — describe the goal, step-by-step tasks, and notes about persistent state. Edit `cryo.toml` to configure the agent command, retry policy, and inbox settings. See [`examples/`](examples/) for reference (chess-by-mail, mr-lazy).
