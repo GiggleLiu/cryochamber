@@ -30,9 +30,9 @@ If you want your coding agent to set up a new Cryochamber project for you, paste
 ```text
 Set up a new Cryochamber project for me in this directory.
 
-1. If `cryo` is not installed, install it with `cargo install cryochamber` (or `cargo install --path .` if you are already in the cryochamber repo).
-2. If the `make-plan` skill is not installed, install it with `claude skill install --path skills/make-plan`.
-3. Invoke `/make-plan` to create the Cryochamber project and generate the initial plan/config files.
+1. If `cryo` is not installed, install it with `cargo install cryochamber`.
+2. If the `make-plan` skill is not installed and your coding agent supports custom skills, install it from the Cryochamber repo: clone https://github.com/GiggleLiu/cryochamber somewhere local, then use your agent's skill installation mechanism to install `/path/to/cryochamber/skills/make-plan`.
+3. Invoke the `make-plan` skill to create the Cryochamber project and generate the initial plan/config files.
 4. Start the daemon with `cryo start`.
 5. Tell me which files were created or updated, and whether the service started successfully.
 ```
@@ -41,11 +41,11 @@ Set up a new Cryochamber project for me in this directory.
 
 Edit `plan.md` with your task — describe the goal, step-by-step tasks, and notes about persistent state. Edit `cryo.toml` to configure the agent command, retry policy, and inbox settings. See [`examples/`](examples/) for reference (chess-by-mail, mr-lazy).
 
-**Recommended:** Tell your AI coding agent to install the skill:
+**Recommended:** If your AI coding agent supports custom skills, install `make-plan` from the Cryochamber repo:
 
 > Add the make-plan skill from https://github.com/GiggleLiu/cryochamber
 
-Then run `/make-plan` to create a new project interactively via guided Q&A.
+Then invoke the `make-plan` skill to create a new project interactively via guided Q&A.
 
 ### 3. Start the service
 
