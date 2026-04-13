@@ -68,6 +68,8 @@ fn test_apply_overrides_all() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
 
     config.apply_overrides(&state);
@@ -97,6 +99,8 @@ fn test_apply_overrides_none_keeps_config() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
 
     config.apply_overrides(&state);
@@ -128,6 +132,8 @@ fn test_apply_overrides_partial() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
 
     config.apply_overrides(&state);

@@ -106,12 +106,15 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 ## Context
 
 - Check messages/inbox/ for new messages
+- The only supported way to communicate with the human is `cryo-agent send` / `cryo-agent reply`
+- Stdout/stderr go to `cryo-agent.log`; they are not a user conversation channel
 
 ## Reminders
 
 - Use `cryo-agent todo add "text" --at TIME` to schedule work
 - Use `cryo-agent todo done <id>` to mark tasks complete
 - Use `cryo-agent hibernate` to end your session (--complete when plan is done)
+- Use `cryo-agent hibernate --exit 1` only for genuine retryable failure
 - Use `cryo-agent note` to leave context for your next session
 - Read plan.md before starting work
 "#,
@@ -131,7 +134,9 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
 
     match kind {
         AgentKind::Claude => {
-            cmd.arg("-p");
+            if !args.iter().any(|arg| arg == "-p") {
+                cmd.arg("-p");
+            }
         }
         AgentKind::Opencode | AgentKind::Codex | AgentKind::Custom | AgentKind::Mock => {}
     }

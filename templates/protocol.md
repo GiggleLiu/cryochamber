@@ -16,6 +16,8 @@ Execute these steps in order. **Do not skip or reorder steps.**
 ### Step 2: Work
 
 - Do the work described in your plan.
+- The only supported way to communicate with the human is through `cryo-agent send` and `cryo-agent reply`.
+- Do not use stdout/stderr as a conversation channel; they are diagnostic logs in `cryo-agent.log`.
 - Reply to any inbox messages: `cryo-agent reply "response text"`
 - Update TODOs as you go: `cryo-agent todo done <id>`
 
@@ -48,9 +50,16 @@ cryo-agent hibernate --summary "what I did, what's next"
 cryo-agent hibernate --complete --summary "All tasks finished"
 ```
 
-**Blocked or failed:**
+**Waiting on user or external input:**
 ```
-cryo-agent hibernate --exit 1 --summary "Blocked on X"
+cryo-agent reply "What you need from the human"
+cryo-agent todo add "Check for reply" --at <TIME>
+cryo-agent hibernate --summary "Waiting on user/external input"
+```
+
+**Failure (retryable only):**
+```
+cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 ```
 
 ## Wake Time Guidelines
@@ -82,6 +91,7 @@ cryo-agent time "+1 day"                      # Relative time computation
 
 - **TODO list drives your schedule.** The daemon wakes at the earliest pending TODO's `at` time.
 - **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
+- **Human communication goes through `cryo-agent`.** Use `send`/`reply`; stdout/stderr are logs only.
 - **Notes survive across sessions.** Use `cryo-agent note` liberally — it's your memory.
 - **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.
 - **Delayed wakes happen.** If the machine was suspended, you'll see a system notice. Adjust accordingly.

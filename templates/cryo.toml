@@ -3,7 +3,7 @@
 # Agent command (e.g. "opencode", "claude", "codex")
 agent = "{{agent}}"
 
-# Max retry attempts on agent failure (0 = no retry)
+# Failed attempts before sending a retry alert (daemon keeps retrying)
 max_retries = 5
 
 # Session timeout in seconds (0 = no timeout)

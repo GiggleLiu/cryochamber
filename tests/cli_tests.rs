@@ -681,6 +681,102 @@ fn test_session_logs_inbox_filenames() {
     assert!(log_content.contains("inbox: 1 messages"));
 }
 
+#[test]
+fn test_restart_respects_no_service_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
+
+    cmd()
+        .args(["start", "--agent", "/bin/sh -c 'sleep 30'"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let before = cryochamber::state::load_state(&dir.path().join("timer.json"))
+        .unwrap()
+        .and_then(|state| state.pid)
+        .expect("daemon should record a pid after start");
+
+    cmd()
+        .arg("restart")
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Restarted (background process)."));
+
+    let after = cryochamber::state::load_state(&dir.path().join("timer.json"))
+        .unwrap()
+        .and_then(|state| state.pid)
+        .expect("daemon should record a pid after restart");
+
+    assert_ne!(before, after, "restart should replace the running daemon");
+
+    let _ = cmd()
+        .arg("cancel")
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .output();
+}
+
+#[test]
+fn test_agent_note_rejects_stale_instance_id() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
+    init_dir(dir.path());
+
+    cmd()
+        .args(["start", "--agent", &mock_agent_cmd()])
+        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("CRYO_NO_SERVICE", "1")
+        .env("MOCK_AGENT_COMPLETE", "false")
+        .env("MOCK_AGENT_WAKE", "2099-12-31T23:59")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Ok(log) = fs::read_to_string(dir.path().join("cryo.log")) {
+            if log.contains("session complete") {
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "daemon should finish the first session before stale instance validation"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    let timer_path = dir.path().join("timer.json");
+    let original_state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&timer_path).unwrap()).unwrap();
+    let mut state = original_state.clone();
+    state["instance_id"] = serde_json::Value::String("stale-instance".to_string());
+    fs::write(&timer_path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+
+    agent_cmd()
+        .args(["note", "hello from stale state"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("instance"));
+
+    fs::write(
+        &timer_path,
+        serde_json::to_string_pretty(&original_state).unwrap(),
+    )
+    .unwrap();
+
+    let _ = cmd()
+        .arg("cancel")
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .output();
+}
+
 // --- cryo-agent binary tests ---
 
 #[test]

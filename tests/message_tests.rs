@@ -179,19 +179,37 @@ fn test_empty_subject_uses_hash_disambiguator() {
 }
 
 #[test]
-fn test_empty_subject_same_content_same_hash() {
+fn test_identical_messages_do_not_overwrite_each_other() {
     let dir = tempfile::tempdir().unwrap();
-    // Same body and author at same timestamp — should produce same filename (overwrite is expected)
+    // Same body/author/timestamp should still produce distinct files.
     let msg1 = make_message("alice", "", "Same content", "2026-02-23T10:00:00");
     let msg2 = make_message("alice", "", "Same content", "2026-02-23T10:00:00");
 
     let path1 = write_message(dir.path(), "inbox", &msg1).unwrap();
     let path2 = write_message(dir.path(), "inbox", &msg2).unwrap();
 
-    assert_eq!(
+    assert_ne!(path1, path2, "Messages should not overwrite each other");
+
+    let inbox = read_inbox(dir.path()).unwrap();
+    assert_eq!(inbox.len(), 2);
+}
+
+#[test]
+fn test_non_empty_subject_same_second_does_not_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let msg1 = make_message("alice", "Status", "First update", "2026-02-23T10:00:00");
+    let msg2 = make_message("bob", "Status", "Second update", "2026-02-23T10:00:00");
+
+    let path1 = write_message(dir.path(), "inbox", &msg1).unwrap();
+    let path2 = write_message(dir.path(), "inbox", &msg2).unwrap();
+
+    assert_ne!(
         path1, path2,
-        "Identical messages should produce same filename"
+        "Messages with same subject should not collide"
     );
+
+    let inbox = read_inbox(dir.path()).unwrap();
+    assert_eq!(inbox.len(), 2);
 }
 
 #[test]

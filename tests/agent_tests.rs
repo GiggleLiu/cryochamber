@@ -41,6 +41,10 @@ fn test_build_prompt_contains_cli_reminders() {
     let prompt = build_prompt(&config);
     assert!(prompt.contains("cryo-agent hibernate"));
     assert!(prompt.contains("cryo-agent note"));
+    assert!(prompt.contains("cryo-agent send"));
+    assert!(prompt.contains("cryo-agent reply"));
+    assert!(prompt.contains("cryo-agent.log"));
+    assert!(prompt.contains("cryo-agent hibernate --exit 1"));
     assert!(prompt.contains("plan.md"));
 }
 
@@ -136,4 +140,16 @@ fn test_resolve_mock_agent() {
 fn test_mock_agent_program() {
     let program = cryochamber::agent::agent_program("mock").unwrap();
     assert_eq!(program, "sh");
+}
+
+#[test]
+fn test_build_command_claude_p_flag_is_idempotent() {
+    let cmd = cryochamber::agent::build_command("claude -p", "test prompt").unwrap();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(args.iter().filter(|arg| arg.as_str() == "-p").count(), 1);
+    assert_eq!(args.last().map(String::as_str), Some("test prompt"));
 }
