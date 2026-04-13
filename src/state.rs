@@ -53,7 +53,17 @@ pub fn state_path(dir: &Path) -> PathBuf {
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
-    std::fs::write(path, json)?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("state");
+    let tmp = path.with_file_name(format!(
+        ".{file_name}.tmp-{}-{nanos}",
+        std::process::id()
+    ));
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 

@@ -28,7 +28,7 @@ fn setup_scenario(dir: &std::path::Path, scenario_name: &str) {
 
 /// Wait for the daemon to exit by polling timer.json for pid=null.
 /// Returns true if daemon exited within the timeout.
-/// Treats missing or unparseable timer.json as "exited" (cryo cancel removes the file).
+/// Treats missing timer.json as "exited" (some commands remove the file).
 fn wait_for_daemon_exit(dir: &std::path::Path, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
@@ -40,7 +40,6 @@ fn wait_for_daemon_exit(dir: &std::path::Path, timeout: Duration) -> bool {
         match fs::read_to_string(&timer_path) {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(state) if state["pid"].is_null() => return true,
-                Err(_) => return true,
                 _ => {}
             },
             Err(_) => return true,

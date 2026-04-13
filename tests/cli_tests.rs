@@ -15,6 +15,21 @@ fn agent_cmd() -> Command {
     Command::cargo_bin("cryo-agent").unwrap()
 }
 
+fn wait_for_idle_daemon(dir: &std::path::Path, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if let Ok(response) =
+            cryochamber::socket::send_request(dir, &cryochamber::socket::Request::Ping)
+        {
+            if response.ok && response.message == "pong" {
+                return true;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    false
+}
+
 /// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
 fn init_dir(dir: &std::path::Path) {
     cmd().arg("init").current_dir(dir).assert().success();
@@ -749,6 +764,11 @@ fn test_agent_note_rejects_stale_instance_id() {
         );
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+
+    assert!(
+        wait_for_idle_daemon(dir.path(), std::time::Duration::from_secs(5)),
+        "daemon should return to the idle loop before stale instance validation"
+    );
 
     let timer_path = dir.path().join("timer.json");
     let original_state: serde_json::Value =
