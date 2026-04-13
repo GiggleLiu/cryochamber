@@ -5,7 +5,7 @@
 ```toml
 # cryo.toml — Cryochamber project configuration
 agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
-max_retries = 1           # Max retry attempts on agent failure (1 = no retry)
+max_retries = 5           # Failed attempts before retry alerting (daemon keeps retrying)
 max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
 watch_inbox = true        # Watch inbox for reactive wake
 
@@ -19,7 +19,7 @@ watch_inbox = true        # Watch inbox for reactive wake
 | Field | Default | Description |
 |-------|---------|-------------|
 | `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex. |
-| `max_retries` | `1` | Max retry attempts on agent failure. `1` means no retry. |
+| `max_retries` | `5` | Failed attempts before sending a retry alert. The daemon continues retrying with backoff. |
 | `max_session_duration` | `0` | Session timeout in seconds. `0` disables timeout. |
 | `watch_inbox` | `true` | Watch `messages/inbox/` for new files and wake immediately. |
 | `web_host` | `"127.0.0.1"` | Host for `cryo web` to listen on. Use `"0.0.0.0"` for remote access only behind an authenticated, TLS-terminating proxy. |

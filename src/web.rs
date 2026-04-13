@@ -118,11 +118,7 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     let task = log::parse_latest_session_task(&log_file).ok().flatten();
 
-    // Fall back to parsing wake time from log if timer.json hasn't been updated yet
-    let effective_wake =
-        next_wake.or_else(|| log::parse_latest_session_wake(&log_file).ok().flatten());
-
-    let next_wake_rel = effective_wake.as_deref().and_then(|w| {
+    let next_wake_rel = next_wake.as_deref().and_then(|w| {
         let wake = chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok()?;
         let now = chrono::Local::now().naive_local();
         let diff_ms = (wake - now).num_milliseconds();
@@ -466,6 +462,39 @@ mod tests {
         assert!(
             next_wake.contains("2099-12-31T23:59"),
             "Status should show TODO-derived wake time, got: {next_wake}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_status_ignores_legacy_log_wake_without_todo() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let config = crate::config::CryoConfig::default();
+        let config_path = dir.path().join("cryo.toml");
+        crate::config::save_config(&config_path, &config).unwrap();
+
+        let log_path = dir.path().join("cryo.log");
+        std::fs::write(
+            &log_path,
+            "--- CRYO SESSION 1 | 2026-02-23T10:00:00Z ---\n\
+task: test\n\
+agent: opencode\n\
+inbox: 0 messages\n\
+[10:00:05] hibernate: wake=2099-12-31T23:59, exit=0, summary=\"legacy\"\n\
+--- CRYO END ---\n",
+        )
+        .unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let state = AppState {
+            project_dir: dir.path().to_path_buf(),
+            tx,
+        };
+        let resp = get_status(State(Arc::new(state))).await;
+        let status = &resp.0;
+        assert!(
+            status["next_wake"].is_null(),
+            "Status should ignore legacy log wake entries when todo.json has no pending wake"
         );
     }
 

@@ -19,7 +19,8 @@ pub fn send_signal(pid: u32, signal: i32) -> bool {
 pub fn signal_daemon_wake(dir: &Path) -> bool {
     if let Ok(Some(st)) = crate::state::load_state(&crate::state::state_path(dir)) {
         if let Some(pid) = st.pid {
-            if crate::state::is_locked(&st) {
+            let reachable = matches!(crate::socket::send_request(dir, &crate::socket::Request::Ping), Ok(resp) if resp.ok);
+            if crate::state::is_locked(&st) && reachable {
                 return send_signal(pid, libc::SIGUSR1);
             }
         }

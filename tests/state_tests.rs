@@ -16,6 +16,8 @@ fn test_save_and_load_state() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -49,6 +51,8 @@ fn test_lock_mechanism() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -71,6 +75,8 @@ fn test_is_locked_dead_process() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     assert!(!is_locked(&state));
 }
@@ -88,6 +94,8 @@ fn test_is_locked_no_pid() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     assert!(!is_locked(&state));
 }
@@ -141,6 +149,8 @@ fn test_override_fields_roundtrip() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -164,6 +174,8 @@ fn test_none_overrides_not_serialized() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
@@ -188,6 +200,8 @@ fn test_last_report_time_roundtrip() {
 
         last_report_time: Some("2026-02-28T09:00:00".to_string()),
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -215,6 +229,8 @@ fn test_provider_index_roundtrip() {
 
         last_report_time: None,
         provider_index: Some(2),
+        instance_id: None,
+        pending_fallback: None,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();

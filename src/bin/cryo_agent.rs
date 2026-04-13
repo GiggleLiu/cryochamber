@@ -20,7 +20,7 @@ enum Commands {
         /// Mark plan as complete (no more wakes)
         #[arg(long)]
         complete: bool,
-        /// Exit code: 0=success, 1=partial, 2=failure
+        /// Exit code: 0=success, nonzero=failure (daemon retries)
         #[arg(long, default_value = "0")]
         exit: u8,
         /// Human-readable session summary

@@ -6,6 +6,7 @@ use std::path::Path;
 use cryochamber::config;
 use cryochamber::message;
 use cryochamber::protocol;
+use cryochamber::socket::{self, Request};
 use cryochamber::state::{self, CryoState};
 
 #[derive(Parser)]
@@ -28,7 +29,7 @@ enum Commands {
         /// Agent command to use (overrides cryo.toml)
         #[arg(long)]
         agent: Option<String>,
-        /// Max retry attempts on agent spawn failure (overrides cryo.toml)
+        /// Failed attempts before alerting (daemon keeps retrying with backoff)
         #[arg(long)]
         max_retries: Option<u32>,
         /// Maximum session duration in seconds (overrides cryo.toml)
@@ -184,7 +185,7 @@ fn require_live_daemon(dir: &Path) -> Result<CryoState> {
     require_valid_project(dir)?;
     let cryo_state = state::load_state(&state::state_path(dir))?
         .context("No daemon state found. Run `cryo start` first.")?;
-    if !state::is_locked(&cryo_state) {
+    if !state::is_locked(&cryo_state) || !daemon_responding(dir) {
         anyhow::bail!(
             "No live daemon in this directory (stale state from a previous run). \
              Run `cryo start` to start a new one, or `cryo cancel` to clean up stale state."
@@ -248,6 +249,43 @@ fn validate_agent_command(agent_cmd: &str) -> Result<()> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonLaunchMode {
+    BackgroundProcess,
+    Service,
+}
+
+fn launch_daemon(dir: &Path) -> Result<DaemonLaunchMode> {
+    if std::env::var("CRYO_NO_SERVICE").is_ok() {
+        cryochamber::process::spawn_daemon(dir)?;
+        Ok(DaemonLaunchMode::BackgroundProcess)
+    } else {
+        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
+        let log_path = cryochamber::log::log_path(dir);
+        cryochamber::service::install("daemon", dir, &exe, &["daemon"], &log_path, false)?;
+        Ok(DaemonLaunchMode::Service)
+    }
+}
+
+fn daemon_responding(dir: &Path) -> bool {
+    matches!(socket::send_request(dir, &Request::Ping), Ok(resp) if resp.ok)
+}
+
+fn wait_for_live_daemon(dir: &Path) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(st) = state::load_state(&state::state_path(dir))? {
+            if state::is_locked(&st) && daemon_responding(dir) {
+                return Ok(());
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
+        }
+    }
+}
+
 fn cmd_start(
     agent_override: Option<String>,
     max_retries_override: Option<u32>,
@@ -295,31 +333,20 @@ fn cmd_start(
         max_session_duration_override,
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     state::save_state(&state::state_path(&dir), &cryo_state)?;
 
-    // CRYO_NO_SERVICE=1 disables OS service installation (useful for tests / debugging)
-    if std::env::var("CRYO_NO_SERVICE").is_ok() {
-        cryochamber::process::spawn_daemon(&dir)?;
-        println!("Cryochamber started (background process).");
-    } else {
-        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
-        let log_path = cryochamber::log::log_path(&dir);
-        cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
-        println!("Cryochamber started (service installed, survives reboot).");
-    }
+    let launch_mode = launch_daemon(&dir)?;
+    wait_for_live_daemon(&dir)?;
 
-    // Wait for the daemon to write its PID before returning
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Some(st) = state::load_state(&state::state_path(&dir))? {
-            if state::is_locked(&st) {
-                break;
-            }
+    match launch_mode {
+        DaemonLaunchMode::BackgroundProcess => {
+            println!("Cryochamber started (background process).")
         }
-        if std::time::Instant::now() > deadline {
-            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
+        DaemonLaunchMode::Service => {
+            println!("Cryochamber started (service installed, survives reboot).")
         }
     }
 
@@ -478,11 +505,13 @@ fn cmd_restart() -> Result<()> {
     };
     state::save_state(&state::state_path(&dir), &updated)?;
 
-    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
-    let log_path = cryochamber::log::log_path(&dir);
-    cryochamber::service::install("daemon", &dir, &exe, &["daemon"], &log_path, false)?;
+    let launch_mode = launch_daemon(&dir)?;
+    wait_for_live_daemon(&dir)?;
 
-    println!("Restarted (service reinstalled).");
+    match launch_mode {
+        DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),
+        DaemonLaunchMode::Service => println!("Restarted (service reinstalled)."),
+    }
     println!("Use `cryo watch` or `cryo web` to follow progress.");
     Ok(())
 }
@@ -527,7 +556,7 @@ fn cmd_cancel() -> Result<()> {
         }
         Some(cryo_state) => {
             // Kill daemon process if still alive
-            if state::is_locked(&cryo_state) {
+            if state::is_locked(&cryo_state) && daemon_responding(&dir) {
                 if let Some(pid) = cryo_state.pid {
                     cryochamber::process::terminate_pid(pid)?;
                     println!("Killed daemon (PID {pid}).");
@@ -579,7 +608,7 @@ fn cmd_clean(force: bool) -> Result<()> {
     // Kill daemon process if still running
     let sp = state::state_path(&dir);
     if let Some(cryo_state) = state::load_state(&sp)? {
-        if state::is_locked(&cryo_state) {
+        if state::is_locked(&cryo_state) && daemon_responding(&dir) {
             if let Some(pid) = cryo_state.pid {
                 cryochamber::process::terminate_pid(pid)?;
                 println!("Killed daemon (PID {pid}).");
@@ -645,7 +674,7 @@ fn build_inbox_message(from: &str, subject: &str, body: &str) -> message::Messag
 /// Check if a daemon is running in the given directory.
 fn is_daemon_running(dir: &std::path::Path) -> bool {
     if let Ok(Some(st)) = state::load_state(&state::state_path(dir)) {
-        return state::is_locked(&st);
+        return state::is_locked(&st) && daemon_responding(dir);
     }
     false
 }

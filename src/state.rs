@@ -2,6 +2,15 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::fallback::FallbackAction;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingFallbackState {
+    pub deadline: String,
+    pub action: FallbackAction,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoState {
@@ -28,6 +37,14 @@ pub struct CryoState {
     /// session updates it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_index: Option<usize>,
+
+    /// Identity token for the currently running daemon instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
+
+    /// Dead-man switch fallback that should survive daemon restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_fallback: Option<PendingFallbackState>,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
@@ -36,7 +53,17 @@ pub fn state_path(dir: &Path) -> PathBuf {
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
-    std::fs::write(path, json)?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("state");
+    let tmp = path.with_file_name(format!(
+        ".{file_name}.tmp-{}-{nanos}",
+        std::process::id()
+    ));
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -51,6 +78,14 @@ pub fn load_state(path: &Path) -> Result<Option<CryoState>> {
     }
     let state: CryoState = serde_json::from_str(&contents)?;
     Ok(Some(state))
+}
+
+pub fn new_instance_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{:x}-{:x}", std::process::id(), nanos)
 }
 
 pub fn is_locked(state: &CryoState) -> bool {
@@ -120,6 +155,8 @@ mod tests {
             max_session_duration_override: None,
             last_report_time: None,
             provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
         };
         assert!(!is_locked(&state), "Dead PID should not be locked");
     }
@@ -136,6 +173,8 @@ mod tests {
             max_session_duration_override: None,
             last_report_time: None,
             provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
         };
         assert!(!is_locked(&state), "No PID should not be locked");
     }
@@ -152,6 +191,8 @@ mod tests {
             max_session_duration_override: None,
             last_report_time: None,
             provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
         };
         assert!(is_locked(&state), "Own PID should be locked");
     }

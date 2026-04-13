@@ -1,13 +1,14 @@
 // src/fallback.rs
 use anyhow::Result;
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
 use crate::message::{self, Message};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FallbackAction {
     pub action: String,
     pub target: String,

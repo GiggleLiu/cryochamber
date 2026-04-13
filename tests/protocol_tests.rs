@@ -22,6 +22,22 @@ fn test_protocol_content_contains_rules() {
 }
 
 #[test]
+fn test_protocol_user_channel_is_cryo_agent_only() {
+    let content = protocol::PROTOCOL_CONTENT;
+    assert!(content.contains("only supported way to communicate with the human"));
+    assert!(content.contains("stdout/stderr"));
+    assert!(content.contains("cryo-agent send"));
+    assert!(content.contains("cryo-agent reply"));
+}
+
+#[test]
+fn test_protocol_no_blocked_hibernate_mode() {
+    let content = protocol::PROTOCOL_CONTENT;
+    assert!(!content.contains("Blocked or failed"));
+    assert!(!content.contains("Blocked on X"));
+}
+
+#[test]
 fn test_protocol_filename_claude() {
     assert_eq!(protocol::protocol_filename("claude"), "CLAUDE.md");
     assert_eq!(protocol::protocol_filename("claude-code"), "CLAUDE.md");

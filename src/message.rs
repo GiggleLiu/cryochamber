@@ -3,6 +3,9 @@ use anyhow::{Context, Result};
 use chrono::{Local, NaiveDateTime};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static MESSAGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -29,18 +32,12 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
 
     let slug = slugify(&msg.subject);
     let ts = msg.timestamp.format("%Y-%m-%dT%H-%M-%S");
-    // When slug is empty (e.g. GitHub comments with no subject), use a short
-    // hash of the body to avoid filename collisions within the same second.
-    let disambig = if slug.is_empty() {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        msg.body.hash(&mut hasher);
-        msg.from.hash(&mut hasher);
-        format!("{:08x}", hasher.finish() as u32)
+    let base = if slug.is_empty() {
+        message_hash(msg)
     } else {
         slug
     };
-    let filename = format!("{ts}_{disambig}.md");
+    let filename = format!("{ts}_{base}_{}.md", unique_suffix());
     let path = box_dir.join(&filename);
 
     // Atomic write: write to tmp, then rename
@@ -50,6 +47,25 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
     std::fs::rename(&tmp_path, &path)?;
 
     Ok(path)
+}
+
+fn message_hash(msg: &Message) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    msg.body.hash(&mut hasher);
+    msg.from.hash(&mut hasher);
+    msg.subject.hash(&mut hasher);
+    format!("{:08x}", hasher.finish() as u32)
+}
+
+fn unique_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let seq = MESSAGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:032x}_{:08x}_{seq:04x}", std::process::id())
 }
 
 /// Read all unread messages from inbox/, sorted by filename (timestamp order).

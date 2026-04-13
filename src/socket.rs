@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Request from CLI to daemon via Unix socket.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
+    Ping,
     Hibernate {
         complete: bool,
         exit_code: u8,
@@ -44,6 +45,14 @@ pub struct Response {
     pub message: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct SocketEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instance_id: Option<String>,
+    #[serde(flatten)]
+    request: Request,
+}
+
 /// Returns the socket path for a project directory.
 pub fn socket_path(dir: &Path) -> PathBuf {
     dir.join(".cryo").join("cryo.sock")
@@ -56,7 +65,16 @@ pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
         anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display())
     })?;
 
-    let mut payload = serde_json::to_string(request)?;
+    let instance_id = crate::state::load_state(&crate::state::state_path(dir))
+        .ok()
+        .flatten()
+        .and_then(|state| state.instance_id);
+    let envelope = SocketEnvelope {
+        instance_id,
+        request: request.clone(),
+    };
+
+    let mut payload = serde_json::to_string(&envelope)?;
     payload.push('\n');
     stream.write_all(payload.as_bytes())?;
     stream.flush()?;
@@ -99,7 +117,10 @@ impl SocketServer {
     }
 
     /// Accept one connection, parse the request, return it with a responder.
-    pub fn accept_one(&self) -> anyhow::Result<Option<(Request, Responder)>> {
+    pub fn accept_one(
+        &self,
+        expected_instance_id: Option<&str>,
+    ) -> anyhow::Result<Option<(Request, Responder)>> {
         let (stream, _) = self.listener.accept()?;
         let mut reader = BufReader::new(stream.try_clone()?);
         let mut line = String::new();
@@ -107,8 +128,19 @@ impl SocketServer {
         if line.trim().is_empty() {
             return Ok(None);
         }
-        let request: Request = serde_json::from_str(line.trim())?;
-        Ok(Some((request, Responder { stream })))
+        let envelope: SocketEnvelope = serde_json::from_str(line.trim())?;
+        let responder = Responder { stream };
+        if let Some(expected) = expected_instance_id {
+            if envelope.instance_id.as_deref() != Some(expected) {
+                responder.respond(&Response {
+                    ok: false,
+                    message: "Daemon instance mismatch. The state file is stale; reload and retry."
+                        .to_string(),
+                })?;
+                return Ok(None);
+            }
+        }
+        Ok(Some((envelope.request, responder)))
     }
 
     /// Set the listener to non-blocking mode.
@@ -131,6 +163,7 @@ impl SocketServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{save_state, CryoState};
 
     #[test]
     fn test_serialize_hibernate_request() {
@@ -212,7 +245,7 @@ mod tests {
 
         // Spawn server handler in a thread
         let handle = std::thread::spawn(move || {
-            if let Some((req, responder)) = server.accept_one().unwrap() {
+            if let Some((req, responder)) = server.accept_one(None).unwrap() {
                 tx.send(req).unwrap();
                 responder
                     .respond(&Response {
@@ -224,6 +257,19 @@ mod tests {
         });
 
         // Client sends a request
+        let state = CryoState {
+            session_number: 1,
+            pid: None,
+            retry_count: 0,
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+            instance_id: Some("instance-123".to_string()),
+            pending_fallback: None,
+        };
+        save_state(&dir.path().join("timer.json"), &state).unwrap();
         let resp = send_request(
             dir.path(),
             &Request::Note {
@@ -258,7 +304,7 @@ mod tests {
             }
         });
 
-        let result = server.accept_one().unwrap();
+        let result = server.accept_one(None).unwrap();
         assert!(result.is_none(), "Empty line should return None");
         handle.join().unwrap();
     }
@@ -280,7 +326,7 @@ mod tests {
             }
         });
 
-        let result = server.accept_one();
+        let result = server.accept_one(None);
         assert!(result.is_err(), "Malformed JSON should return error");
         handle.join().unwrap();
     }
@@ -309,7 +355,7 @@ mod tests {
             }
         });
 
-        let result = server.accept_one();
+        let result = server.accept_one(None);
         // serde ignores unknown fields by default (no deny_unknown_fields set)
         match result {
             Ok(Some((req, responder))) => {
@@ -325,6 +371,42 @@ mod tests {
             Err(e) => panic!("Should not error for unknown fields: {e}"),
         }
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_accept_one_rejects_mismatched_instance_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let server = SocketServer::bind(&sock_path).unwrap();
+        server.set_nonblocking(false).unwrap();
+
+        let handle = std::thread::spawn({
+            let sock_path = sock_path.clone();
+            move || {
+                let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+                use std::io::{BufRead, BufReader, Write};
+                let json = r#"{"instance_id":"wrong-instance","cmd":"note","text":"hello"}"#;
+                stream.write_all(json.as_bytes()).unwrap();
+                stream.write_all(b"\n").unwrap();
+                stream.flush().unwrap();
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                line
+            }
+        });
+
+        let result = server.accept_one(Some("expected-instance")).unwrap();
+        assert!(
+            result.is_none(),
+            "Mismatched instance should be rejected before reaching the daemon"
+        );
+
+        let response_line = handle.join().unwrap();
+        let response: Response = serde_json::from_str(response_line.trim()).unwrap();
+        assert!(!response.ok);
+        assert!(response.message.contains("instance"));
     }
 
     #[test]

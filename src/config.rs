@@ -35,7 +35,7 @@ pub struct CryoConfig {
     #[serde(default = "default_agent")]
     pub agent: String,
 
-    /// Max retry attempts on agent failure (0 = no retry)
+    /// Failed attempts before sending a retry alert. The daemon keeps retrying.
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
@@ -209,6 +209,8 @@ mod tests {
 
             last_report_time: None,
             provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
         };
         config.apply_overrides(&state);
         assert_eq!(config.agent, "claude");
@@ -230,6 +232,8 @@ mod tests {
 
             last_report_time: None,
             provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
         };
         config.apply_overrides(&state);
         assert_eq!(config.agent, original.agent);

@@ -57,6 +57,8 @@ fn test_state_roundtrip() {
 
         last_report_time: None,
         provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
     };
     save_state(&state_path, &state).unwrap();
 

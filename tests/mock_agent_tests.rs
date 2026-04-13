@@ -28,7 +28,7 @@ fn setup_scenario(dir: &std::path::Path, scenario_name: &str) {
 
 /// Wait for the daemon to exit by polling timer.json for pid=null.
 /// Returns true if daemon exited within the timeout.
-/// Treats missing or unparseable timer.json as "exited" (cryo cancel removes the file).
+/// Treats missing timer.json as "exited" (some commands remove the file).
 fn wait_for_daemon_exit(dir: &std::path::Path, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
@@ -40,7 +40,6 @@ fn wait_for_daemon_exit(dir: &std::path::Path, timeout: Duration) -> bool {
         match fs::read_to_string(&timer_path) {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(state) if state["pid"].is_null() => return true,
-                Err(_) => return true,
                 _ => {}
             },
             Err(_) => return true,
@@ -421,6 +420,34 @@ fn test_mock_hibernate_then_crash() {
     );
 
     cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_mock_hibernate_exit_code_retries() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "hibernate-failed-then-succeed.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(20)),
+        "Daemon should retry after nonzero hibernate exit code and then complete"
+    );
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("CRYO SESSION 2"),
+        "Nonzero hibernate exit code should trigger a retry session: {log}"
+    );
+    assert!(
+        log.contains("plan complete"),
+        "Retry scenario should eventually complete the plan: {log}"
+    );
 }
 
 // --- Provider rotation tests ---
@@ -809,6 +836,94 @@ fn test_fallback_cancelled_on_success() {
             );
         }
     }
+}
+
+#[test]
+fn test_pending_fallback_persists_across_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "alert-then-hibernate.sh");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock"])
+        .env("CRYO_NO_SERVICE", "1")
+        .env("TEST_WAKE_AT", "2099-12-31T23:59")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut before_restart = None;
+    while std::time::Instant::now() < deadline {
+        if let Ok(content) = fs::read_to_string(dir.path().join("timer.json")) {
+            if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
+                if !state["pid"].is_null() && state.get("pending_fallback").is_some() {
+                    before_restart = Some(state);
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    let before_restart =
+        before_restart.expect("pending_fallback should be persisted after hibernate");
+    let before_instance = before_restart["instance_id"]
+        .as_str()
+        .expect("daemon should persist an instance_id")
+        .to_string();
+    assert_eq!(
+        before_restart["pending_fallback"]["action"]["action"],
+        "email"
+    );
+    assert_eq!(
+        before_restart["pending_fallback"]["action"]["target"],
+        "ops@test.com"
+    );
+    assert_eq!(
+        before_restart["pending_fallback"]["action"]["message"],
+        "Watchdog set"
+    );
+
+    cryo_bin()
+        .arg("restart")
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut after_restart = None;
+    while std::time::Instant::now() < deadline {
+        if let Ok(content) = fs::read_to_string(dir.path().join("timer.json")) {
+            if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
+                if !state["pid"].is_null() && state.get("pending_fallback").is_some() {
+                    let instance = state["instance_id"].as_str().unwrap_or_default();
+                    if instance != before_instance {
+                        after_restart = Some(state);
+                        break;
+                    }
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    let after_restart =
+        after_restart.expect("pending_fallback and fresh instance_id should survive restart");
+    assert_eq!(
+        after_restart["pending_fallback"]["action"]["action"],
+        "email"
+    );
+    assert_eq!(
+        after_restart["pending_fallback"]["action"]["target"],
+        "ops@test.com"
+    );
+    assert_eq!(
+        after_restart["pending_fallback"]["action"]["message"],
+        "Watchdog set"
+    );
+
+    cancel_and_wait(dir.path());
 }
 
 #[test]
