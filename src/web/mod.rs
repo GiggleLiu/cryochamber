@@ -1,8 +1,8 @@
 pub mod discovery;
-pub mod state;
-pub mod watchers;
 pub mod lifecycle;
 pub mod routes;
+pub mod state;
+pub mod watchers;
 
 pub use state::{AppState, SseEvent};
 
