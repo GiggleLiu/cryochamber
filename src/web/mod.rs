@@ -18,7 +18,7 @@ use tokio_stream::StreamExt;
 
 use crate::{config, log, message, state};
 
-const WEB_HTML: &str = include_str!("../templates/web.html");
+const WEB_HTML: &str = include_str!("../../templates/web.html");
 
 #[derive(Clone, Debug)]
 pub enum SseEvent {

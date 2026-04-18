@@ -44,8 +44,10 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 notify-rust = "4"
 ureq = "3"
+urlencoding = "2"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"
 predicates = "3.1.4"
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,1 @@
+//! SSE event stream.
