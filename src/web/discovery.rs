@@ -133,6 +133,43 @@ pub fn merge_registry(idx: &mut ChamberIndex, entries: &[crate::registry::Daemon
     }
 }
 
+/// Fill in runtime fields on each entry from its on-disk state.
+/// `running` is left as-is if already true (set by `merge_registry`).
+pub fn populate_runtime(idx: &mut ChamberIndex) {
+    for entry in idx.values_mut() {
+        let dir = &entry.path;
+
+        // Session # and pid from timer.json
+        if let Ok(Some(st)) = crate::state::load_state(&crate::state::state_path(dir)) {
+            entry.session = Some(st.session_number);
+            if !entry.running {
+                entry.running = crate::state::is_locked(&st);
+            }
+        }
+
+        // Next wake from todo.json
+        let todo_path = dir.join("todo.json");
+        entry.next_wake = crate::todo::TodoList::load(&todo_path)
+            .ok()
+            .and_then(|list| list.next_wake_time().map(String::from));
+
+        // Unread = pending inbox messages (not archived)
+        entry.unread = crate::message::read_inbox(dir)
+            .map(|v| v.len())
+            .unwrap_or(0);
+    }
+}
+
+/// One-shot discovery: scan workspace, merge registry, populate runtime.
+pub fn discover(workspace: &Path) -> ChamberIndex {
+    let mut idx = scan_workspace(workspace);
+    if let Ok(entries) = crate::registry::list() {
+        merge_registry(&mut idx, &entries);
+    }
+    populate_runtime(&mut idx);
+    idx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,5 +306,48 @@ mod tests {
         let entry = idx.values().next().unwrap();
         assert_eq!(entry.source, Source::Workspace);
         assert!(entry.running);
+    }
+
+    #[test]
+    fn populate_reads_session_and_unread() {
+        let dir = tempfile::tempdir().unwrap();
+        let chambers = dir.path().join("chambers");
+        let alpha = chambers.join("alpha");
+        std::fs::create_dir_all(&alpha).unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
+
+        // Fake runtime state: session 7, not locked (no live PID)
+        let st = crate::state::CryoState {
+            session_number: 7,
+            pid: None,
+            retry_count: 0,
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
+        };
+        crate::state::save_state(&crate::state::state_path(&alpha), &st).unwrap();
+
+        // Fake inbox with one message
+        crate::message::ensure_dirs(&alpha).unwrap();
+        let msg = crate::message::Message {
+            from: "tester".into(),
+            subject: "hi".into(),
+            body: "yo".into(),
+            timestamp: chrono::Local::now().naive_local(),
+            metadata: Default::default(),
+        };
+        crate::message::write_message(&alpha, "inbox", &msg).unwrap();
+
+        let mut idx = scan_workspace(dir.path());
+        populate_runtime(&mut idx);
+        let entry = idx.values().next().unwrap();
+        assert_eq!(entry.session, Some(7));
+        assert_eq!(entry.unread, 1);
+        assert!(!entry.running, "no live pid -> not running");
     }
 }
