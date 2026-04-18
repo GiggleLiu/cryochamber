@@ -93,3 +93,58 @@ async fn unknown_chamber_id_returns_404() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn start_chamber_via_api_creates_background_daemon() {
+    // Force the background-process launch path so no service install happens.
+    std::env::set_var("CRYO_NO_SERVICE", "1");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let chambers = tmp.path().join("chambers");
+    let alpha = chambers.join("alpha");
+    std::fs::create_dir_all(&alpha).unwrap();
+    let cfg = config::CryoConfig {
+        agent: "true".into(),
+        ..Default::default()
+    };
+    config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
+    std::fs::write(alpha.join("plan.md"), "test plan").unwrap();
+
+    let app = Arc::new(AppState::new(tmp.path().to_path_buf()));
+    let mut idx = discovery::scan_workspace(tmp.path());
+    discovery::populate_runtime(&mut idx);
+    *app.chambers.write().unwrap() = idx;
+    let id = {
+        let idx = app.chambers.read().unwrap();
+        idx.values().find(|e| e.name == "alpha").unwrap().id.clone()
+    };
+
+    let router = build_router_with_state(app.clone());
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/chambers/{id}/start"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["ok"], true, "start should succeed: {v:?}");
+
+    // Daemon writes timer.json fairly quickly. Poll briefly, then assert.
+    let state_path = cryochamber::state::state_path(&alpha.canonicalize().unwrap());
+    for _ in 0..30 {
+        if state_path.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(state_path.exists(), "daemon should have written timer.json");
+
+    // Clean up: stop the daemon we spawned
+    let _ = cryochamber::web::lifecycle::stop_chamber(&alpha.canonicalize().unwrap());
+}
