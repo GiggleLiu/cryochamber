@@ -1,42 +1,50 @@
 # Web UI
 
-`cryo web` starts a local web server with a chat interface for sending messages to your agent and monitoring its activity.
+`cryo web` runs a workspace-scoped web dashboard on `http://127.0.0.1:8765` by default.
 
-## Usage
+## Workspace layout
+
+A workspace is a directory containing a `chambers/` subdirectory. Each chamber is a regular cryochamber project (a dir with `cryo.toml`):
+
+```
+~/my-cryo-workspace/
+  chambers/
+    chess-by-mail/     # cryo.toml + plan.md here
+    mr-lazy/
+    reports/
+```
+
+Start the UI from the workspace dir:
 
 ```bash
-cryo web                         # default: http://127.0.0.1:3945
-cryo web --port 8080             # custom port
-cryo web --host 0.0.0.0          # listen on all interfaces (see warning below)
+cd ~/my-cryo-workspace
+cryo web           # installs a service that survives reboot
+cryo web --foreground   # run in foreground (no service)
+cryo web --stop    # stop and remove the service
 ```
 
-> **Warning:** The web UI has no authentication. Binding to `0.0.0.0` exposes all endpoints (status, messages, wake) to the network. Only do this behind an authenticated, TLS-terminating reverse proxy.
+## What the UI does
 
-Or configure in `cryo.toml`:
+- **Sidebar** — every chamber, sorted by running → stopped → external. Shows status dot, name, unread-message badge.
+- **Main pane** — full detail for the selected chamber: status, task, next wake, notes, message history, log tail, send widget.
+- **Lifecycle buttons** — `start` / `stop` / `restart` for workspace chambers. External chambers show no lifecycle buttons.
 
-```toml
-web_host = "127.0.0.1"
-web_port = 3945
+## External chambers
+
+Running daemons anywhere on the machine (registered via `cryo start` from any working directory) appear as **external** chambers if they aren't under the current workspace's `./chambers/`. They're monitor-only from the UI.
+
+## Migrating from single-chamber mode
+
+Earlier versions of `cryo web` ran inside a chamber and served that one chamber. To migrate:
+
+```bash
+mkdir -p ~/cryo-workspace/chambers
+ln -s $(pwd) ~/cryo-workspace/chambers/my-chamber
+cd ~/cryo-workspace && cryo web
 ```
 
-## Features
+Running `cryo web` from a chamber dir now prints a migration error.
 
-- **Chat interface** — Send messages to the agent's inbox and see outbox replies
-- **Status bar** — Shows daemon status (running/stopped), session number, and agent name
-- **Wake button** — Force the daemon to wake immediately (sends SIGUSR1)
-- **Live log** — Toggle the log panel to see `cryo.log` events in real-time
-- **Real-time updates** — Server-Sent Events (SSE) stream new messages, status changes, and log lines as they happen
-- **Polling fallback** — Periodic polling ensures messages from the daemon are never missed
+## Security
 
-## API Endpoints
-
-The web server exposes a JSON API:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Chat UI (HTML) |
-| `/api/status` | GET | Daemon status (running, session, agent, log tail) |
-| `/api/messages` | GET | All messages (inbox + archived inbox + outbox), sorted by time |
-| `/api/send` | POST | Send a message to inbox (`{ "body": "...", "from": "...", "subject": "..." }`) |
-| `/api/wake` | POST | Wake the daemon (`{ "message": "..." }`) |
-| `/api/events` | GET | SSE stream (events: `message`, `status`, `log`) |
+The default bind is `127.0.0.1`. If you pass `--host 0.0.0.0`, cryo prints a warning because lifecycle actions are exposed over the network without authentication. Don't do that on a shared network. Token auth is tracked as future work.

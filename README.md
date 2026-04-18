@@ -72,13 +72,35 @@ cryo send "message"  # send a message to the agent
 cryo cancel          # stop the daemon
 ```
 
+## Web UI (multi-chamber)
+
+`cryo web` runs a workspace-wide dashboard. A **workspace** is a directory that contains a `chambers/` subdirectory; each `chambers/<name>/` is a cryo project (a **chamber**).
+
+```
+~/my-cryo-workspace/
+  chambers/
+    chess-by-mail/
+    mr-lazy/
+    reports/
+```
+
+Run `cryo web` from the workspace dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside `./chambers/`) appear as **external** chambers for monitoring only.
+
+**Migrating from a single-chamber project:**
+
+```bash
+mkdir -p ~/cryo-workspace/chambers
+ln -s $(pwd) ~/cryo-workspace/chambers/my-chamber
+cd ~/cryo-workspace && cryo web
+```
+
 ## Messaging Channels
 
 Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary. These are configured automatically when using `/make-plan`.
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web-ui.html) |
+| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web.html) |
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 
