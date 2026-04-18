@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cryochamber</title>
+<link rel="stylesheet" href="/assets/web.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <h2>Cryochamber</h2>
+    <ul id="chamber-list"></ul>
+    <footer>
+      <button id="refresh">⟳ refresh</button>
+      <span id="workspace-path"></span>
+    </footer>
+  </aside>
+  <main class="pane" id="pane">
+    <div class="pane-empty">
+      <div>Pick a chamber from the sidebar</div>
+      <div id="workspace-summary"></div>
+    </div>
+  </main>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+(function() {
+  const state = {
+    chambers: [],
+    currentId: null,
+  };
+
+  function urlChamberId() {
+    const m = window.location.pathname.match(/^\/c\/(.+)$/);
+    return m ? m[1] : null;
+  }
+
+  async function fetchJSON(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    return res.json();
+  }
+
+  function toast(msg, kind) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast' + (kind === 'error' ? ' error' : '');
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  function statusDot(entry) {
+    if (entry.config_error) return '✗';
+    if (entry.source === 'external') return '⚠';
+    return entry.running ? '●' : '○';
+  }
+
+  function renderSidebar() {
+    const ul = document.getElementById('chamber-list');
+    ul.innerHTML = '';
+    const sorted = [...state.chambers].sort((a, b) => {
+      const rank = e => (e.running ? 0 : (e.source === 'external' ? 2 : 1));
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    });
+    for (const c of sorted) {
+      const li = document.createElement('li');
+      li.dataset.id = c.id;
+      if (c.id === state.currentId) li.classList.add('active');
+      const dot = document.createElement('span');
+      dot.textContent = statusDot(c);
+      const name = document.createElement('span');
+      name.textContent = c.name;
+      li.appendChild(dot);
+      li.appendChild(name);
+      if (c.unread > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'unread';
+        badge.textContent = c.unread;
+        li.appendChild(badge);
+      }
+      li.addEventListener('click', () => selectChamber(c.id));
+      ul.appendChild(li);
+    }
+  }
+
+  function renderSummary() {
+    const running = state.chambers.filter(c => c.running).length;
+    const stopped = state.chambers.filter(c => !c.running && c.source === 'workspace').length;
+    const external = state.chambers.filter(c => c.source === 'external').length;
+    const el = document.getElementById('workspace-summary');
+    if (el) el.textContent = `${running} running · ${stopped} stopped · ${external} external`;
+  }
+
+  async function loadChambers() {
+    state.chambers = await fetchJSON('/api/chambers');
+    renderSidebar();
+    renderSummary();
+  }
+
+  async function selectChamber(id) {
+    state.currentId = id;
+    window.history.pushState({}, '', `/c/${id}`);
+    renderSidebar();
+    await renderDetail(id);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function btn(label, onClick) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  async function renderDetail(id) {
+    const entry = state.chambers.find(c => c.id === id);
+    if (!entry) return;
+    const pane = document.getElementById('pane');
+    const [status, messages] = await Promise.all([
+      fetchJSON(`/api/chambers/${id}/status`),
+      fetchJSON(`/api/chambers/${id}/messages`),
+    ]);
+    pane.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.style.padding = '12px 20px';
+    header.style.borderBottom = '1px solid var(--border)';
+    header.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <strong style="color: var(--accent)">${escapeHtml(entry.name)}</strong>
+          <span style="color: var(--text-dim); margin-left: 8px;">${statusDot(entry)} session #${status.session}</span>
+          ${status.next_wake ? `<span style="color: var(--text-dim); margin-left: 12px;">Next wake: ${escapeHtml(status.next_wake)}</span>` : ''}
+        </div>
+        <div class="lifecycle-buttons"></div>
+      </div>
+      ${status.task ? `<div style="margin-top:6px; color: var(--text-dim); font-size:12px;">Task: ${escapeHtml(status.task)}</div>` : ''}
+    `;
+    const btns = header.querySelector('.lifecycle-buttons');
+    if (entry.source === 'workspace') {
+      if (entry.running) {
+        btns.appendChild(btn('wake', () => lifecycle(id, 'wake')));
+        btns.appendChild(btn('stop', () => lifecycle(id, 'stop')));
+        btns.appendChild(btn('restart', () => lifecycle(id, 'restart')));
+      } else if (!entry.config_error) {
+        btns.appendChild(btn('start', () => lifecycle(id, 'start')));
+      }
+    } else {
+      btns.appendChild(btn('wake', () => lifecycle(id, 'wake')));
+    }
+    pane.appendChild(header);
+
+    const msgBox = document.createElement('div');
+    msgBox.style.flex = '1';
+    msgBox.style.overflowY = 'auto';
+    msgBox.style.padding = '12px 20px';
+    for (const m of messages) {
+      const row = document.createElement('div');
+      row.style.marginBottom = '10px';
+      row.style.padding = '8px';
+      row.style.background = m.direction === 'inbox' ? 'var(--inbox-bg)' : 'var(--outbox-bg)';
+      row.style.borderRadius = '3px';
+      row.innerHTML = `<div style="font-size:11px; color: var(--text-dim)">${escapeHtml(m.direction)} · ${escapeHtml(m.from)} · ${escapeHtml(m.timestamp)}</div>
+                       <div style="margin-top:4px; white-space: pre-wrap;">${escapeHtml(m.body)}</div>`;
+      msgBox.appendChild(row);
+    }
+    pane.appendChild(msgBox);
+
+    const send = document.createElement('div');
+    send.style.padding = '10px 20px';
+    send.style.borderTop = '1px solid var(--border)';
+    send.innerHTML = `
+      <input id="send-body" placeholder="Message..." style="width:70%;padding:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:inherit;">
+      <button id="send-btn" style="padding:6px 12px;background:var(--accent-dim);color:var(--accent);border:none;cursor:pointer;font-family:inherit;">send</button>
+    `;
+    send.querySelector('#send-btn').addEventListener('click', async () => {
+      const body = send.querySelector('#send-body').value.trim();
+      if (!body) return;
+      try {
+        await fetchJSON(`/api/chambers/${id}/send`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({body}),
+        });
+        send.querySelector('#send-body').value = '';
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    pane.appendChild(send);
+
+    const logBox = document.createElement('pre');
+    logBox.id = 'log-box';
+    logBox.style.background = 'var(--bg)';
+    logBox.style.color = 'var(--text-dim)';
+    logBox.style.padding = '10px 20px';
+    logBox.style.maxHeight = '200px';
+    logBox.style.overflowY = 'auto';
+    logBox.style.fontSize = '11px';
+    logBox.style.borderTop = '1px solid var(--border)';
+    logBox.textContent = status.log_tail || '';
+    pane.appendChild(logBox);
+  }
+
+  async function lifecycle(id, action) {
+    try {
+      const resp = await fetchJSON(`/api/chambers/${id}/${action}`, {method: 'POST'});
+      toast(resp.message || action, resp.ok ? '' : 'error');
+      await loadChambers();
+      if (state.currentId === id) await renderDetail(id);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  document.getElementById('refresh').addEventListener('click', async () => {
+    try {
+      state.chambers = await fetchJSON('/api/chambers/refresh', {method: 'POST'});
+      renderSidebar();
+      renderSummary();
+      if (state.currentId) await renderDetail(state.currentId);
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  const evt = new EventSource('/api/events');
+  evt.addEventListener('message', async e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) {
+      await renderDetail(state.currentId);
+    }
+    await loadChambers();
+  });
+  evt.addEventListener('status', async e => {
+    await loadChambers();
+    if (state.currentId) await renderDetail(state.currentId);
+  });
+  evt.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) {
+      const box = document.getElementById('log-box');
+      if (box) { box.textContent += (box.textContent ? '\n' : '') + d.line; box.scrollTop = box.scrollHeight; }
+    }
+  });
+  evt.addEventListener('index', async () => { await loadChambers(); });
+
+  (async () => {
+    await loadChambers();
+    const urlId = urlChamberId();
+    if (urlId && state.chambers.some(c => c.id === urlId)) {
+      await selectChamber(urlId);
+    } else {
+      renderSummary();
+    }
+  })();
+})();
+</script>
+</body>
+</html>
