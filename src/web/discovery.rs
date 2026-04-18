@@ -1,7 +1,7 @@
 //! Chamber discovery: scan `./chambers/*/cryo.toml` and merge with the daemon registry.
 
-use std::path::{Path, PathBuf};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// Where a chamber was sourced from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -76,7 +76,9 @@ pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
         let config_error = if !cryo_toml.exists() {
             Some("missing cryo.toml".into())
         } else {
-            crate::config::load_config(&cryo_toml).err().map(|e| e.to_string())
+            crate::config::load_config(&cryo_toml)
+                .err()
+                .map(|e| e.to_string())
         };
         let id = encode_id(&canonical);
         out.insert(
