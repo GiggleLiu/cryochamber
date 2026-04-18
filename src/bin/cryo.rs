@@ -385,7 +385,9 @@ fn cmd_web(host: Option<String>, port: Option<u16>, foreground: bool, stop: bool
                ln -s {} ~/cryo-workspace/chambers/{}\n  \
                cd ~/cryo-workspace && cryo web\n",
             dir.display(),
-            dir.file_name().and_then(|s| s.to_str()).unwrap_or("this-chamber"),
+            dir.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("this-chamber"),
         );
     }
 
@@ -419,7 +421,6 @@ fn cmd_web_daemon(host: String, port: u16) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(cryochamber::web::serve(dir, &host, port))
 }
-
 
 fn cmd_status() -> Result<()> {
     let dir = cryochamber::work_dir()?;

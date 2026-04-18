@@ -31,12 +31,19 @@ async fn list_chambers_returns_both() {
     let router = build_router_with_state(app);
 
     let resp = router
-        .oneshot(Request::builder().uri("/api/chambers").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/chambers")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let list: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(list.as_array().unwrap().len(), 2);
 }
@@ -66,12 +73,22 @@ async fn send_message_writes_to_correct_chamber() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let alpha_dir = tmp.path().join("chambers").join("alpha").canonicalize().unwrap();
+    let alpha_dir = tmp
+        .path()
+        .join("chambers")
+        .join("alpha")
+        .canonicalize()
+        .unwrap();
     let msgs = cryochamber::message::read_inbox(&alpha_dir).unwrap();
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].1.body, "hello alpha");
 
-    let beta_dir = tmp.path().join("chambers").join("beta").canonicalize().unwrap();
+    let beta_dir = tmp
+        .path()
+        .join("chambers")
+        .join("beta")
+        .canonicalize()
+        .unwrap();
     let beta_msgs = cryochamber::message::read_inbox(&beta_dir).unwrap();
     assert_eq!(beta_msgs.len(), 0);
 }
@@ -131,7 +148,9 @@ async fn start_chamber_via_api_creates_background_daemon() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["ok"], true, "start should succeed: {v:?}");
 
