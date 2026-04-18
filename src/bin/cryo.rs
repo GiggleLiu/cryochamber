@@ -95,10 +95,10 @@ enum Commands {
     },
     /// Open a web chat UI for messaging and waking the agent
     Web {
-        /// Host to listen on (overrides cryo.toml web_host)
+        /// Host to listen on (default: 127.0.0.1)
         #[arg(long)]
         host: Option<String>,
-        /// Port to listen on (overrides cryo.toml web_port)
+        /// Port to listen on (default: 8765)
         #[arg(long)]
         port: Option<u16>,
         /// Run in foreground instead of installing a service

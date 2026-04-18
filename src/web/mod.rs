@@ -24,14 +24,6 @@ pub fn build_router(workspace_dir: PathBuf) -> Router {
 
 /// Separate entry point so integration tests can inject their own `AppState`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
-    let watchers = crate::web::watchers::WatcherRegistry::new();
-    {
-        let idx = app.chambers.read().unwrap();
-        for entry in idx.values() {
-            watchers.ensure_watching(entry.id.clone(), &entry.path, app.tx.clone());
-        }
-    }
-
     Router::new()
         .route("/", get(crate::web::routes::pages::get_index))
         .route("/c/{id}", get(crate::web::routes::pages::get_index))

@@ -1,5 +1,6 @@
 //! Shared application state for the web server.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -33,6 +34,7 @@ pub struct AppState {
     pub workspace_dir: PathBuf,
     pub chambers: Arc<RwLock<ChamberIndex>>,
     pub tx: tokio::sync::broadcast::Sender<SseEvent>,
+    pub watchers: crate::web::watchers::WatcherRegistry,
 }
 
 impl AppState {
@@ -42,6 +44,7 @@ impl AppState {
             workspace_dir,
             chambers: Arc::new(RwLock::new(ChamberIndex::new())),
             tx,
+            watchers: crate::web::watchers::WatcherRegistry::new(),
         }
     }
 
@@ -70,6 +73,26 @@ impl AppState {
             *idx = fresh;
         }
         let _ = self.tx.send(SseEvent::IndexChanged);
+        self.wire_watchers();
+    }
+
+    /// Synchronise the watcher registry with the current chamber index:
+    /// start watchers for any new chambers and stop watchers for removed ones.
+    /// Tests that populate the index directly should call this after writing.
+    pub fn wire_watchers(&self) {
+        let (paths, entries): (BTreeSet<PathBuf>, Vec<(String, PathBuf)>) = {
+            let idx = self.chambers.read().unwrap();
+            let paths: BTreeSet<PathBuf> = idx.values().map(|e| e.path.clone()).collect();
+            let entries: Vec<(String, PathBuf)> = idx
+                .values()
+                .map(|e| (e.id.clone(), e.path.clone()))
+                .collect();
+            (paths, entries)
+        };
+        for (id, path) in entries {
+            self.watchers.ensure_watching(id, &path, self.tx.clone());
+        }
+        self.watchers.retain(&paths);
     }
 }
 

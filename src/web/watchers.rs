@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use notify::{
@@ -14,10 +15,10 @@ use notify::{
 use crate::web::state::SseEvent;
 
 /// Stored handle per chamber: the watcher (kept alive by the thread) and the
-/// join handle on the background log/state poll thread.
+/// stop flag for the background log/state poll thread.
 struct Handle {
     _watcher: notify::RecommendedWatcher,
-    _stop: Arc<Mutex<bool>>,
+    _stop: Arc<AtomicBool>,
 }
 
 #[derive(Default, Clone)]
@@ -49,6 +50,12 @@ impl WatcherRegistry {
     /// Drop watchers for any chamber whose path is not in `keep`.
     pub fn retain(&self, keep: &std::collections::BTreeSet<PathBuf>) {
         let mut map = self.inner.lock().unwrap();
+        // Signal poll threads to stop before dropping their handles.
+        for (p, handle) in map.iter() {
+            if !keep.contains(p) {
+                handle._stop.store(true, Ordering::Relaxed);
+            }
+        }
         map.retain(|p, _| keep.contains(p));
     }
 }
@@ -116,7 +123,7 @@ fn spawn_watcher(
     watcher.watch(&outbox, RecursiveMode::NonRecursive).ok()?;
 
     // Background poll: log tail + timer.json change.
-    let stop = Arc::new(Mutex::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
     let tx_log = tx.clone();
     let tx_state = tx;
@@ -128,25 +135,25 @@ fn spawn_watcher(
         let mut last_size = log_path.metadata().map(|m| m.len()).unwrap_or(0);
         let mut last_state = std::fs::read_to_string(&state_path).unwrap_or_default();
         loop {
-            if *stop_clone.lock().unwrap() {
+            if stop_clone.load(Ordering::Relaxed) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
-            if let Ok(meta) = log_path.metadata() {
-                let cur = meta.len();
-                if cur > last_size {
-                    if let Ok(content) = std::fs::read_to_string(&log_path) {
-                        let new_bytes = &content[last_size as usize..];
-                        for line in new_bytes.lines() {
-                            if !line.trim().is_empty() {
+            if let Ok(bytes) = std::fs::read(&log_path) {
+                if (bytes.len() as u64) > last_size {
+                    let new_bytes = &bytes[last_size as usize..];
+                    for line in new_bytes.split(|b| *b == b'\n') {
+                        if !line.is_empty() {
+                            let text = String::from_utf8_lossy(line).into_owned();
+                            if !text.trim().is_empty() {
                                 let _ = tx_log.send(SseEvent::LogLine {
                                     chamber_id: id_log.clone(),
-                                    line: line.to_string(),
+                                    line: text,
                                 });
                             }
                         }
                     }
-                    last_size = cur;
+                    last_size = bytes.len() as u64;
                 }
             }
             if let Ok(content) = std::fs::read_to_string(&state_path) {

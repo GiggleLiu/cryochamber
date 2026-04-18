@@ -100,7 +100,7 @@ Cryochamber supports external messaging channels that sync between a remote serv
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web.html) |
+| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web-ui.html) |
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 

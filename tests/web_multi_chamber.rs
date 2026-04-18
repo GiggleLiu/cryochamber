@@ -21,6 +21,7 @@ fn setup_app(tmp: &tempfile::TempDir) -> Arc<AppState> {
     let mut idx = discovery::scan_workspace(tmp.path());
     discovery::populate_runtime(&mut idx);
     *app.chambers.write().unwrap() = idx;
+    app.wire_watchers();
     app
 }
 
@@ -131,6 +132,7 @@ async fn start_chamber_via_api_creates_background_daemon() {
     let mut idx = discovery::scan_workspace(tmp.path());
     discovery::populate_runtime(&mut idx);
     *app.chambers.write().unwrap() = idx;
+    app.wire_watchers();
     let id = {
         let idx = app.chambers.read().unwrap();
         idx.values().find(|e| e.name == "alpha").unwrap().id.clone()
