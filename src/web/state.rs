@@ -47,9 +47,20 @@ impl AppState {
 
     /// Resolve an id to `(path, ChamberEntry)` if the id refers to a known
     /// chamber in the current index.
+    ///
+    /// The `id` may arrive either as the raw percent-encoded form (the key
+    /// stored in the index) or as the decoded absolute path string (because
+    /// axum's `Path` extractor percent-decodes path parameters before calling
+    /// the handler). Both forms are tried.
     pub fn resolve(&self, id: &str) -> Option<(PathBuf, ChamberEntry)> {
         let idx = self.chambers.read().ok()?;
-        idx.get(id).map(|e| (e.path.clone(), e.clone()))
+        // Fast path: id is already in encoded form (direct key lookup).
+        if let Some(e) = idx.get(id) {
+            return Some((e.path.clone(), e.clone()));
+        }
+        // Slow path: axum decoded the percent-encoding, so re-encode and retry.
+        let re_encoded = crate::web::discovery::encode_id(std::path::Path::new(id));
+        idx.get(&re_encoded).map(|e| (e.path.clone(), e.clone()))
     }
 
     /// Overwrite the chamber index with a fresh discovery pass.

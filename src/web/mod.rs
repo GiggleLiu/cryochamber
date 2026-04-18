@@ -7,21 +7,88 @@ pub mod watchers;
 pub use state::{AppState, SseEvent};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-/// Placeholder: the real router is built in Task 14. Present now so CLI and
-/// tests can already import `serve` / `build_router` with a stable signature.
-pub fn build_router(workspace_dir: PathBuf) -> axum::Router {
-    let _ = workspace_dir;
-    axum::Router::new()
+use axum::{
+    routing::{get, post},
+    Router,
+};
+
+use crate::web::state::AppState as WebAppState;
+
+pub fn build_router(workspace_dir: PathBuf) -> Router {
+    let app = Arc::new(WebAppState::new(workspace_dir));
+    app.refresh();
+    build_router_with_state(app)
+}
+
+/// Separate entry point so integration tests can inject their own `AppState`.
+pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
+    let watchers = crate::web::watchers::WatcherRegistry::new();
+    {
+        let idx = app.chambers.read().unwrap();
+        for entry in idx.values() {
+            watchers.ensure_watching(entry.id.clone(), &entry.path, app.tx.clone());
+        }
+    }
+
+    Router::new()
+        .route("/", get(crate::web::routes::pages::get_index))
+        .route("/c/{id}", get(crate::web::routes::pages::get_index))
+        .route("/assets/web.css", get(crate::web::routes::pages::get_css))
+        .route(
+            "/api/chambers",
+            get(crate::web::routes::chambers::get_chambers),
+        )
+        .route(
+            "/api/chambers/refresh",
+            post(crate::web::routes::chambers::post_refresh),
+        )
+        .route(
+            "/api/chambers/{id}/status",
+            get(crate::web::routes::chamber::get_status),
+        )
+        .route(
+            "/api/chambers/{id}/messages",
+            get(crate::web::routes::chamber::get_messages),
+        )
+        .route(
+            "/api/chambers/{id}/send",
+            post(crate::web::routes::chamber::post_send),
+        )
+        .route(
+            "/api/chambers/{id}/wake",
+            post(crate::web::routes::chamber::post_wake),
+        )
+        .route(
+            "/api/chambers/{id}/start",
+            post(crate::web::routes::chamber::post_start),
+        )
+        .route(
+            "/api/chambers/{id}/stop",
+            post(crate::web::routes::chamber::post_stop),
+        )
+        .route(
+            "/api/chambers/{id}/restart",
+            post(crate::web::routes::chamber::post_restart),
+        )
+        .route("/api/events", get(crate::web::routes::events::get_events))
+        .with_state(app)
 }
 
 pub async fn serve(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
-    crate::message::ensure_dirs(&workspace_dir)?;
-    let app = build_router(workspace_dir);
+    let app = Arc::new(WebAppState::new(workspace_dir));
+    app.refresh();
+    let router = build_router_with_state(app);
     let addr = format!("{host}:{port}");
+    if !host.starts_with("127.") && host != "localhost" {
+        eprintln!(
+            "Warning: cryo web is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1 unless you know what you're doing."
+        );
+    }
     println!("Cryochamber web UI: http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, router).await?;
     Ok(())
 }
 
