@@ -16,7 +16,13 @@ use std::sync::Arc;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::{config, log, message, state};
+use crate::{config, log, message, state as crate_state};
+
+pub mod discovery;
+pub mod state;
+pub mod watchers;
+pub mod lifecycle;
+pub mod routes;
 
 const WEB_HTML: &str = include_str!("../../templates/web.html");
 
@@ -85,10 +91,10 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Json<Value> {
         .flatten()
         .unwrap_or_default();
 
-    let (running, session, agent) = match state::load_state(&state::state_path(dir)).ok().flatten()
+    let (running, session, agent) = match crate_state::load_state(&crate_state::state_path(dir)).ok().flatten()
     {
         Some(st) => {
-            let is_running = state::is_locked(&st);
+            let is_running = crate_state::is_locked(&st);
             let effective_agent = st
                 .agent_override
                 .as_deref()
@@ -370,7 +376,7 @@ pub fn spawn_watchers(project_dir: &Path, tx: tokio::sync::broadcast::Sender<Sse
     let dir3 = project_dir.to_path_buf();
     let tx_state = tx;
     std::thread::spawn(move || {
-        let state_path = crate::state::state_path(&dir3);
+        let state_path = crate_state::state_path(&dir3);
         let mut last_content = std::fs::read_to_string(&state_path).unwrap_or_default();
 
         loop {
