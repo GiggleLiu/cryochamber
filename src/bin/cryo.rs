@@ -364,11 +364,6 @@ fn cmd_daemon() -> Result<()> {
 
 fn cmd_web(host: Option<String>, port: Option<u16>, foreground: bool, stop: bool) -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    require_valid_project(&dir)?;
-
-    let cfg = config::load_config(&config::config_path(&dir))?.unwrap_or_default();
-    let host = host.unwrap_or(cfg.web_host);
-    let port = port.unwrap_or(cfg.web_port);
 
     if stop {
         if cryochamber::service::uninstall("web", &dir)? {
@@ -378,6 +373,24 @@ fn cmd_web(host: Option<String>, port: Option<u16>, foreground: bool, stop: bool
         }
         return Ok(());
     }
+
+    let has_chambers_dir = dir.join("chambers").is_dir();
+    let is_chamber = cryochamber::config::config_path(&dir).exists();
+    if is_chamber && !has_chambers_dir {
+        anyhow::bail!(
+            "cryo web now runs in workspace mode.\n\n\
+             This directory contains a cryo.toml (it's a chamber), not a chambers/ directory.\n\
+             Create a workspace:\n  \
+               mkdir -p ~/cryo-workspace/chambers\n  \
+               ln -s {} ~/cryo-workspace/chambers/{}\n  \
+               cd ~/cryo-workspace && cryo web\n",
+            dir.display(),
+            dir.file_name().and_then(|s| s.to_str()).unwrap_or("this-chamber"),
+        );
+    }
+
+    let host = host.unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = port.unwrap_or(8765);
 
     if foreground {
         let rt = tokio::runtime::Runtime::new()?;
@@ -394,7 +407,7 @@ fn cmd_web(host: Option<String>, port: Option<u16>, foreground: bool, stop: bool
             &log_path,
             true,
         )?;
-        println!("Web UI service installed: http://{}:{}", host, port);
+        println!("Web UI service installed: http://{host}:{port}");
         println!("Log: cryo-web.log");
         println!("Survives reboot. Stop with: cryo web --stop");
         Ok(())
@@ -406,6 +419,7 @@ fn cmd_web_daemon(host: String, port: u16) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(cryochamber::web::serve(dir, &host, port))
 }
+
 
 fn cmd_status() -> Result<()> {
     let dir = cryochamber::work_dir()?;
