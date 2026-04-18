@@ -73,8 +73,7 @@ fn launch_daemon(dir: &Path) -> Result<()> {
     if std::env::var("CRYO_NO_SERVICE").is_ok() {
         crate::process::spawn_daemon(dir)?;
     } else {
-        let exe =
-            std::env::current_exe().context("Failed to resolve cryo executable path")?;
+        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
         let log_path = crate::log::log_path(dir);
         crate::service::install("daemon", dir, &exe, &["daemon"], &log_path, false)?;
     }
