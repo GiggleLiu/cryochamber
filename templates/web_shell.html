@@ -166,11 +166,178 @@
     renderRail();
   }
 
+  let view = null;
+
+  function newView() {
+    return {
+      chamberId: null,
+      headerName: null,
+      headerMeta: null,
+      headerTaskLine: null,
+      planCompleteBox: null,
+      lifecycleBtns: null,
+      panels: { todos: null, sync: null, log: null },
+      lastMsgKey: null,
+      lastTodoSig: null,
+      lastSyncSig: null,
+      lastLifecycleSig: null,
+    };
+  }
+
+  function btn(label, onClick, cls) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function statusDotChar(entry) {
+    if (entry.config_error) return '✗';
+    if (entry.source === 'external') return '⚠';
+    if (entry.completed && !entry.running) return '✓';
+    return entry.running ? '●' : '○';
+  }
+
+  function buildHead(pane, entry, status) {
+    const head = document.createElement('div');
+    head.className = 'thread-head';
+
+    const left = document.createElement('div');
+    left.className = 'left';
+    const title = document.createElement('div');
+    title.className = 'title';
+    const name = document.createElement('span');
+    name.textContent = entry.name;
+    const session = document.createElement('span');
+    session.className = 'session';
+    left.appendChild(title);
+    title.appendChild(name);
+    title.appendChild(session);
+
+    const task = document.createElement('div');
+    task.className = 'task';
+    left.appendChild(task);
+
+    const plan = document.createElement('div');
+    plan.className = 'plan-complete';
+    plan.style.display = 'none';
+    left.appendChild(plan);
+
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'lifecycle';
+    left.appendChild(lifecycle);
+
+    const right = document.createElement('div');
+    const wake = document.createElement('span');
+    wake.className = 'wake-chip';
+    right.appendChild(wake);
+
+    head.appendChild(left);
+    head.appendChild(right);
+    pane.appendChild(head);
+
+    view.headerName = name;
+    view.headerMeta = session;
+    view.headerTaskLine = task;
+    view.planCompleteBox = plan;
+    view.lifecycleBtns = lifecycle;
+    view.wakeChip = wake;
+
+    updateHead(entry, status);
+    updateLifecycleButtons(entry);
+  }
+
+  function updateHead(entry, status) {
+    const dot = statusDotChar(entry);
+    view.headerName.textContent = entry.name;
+    view.headerMeta.textContent = `SESSION #${status.session}`;
+    if (status.completed) {
+      view.planCompleteBox.style.display = '';
+      view.planCompleteBox.textContent = '✓ Plan complete' +
+        (status.completion_summary ? ': ' + status.completion_summary : '');
+      view.headerTaskLine.textContent = '';
+    } else {
+      view.planCompleteBox.style.display = 'none';
+      if (status.task) {
+        view.headerTaskLine.innerHTML =
+          '<span class="label">Task</span>' + escapeHtml(status.task);
+      } else {
+        view.headerTaskLine.textContent = '';
+      }
+    }
+    if (status.next_wake) {
+      view.wakeChip.innerHTML = '<span class="pulse"></span>next wake · ' +
+        escapeHtml(status.next_wake);
+      view.wakeChip.style.display = '';
+    } else {
+      view.wakeChip.style.display = 'none';
+    }
+  }
+
+  function updateLifecycleButtons(entry) {
+    const sig = `${entry.source}|${entry.running}|${!!entry.config_error}`;
+    if (sig === view.lastLifecycleSig) return;
+    view.lastLifecycleSig = sig;
+    const btns = view.lifecycleBtns;
+    btns.innerHTML = '';
+    const disabled = entry.source === 'external';
+    if (entry.source === 'workspace') {
+      if (entry.running) {
+        btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
+        btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop')));
+        btns.appendChild(btn('restart', () => lifecycle(entry.id, 'restart')));
+      } else if (!entry.config_error) {
+        btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary'));
+      }
+      if (!entry.config_error) {
+        btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger'));
+      }
+    } else if (!disabled) {
+      btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
+    } else {
+      btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
+    }
+  }
+
+  function confirmReset(id, name) {
+    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive cryo.log and cryo-agent.log to history/<timestamp>/\n  • start a new session (session counter resets to #1)\n\nThis cannot be undone.`;
+    if (window.confirm(msg)) lifecycle(id, 'reset');
+  }
+
+  async function lifecycle(id, action) {
+    try {
+      const opts = { method: 'POST' };
+      if (action === 'wake') {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify({});
+      }
+      const resp = await fetchJSON(`/api/chambers/${id}/${action}`, opts);
+      toast(resp.message || action, resp.ok ? '' : 'error');
+      await loadChambers();
+      if (state.currentId === id) await buildDetail(id);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function buildDetail(id) {
+    const entry = state.chambers.find(c => c.id === id);
+    if (!entry) return;
+    const pane = document.getElementById('pane');
+    const status = await fetchJSON(`/api/chambers/${id}/status`);
+    pane.innerHTML = '';
+    view = newView();
+    view.chamberId = id;
+    buildHead(pane, entry, status);
+    document.getElementById('drawer').hidden = false;
+  }
+
   async function selectChamber(id) {
     state.currentId = id;
     window.history.pushState({}, '', `/c/${id}`);
     renderRail();
-    // Detail rendering is wired in Task 5.
+    await buildDetail(id);
   }
 
   document.getElementById('refresh').addEventListener('click', async () => {
