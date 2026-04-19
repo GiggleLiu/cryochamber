@@ -1,8 +1,10 @@
 use anyhow::Result;
-use chrono::{NaiveDateTime, NaiveTime, Utc};
+use chrono::{Local, NaiveDateTime, NaiveTime, Utc};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::log::{self, SessionOutcome};
+use crate::message::{self, Message};
 
 /// Aggregated report for a time period.
 #[derive(Debug, Clone)]
@@ -33,8 +35,14 @@ pub fn generate_report(log_path: &Path, since: NaiveDateTime) -> Result<ReportSu
     })
 }
 
-/// Send a desktop notification with the report summary.
-pub fn send_report_notification(summary: &ReportSummary, project_name: &str) -> Result<()> {
+/// Write the periodic report to `messages/outbox/` so it flows through whichever
+/// sync channel the user has configured (Zulip, GitHub Discussions, external
+/// watcher, etc.). Returns the path of the written message.
+pub fn write_report_to_outbox(
+    work_dir: &Path,
+    summary: &ReportSummary,
+    project_name: &str,
+) -> Result<std::path::PathBuf> {
     let period_label = match summary.period_hours {
         0..=23 => format!("{}h", summary.period_hours),
         24..=167 => format!("{}d", summary.period_hours / 24),
@@ -44,22 +52,26 @@ pub fn send_report_notification(summary: &ReportSummary, project_name: &str) -> 
         "Last {}: {} sessions, {} failed",
         period_label, summary.total_sessions, summary.failed_sessions,
     );
-    let mut notification = notify_rust::Notification::new();
-    notification
-        .summary(&format!("Cryochamber Report: {}", project_name))
-        .body(&body);
-    #[cfg(target_os = "linux")]
-    {
-        notification.urgency(notify_rust::Urgency::Normal);
-        notification.timeout(notify_rust::Timeout::Milliseconds(10000));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        notification.subtitle("Periodic report");
-        notification.sound_name("Tink");
-    }
-    notification.show()?;
-    Ok(())
+
+    message::ensure_dirs(work_dir)?;
+    let msg = Message {
+        from: "cryochamber".to_string(),
+        subject: format!("Cryochamber Report: {}", project_name),
+        body,
+        timestamp: Local::now().naive_local(),
+        metadata: BTreeMap::from([
+            (
+                "total_sessions".to_string(),
+                summary.total_sessions.to_string(),
+            ),
+            (
+                "failed_sessions".to_string(),
+                summary.failed_sessions.to_string(),
+            ),
+            ("period_hours".to_string(), summary.period_hours.to_string()),
+        ]),
+    };
+    message::write_message(work_dir, "outbox", &msg)
 }
 
 /// Compute the next report time based on config and last report.
@@ -105,7 +117,7 @@ pub fn compute_next_report_time(
 mod tests {
     use super::*;
     use crate::log::EventLogger;
-    use chrono::{Local, Timelike};
+    use chrono::Timelike;
 
     #[test]
     fn test_generate_report_counts() {
@@ -154,6 +166,54 @@ mod tests {
         let report = generate_report(&log_path, since).unwrap();
         assert_eq!(report.total_sessions, 0);
         assert_eq!(report.failed_sessions, 0);
+    }
+
+    #[test]
+    fn test_write_report_to_outbox_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let summary = ReportSummary {
+            total_sessions: 8,
+            failed_sessions: 1,
+            period_hours: 24,
+        };
+        let path = write_report_to_outbox(dir.path(), &summary, "my-project").unwrap();
+
+        assert!(path.exists(), "outbox file should exist");
+        assert!(
+            path.starts_with(dir.path().join("messages").join("outbox")),
+            "file should be in messages/outbox/: {}",
+            path.display()
+        );
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("Cryochamber Report: my-project"),
+            "subject missing from outbox file: {content}"
+        );
+        assert!(
+            content.contains("Last 1d: 8 sessions, 1 failed"),
+            "body missing from outbox file: {content}"
+        );
+    }
+
+    #[test]
+    fn test_write_report_to_outbox_period_labels() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let hourly = ReportSummary {
+            total_sessions: 1,
+            failed_sessions: 0,
+            period_hours: 3,
+        };
+        let p = write_report_to_outbox(dir.path(), &hourly, "p").unwrap();
+        assert!(std::fs::read_to_string(&p).unwrap().contains("Last 3h:"));
+
+        let weekly = ReportSummary {
+            total_sessions: 50,
+            failed_sessions: 2,
+            period_hours: 168,
+        };
+        let p = write_report_to_outbox(dir.path(), &weekly, "p").unwrap();
+        assert!(std::fs::read_to_string(&p).unwrap().contains("Last 1w:"));
     }
 
     #[test]
