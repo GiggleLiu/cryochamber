@@ -398,6 +398,93 @@
     view.logBox = logBox;
   }
 
+  function syncSignature(sync) {
+    if (!sync || !sync.length) return '0:';
+    return sync.length + ':' + sync.map(s =>
+      `${s.backend}|${s.running}|${s.installed}|${s.target}|${s.last_pushed_session ?? ''}`
+    ).join(',');
+  }
+
+  function buildSyncBox(sync) {
+    view.syncBox.className = 'sync-box';
+    view.syncBox.style.display = 'none';
+    updateSyncBox(sync);
+  }
+
+  function updateSyncBox(sync) {
+    const sig = syncSignature(sync);
+    if (sig === view.lastSyncSig) return;
+    view.lastSyncSig = sig;
+    const box = view.syncBox;
+    box.innerHTML = '';
+    if (!sync || !sync.length) {
+      box.style.display = 'none';
+      return;
+    }
+    box.style.display = '';
+
+    const title = document.createElement('div');
+    title.className = 'sync-title';
+    title.textContent = 'Sync';
+    box.appendChild(title);
+
+    for (const s of sync) {
+      const row = document.createElement('div');
+      row.className = 'sync-row';
+
+      const dot = document.createElement('span');
+      dot.className = 'sync-dot';
+      let dotChar = '○';
+      if (s.running) { dotChar = '●'; dot.classList.add('running'); }
+      else if (s.configured && !s.installed) { dotChar = '⚠'; dot.classList.add('warning'); }
+      else { dot.classList.add('stopped'); }
+      dot.textContent = dotChar;
+
+      const label = document.createElement('span');
+      label.className = 'sync-backend';
+      label.textContent = s.backend;
+
+      const target = document.createElement('span');
+      target.className = 'sync-target';
+      target.textContent = s.target;
+      target.title = s.target;
+
+      const meta = document.createElement('span');
+      meta.className = 'sync-meta';
+      meta.textContent = s.last_pushed_session != null ? `last push: session #${s.last_pushed_session}` : '';
+
+      const actions = document.createElement('span');
+      actions.className = 'sync-actions';
+      const toggle = btn(s.running ? 'stop' : 'start', () => {
+        if (s.running) {
+          if (!window.confirm('Stop sync and uninstall service?')) return;
+        }
+        syncAction(view.chamberId, s.backend, s.running ? 'stop' : 'start');
+      });
+      const pullBtn = btn('pull', () => syncAction(view.chamberId, s.backend, 'pull'));
+      const pushBtn = btn('push', () => syncAction(view.chamberId, s.backend, 'push'));
+      actions.appendChild(toggle);
+      actions.appendChild(pullBtn);
+      actions.appendChild(pushBtn);
+
+      row.appendChild(dot);
+      row.appendChild(label);
+      row.appendChild(target);
+      row.appendChild(meta);
+      row.appendChild(actions);
+      box.appendChild(row);
+    }
+  }
+
+  async function syncAction(id, backend, verb) {
+    try {
+      const resp = await fetchJSON(`/api/chambers/${id}/sync/${backend}/${verb}`, { method: 'POST' });
+      toast(resp.message || verb, resp.ok ? '' : 'error');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
