@@ -238,6 +238,9 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let sync_path = gh_sync_path(&dir);
 
     eprintln!("Sync daemon started (PID {})", std::process::id());
+    let pid_path = cryochamber::gh_sync::sync_pid_path(&dir);
+    std::fs::write(&pid_path, std::process::id().to_string())
+        .context("Failed to write cryo-gh-sync.pid")?;
 
     // Register signal handlers
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -321,6 +324,7 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     }
 
     eprintln!("Sync: stopped");
+    let _ = std::fs::remove_file(&pid_path);
     Ok(())
 }
 
