@@ -72,6 +72,19 @@ pub fn is_sync_running(dir: &Path) -> bool {
     }
 }
 
+pub fn summarize(dir: &Path) -> Option<crate::sync_common::SyncSummary> {
+    let state = load_sync_state(&dir.join("gh-sync.json")).ok().flatten()?;
+    Some(crate::sync_common::SyncSummary {
+        backend: crate::sync_common::SyncBackend::Gh,
+        configured: true,
+        installed: crate::service::is_installed("gh-sync", dir),
+        running: is_sync_running(dir),
+        target: format!("{}#{}", state.repo, state.discussion_number),
+        last_pushed_session: state.last_pushed_session,
+        log_tail_path: dir.join("cryo-gh-sync.log"),
+    })
+}
+
 #[cfg(test)]
 mod pid_tests {
     use super::*;
