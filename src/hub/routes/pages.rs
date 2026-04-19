@@ -15,8 +15,5 @@ pub async fn get_css() -> ([(&'static str, &'static str); 1], &'static str) {
 }
 
 pub async fn get_logo() -> ([(&'static str, &'static str); 1], &'static str) {
-    (
-        [("content-type", "image/svg+xml; charset=utf-8")],
-        LOGO_SVG,
-    )
+    ([("content-type", "image/svg+xml; charset=utf-8")], LOGO_SVG)
 }

@@ -113,7 +113,7 @@ fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Resul
         true,
     )?;
     println!("Cryohub service installed: http://{host}:{port}");
-    println!("Log: {LOG_FILENAME}");
+    println!("Log: {}", log_path.display());
     println!("Survives reboot. Stop with: cryohub stop");
     Ok(())
 }

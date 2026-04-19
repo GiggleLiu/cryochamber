@@ -28,10 +28,7 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .route("/", get(crate::hub::routes::pages::get_index))
         .route("/c/{id}", get(crate::hub::routes::pages::get_index))
         .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
-        .route(
-            "/assets/logo.svg",
-            get(crate::hub::routes::pages::get_logo),
-        )
+        .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
         .route(
             "/api/chambers",
             get(crate::hub::routes::chambers::get_chambers),
