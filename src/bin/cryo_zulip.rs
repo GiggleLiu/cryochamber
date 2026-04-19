@@ -248,6 +248,9 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let sync_path = zulip_sync_path(&dir);
 
     eprintln!("Zulip sync daemon started (PID {})", std::process::id());
+    let pid_path = cryochamber::zulip_sync::sync_pid_path(&dir);
+    std::fs::write(&pid_path, std::process::id().to_string())
+        .context("Failed to write cryo-zulip-sync.pid")?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
@@ -334,6 +337,7 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     }
 
     eprintln!("Zulip sync: stopped");
+    let _ = std::fs::remove_file(&pid_path);
     Ok(())
 }
 
