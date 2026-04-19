@@ -380,6 +380,7 @@ mod tests {
                 next_wake: None,
                 unread: 0,
                 completed: false,
+                sync: vec![],
             };
             app.chambers.write().unwrap().insert(id.clone(), entry);
             id

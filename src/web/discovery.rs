@@ -37,6 +37,12 @@ pub fn decode_id(id: &str) -> Option<PathBuf> {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncBadge {
+    pub backend: String,
+    pub running: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ChamberEntry {
     pub id: String,
     pub name: String,
@@ -48,6 +54,7 @@ pub struct ChamberEntry {
     pub next_wake: Option<String>,
     pub unread: usize,
     pub completed: bool,
+    pub sync: Vec<SyncBadge>,
 }
 
 /// A map from chamber id → entry.
@@ -95,6 +102,7 @@ pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
                 next_wake: None,
                 unread: 0,
                 completed: false,
+                sync: vec![],
             },
         );
     }
@@ -131,6 +139,7 @@ pub fn merge_registry(idx: &mut ChamberIndex, entries: &[crate::registry::Daemon
                 next_wake: None,
                 unread: 0,
                 completed: false,
+                sync: vec![],
             },
         );
     }
@@ -167,6 +176,15 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
             .ok()
             .flatten()
             .is_some();
+
+        // Sync summaries, compact badge form (full detail served by GET /sync)
+        entry.sync = crate::sync_common::summarize_all(dir)
+            .into_iter()
+            .map(|s| SyncBadge {
+                backend: s.backend.as_str().into(),
+                running: s.running,
+            })
+            .collect();
     }
 }
 
@@ -359,5 +377,31 @@ mod tests {
         assert_eq!(entry.session, Some(7));
         assert_eq!(entry.unread, 1);
         assert!(!entry.running, "no live pid -> not running");
+    }
+
+    #[test]
+    fn populate_reports_configured_gh_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let chambers = dir.path().join("chambers");
+        let alpha = chambers.join("alpha");
+        std::fs::create_dir_all(&alpha).unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
+        let state = crate::gh_sync::GhSyncState {
+            repo: "a/b".into(),
+            discussion_number: 1,
+            discussion_node_id: "n".into(),
+            last_read_cursor: None,
+            self_login: None,
+            last_pushed_session: None,
+        };
+        crate::gh_sync::save_sync_state(&alpha.join("gh-sync.json"), &state).unwrap();
+
+        let mut idx = scan_workspace(dir.path());
+        populate_runtime(&mut idx);
+        let entry = idx.values().next().unwrap();
+        assert_eq!(entry.sync.len(), 1);
+        assert_eq!(entry.sync[0].backend, "gh");
+        assert!(!entry.sync[0].running);
     }
 }
