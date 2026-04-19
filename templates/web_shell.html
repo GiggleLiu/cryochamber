@@ -627,6 +627,31 @@
     document.getElementById('drawer').hidden = false;
   }
 
+  async function updateDetail(id, parts) {
+    if (!view || view.chamberId !== id) return;
+    const fetches = {};
+    if (parts.status)   fetches.status   = fetchJSON(`/api/chambers/${id}/status`);
+    if (parts.messages) fetches.messages = fetchJSON(`/api/chambers/${id}/messages`);
+    if (parts.todos)    fetches.todos    = fetchJSON(`/api/chambers/${id}/todos`);
+    if (parts.sync)     fetches.sync     = fetchJSON(`/api/chambers/${id}/sync`);
+    const entries = await Promise.allSettled(
+      Object.entries(fetches).map(async ([k, p]) => [k, await p])
+    );
+    const data = {};
+    for (const r of entries) {
+      if (r.status === 'fulfilled') data[r.value[0]] = r.value[1];
+    }
+    const entry = state.chambers.find(c => c.id === id);
+    if (entry && data.status) {
+      updateHead(entry, data.status);
+      updateLifecycleButtons(entry);
+      renderLog(data.status); // refreshes log_tail baseline
+    }
+    if (data.sync)     renderSync(id, data.sync);
+    if (data.todos)    renderTodos(data.todos);
+    if (data.messages) updateMessages(data.messages);
+  }
+
   async function selectChamber(id) {
     state.currentId = id;
     window.history.pushState({}, '', `/c/${id}`);
@@ -642,6 +667,27 @@
   });
 
   initDrawerTabs();
+
+  const evt = new EventSource('/api/events');
+  evt.addEventListener('message', async e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) {
+      await updateDetail(state.currentId, { messages: true });
+    }
+    await loadChambers();
+  });
+  evt.addEventListener('status', async e => {
+    const d = JSON.parse(e.data);
+    await loadChambers();
+    if (state.currentId === d.chamber_id) {
+      await updateDetail(state.currentId, { status: true, todos: true, sync: true });
+    }
+  });
+  evt.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) appendLogLine(d.line);
+  });
+  evt.addEventListener('index', async () => { await loadChambers(); });
 
   // Expose for subsequent task wiring.
   window.__hub = { state, fetchJSON, toast, escapeHtml, hash32, renderRail, loadChambers, selectChamber };
