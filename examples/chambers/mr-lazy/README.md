@@ -12,7 +12,7 @@ for cross-session memory, probabilistic plan completion.
 ## Quick Start
 
 ```bash
-cd examples/mr-lazy
+cd examples/chambers/mr-lazy
 cryo init && cryo start
 cryo web   # open the browser chat UI (port 3946)
 ```

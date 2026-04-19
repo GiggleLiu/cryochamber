@@ -45,6 +45,10 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             get(crate::web::routes::chamber::get_messages),
         )
         .route(
+            "/api/chambers/{id}/todos",
+            get(crate::web::routes::chamber::get_todos),
+        )
+        .route(
             "/api/chambers/{id}/send",
             post(crate::web::routes::chamber::post_send),
         )
@@ -63,6 +67,10 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .route(
             "/api/chambers/{id}/restart",
             post(crate::web::routes::chamber::post_restart),
+        )
+        .route(
+            "/api/chambers/{id}/reset",
+            post(crate::web::routes::chamber::post_reset),
         )
         .route("/api/events", get(crate::web::routes::events::get_events))
         .with_state(app)

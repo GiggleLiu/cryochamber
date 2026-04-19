@@ -53,9 +53,10 @@ enum Commands {
     },
     /// Read inbox messages from human
     Receive,
-    /// Print current time or compute a future time
+    /// Print current time, compute a future time, or validate an ISO8601 timestamp
     Time {
-        /// Offset from now (e.g. "+30 minutes", "+2 hours", "+1 day")
+        /// Input: "+N minutes|hours|days|weeks" (relative offset)
+        /// or an absolute ISO8601 timestamp like "2026-04-25T10:00"
         offset: Option<String>,
     },
     /// Manage TODO items across sessions
@@ -163,35 +164,170 @@ fn cmd_time(offset: Option<&str>) -> Result<()> {
 
     let now = Local::now();
 
-    let target = match offset {
-        None => now,
+    let formatted = match offset {
+        None => now.format("%Y-%m-%dT%H:%M").to_string(),
         Some(s) => {
-            let s = s.trim().trim_start_matches('+');
-            let parts: Vec<&str> = s.splitn(2, ' ').collect();
-            if parts.len() != 2 {
-                anyhow::bail!(
-                    "Invalid offset format. Use e.g. \"+30 minutes\", \"+2 hours\", \"+1 day\""
-                );
+            let s = s.trim();
+            if looks_like_iso_date(s) {
+                parse_iso_timestamp(s)?
+            } else {
+                let dt = now + parse_relative_offset(s)?;
+                dt.format("%Y-%m-%dT%H:%M").to_string()
             }
-            let n: i64 = parts[0]
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid number: {}", parts[0]))?;
-            let unit = parts[1].trim_end_matches('s'); // "minutes" -> "minute"
-            let duration = match unit {
-                "minute" | "min" => chrono::Duration::minutes(n),
-                "hour" | "hr" => chrono::Duration::hours(n),
-                "day" => chrono::Duration::days(n),
-                "week" => chrono::Duration::weeks(n),
-                _ => {
-                    anyhow::bail!("Unknown time unit: {unit}. Use minutes, hours, days, or weeks.")
-                }
-            };
-            now + duration
         }
     };
 
-    println!("{}", target.format("%Y-%m-%dT%H:%M"));
+    println!("{formatted}");
     Ok(())
+}
+
+/// Accepted forms for `cryo-agent time` input, as a user-facing error body.
+fn time_usage_error(got: &str) -> String {
+    format!(
+        "unrecognized time expression {got:?}.\n\
+         Accepted forms:\n  \
+           (no argument)          # current time\n  \
+           +30 minutes            # relative offset (minutes|hours|days|weeks)\n  \
+           2026-04-25T10:00       # absolute ISO8601\n\
+         For natural expressions like \"tomorrow 9am\", compute the absolute\n\
+         timestamp yourself from the current time and pass it directly."
+    )
+}
+
+/// Heuristic: input starts with `YYYY-MM-DD` → try ISO8601.
+fn looks_like_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 10
+        && b[0..4].iter().all(|c| c.is_ascii_digit())
+        && b[4] == b'-'
+        && b[5..7].iter().all(|c| c.is_ascii_digit())
+        && b[7] == b'-'
+        && b[8..10].iter().all(|c| c.is_ascii_digit())
+}
+
+/// Parse an ISO8601-ish absolute timestamp and return it normalized to `%Y-%m-%dT%H:%M`.
+fn parse_iso_timestamp(s: &str) -> Result<String> {
+    let dt_formats = [
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+    ];
+    for fmt in &dt_formats {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
+            return Ok(dt.format("%Y-%m-%dT%H:%M").to_string());
+        }
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let dt = date.and_hms_opt(0, 0, 0).unwrap();
+        return Ok(dt.format("%Y-%m-%dT%H:%M").to_string());
+    }
+    anyhow::bail!("{}", time_usage_error(s))
+}
+
+/// Parse "+N minutes|hours|days|weeks" (the `+` is optional).
+fn parse_relative_offset(s: &str) -> Result<chrono::Duration> {
+    let rel = s.trim_start_matches('+');
+    let parts: Vec<&str> = rel.splitn(2, ' ').collect();
+    if parts.len() != 2 {
+        anyhow::bail!("{}", time_usage_error(s));
+    }
+    let n: i64 = parts[0]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{}", time_usage_error(s)))?;
+    let unit = parts[1].trim_end_matches('s');
+    match unit {
+        "minute" | "min" => Ok(chrono::Duration::minutes(n)),
+        "hour" | "hr" => Ok(chrono::Duration::hours(n)),
+        "day" => Ok(chrono::Duration::days(n)),
+        "week" => Ok(chrono::Duration::weeks(n)),
+        _ => anyhow::bail!("{}", time_usage_error(s)),
+    }
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::*;
+
+    #[test]
+    fn iso_pass_through_minute_precision() {
+        assert_eq!(
+            parse_iso_timestamp("2026-04-25T10:00").unwrap(),
+            "2026-04-25T10:00"
+        );
+    }
+
+    #[test]
+    fn iso_pass_through_second_precision_truncates() {
+        assert_eq!(
+            parse_iso_timestamp("2026-04-25T10:00:42").unwrap(),
+            "2026-04-25T10:00"
+        );
+    }
+
+    #[test]
+    fn iso_space_separator_accepted() {
+        assert_eq!(
+            parse_iso_timestamp("2026-04-25 10:00").unwrap(),
+            "2026-04-25T10:00"
+        );
+    }
+
+    #[test]
+    fn iso_date_only_gets_midnight() {
+        assert_eq!(
+            parse_iso_timestamp("2026-04-25").unwrap(),
+            "2026-04-25T00:00"
+        );
+    }
+
+    #[test]
+    fn iso_invalid_date_rejected() {
+        let err = parse_iso_timestamp("2026-13-40").unwrap_err().to_string();
+        assert!(err.contains("unrecognized time expression"));
+    }
+
+    #[test]
+    fn relative_offset_plus_prefix() {
+        let d = parse_relative_offset("+30 minutes").unwrap();
+        assert_eq!(d.num_minutes(), 30);
+    }
+
+    #[test]
+    fn relative_offset_no_plus_prefix() {
+        let d = parse_relative_offset("2 hours").unwrap();
+        assert_eq!(d.num_hours(), 2);
+    }
+
+    #[test]
+    fn relative_offset_singular_unit() {
+        let d = parse_relative_offset("+1 day").unwrap();
+        assert_eq!(d.num_days(), 1);
+    }
+
+    #[test]
+    fn relative_offset_weeks() {
+        let d = parse_relative_offset("+2 weeks").unwrap();
+        assert_eq!(d.num_days(), 14);
+    }
+
+    #[test]
+    fn relative_offset_unknown_unit_lists_accepted_forms() {
+        let err = parse_relative_offset("+1 fortnight")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unrecognized time expression"));
+        assert!(err.contains("Accepted forms"));
+        assert!(err.contains("ISO8601"));
+    }
+
+    #[test]
+    fn looks_like_iso_detects_date_prefix() {
+        assert!(looks_like_iso_date("2026-04-25"));
+        assert!(looks_like_iso_date("2026-04-25T10:00"));
+        assert!(!looks_like_iso_date("tomorrow 9am"));
+        assert!(!looks_like_iso_date("+30 minutes"));
+    }
 }
 
 fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {

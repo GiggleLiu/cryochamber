@@ -47,14 +47,6 @@ pub struct CryoConfig {
     #[serde(default = "default_watch_inbox")]
     pub watch_inbox: bool,
 
-    /// Web UI host (default: 127.0.0.1)
-    #[serde(default = "default_web_host")]
-    pub web_host: String,
-
-    /// Web UI port (default: 3945)
-    #[serde(default = "default_web_port")]
-    pub web_port: u16,
-
     /// Fallback alert method: "notify" (desktop popup), "outbox" (file only), "none"
     #[serde(default = "default_fallback_alert")]
     pub fallback_alert: String,
@@ -96,14 +88,6 @@ fn default_watch_inbox() -> bool {
     true
 }
 
-fn default_web_host() -> String {
-    "127.0.0.1".to_string()
-}
-
-fn default_web_port() -> u16 {
-    3945
-}
-
 fn default_fallback_alert() -> String {
     "notify".to_string()
 }
@@ -123,8 +107,6 @@ impl Default for CryoConfig {
             max_retries: default_max_retries(),
             max_session_duration: 0,
             watch_inbox: default_watch_inbox(),
-            web_host: default_web_host(),
-            web_port: default_web_port(),
             fallback_alert: default_fallback_alert(),
             report_time: default_report_time(),
             report_interval: 0,

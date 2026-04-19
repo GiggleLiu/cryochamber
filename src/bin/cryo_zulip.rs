@@ -82,7 +82,16 @@ fn cmd_init(config_path: &str, stream_name: &str, topic: Option<&str>) -> Result
     println!("Authenticated as {self_email}");
 
     println!("Resolving stream '{stream_name}'...");
-    let stream_id = client.get_stream_id(stream_name)?;
+    let stream_id = client.get_stream_id(stream_name).map_err(|e| {
+        anyhow::anyhow!(
+            "Could not resolve stream '{stream_name}'. Likely causes:\n  \
+             1. The stream does not exist — verify the name in Zulip.\n  \
+             2. The bot ({self_email}) is not subscribed to the stream —\n     \
+                add it in Zulip: stream settings → Subscribers → add user.\n  \
+             3. The stream is private and the bot lacks access.\n\n\
+             Underlying error: {e}"
+        )
+    })?;
     println!("Stream ID: {stream_id}");
 
     let sync_state = cryochamber::zulip_sync::ZulipSyncState {

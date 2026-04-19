@@ -340,6 +340,11 @@
   font-size: 12px;
 }
 .lifecycle-buttons button:hover { background: var(--accent-dim); }
+.lifecycle-buttons button.danger { color: var(--red); border-color: var(--red); }
+.lifecycle-buttons button.danger:hover {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--red);
+}
 .toast {
   position: fixed;
   bottom: 20px;
@@ -353,3 +358,50 @@
   display: none;
 }
 .toast.error { border-color: var(--red); color: var(--red); }
+
+/* ----- Plan complete banner ----- */
+.plan-complete {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: rgba(63, 185, 80, 0.12);
+  border: 1px solid var(--green);
+  border-radius: 4px;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ----- Todos ----- */
+.todos {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.todos-title {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.todo-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  line-height: 1.4;
+}
+.todo-row.done { color: var(--text-dim); }
+.todo-row.done .todo-text { text-decoration: line-through; }
+.todo-check { color: var(--text-dim); flex-shrink: 0; }
+.todo-row.done .todo-check { color: var(--green); }
+.todo-text { flex: 1; word-break: break-word; }
+.todo-at {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}

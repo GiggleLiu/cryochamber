@@ -96,8 +96,8 @@ cryo ps              # list all running daemons
 
 ## Example Run
 
-The [`examples/mr-lazy/`](https://github.com/GiggleLiu/cryochamber/tree/main/examples/mr-lazy) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
+The [`examples/chambers/mr-lazy/`](https://github.com/GiggleLiu/cryochamber/tree/main/examples/chambers/mr-lazy) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
 
 ```bash
-cd examples/mr-lazy && cryo init && cryo start && cryo watch
+cd examples/chambers/mr-lazy && cryo init && cryo start && cryo watch
 ```

@@ -53,6 +53,10 @@ pub fn status_json(dir: &Path) -> Value {
     let task = crate::log::parse_latest_session_task(&log_file)
         .ok()
         .flatten();
+    let completion_summary = crate::log::parse_latest_session_plan_complete(&log_file)
+        .ok()
+        .flatten();
+    let completed = completion_summary.is_some();
 
     let next_wake_rel = next_wake.as_deref().and_then(|w| {
         let wake = chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok()?;
@@ -72,7 +76,17 @@ pub fn status_json(dir: &Path) -> Value {
         "next_wake": next_wake_rel,
         "notes": notes,
         "task": task,
+        "completed": completed,
+        "completion_summary": completion_summary,
     })
+}
+
+/// Build the JSON TODO list for a chamber. Items are returned in file order
+/// (i.e. insertion order). Missing `todo.json` and parse errors both yield `[]`.
+pub fn todos_json(dir: &Path) -> Value {
+    let path = dir.join("todo.json");
+    let list = crate::todo::TodoList::load(&path).unwrap_or_default();
+    serde_json::to_value(list.items()).unwrap_or_else(|_| Value::Array(Vec::new()))
 }
 
 /// Build the list of all messages (archive + inbox + outbox) for a chamber.
@@ -125,6 +139,14 @@ pub async fn get_messages(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(messages_json(&path)))
+}
+
+pub async fn get_todos(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let (path, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(todos_json(&path)))
 }
 
 #[derive(Deserialize)]
@@ -249,6 +271,24 @@ pub async fn post_restart(
     }
 }
 
+pub async fn post_reset(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    require_workspace(&entry)?;
+    let result = crate::web::lifecycle::reset_chamber(&path);
+    app.refresh();
+    match result {
+        Ok(archive) => Ok(Json(json!({
+            "ok": true,
+            "message": format!("Reset: logs archived to {}", archive.display()),
+            "archive": archive.display().to_string(),
+        }))),
+        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +299,32 @@ mod tests {
         let v = status_json(dir.path());
         assert_eq!(v["running"], false);
         assert_eq!(v["session"], 0);
+    }
+
+    #[test]
+    fn todos_json_is_empty_array_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = todos_json(dir.path());
+        assert_eq!(v, serde_json::json!([]));
+    }
+
+    #[test]
+    fn todos_json_returns_items_in_file_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut list = crate::todo::TodoList::new();
+        list.add("first".into(), "2026-05-01T10:00".into());
+        let id2 = list.add("second".into(), "2026-04-01T10:00".into());
+        list.done(id2).unwrap();
+        list.save(&dir.path().join("todo.json")).unwrap();
+
+        let v = todos_json(dir.path());
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["text"], "first");
+        assert_eq!(arr[0]["done"], false);
+        assert_eq!(arr[0]["at"], "2026-05-01T10:00");
+        assert_eq!(arr[1]["text"], "second");
+        assert_eq!(arr[1]["done"], true);
     }
 
     #[test]
@@ -313,6 +379,7 @@ mod tests {
                 session: None,
                 next_wake: None,
                 unread: 0,
+                completed: false,
             };
             app.chambers.write().unwrap().insert(id.clone(), entry);
             id
@@ -328,7 +395,12 @@ mod tests {
             .unwrap_err();
         assert_eq!(err, StatusCode::CONFLICT);
 
-        let err = post_restart(State(app), AxumPath(id)).await.unwrap_err();
+        let err = post_restart(State(app.clone()), AxumPath(id.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err, StatusCode::CONFLICT);
+
+        let err = post_reset(State(app), AxumPath(id)).await.unwrap_err();
         assert_eq!(err, StatusCode::CONFLICT);
     }
 }

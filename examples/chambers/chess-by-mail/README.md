@@ -19,7 +19,7 @@ A cron job can't do this because:
 ## Quick Start
 
 ```bash
-cd examples/chess-by-mail
+cd examples/chambers/chess-by-mail
 cryo init && cryo start
 cryo web   # open the browser chat UI (port 3947)
 ```
@@ -44,7 +44,7 @@ The AI uses `chess_engine.py` (powered by `python-chess` via uv) for all chess o
 You can play from the Zulip web UI instead of the terminal by connecting a Zulip stream:
 
 ```bash
-cd examples/chess-by-mail
+cd examples/chambers/chess-by-mail
 
 # Connect to a Zulip stream (requires a zuliprc with bot credentials)
 cryo-zulip init --config ~/.zuliprc --stream chess-game

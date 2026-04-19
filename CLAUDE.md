@@ -25,8 +25,9 @@ make clippy         # cargo clippy (warnings are errors)
 make coverage       # generate coverage report (auto-installs cargo-llvm-cov)
 make cli            # cargo install --path .
 make logo           # compile logo with typst
-make example        # run an example (DIR=examples/mr-lazy or DIR=examples/chess-by-mail)
-make example-cancel # stop a running example (DIR=examples/...)
+make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)
+make example-cancel # stop a running example (DIR=examples/chambers/...)
+make example-web    # start cryo web over examples/ workspace (PORT=8765)
 make example-clean  # remove auto-generated files from all examples
 make run-plan       # execute a plan with Claude headless (see Makefile for options)
 make check-agent    # quick agent smoke test (AGENT=opencode|claude)

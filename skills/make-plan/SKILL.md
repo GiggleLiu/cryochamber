@@ -95,8 +95,8 @@ After all questions:
 6. Write the file
 
 Reference existing examples for plan.md structure:
-- `examples/mr-lazy/plan.md` — simple periodic task
-- `examples/chess-by-mail/plan.md` — adaptive event-driven task
+- `examples/chambers/mr-lazy/plan.md` — simple periodic task
+- `examples/chambers/chess-by-mail/plan.md` — adaptive event-driven task
 
 ## Phase 2: Configure cryo.toml
 

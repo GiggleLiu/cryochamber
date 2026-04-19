@@ -54,6 +54,7 @@
   function statusDot(entry) {
     if (entry.config_error) return '✗';
     if (entry.source === 'external') return '⚠';
+    if (entry.completed && !entry.running) return '✓';
     return entry.running ? '●' : '○';
   }
 
@@ -123,9 +124,10 @@
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
     const pane = document.getElementById('pane');
-    const [status, messages] = await Promise.all([
+    const [status, messages, todos] = await Promise.all([
       fetchJSON(`/api/chambers/${id}/status`),
       fetchJSON(`/api/chambers/${id}/messages`),
+      fetchJSON(`/api/chambers/${id}/todos`),
     ]);
     pane.innerHTML = '';
 
@@ -141,7 +143,9 @@
         </div>
         <div class="lifecycle-buttons"></div>
       </div>
-      ${status.task ? `<div style="margin-top:6px; color: var(--text-dim); font-size:12px;">Task: ${escapeHtml(status.task)}</div>` : ''}
+      ${status.completed
+        ? `<div class="plan-complete">✓ Plan complete${status.completion_summary ? `: ${escapeHtml(status.completion_summary)}` : ''}</div>`
+        : (status.task ? `<div style="margin-top:6px; color: var(--text-dim); font-size:12px;">Task: ${escapeHtml(status.task)}</div>` : '')}
     `;
     const btns = header.querySelector('.lifecycle-buttons');
     if (entry.source === 'workspace') {
@@ -152,10 +156,45 @@
       } else if (!entry.config_error) {
         btns.appendChild(btn('start', () => lifecycle(id, 'start')));
       }
+      if (!entry.config_error) {
+        const resetBtn = btn('reset', () => confirmReset(id, entry.name));
+        resetBtn.classList.add('danger');
+        btns.appendChild(resetBtn);
+      }
     } else {
       btns.appendChild(btn('wake', () => lifecycle(id, 'wake')));
     }
     pane.appendChild(header);
+
+    if (todos && todos.length > 0) {
+      const todoBox = document.createElement('div');
+      todoBox.className = 'todos';
+      const title = document.createElement('div');
+      title.className = 'todos-title';
+      const pending = todos.filter(t => !t.done).length;
+      title.textContent = `Todos (${pending} pending / ${todos.length} total)`;
+      todoBox.appendChild(title);
+      for (const t of todos) {
+        const row = document.createElement('div');
+        row.className = 'todo-row' + (t.done ? ' done' : '');
+        const check = document.createElement('span');
+        check.className = 'todo-check';
+        check.textContent = t.done ? '☑' : '☐';
+        const text = document.createElement('span');
+        text.className = 'todo-text';
+        text.textContent = t.text;
+        row.appendChild(check);
+        row.appendChild(text);
+        if (t.at) {
+          const when = document.createElement('span');
+          when.className = 'todo-at';
+          when.textContent = t.at;
+          row.appendChild(when);
+        }
+        todoBox.appendChild(row);
+      }
+      pane.appendChild(todoBox);
+    }
 
     const msgBox = document.createElement('div');
     msgBox.style.flex = '1';
@@ -205,6 +244,13 @@
     logBox.style.borderTop = '1px solid var(--border)';
     logBox.textContent = status.log_tail || '';
     pane.appendChild(logBox);
+  }
+
+  function confirmReset(id, name) {
+    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive cryo.log and cryo-agent.log to history/<timestamp>/\n  • start a new session (session counter resets to #1)\n\nThis cannot be undone.`;
+    if (window.confirm(msg)) {
+      lifecycle(id, 'reset');
+    }
   }
 
   async function lifecycle(id, action) {

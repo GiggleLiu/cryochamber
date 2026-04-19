@@ -121,6 +121,28 @@ pub fn parse_latest_session_wake(log_path: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Extract the plan-complete summary from the latest session, if any.
+/// Matches lines like `[HH:MM:SS] hibernate: plan complete, exit=0, summary="..."`.
+/// Returns `None` if the latest session did not end with plan completion.
+pub fn parse_latest_session_plan_complete(log_path: &Path) -> Result<Option<String>> {
+    let session = match read_current_session(log_path)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    for line in session.lines() {
+        if !line.contains("hibernate: plan complete") {
+            continue;
+        }
+        let summary = line
+            .find("summary=\"")
+            .and_then(|pos| line.get(pos + "summary=\"".len()..))
+            .and_then(|rest| rest.rfind('"').map(|end| rest[..end].to_string()))
+            .unwrap_or_default();
+        return Ok(Some(summary));
+    }
+    Ok(None)
+}
+
 /// Extract the task line from the current session in cryo.log.
 pub fn parse_latest_session_task(log_path: &Path) -> Result<Option<String>> {
     let session = match read_current_session(log_path)? {
@@ -613,6 +635,46 @@ mod tests {
         let task = parse_latest_session_task(&path).unwrap();
         assert!(task.is_some(), "Should find task line");
         assert_eq!(task.unwrap(), "implement auth");
+    }
+
+    #[test]
+    fn test_parse_plan_complete_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+                       task: ship it\n\
+                       [12:00:01] agent started (pid 1)\n\
+                       [12:05:00] hibernate: plan complete, exit=0, summary=\"All tests green\"\n\
+                       --- CRYO END ---\n";
+        std::fs::write(&path, content).unwrap();
+        let summary = parse_latest_session_plan_complete(&path).unwrap();
+        assert_eq!(summary, Some("All tests green".into()));
+    }
+
+    #[test]
+    fn test_parse_plan_complete_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+                       [12:00:01] agent started\n\
+                       [12:05:00] hibernate: wake=2026-03-01T14:00, exit=0, summary=\"working\"\n\
+                       --- CRYO END ---\n";
+        std::fs::write(&path, content).unwrap();
+        assert!(parse_latest_session_plan_complete(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_parse_plan_complete_only_latest_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+                       [12:05:00] hibernate: plan complete, exit=0, summary=\"old\"\n\
+                       --- CRYO END ---\n\
+                       --- CRYO SESSION 2 | 2026-03-01T14:00:00Z ---\n\
+                       [14:05:00] hibernate: wake=2026-03-01T15:00, exit=0, summary=\"resumed\"\n\
+                       --- CRYO END ---\n";
+        std::fs::write(&path, content).unwrap();
+        assert!(parse_latest_session_plan_complete(&path).unwrap().is_none());
     }
 
     #[test]

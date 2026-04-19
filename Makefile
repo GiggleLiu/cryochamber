@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel example-web time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
 
 # Default target
 help:
@@ -16,8 +16,9 @@ help:
 	@echo "  example-clean - Remove auto-generated files from examples"
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Claude headless autorun"
-	@echo "  example      - Run an example (DIR=examples/mr-lazy or DIR=examples/chess-by-mail)"
+	@echo "  example      - Run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)"
 	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
+	@echo "  example-web  - Start cryo web workspace over examples/ (PORT=8765)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
@@ -71,14 +72,14 @@ clean:
 
 # Remove auto-generated files from examples (cancels running daemons first)
 example-clean:
-	@for dir in examples/*/; do \
+	@for dir in examples/chambers/*/; do \
 		if [ -f "$(CURDIR)/$$dir/timer.json" ]; then \
 			cd "$(CURDIR)/$$dir" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
 		fi; \
 	done; true
-	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md
-	rm -f examples/*/*.log examples/*/*.json
-	rm -rf examples/*/messages examples/*/.cryo
+	rm -f examples/chambers/*/CLAUDE.md examples/chambers/*/AGENTS.md
+	rm -f examples/chambers/*/*.log examples/chambers/*/*.json
+	rm -rf examples/chambers/*/messages examples/chambers/*/.cryo
 
 # Run a plan with Claude in headless mode
 # Usage: make run-plan [INSTRUCTIONS="..."] [OUTPUT=output.log] [AGENT_TYPE=claude]
@@ -113,19 +114,28 @@ cli:
 	cargo install --path .
 
 # Run an example
-# Usage: make example DIR=examples/mr-lazy
-#        make example DIR=examples/chess-by-mail AGENT=claude
+# Usage: make example DIR=examples/chambers/mr-lazy
+#        make example DIR=examples/chambers/chess-by-mail AGENT=claude
 example: build
-	@if [ -z "$(DIR)" ]; then echo "Usage: make example DIR=examples/mr-lazy"; exit 1; fi
+	@if [ -z "$(DIR)" ]; then echo "Usage: make example DIR=examples/chambers/mr-lazy"; exit 1; fi
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
 	$(CURDIR)/target/debug/cryo web
 
 # Stop a running example
-# Usage: make example-cancel DIR=examples/chess-by-mail
+# Usage: make example-cancel DIR=examples/chambers/chess-by-mail
 example-cancel:
 	cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel
+
+# Start cryo web against examples/ as a multi-chamber workspace.
+# Each examples/chambers/<name>/ is a chamber; the server runs in the foreground.
+# Usage: make example-web
+#        make example-web PORT=8080
+PORT ?= 8765
+
+example-web: build
+	cd examples && $(CURDIR)/target/debug/cryo web --foreground --port $(PORT)
 
 # Quick smoke test: force one agent wakeup cycle
 # Usage: make check-agent                 # check default (opencode)
@@ -135,7 +145,7 @@ CHECK_TIMEOUT ?= 3000
 
 check-agent: build
 	@TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
-	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cp examples/chambers/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	echo "=== Agent Health Check ==="; \
 	echo "Agent: $(AGENT)"; \
@@ -175,7 +185,7 @@ check-round-trip: build
 	echo ""; \
 	echo "2. Starting mr-lazy daemon..."; \
 	TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
-	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cp examples/chambers/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo start \
 		--agent "$(AGENT)" \
@@ -257,7 +267,7 @@ check-service: build
 	@echo ""
 	@echo "1. Setting up test project..."
 	@TMPDIR=$$(mktemp -d /tmp/cryo-check-svc-XXXXXX); \
-	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cp examples/chambers/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	echo "   OK: $$TMPDIR"; \
 	echo ""; \

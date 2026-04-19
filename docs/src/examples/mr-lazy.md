@@ -9,7 +9,7 @@ Every time cryochamber wakes Mr. Lazy, he rolls a die — 25% chance he actually
 ## Quick Start
 
 ```bash
-cd examples/mr-lazy
+cd examples/chambers/mr-lazy
 cryo init && cryo start
 cryo web   # open the browser chat UI (port 3946)
 ```

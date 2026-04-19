@@ -47,6 +47,7 @@ pub struct ChamberEntry {
     pub session: Option<u32>,
     pub next_wake: Option<String>,
     pub unread: usize,
+    pub completed: bool,
 }
 
 /// A map from chamber id → entry.
@@ -93,6 +94,7 @@ pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
                 session: None,
                 next_wake: None,
                 unread: 0,
+                completed: false,
             },
         );
     }
@@ -128,6 +130,7 @@ pub fn merge_registry(idx: &mut ChamberIndex, entries: &[crate::registry::Daemon
                 session: None,
                 next_wake: None,
                 unread: 0,
+                completed: false,
             },
         );
     }
@@ -157,6 +160,13 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
         entry.unread = crate::message::read_inbox(dir)
             .map(|v| v.len())
             .unwrap_or(0);
+
+        // Plan completion flag from the last session in cryo.log
+        let log_file = crate::log::log_path(dir);
+        entry.completed = crate::log::parse_latest_session_plan_complete(&log_file)
+            .ok()
+            .flatten()
+            .is_some();
     }
 }
 

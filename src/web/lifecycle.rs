@@ -2,7 +2,7 @@
 //! paths in `cryo start` / `cryo cancel` / `cryo restart` (see `src/bin/cryo.rs`)
 //! but take an explicit `dir: &Path` and do not read the process-wide `work_dir()`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -69,6 +69,35 @@ pub fn restart_chamber(dir: &Path) -> Result<()> {
     launch_daemon(dir)
 }
 
+/// Move `cryo.log` and `cryo-agent.log` into `history/<timestamp>/` within the
+/// chamber dir, returning the archive directory. Missing files are skipped.
+pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
+    let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let archive = dir.join("history").join(&ts);
+    std::fs::create_dir_all(&archive)
+        .with_context(|| format!("Failed to create {}", archive.display()))?;
+    for name in ["cryo.log", "cryo-agent.log"] {
+        let src = dir.join(name);
+        if !src.exists() {
+            continue;
+        }
+        let dst = archive.join(name);
+        std::fs::rename(&src, &dst)
+            .with_context(|| format!("Failed to move {} to {}", src.display(), dst.display()))?;
+    }
+    Ok(archive)
+}
+
+/// Reset the chamber: stop the daemon (if running), archive logs under
+/// `history/<timestamp>/`, then start a fresh session. Destructive — the UI
+/// must confirm before calling. Returns the archive directory path.
+pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
+    stop_chamber(dir)?;
+    let archive = archive_logs(dir)?;
+    start_chamber(dir)?;
+    Ok(archive)
+}
+
 fn launch_daemon(dir: &Path) -> Result<()> {
     if std::env::var("CRYO_NO_SERVICE").is_ok() {
         crate::process::spawn_daemon(dir)?;
@@ -117,5 +146,31 @@ mod tests {
     fn stop_chamber_is_idempotent_on_nothing_running() {
         let dir = tempfile::tempdir().unwrap();
         stop_chamber(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn archive_logs_moves_existing_logs_and_skips_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cryo_log = dir.path().join("cryo.log");
+        std::fs::write(&cryo_log, b"old session data").unwrap();
+        // cryo-agent.log intentionally absent
+
+        let archive = archive_logs(dir.path()).unwrap();
+        assert!(archive.starts_with(dir.path().join("history")));
+        assert!(archive.join("cryo.log").exists());
+        assert!(!archive.join("cryo-agent.log").exists());
+        assert!(!cryo_log.exists(), "original cryo.log should be moved");
+        assert_eq!(
+            std::fs::read_to_string(archive.join("cryo.log")).unwrap(),
+            "old session data"
+        );
+    }
+
+    #[test]
+    fn archive_logs_creates_history_dir_when_no_logs_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive_logs(dir.path()).unwrap();
+        assert!(archive.is_dir());
+        assert!(dir.path().join("history").is_dir());
     }
 }
