@@ -63,9 +63,7 @@ pub fn is_sync_running(dir: &Path) -> bool {
             if ret == 0 {
                 return true;
             }
-            let errno = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(0);
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             errno == libc::EPERM
         }
         None => false,

@@ -149,12 +149,9 @@ mod tests {
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
         app.refresh();
         let id = encode_id(&alpha.canonicalize().unwrap());
-        let err = post_sync_action(
-            State(app),
-            AxumPath((id, "bogus".into(), "start".into())),
-        )
-        .await
-        .unwrap_err();
+        let err = post_sync_action(State(app), AxumPath((id, "bogus".into(), "start".into())))
+            .await
+            .unwrap_err();
         assert_eq!(err, StatusCode::BAD_REQUEST);
     }
 

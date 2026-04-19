@@ -63,9 +63,7 @@ pub fn is_sync_running(dir: &Path) -> bool {
             if ret == 0 {
                 return true;
             }
-            let errno = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(0);
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             errno == libc::EPERM
         }
         None => false,
@@ -73,7 +71,9 @@ pub fn is_sync_running(dir: &Path) -> bool {
 }
 
 pub fn summarize(dir: &Path) -> Option<crate::sync_common::SyncSummary> {
-    let state = load_sync_state(&dir.join("zulip-sync.json")).ok().flatten()?;
+    let state = load_sync_state(&dir.join("zulip-sync.json"))
+        .ok()
+        .flatten()?;
     Some(crate::sync_common::SyncSummary {
         backend: crate::sync_common::SyncBackend::Zulip,
         configured: true,
@@ -93,10 +93,7 @@ mod pid_tests {
     #[test]
     fn pid_path_points_into_dir() {
         let p = sync_pid_path(std::path::Path::new("/tmp/cryo-x"));
-        assert_eq!(
-            p,
-            std::path::Path::new("/tmp/cryo-x/cryo-zulip-sync.pid")
-        );
+        assert_eq!(p, std::path::Path::new("/tmp/cryo-x/cryo-zulip-sync.pid"));
     }
 
     #[test]

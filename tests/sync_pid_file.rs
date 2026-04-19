@@ -30,7 +30,10 @@ fn cryo_gh_sync_daemon_manages_pid_file() {
     std::fs::create_dir_all(workdir.join("messages").join("outbox")).unwrap();
 
     let bin = target_bin("cryo-gh");
-    assert!(bin.exists(), "build cryo-gh first: cargo build --bin cryo-gh");
+    assert!(
+        bin.exists(),
+        "build cryo-gh first: cargo build --bin cryo-gh"
+    );
 
     let mut child = std::process::Command::new(&bin)
         .current_dir(&workdir)
@@ -69,5 +72,8 @@ fn cryo_gh_sync_daemon_manages_pid_file() {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(!pid_path.exists(), "pid file should be removed after SIGTERM");
+    assert!(
+        !pid_path.exists(),
+        "pid file should be removed after SIGTERM"
+    );
 }
