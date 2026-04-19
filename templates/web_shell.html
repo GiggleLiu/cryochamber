@@ -437,13 +437,72 @@
     });
   }
 
+  function initDrawerTabs() {
+    const tabs   = document.querySelectorAll('.drawer-tab');
+    const panels = document.querySelectorAll('.drawer-body');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const name = tab.getAttribute('data-tab');
+        tabs.forEach(t => t.classList.toggle('active', t === tab));
+        panels.forEach(p => {
+          p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
+        });
+        if (name === 'log' && view && view.logEl) {
+          view.logEl.scrollTop = view.logEl.scrollHeight;
+        }
+      });
+    });
+  }
+
+  function todoSignature(todos) {
+    if (!todos || !todos.length) return '0:';
+    return todos.length + ':' + todos.map(t => `${t.id}|${t.done ? 1 : 0}|${t.at || ''}`).join(',');
+  }
+
+  function renderTodos(todos) {
+    const sig = todoSignature(todos);
+    if (sig === view.lastTodoSig) return;
+    view.lastTodoSig = sig;
+    const box = document.getElementById('panel-todos');
+    const pending = (todos || []).filter(t => !t.done).length;
+    const done    = (todos || []).filter(t =>  t.done).length;
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.innerHTML = `Todos <span class="count">${pending} pending · ${done} done</span>`;
+    box.appendChild(title);
+    const list = document.createElement('div');
+    list.className = 'todos';
+    for (const t of (todos || [])) {
+      const row = document.createElement('div');
+      row.className = 'todo' + (t.done ? ' done' : '');
+      const check = document.createElement('span');
+      check.className = 'check';
+      const text = document.createElement('span');
+      text.className = 'text';
+      text.textContent = t.text;
+      row.appendChild(check);
+      row.appendChild(text);
+      if (t.at) {
+        const when = document.createElement('span');
+        when.className = 'when' + (t.at_soon ? ' soon' : '');
+        when.textContent = t.at;
+        row.appendChild(when);
+      }
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+    document.getElementById('todos-count').textContent = pending;
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
     const pane = document.getElementById('pane');
-    const [status, messages] = await Promise.all([
+    const [status, messages, todos] = await Promise.all([
       fetchJSON(`/api/chambers/${id}/status`),
       fetchJSON(`/api/chambers/${id}/messages`),
+      fetchJSON(`/api/chambers/${id}/todos`),
     ]);
     pane.innerHTML = '';
     view = newView();
@@ -451,6 +510,7 @@
     buildHead(pane, entry, status);
     buildThread(pane, messages);
     buildCompose(pane, id);
+    renderTodos(todos);
     document.getElementById('drawer').hidden = false;
   }
 
@@ -467,6 +527,8 @@
       renderRail();
     } catch (e) { toast(e.message, 'error'); }
   });
+
+  initDrawerTabs();
 
   // Expose for subsequent task wiring.
   window.__hub = { state, fetchJSON, toast, escapeHtml, hash32, renderRail, loadChambers, selectChamber };
