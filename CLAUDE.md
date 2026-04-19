@@ -74,7 +74,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL), `zulip` (Zulip REST API). |
 | `registry` | PID file registry for tracking running daemons. Uses `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. |
-| `report` | Periodic session summary reports. Parses log, counts sessions/failures, sends desktop notification via notify-rust. |
+| `report` | Periodic session summary reports. Parses log, counts sessions/failures, writes summary to `messages/outbox/` for sync delivery. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
 | `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoList` structs, load/save, add/done/remove. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |

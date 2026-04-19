@@ -103,7 +103,7 @@ How should the agent communicate with the user?
 
 ### Q10. Periodic reports
 
-Want daily/hourly health summaries as desktop notifications?
+Want daily/hourly health summaries written to `messages/outbox/` (delivered via any configured sync channel)?
 - If yes: set `report_time` (e.g. "09:00") and `report_interval` (hours, e.g. 24 for daily).
 - If no: skip (disabled by default).
 

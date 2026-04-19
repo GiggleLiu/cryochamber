@@ -47,7 +47,8 @@ pub struct CryoConfig {
     #[serde(default = "default_watch_inbox")]
     pub watch_inbox: bool,
 
-    /// Fallback alert method: "notify" (desktop popup), "outbox" (file only), "none"
+    /// Fallback alert method: "outbox" (write to messages/outbox/) or "none" (suppress).
+    /// Legacy "notify" is accepted and treated as "outbox".
     #[serde(default = "default_fallback_alert")]
     pub fallback_alert: String,
 
@@ -89,7 +90,7 @@ fn default_watch_inbox() -> bool {
 }
 
 fn default_fallback_alert() -> String {
-    "notify".to_string()
+    "outbox".to_string()
 }
 
 fn default_report_time() -> String {
