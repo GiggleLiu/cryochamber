@@ -245,6 +245,15 @@ fn parse_relative_offset(s: &str) -> Result<chrono::Duration> {
     }
 }
 
+fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {
+    match action {
+        TodoAction::Add { text, at } => send(dir, &Request::TodoAdd { text, at }),
+        TodoAction::List => send(dir, &Request::TodoList),
+        TodoAction::Done { id } => send(dir, &Request::TodoDone { id }),
+        TodoAction::Remove { id } => send(dir, &Request::TodoRemove { id }),
+    }
+}
+
 #[cfg(test)]
 mod time_tests {
     use super::*;
@@ -327,14 +336,5 @@ mod time_tests {
         assert!(looks_like_iso_date("2026-04-25T10:00"));
         assert!(!looks_like_iso_date("tomorrow 9am"));
         assert!(!looks_like_iso_date("+30 minutes"));
-    }
-}
-
-fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {
-    match action {
-        TodoAction::Add { text, at } => send(dir, &Request::TodoAdd { text, at }),
-        TodoAction::List => send(dir, &Request::TodoList),
-        TodoAction::Done { id } => send(dir, &Request::TodoDone { id }),
-        TodoAction::Remove { id } => send(dir, &Request::TodoRemove { id }),
     }
 }

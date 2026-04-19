@@ -15,6 +15,20 @@ Assumes cryo CLI is installed and on PATH.
 
 Ask questions **one at a time**. Suggest answers based on the task. Multiple choice where possible.
 
+### Q0. Where should the chamber live?
+
+Ask up front — this affects sync paths, workspace discovery (`cryo web`), and `.gitignore`
+patterns. Suggest a sensible default based on context:
+
+- **In a workspace** (recommended) — `<workspace>/chambers/<name>/`, where the workspace
+  is a parent directory containing multiple chambers. `cryo web` runs at the workspace
+  level and lists every chamber under `chambers/`.
+- **Standalone** — `~/cryo/<name>/` or any other directory. Simpler if you only ever run
+  one chamber, but `cryo web` still requires a workspace layout (a symlink in
+  `<workspace>/chambers/<name>` works).
+
+Confirm the exact path before moving on. Create the directory if it doesn't exist.
+
 ### Q1. What's the task?
 
 Open-ended: "What should the agent do each session?"
@@ -40,7 +54,16 @@ Recommend based on task:
 
 ### Q5. Persistent state
 
-What does the agent need to remember across sessions? Suggest based on task (counters, progress markers, data snapshots, timestamps). Warn: `cryo-agent note` is the **only** cross-session memory.
+What does the agent need to remember across sessions? Suggest based on task (counters, progress markers, data snapshots, timestamps, scheduled reminders). Two cross-session primitives are available — see the **State primitives** reference below.
+
+#### State primitives reference
+
+| Primitive | What it stores | When to use |
+|---|---|---|
+| `cryo-agent todo add "..." --at <ISO>` / `todo list` / `todo done <id>` | A list of items, each with optional scheduled deadline | Anything time-scheduled: reminders, deadlines, periodic tasks. The daemon surfaces `todo list` on wake, and the `--at` values make scheduling decisions machine-readable. |
+| `cryo-agent note "..."` | Free-form append-only text | Auxiliary state: counters, fired-reminder markers, the last summary timestamp, game position snapshots, anything without a deadline. |
+
+Rule of thumb: if the thing has a **time** associated with it, prefer `todo --at`. Otherwise `note`. Use both in combination when needed (e.g. `todo` stores the reminder, `note` marks it already fired).
 
 ### Q6. Failure & retry strategy
 
@@ -73,9 +96,9 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 ### Q9. Notification & sync channel
 
 How should the agent communicate with the user?
-- **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval.
+- **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval. **Before Phase 3:** the bot (whoever owns the API key in the zuliprc) must be subscribed to the target stream; otherwise `cryo-zulip init` fails when resolving the stream. Remind the user to add the bot in Zulip's stream settings.
 - **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
-- **Web UI only** — simplest, browser via `cryo web`. Use `web_host = "0.0.0.0"` so the UI is accessible from remote machines. Auto-detect an available port: start from the default (3945), check if the port is in use (e.g. `ss -tlnp | grep :3945`), increment by 1 until a free port is found, then confirm the chosen port with the user.
+- **Web UI only** — simplest, browser via `cryo web`. Host and port are CLI flags (`cryo web --host 0.0.0.0 --port 8765`), not `cryo.toml` fields. Default is `127.0.0.1:8765`. For remote access use `--host 0.0.0.0`. If 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user. Note: `cryo web` runs at the workspace level (expects a `chambers/` directory), not per-chamber.
 - **None** — agent runs silently, check logs manually.
 
 ### Q10. Periodic reports
@@ -90,9 +113,10 @@ After all questions:
 1. Draft `plan.md` with **Goal**, **Tasks**, **Configuration**, and **Notes** sections
 2. For interactive schedule tables: embed the schedule as a markdown table in Tasks
 3. Include delayed wake handling instructions in Tasks
-4. Include persistent state strategy in Notes
-5. Present draft to user for approval/edits
-6. Write the file
+4. Include persistent state strategy in Notes (map each piece of state to `todo --at` vs. `note` — see the State primitives reference in Q5)
+5. Include a `cryo-agent time` usage note: the tool accepts `(no arg)` for current time, `+N minutes|hours|days|weeks` for offsets, or an ISO8601 string like `2026-04-25T10:00` as pass-through. It does **not** parse natural-language expressions ("tomorrow 9am"). For those, the agent should fetch the current time with `cryo-agent time`, compute the absolute ISO timestamp itself, and pass that directly to `todo --at` / `hibernate --wake`.
+6. Present draft to user for approval/edits
+7. Write the file
 
 Reference existing examples for plan.md structure:
 - `examples/chambers/mr-lazy/plan.md` — simple periodic task
@@ -107,7 +131,8 @@ Generate from Phase 1 answers. No new questions — everything maps directly.
 | AI agent (Q7) | `agent` |
 | Retry strategy (Q6) | `max_retries` |
 | Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
-| Sync channel (Q9) | `web_host` (default `"0.0.0.0"`), `web_port` |
+| Sync channel (Q9) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
+| Sync channel (Q9) — Web UI | Host/port are CLI flags for `cryo web`; nothing goes in `cryo.toml`. |
 | Reports (Q10) | `report_time`, `report_interval` |
 | Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 
@@ -121,12 +146,13 @@ Process:
 
 Three layers, in order. On failure: stop, report what failed, suggest fixes, let user retry that layer.
 
-### Layer 1: File validation
+### Layer 1: Static file + binary validation (no API calls)
 
 - Verify `plan.md` exists and contains Goal and Tasks sections
-- Verify `cryo.toml` parses correctly (run `cryo init` and check for errors)
+- Verify `cryo.toml` parses correctly: run `cryo init` in the chamber directory — it's idempotent and will print "(exists, kept)" for pre-existing files. Failure here means TOML is malformed.
 - Verify the agent command is on PATH (e.g. `which opencode`)
-- Verify the AI agent can actually respond: run `cryo start`, watch `cryo.log` for the first session to start, and confirm the agent produces output. Then `cryo cancel` to clean up. This tests with the actual provider env vars from `cryo.toml`, catching misconfigured API keys or broken agent installations.
+
+These checks are free. If any fails, stop — don't proceed to the live smoke test in Layer 3, which will fail in a more confusing way.
 
 ### Layer 2: External tool validation
 
@@ -138,13 +164,20 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
 
 ### Layer 3: Live smoke test
 
-1. Run `cryo init && cryo start`
-2. Wait for the first session to complete (watch `cryo.log` for agent start → hibernate)
-3. If sync channel configured:
-   - Zulip: run `cryo-zulip init --config <path> --stream <name>` and verify connection
-   - GitHub: run `cryo-gh init --repo <repo>` and verify connection
-4. Run `cryo cancel` to clean up
-5. Report: session count, any errors in `cryo.log`, agent exit status
+This is the only place the agent actually runs. It catches misconfigured API keys,
+broken agent installs, and sync credential issues.
+
+1. If a sync channel is configured, initialize it first so the smoke run can exercise it:
+   - Zulip: `cryo-zulip init --config <path> --stream <name>`. Needs the bot subscribed
+     to the stream (see Q9 pre-flight).
+   - GitHub: `cryo-gh init --repo <repo>`.
+2. Run `CRYO_NO_SERVICE=1 cryo start` (direct-spawn mode — simpler to cancel than a
+   launchd/systemd service).
+3. Wait for the first session to complete: watch `cryo.log` for
+   `agent started` → `hibernate:` → `session complete` → `--- CRYO END ---`.
+4. Run `cryo cancel` to clean up.
+5. Report: session count, exit code from `cryo.log`, any errors, and whether the
+   agent sent a Zulip/GitHub test message (if applicable).
 
 On success: "Your cryo application is ready."
 
@@ -173,26 +206,26 @@ If the user deferred provider setup in Q7, remind them how to configure it:
 
 ```dot
 digraph cryo_create {
-    "Q1-Q10: Brainstorm" [shape=box];
+    "Q0-Q10: Brainstorm" [shape=box];
     "Draft plan.md" [shape=box];
     "User approves?" [shape=diamond];
     "Generate cryo.toml" [shape=box];
     "User approves config?" [shape=diamond];
-    "Layer 1: Files + Agent" [shape=box];
+    "Layer 1: Static files" [shape=box];
     "Layer 2: Tools" [shape=box];
     "Layer 3: Smoke test" [shape=box];
     "Start now?" [shape=diamond];
     "Start services" [shape=box];
     "Ready" [shape=doublecircle];
 
-    "Q1-Q10: Brainstorm" -> "Draft plan.md";
+    "Q0-Q10: Brainstorm" -> "Draft plan.md";
     "Draft plan.md" -> "User approves?";
     "User approves?" -> "Draft plan.md" [label="revise"];
     "User approves?" -> "Generate cryo.toml" [label="yes"];
     "Generate cryo.toml" -> "User approves config?";
     "User approves config?" -> "Generate cryo.toml" [label="revise"];
-    "User approves config?" -> "Layer 1: Files + Agent" [label="yes"];
-    "Layer 1: Files + Agent" -> "Layer 2: Tools";
+    "User approves config?" -> "Layer 1: Static files" [label="yes"];
+    "Layer 1: Static files" -> "Layer 2: Tools";
     "Layer 2: Tools" -> "Layer 3: Smoke test";
     "Layer 3: Smoke test" -> "Start now?";
     "Start now?" -> "Start services" [label="yes"];
@@ -205,8 +238,10 @@ digraph cryo_create {
 
 | Mistake | Fix |
 |---|---|
-| Hardcoded timestamps in plan.md | Always use `cryo-agent time "+N minutes"` |
-| No persistent state strategy — agent forgets everything | Use `cryo-agent note` for all cross-session state |
+| Hardcoded timestamps in plan.md | Always compute times via `cryo-agent time` (relative) or an ISO8601 string the agent constructed |
+| Passing natural language to `cryo-agent time` (e.g. `"tomorrow 9am"`) | Only `+N minutes\|hours\|days\|weeks` and ISO8601 (`2026-04-25T10:00`) are accepted. Agent must reason about NL expressions itself. |
+| Using `note` for time-scheduled items | Use `todo add "..." --at <ISO>` for anything with a deadline; `note` is for auxiliary state. |
 | Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |
 | `watch_inbox = false` with two-way interaction | Set `watch_inbox = true` for event-driven tasks |
+| Zulip bot not subscribed to target stream | `cryo-zulip init` fails to resolve — add the bot in Zulip's stream settings first |
 | Provider env vars not set | Validate in Phase 3 before starting |
