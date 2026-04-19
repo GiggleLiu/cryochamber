@@ -89,7 +89,9 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - **Config/state split**: `cryo.toml` is the project config (agent, retries, timeout, watch_inbox) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, retry count, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
-- **Default agent**: The CLI defaults to `opencode run` as the agent command (headless mode, not the TUI).
+- **Default agent**: The CLI defaults to `opencode` as the agent command (headless mode, not the TUI).
+- **`cryo-agent time` input grammar**: Accepts three forms only — empty (current time), `+N minutes|hours|days|weeks` (relative offset), and ISO8601 (`2026-04-25T10:00` or date-only) as validated pass-through. Natural-language parsing is deliberately **not** supported: the agent is an LLM that can reason about "tomorrow 9am" itself, so the tool stays small and documentable. Unknown input prints the accepted forms.
+- **`cryo web` is workspace-level**: Host and port come from CLI flags (`--host`, `--port`, defaults `127.0.0.1:8765`), not from `cryo.toml`. The command requires a `chambers/` subdirectory (workspace mode) and rejects chamber-cwd invocations. Per-chamber `web_host`/`web_port` fields have been removed from `CryoConfig`.
 
 ### Files Created by `cryo init`
 
@@ -126,7 +128,7 @@ Main documentation lives in the mdbook at `docs/src/` (published to [giggleliu.g
 - `templates/` — Single source of truth for agent protocol, template plan, and cryo.toml config template
 - `docs/plans/` — Design documents (key design decisions only)
 - `docs/reports/` — Code review reports
-- `examples/` — Showcase examples (chess-by-mail, mr-lazy)
+- `examples/` — Showcase examples. `chambers/` holds runnable chambers (e.g. `mr-lazy`, `chess-by-mail`, `personal-assistant`).
 
 ## Skills
 

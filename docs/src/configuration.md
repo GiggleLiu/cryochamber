@@ -5,13 +5,9 @@
 ```toml
 # cryo.toml — Cryochamber project configuration
 agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
-max_retries = 5           # Failed attempts before retry alerting (daemon keeps retrying)
+max_retries = 1           # Failed attempts before retry alerting (daemon keeps retrying)
 max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
 watch_inbox = true        # Watch inbox for reactive wake
-
-# Web UI host and port (for `cryo web`)
-# web_host = "127.0.0.1"
-# web_port = 3945
 ```
 
 ## Fields
@@ -19,11 +15,13 @@ watch_inbox = true        # Watch inbox for reactive wake
 | Field | Default | Description |
 |-------|---------|-------------|
 | `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex. |
-| `max_retries` | `5` | Failed attempts before sending a retry alert. The daemon continues retrying with backoff. |
+| `max_retries` | `5` | Failed attempts before sending a retry alert. The daemon continues retrying with backoff. Template uses `1` for fail-fast one-shot tasks; bump to `5+` for long-running assistants. |
 | `max_session_duration` | `0` | Session timeout in seconds. `0` disables timeout. |
 | `watch_inbox` | `true` | Watch `messages/inbox/` for new files and wake immediately. |
-| `web_host` | `"127.0.0.1"` | Host for `cryo web` to listen on. Use `"0.0.0.0"` for remote access only behind an authenticated, TLS-terminating proxy. |
-| `web_port` | `3945` | Port for `cryo web` to listen on. |
+
+`cryo web` host and port are not `cryo.toml` fields — they are CLI flags
+(`cryo web --host 0.0.0.0 --port 8765`, defaults `127.0.0.1:8765`). `cryo web`
+runs at the workspace level (expects a `chambers/` directory), not per-chamber.
 
 ## CLI Overrides
 

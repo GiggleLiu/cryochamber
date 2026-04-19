@@ -33,7 +33,9 @@ cryo-agent todo add "text" --at <TIME> # Schedule next wake via TODO
 cryo-agent note "text"                 # Leave a note for next session
 cryo-agent send "message"             # Send message to human (writes to outbox)
 cryo-agent receive                     # Read inbox messages from human
-cryo-agent time "+30 minutes"          # Compute a future timestamp
+cryo-agent time                        # Current time (ISO8601 local)
+cryo-agent time "+30 minutes"          # Relative offset (minutes|hours|days|weeks)
+cryo-agent time "2026-04-25T10:00"     # ISO8601 pass-through (validates + normalizes)
 cryo-agent alert <action> <target> "msg"  # Set dead-man switch
 ```
 
