@@ -29,7 +29,7 @@ make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess
 make example-cancel # stop a running example (DIR=examples/chambers/...)
 make example-web    # start cryo web over examples/ workspace (PORT=8765)
 make example-clean  # remove auto-generated files from all examples
-make run-plan       # execute a plan with Claude headless (see Makefile for options)
+make run-plan       # execute a plan with Codex by default (RUNNER=claude for Claude)
 make check-agent    # quick agent smoke test (AGENT=opencode|claude)
 make check-round-trip # full round-trip test with mr-lazy
 make check-gh       # verify GitHub Discussion sync (REPO=owner/repo)
