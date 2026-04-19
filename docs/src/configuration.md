@@ -12,6 +12,13 @@ watch_inbox = true        # Watch inbox for reactive wake
 # Web UI host and port (for `cryo web`)
 # web_host = "127.0.0.1"
 # web_port = 3945
+
+# Fallback alert method when the dead-man switch fires
+# fallback_alert = "outbox"  # "outbox" writes to messages/outbox/; "none" disables alerts
+
+# Periodic status report written to messages/outbox/
+# report_time = "09:00"     # HH:MM local time
+# report_interval = 24      # hours between reports; 0 disables reports
 ```
 
 ## Fields
@@ -24,6 +31,9 @@ watch_inbox = true        # Watch inbox for reactive wake
 | `watch_inbox` | `true` | Watch `messages/inbox/` for new files and wake immediately. |
 | `web_host` | `"127.0.0.1"` | Host for `cryo web` to listen on. Use `"0.0.0.0"` for remote access only behind an authenticated, TLS-terminating proxy. |
 | `web_port` | `3945` | Port for `cryo web` to listen on. |
+| `fallback_alert` | `"outbox"` | Fallback alert behavior. `"outbox"` writes alerts to `messages/outbox/`; `"none"` suppresses fallback alert files. Legacy `"notify"` is accepted and treated as `"outbox"`. |
+| `report_time` | `"09:00"` | Local wall-clock time for periodic status reports, formatted as `HH:MM`. |
+| `report_interval` | `0` | Hours between periodic reports. `0` disables reports; common values are `24` for daily and `168` for weekly. Reports are written to `messages/outbox/`. |
 
 ## CLI Overrides
 
