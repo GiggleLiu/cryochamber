@@ -229,6 +229,54 @@
     }
   }
 
+  function todoSignature(todos) {
+    if (!todos || !todos.length) return '0:';
+    return todos.length + ':' + todos.map(t => `${t.id}|${t.done ? 1 : 0}|${t.at || ''}`).join(',');
+  }
+
+  function buildTodos(todos) {
+    view.todosBox.className = 'todos';
+    view.todosBox.style.display = 'none';
+    updateTodos(todos);
+  }
+
+  function updateTodos(todos) {
+    const sig = todoSignature(todos);
+    if (sig === view.lastTodoSig) return;
+    view.lastTodoSig = sig;
+    const box = view.todosBox;
+    box.innerHTML = '';
+    if (!todos || !todos.length) {
+      box.style.display = 'none';
+      return;
+    }
+    box.style.display = '';
+    const title = document.createElement('div');
+    title.className = 'todos-title';
+    const pending = todos.filter(t => !t.done).length;
+    title.textContent = `Todos (${pending} pending / ${todos.length} total)`;
+    box.appendChild(title);
+    for (const t of todos) {
+      const row = document.createElement('div');
+      row.className = 'todo-row' + (t.done ? ' done' : '');
+      const check = document.createElement('span');
+      check.className = 'todo-check';
+      check.textContent = t.done ? '☑' : '☐';
+      const text = document.createElement('span');
+      text.className = 'todo-text';
+      text.textContent = t.text;
+      row.appendChild(check);
+      row.appendChild(text);
+      if (t.at) {
+        const when = document.createElement('span');
+        when.className = 'todo-at';
+        when.textContent = t.at;
+        row.appendChild(when);
+      }
+      box.appendChild(row);
+    }
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
