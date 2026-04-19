@@ -120,6 +120,75 @@
     return b;
   }
 
+  // Per-chamber view state. Reset on every buildDetail.
+  let view = null;
+
+  function newView() {
+    return {
+      chamberId: null,
+      headerName: null,
+      headerMeta: null,       // "● session #N · Next wake: ..."
+      headerTaskLine: null,
+      planCompleteBox: null,
+      lifecycleBtns: null,
+      syncBox: null,          // container (may be empty)
+      todosBox: null,
+      msgBox: null,
+      logBox: null,
+      lastMsgKey: null,
+      lastTodoSig: null,
+      lastSyncSig: null,
+      lastLifecycleSig: null,
+    };
+  }
+
+  async function buildDetail(id) {
+    const entry = state.chambers.find(c => c.id === id);
+    if (!entry) return;
+    const pane = document.getElementById('pane');
+    const [status, messages, todos, sync] = await Promise.all([
+      fetchJSON(`/api/chambers/${id}/status`),
+      fetchJSON(`/api/chambers/${id}/messages`),
+      fetchJSON(`/api/chambers/${id}/todos`),
+      fetchJSON(`/api/chambers/${id}/sync`),
+    ]);
+    pane.innerHTML = '';
+    view = newView();
+    view.chamberId = id;
+
+    buildHeader(pane, entry, status);
+    view.syncBox = document.createElement('div');
+    pane.appendChild(view.syncBox);
+    buildSyncBox(sync);
+    view.todosBox = document.createElement('div');
+    pane.appendChild(view.todosBox);
+    buildTodos(todos);
+    buildMessages(messages);
+    buildSendBar(pane, id);
+    buildLogBox(pane, status);
+    scrollMessagesToBottom();
+  }
+
+  async function updateDetail(id, parts) {
+    if (!view || view.chamberId !== id) return;
+    const fetches = {};
+    if (parts.status) fetches.status = fetchJSON(`/api/chambers/${id}/status`);
+    if (parts.messages) fetches.messages = fetchJSON(`/api/chambers/${id}/messages`);
+    if (parts.todos) fetches.todos = fetchJSON(`/api/chambers/${id}/todos`);
+    if (parts.sync) fetches.sync = fetchJSON(`/api/chambers/${id}/sync`);
+    const entries = await Promise.allSettled(Object.entries(fetches).map(async ([k, p]) => [k, await p]));
+    const data = {};
+    for (const r of entries) {
+      if (r.status === 'fulfilled') data[r.value[0]] = r.value[1];
+    }
+    const entry = state.chambers.find(c => c.id === id);
+    if (entry && data.status) updateHeader(entry, data.status);
+    if (entry && data.status) updateLifecycleButtons(entry);
+    if (data.sync) updateSyncBox(data.sync);
+    if (data.todos) updateTodos(data.todos);
+    if (data.messages) updateMessages(data.messages);
+  }
+
   async function renderDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
