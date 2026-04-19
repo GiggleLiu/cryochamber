@@ -277,6 +277,127 @@
     }
   }
 
+  // Small 32-bit FNV-1a. Enough to disambiguate same-timestamp messages.
+  function hash32(s) {
+    let h = 0x811c9dc5 >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(36);
+  }
+
+  function messageKey(m) {
+    return `${m.direction}|${m.timestamp}|${m.from}|${hash32(m.body || '')}`;
+  }
+
+  function buildMessageRow(m) {
+    const row = document.createElement('div');
+    row.style.marginBottom = '10px';
+    row.style.padding = '8px';
+    row.style.background = m.direction === 'inbox' ? 'var(--inbox-bg)' : 'var(--outbox-bg)';
+    row.style.borderRadius = '3px';
+    row.dataset.key = messageKey(m);
+    const meta = document.createElement('div');
+    meta.style.fontSize = '11px';
+    meta.style.color = 'var(--text-dim)';
+    meta.textContent = `${m.direction} · ${m.from} · ${m.timestamp}`;
+    const body = document.createElement('div');
+    body.style.marginTop = '4px';
+    body.style.whiteSpace = 'pre-wrap';
+    body.textContent = m.body;
+    row.appendChild(meta);
+    row.appendChild(body);
+    return row;
+  }
+
+  function buildMessages(messages) {
+    const box = document.createElement('div');
+    box.id = 'msg-box';
+    box.style.flex = '1';
+    box.style.overflowY = 'auto';
+    box.style.padding = '12px 20px';
+    document.getElementById('pane').appendChild(box);
+    view.msgBox = box;
+    view.lastMsgKey = null;
+    for (const m of messages || []) {
+      box.appendChild(buildMessageRow(m));
+      view.lastMsgKey = messageKey(m);
+    }
+  }
+
+  function isAtBottom(el) {
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+  }
+
+  function scrollMessagesToBottom() {
+    if (view && view.msgBox) view.msgBox.scrollTop = view.msgBox.scrollHeight;
+  }
+
+  function updateMessages(messages) {
+    if (!view.msgBox) return;
+    const box = view.msgBox;
+    const wasAtBottom = isAtBottom(box);
+
+    // Locate index immediately after lastMsgKey in the new array.
+    let startAt = 0;
+    if (view.lastMsgKey) {
+      const idx = messages.findIndex(m => messageKey(m) === view.lastMsgKey);
+      if (idx < 0) {
+        // Fallback: full rebuild (e.g. chamber reset archived history).
+        box.innerHTML = '';
+        for (const m of messages) box.appendChild(buildMessageRow(m));
+        view.lastMsgKey = messages.length ? messageKey(messages[messages.length - 1]) : null;
+        box.scrollTop = box.scrollHeight;
+        return;
+      }
+      startAt = idx + 1;
+    }
+    for (let i = startAt; i < messages.length; i++) {
+      box.appendChild(buildMessageRow(messages[i]));
+      view.lastMsgKey = messageKey(messages[i]);
+    }
+    if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  function buildSendBar(pane, id) {
+    const send = document.createElement('div');
+    send.style.padding = '10px 20px';
+    send.style.borderTop = '1px solid var(--border)';
+    send.innerHTML = `
+      <input id="send-body" placeholder="Message..." style="width:70%;padding:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:inherit;">
+      <button id="send-btn" style="padding:6px 12px;background:var(--accent-dim);color:var(--accent);border:none;cursor:pointer;font-family:inherit;">send</button>
+    `;
+    send.querySelector('#send-btn').addEventListener('click', async () => {
+      const body = send.querySelector('#send-body').value.trim();
+      if (!body) return;
+      try {
+        await fetchJSON(`/api/chambers/${id}/send`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({body}),
+        });
+        send.querySelector('#send-body').value = '';
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    pane.appendChild(send);
+  }
+
+  function buildLogBox(pane, status) {
+    const logBox = document.createElement('pre');
+    logBox.id = 'log-box';
+    logBox.style.background = 'var(--bg)';
+    logBox.style.color = 'var(--text-dim)';
+    logBox.style.padding = '10px 20px';
+    logBox.style.maxHeight = '200px';
+    logBox.style.overflowY = 'auto';
+    logBox.style.fontSize = '11px';
+    logBox.style.borderTop = '1px solid var(--border)';
+    logBox.textContent = status.log_tail || '';
+    pane.appendChild(logBox);
+    view.logBox = logBox;
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
