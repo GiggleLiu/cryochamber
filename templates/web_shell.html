@@ -59,7 +59,138 @@
 <div id="toast" class="toast"></div>
 
 <script>
-// Filled in by subsequent tasks.
+(function() {
+  const state = {
+    chambers: [],
+    currentId: null,
+  };
+
+  function urlChamberId() {
+    const m = window.location.pathname.match(/^\/c\/(.+)$/);
+    return m ? m[1] : null;
+  }
+
+  async function fetchJSON(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    return res.json();
+  }
+
+  function toast(msg, kind) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast' + (kind === 'error' ? ' error' : '');
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function hash32(s) {
+    let h = 0x811c9dc5 >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(36);
+  }
+
+  function statusClass(entry) {
+    if (entry.config_error) return 'error';
+    if (entry.source === 'external') return 'external';
+    if (entry.completed && !entry.running) return 'complete';
+    if (entry.running) return 'running';
+    return 'stopped';
+  }
+
+  function renderRail() {
+    const list = document.getElementById('chamber-list');
+    list.innerHTML = '';
+    const sorted = [...state.chambers].sort((a, b) => {
+      const rank = e => (e.running ? 0 : (e.source === 'external' ? 2 : 1));
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    });
+    for (const c of sorted) {
+      const row = document.createElement('div');
+      row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
+      row.dataset.id = c.id;
+
+      const row1 = document.createElement('div');
+      row1.className = 'chamber-row1';
+      const dot = document.createElement('span');
+      dot.className = 'status-dot ' + statusClass(c);
+      const name = document.createElement('span');
+      name.className = 'chamber-name';
+      name.textContent = c.name;
+      row1.appendChild(dot);
+      row1.appendChild(name);
+      if (c.unread > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'unread';
+        badge.textContent = c.unread;
+        row1.appendChild(badge);
+      }
+      row.appendChild(row1);
+
+      if (c.last_message_preview) {
+        const prev = document.createElement('div');
+        prev.className = 'chamber-preview';
+        prev.textContent = c.last_message_preview;
+        row.appendChild(prev);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'chamber-meta';
+      const task = document.createElement('span');
+      task.className = 'task';
+      task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
+      const when = document.createElement('span');
+      when.className = 'when' + (c.wake_imminent ? ' soon' : '');
+      when.textContent = c.next_wake_display || '';
+      meta.appendChild(task);
+      meta.appendChild(when);
+      row.appendChild(meta);
+
+      row.addEventListener('click', () => selectChamber(c.id));
+      list.appendChild(row);
+    }
+    document.getElementById('rail-count').textContent = state.chambers.length;
+  }
+
+  async function loadChambers() {
+    state.chambers = await fetchJSON('/api/chambers');
+    renderRail();
+  }
+
+  async function selectChamber(id) {
+    state.currentId = id;
+    window.history.pushState({}, '', `/c/${id}`);
+    renderRail();
+    // Detail rendering is wired in Task 5.
+  }
+
+  document.getElementById('refresh').addEventListener('click', async () => {
+    try {
+      state.chambers = await fetchJSON('/api/chambers/refresh', { method: 'POST' });
+      renderRail();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  // Expose for subsequent task wiring.
+  window.__hub = { state, fetchJSON, toast, escapeHtml, hash32, renderRail, loadChambers, selectChamber };
+
+  (async () => {
+    await loadChambers();
+    const urlId = urlChamberId();
+    if (urlId && state.chambers.some(c => c.id === urlId)) {
+      await selectChamber(urlId);
+    }
+  })();
+})();
 </script>
 </body>
 </html>
