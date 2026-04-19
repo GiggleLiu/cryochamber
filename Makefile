@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel example-web time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel example-hub time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -22,7 +22,7 @@ help:
 	@echo "  run-plan     - Execute a plan with Codex or Claude"
 	@echo "  example      - Run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)"
 	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
-	@echo "  example-web  - Start cryo web workspace over examples/ (PORT=8765)"
+	@echo "  example-hub  - Start cryohub workspace over examples/ (PORT=8765)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
@@ -130,21 +130,21 @@ example: build
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
-	$(CURDIR)/target/debug/cryo web
+	$(CURDIR)/target/debug/cryohub start --foreground
 
 # Stop a running example
 # Usage: make example-cancel DIR=examples/chambers/chess-by-mail
 example-cancel:
 	cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel
 
-# Start cryo web against examples/ as a multi-chamber workspace.
+# Start cryohub against examples/ as a multi-chamber workspace.
 # Each examples/chambers/<name>/ is a chamber; the server runs in the foreground.
-# Usage: make example-web
-#        make example-web PORT=8080
+# Usage: make example-hub
+#        make example-hub PORT=8080
 PORT ?= 8765
 
-example-web: build
-	cd examples && $(CURDIR)/target/debug/cryo web --foreground --port $(PORT)
+example-hub: build
+	cd examples && $(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
 
 # Quick smoke test: force one agent wakeup cycle
 # Usage: make check-agent                 # check default (opencode)

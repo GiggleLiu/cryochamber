@@ -59,7 +59,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryo web                                                      # if using the web UI
+cryohub start                                                 # if using the web UI
 ```
 
 ### 4. Manage the running service
@@ -72,9 +72,9 @@ cryo send "message"  # send a message to the agent
 cryo cancel          # stop the daemon
 ```
 
-## Web UI (multi-chamber)
+## Cryohub (multi-chamber)
 
-`cryo web` runs a workspace-wide dashboard. A **workspace** is a directory that contains a `chambers/` subdirectory; each `chambers/<name>/` is a cryo project (a **chamber**).
+`cryohub` runs a workspace-wide dashboard. A **workspace** is a directory that contains a `chambers/` subdirectory; each `chambers/<name>/` is a cryo project (a **chamber**).
 
 ```
 ~/my-cryo-workspace/
@@ -84,14 +84,14 @@ cryo cancel          # stop the daemon
     reports/
 ```
 
-Run `cryo web` from the workspace dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside `./chambers/`) appear as **external** chambers for monitoring only.
+Run `cryohub start` from the workspace dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside `./chambers/`) appear as **external** chambers for monitoring only.
 
-**Migrating from a single-chamber project:**
+**Single-chamber layout:**
 
 ```bash
 mkdir -p ~/cryo-workspace/chambers
 ln -s $(pwd) ~/cryo-workspace/chambers/my-chamber
-cd ~/cryo-workspace && cryo web
+cd ~/cryo-workspace && cryohub start
 ```
 
 ## Messaging Channels
@@ -100,7 +100,7 @@ Cryochamber supports external messaging channels that sync between a remote serv
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web-ui.html) |
+| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Hub](https://giggleliu.github.io/cryochamber/hub.html) |
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 

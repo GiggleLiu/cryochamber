@@ -12,7 +12,7 @@ use notify::{
     recommended_watcher, Event as NotifyEvent, EventKind, RecursiveMode, Watcher,
 };
 
-use crate::web::state::SseEvent;
+use crate::hub::state::SseEvent;
 
 /// Stored handle per chamber: the watcher (kept alive by the thread) and the
 /// stop flag for the background log/state poll thread.

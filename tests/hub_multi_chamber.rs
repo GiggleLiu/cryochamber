@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cryochamber::config;
-use cryochamber::web::{build_router_with_state, discovery, state::AppState};
+use cryochamber::hub::{build_router_with_state, discovery, state::AppState};
 use tower::ServiceExt;
 
 /// Build a workspace with two chambers. Populate the AppState index
@@ -167,5 +167,5 @@ async fn start_chamber_via_api_creates_background_daemon() {
     assert!(state_path.exists(), "daemon should have written timer.json");
 
     // Clean up: stop the daemon we spawned
-    let _ = cryochamber::web::lifecycle::stop_chamber(&alpha.canonicalize().unwrap());
+    let _ = cryochamber::hub::lifecycle::stop_chamber(&alpha.canonicalize().unwrap());
 }

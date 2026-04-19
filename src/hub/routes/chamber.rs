@@ -12,7 +12,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::web::state::{AppState, SseEvent};
+use crate::hub::state::{AppState, SseEvent};
 
 /// Build the JSON status payload for a single chamber.
 pub fn status_json(dir: &Path) -> Value {
@@ -64,7 +64,7 @@ pub fn status_json(dir: &Path) -> Value {
         let diff_ms = (wake - now).num_milliseconds();
         Some(format!(
             "{w} ({})",
-            crate::web::format_relative_time(diff_ms)
+            crate::hub::format_relative_time(diff_ms)
         ))
     });
 
@@ -220,9 +220,9 @@ pub async fn post_wake(
     })))
 }
 
-use crate::web::discovery::Source;
+use crate::hub::discovery::Source;
 
-fn require_workspace(entry: &crate::web::discovery::ChamberEntry) -> Result<(), StatusCode> {
+fn require_workspace(entry: &crate::hub::discovery::ChamberEntry) -> Result<(), StatusCode> {
     if entry.source == Source::External {
         return Err(StatusCode::CONFLICT);
     }
@@ -235,7 +235,7 @@ pub async fn post_start(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     require_workspace(&entry)?;
-    let result = crate::web::lifecycle::start_chamber(&path);
+    let result = crate::hub::lifecycle::start_chamber(&path);
     app.refresh();
     match result {
         Ok(()) => Ok(Json(json!({"ok": true, "message": "Started"}))),
@@ -249,7 +249,7 @@ pub async fn post_stop(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     require_workspace(&entry)?;
-    let result = crate::web::lifecycle::stop_chamber(&path);
+    let result = crate::hub::lifecycle::stop_chamber(&path);
     app.refresh();
     match result {
         Ok(()) => Ok(Json(json!({"ok": true, "message": "Stopped"}))),
@@ -263,7 +263,7 @@ pub async fn post_restart(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     require_workspace(&entry)?;
-    let result = crate::web::lifecycle::restart_chamber(&path);
+    let result = crate::hub::lifecycle::restart_chamber(&path);
     app.refresh();
     match result {
         Ok(()) => Ok(Json(json!({"ok": true, "message": "Restarted"}))),
@@ -277,7 +277,7 @@ pub async fn post_reset(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     require_workspace(&entry)?;
-    let result = crate::web::lifecycle::reset_chamber(&path);
+    let result = crate::hub::lifecycle::reset_chamber(&path);
     app.refresh();
     match result {
         Ok(archive) => Ok(Json(json!({
@@ -368,8 +368,8 @@ mod tests {
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
         // Inject a synthetic external entry directly into the index
         let id = {
-            let id = crate::web::discovery::encode_id(&external.canonicalize().unwrap());
-            let entry = crate::web::discovery::ChamberEntry {
+            let id = crate::hub::discovery::encode_id(&external.canonicalize().unwrap());
+            let entry = crate::hub::discovery::ChamberEntry {
                 id: id.clone(),
                 name: "outside".into(),
                 path: external.canonicalize().unwrap(),

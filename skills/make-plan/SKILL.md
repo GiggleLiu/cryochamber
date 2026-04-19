@@ -17,14 +17,14 @@ Ask questions **one at a time**. Suggest answers based on the task. Multiple cho
 
 ### Q0. Where should the chamber live?
 
-Ask up front — this affects sync paths, workspace discovery (`cryo web`), and `.gitignore`
+Ask up front — this affects sync paths, workspace discovery (`cryohub`), and `.gitignore`
 patterns. Suggest a sensible default based on context:
 
 - **In a workspace** (recommended) — `<workspace>/chambers/<name>/`, where the workspace
-  is a parent directory containing multiple chambers. `cryo web` runs at the workspace
+  is a parent directory containing multiple chambers. `cryohub` runs at the workspace
   level and lists every chamber under `chambers/`.
 - **Standalone** — `~/cryo/<name>/` or any other directory. Simpler if you only ever run
-  one chamber, but `cryo web` still requires a workspace layout (a symlink in
+  one chamber, but `cryohub` still requires a workspace layout (a symlink in
   `<workspace>/chambers/<name>` works).
 
 Confirm the exact path before moving on. Create the directory if it doesn't exist.
@@ -98,7 +98,7 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 How should the agent communicate with the user?
 - **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval. **Before Phase 3:** the bot (whoever owns the API key in the zuliprc) must be subscribed to the target stream; otherwise `cryo-zulip init` fails when resolving the stream. Remind the user to add the bot in Zulip's stream settings.
 - **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
-- **Web UI only** — simplest, browser via `cryo web`. Host and port are CLI flags (`cryo web --host 0.0.0.0 --port 8765`), not `cryo.toml` fields. Default is `127.0.0.1:8765`. For remote access use `--host 0.0.0.0`. If 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user. Note: `cryo web` runs at the workspace level (expects a `chambers/` directory), not per-chamber.
+- **Hub (Web UI) only** — simplest, browser via `cryohub start`. Host and port are CLI flags (`cryohub start --host 0.0.0.0 --port 8765`), not `cryo.toml` fields. Default is `127.0.0.1:8765`. For remote access use `--host 0.0.0.0`. If 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user. Note: `cryohub` runs at the workspace level (expects a `chambers/` directory), not per-chamber.
 - **None** — agent runs silently, check logs manually.
 
 ### Q10. Periodic reports
@@ -132,7 +132,7 @@ Generate from Phase 1 answers. No new questions — everything maps directly.
 | Retry strategy (Q6) | `max_retries` |
 | Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
 | Sync channel (Q9) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
-| Sync channel (Q9) — Web UI | Host/port are CLI flags for `cryo web`; nothing goes in `cryo.toml`. |
+| Sync channel (Q9) — Hub (Web UI) | Host/port are CLI flags for `cryohub start`; nothing goes in `cryo.toml`. |
 | Reports (Q10) | `report_time`, `report_interval` |
 | Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 

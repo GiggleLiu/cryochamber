@@ -21,7 +21,7 @@ A cron job can't do this because:
 ```bash
 cd examples/chambers/chess-by-mail
 cryo init && cryo start
-cryo web   # open the browser chat UI (port 3947)
+cd ../.. && cryohub start --foreground   # open the browser chat UI from the workspace dir
 ```
 
 ## Playing
@@ -31,8 +31,8 @@ cryo web   # open the browser chat UI (port 3947)
 cryo send "e2e4"
 cryo send "Nf3" --wake  # wake the AI immediately
 
-# Or use the web UI
-cryo web
+# Or use the hub UI from the workspace dir
+cryohub start
 ```
 
 ## How It Works

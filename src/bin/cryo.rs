@@ -93,32 +93,9 @@ enum Commands {
         target: String,
         message: String,
     },
-    /// Open a web chat UI for messaging and waking the agent
-    Web {
-        /// Host to listen on (default: 127.0.0.1)
-        #[arg(long)]
-        host: Option<String>,
-        /// Port to listen on (default: 8765)
-        #[arg(long)]
-        port: Option<u16>,
-        /// Run in foreground instead of installing a service
-        #[arg(long, conflicts_with = "stop")]
-        foreground: bool,
-        /// Stop the web service
-        #[arg(long)]
-        stop: bool,
-    },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
-    /// Internal: run the web server (called by OS service)
-    #[command(hide = true)]
-    WebDaemon {
-        #[arg(long)]
-        host: String,
-        #[arg(long)]
-        port: u16,
-    },
 }
 
 fn main() -> Result<()> {
@@ -145,14 +122,7 @@ fn main() -> Result<()> {
             wake,
         } => cmd_send(&body, &from, subject.as_deref(), wake),
         Commands::Wake { message } => cmd_wake(message.as_deref()),
-        Commands::Web {
-            host,
-            port,
-            foreground,
-            stop,
-        } => cmd_web(host, port, foreground, stop),
         Commands::Daemon => cmd_daemon(),
-        Commands::WebDaemon { host, port } => cmd_web_daemon(host, port),
         Commands::Receive => cmd_receive(),
         Commands::FallbackExec {
             action,
@@ -350,7 +320,7 @@ fn cmd_start(
         }
     }
 
-    println!("Use `cryo watch` or `cryo web` to follow progress.");
+    println!("Use `cryo watch` or `cryohub start` to follow progress.");
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -360,66 +330,6 @@ fn cmd_daemon() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     let daemon = cryochamber::daemon::Daemon::new(dir);
     daemon.run()
-}
-
-fn cmd_web(host: Option<String>, port: Option<u16>, foreground: bool, stop: bool) -> Result<()> {
-    let dir = cryochamber::work_dir()?;
-
-    if stop {
-        if cryochamber::service::uninstall("web", &dir)? {
-            println!("Web service stopped and removed.");
-        } else {
-            println!("No web service installed for this directory.");
-        }
-        return Ok(());
-    }
-
-    let has_chambers_dir = dir.join("chambers").is_dir();
-    let is_chamber = cryochamber::config::config_path(&dir).exists();
-    if is_chamber && !has_chambers_dir {
-        anyhow::bail!(
-            "cryo web now runs in workspace mode.\n\n\
-             This directory contains a cryo.toml (it's a chamber), not a chambers/ directory.\n\
-             Create a workspace:\n  \
-               mkdir -p ~/cryo-workspace/chambers\n  \
-               ln -s {} ~/cryo-workspace/chambers/{}\n  \
-               cd ~/cryo-workspace && cryo web\n",
-            dir.display(),
-            dir.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("this-chamber"),
-        );
-    }
-
-    let host = host.unwrap_or_else(|| "127.0.0.1".to_string());
-    let port = port.unwrap_or(8765);
-
-    if foreground {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(cryochamber::web::serve(dir, &host, port))
-    } else {
-        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
-        let port_str = port.to_string();
-        let log_path = dir.join("cryo-web.log");
-        cryochamber::service::install(
-            "web",
-            &dir,
-            &exe,
-            &["web-daemon", "--host", &host, "--port", &port_str],
-            &log_path,
-            true,
-        )?;
-        println!("Web UI service installed: http://{host}:{port}");
-        println!("Log: cryo-web.log");
-        println!("Survives reboot. Stop with: cryo web --stop");
-        Ok(())
-    }
-}
-
-fn cmd_web_daemon(host: String, port: u16) -> Result<()> {
-    let dir = cryochamber::work_dir()?;
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::web::serve(dir, &host, port))
 }
 
 fn cmd_status() -> Result<()> {
@@ -527,7 +437,7 @@ fn cmd_restart() -> Result<()> {
         DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),
         DaemonLaunchMode::Service => println!("Restarted (service reinstalled)."),
     }
-    println!("Use `cryo watch` or `cryo web` to follow progress.");
+    println!("Use `cryo watch` or `cryohub start` to follow progress.");
     Ok(())
 }
 
@@ -616,8 +526,8 @@ fn cmd_clean(force: bool) -> Result<()> {
     if cryochamber::service::uninstall("zulip-sync", &dir)? {
         println!("Removed zulip-sync service.");
     }
-    if cryochamber::service::uninstall("web", &dir)? {
-        println!("Removed web service.");
+    if cryochamber::service::uninstall("hub", &dir)? {
+        println!("Removed hub service.");
     }
 
     // Kill daemon process if still running
@@ -640,7 +550,7 @@ fn cmd_clean(force: bool) -> Result<()> {
         "gh-sync.json",
         "cryo-zulip-sync.log",
         "zulip-sync.json",
-        "cryo-web.log",
+        "cryohub.log",
     ];
     for name in &runtime_files {
         let path = dir.join(name);

@@ -42,7 +42,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryo web                                                      # if using the web UI
+cryohub start                                                 # if using the web UI
 cryo watch                                                    # follow the live log
 ```
 
@@ -85,7 +85,7 @@ inbox: 0 messages
 ```bash
 cryo status          # quick health check
 cryo log             # read full session history
-cryo web             # visual overview in the browser
+cryohub start        # visual overview in the browser (from workspace dir)
 cryo send "message"  # send a message to the agent's inbox
 cryo receive         # read messages the agent sent you
 cryo wake            # force an immediate wake

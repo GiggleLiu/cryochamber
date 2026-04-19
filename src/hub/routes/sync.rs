@@ -10,11 +10,11 @@ use axum::{
 };
 use serde_json::Value;
 
+use crate::hub::discovery::Source;
+use crate::hub::state::{AppState, SseEvent};
 use crate::sync_common::{self, SyncBackend};
-use crate::web::discovery::Source;
-use crate::web::state::{AppState, SseEvent};
 
-fn require_workspace(entry: &crate::web::discovery::ChamberEntry) -> Result<(), StatusCode> {
+fn require_workspace(entry: &crate::hub::discovery::ChamberEntry) -> Result<(), StatusCode> {
     if entry.source == Source::External {
         return Err(StatusCode::CONFLICT);
     }
@@ -64,7 +64,7 @@ pub async fn post_sync_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::web::discovery::{encode_id, ChamberEntry, Source};
+    use crate::hub::discovery::{encode_id, ChamberEntry, Source};
 
     #[tokio::test]
     async fn get_sync_returns_empty_for_unconfigured_chamber() {

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use crate::web::discovery::{ChamberEntry, ChamberIndex};
+use crate::hub::discovery::{ChamberEntry, ChamberIndex};
 
 /// SSE event broadcast to all connected clients. Every event carries
 /// `chamber_id` so the sidebar (which listens to all events) and the detail
@@ -34,7 +34,7 @@ pub struct AppState {
     pub workspace_dir: PathBuf,
     pub chambers: Arc<RwLock<ChamberIndex>>,
     pub tx: tokio::sync::broadcast::Sender<SseEvent>,
-    pub watchers: crate::web::watchers::WatcherRegistry,
+    pub watchers: crate::hub::watchers::WatcherRegistry,
 }
 
 impl AppState {
@@ -44,7 +44,7 @@ impl AppState {
             workspace_dir,
             chambers: Arc::new(RwLock::new(ChamberIndex::new())),
             tx,
-            watchers: crate::web::watchers::WatcherRegistry::new(),
+            watchers: crate::hub::watchers::WatcherRegistry::new(),
         }
     }
 
@@ -62,13 +62,13 @@ impl AppState {
             return Some((e.path.clone(), e.clone()));
         }
         // Slow path: axum decoded the percent-encoding, so re-encode and retry.
-        let re_encoded = crate::web::discovery::encode_id(std::path::Path::new(id));
+        let re_encoded = crate::hub::discovery::encode_id(std::path::Path::new(id));
         idx.get(&re_encoded).map(|e| (e.path.clone(), e.clone()))
     }
 
     /// Overwrite the chamber index with a fresh discovery pass.
     pub fn refresh(&self) {
-        let fresh = crate::web::discovery::discover(&self.workspace_dir);
+        let fresh = crate::hub::discovery::discover(&self.workspace_dir);
         if let Ok(mut idx) = self.chambers.write() {
             *idx = fresh;
         }
@@ -111,7 +111,7 @@ mod tests {
 
         let state = AppState::new(dir.path().to_path_buf());
         state.refresh();
-        let id = crate::web::discovery::encode_id(&alpha.canonicalize().unwrap());
+        let id = crate::hub::discovery::encode_id(&alpha.canonicalize().unwrap());
         let resolved = state.resolve(&id);
         assert!(resolved.is_some());
         let (path, entry) = resolved.unwrap();

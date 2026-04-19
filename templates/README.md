@@ -14,7 +14,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryo web                                                      # if using the web UI
+cryohub start                                                 # if using the web UI
 ```
 
 ## Manage the running service
@@ -42,7 +42,7 @@ Cryochamber supports external messaging channels that sync between a remote serv
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web-ui.html) |
+| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Hub](https://giggleliu.github.io/cryochamber/hub.html) |
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 

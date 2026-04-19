@@ -5,18 +5,18 @@ use std::sync::Arc;
 use axum::{extract::State, response::Json};
 use serde_json::Value;
 
-use crate::web::state::AppState;
+use crate::hub::state::AppState;
 
 pub async fn get_chambers(State(app): State<Arc<AppState>>) -> Json<Value> {
     let idx = app.chambers.read().unwrap();
-    let list: Vec<&crate::web::discovery::ChamberEntry> = idx.values().collect();
+    let list: Vec<&crate::hub::discovery::ChamberEntry> = idx.values().collect();
     Json(serde_json::to_value(&list).unwrap_or(Value::Array(vec![])))
 }
 
 pub async fn post_refresh(State(app): State<Arc<AppState>>) -> Json<Value> {
     app.refresh();
     let idx = app.chambers.read().unwrap();
-    let list: Vec<&crate::web::discovery::ChamberEntry> = idx.values().collect();
+    let list: Vec<&crate::hub::discovery::ChamberEntry> = idx.values().collect();
     Json(serde_json::to_value(&list).unwrap_or(Value::Array(vec![])))
 }
 
@@ -35,8 +35,8 @@ mod tests {
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
         // Populate index without calling registry::list() so tests are
         // isolated from any real daemons the machine might have running.
-        let mut idx = crate::web::discovery::scan_workspace(dir.path());
-        crate::web::discovery::populate_runtime(&mut idx);
+        let mut idx = crate::hub::discovery::scan_workspace(dir.path());
+        crate::hub::discovery::populate_runtime(&mut idx);
         *app.chambers.write().unwrap() = idx;
 
         let Json(v) = get_chambers(State(app)).await;

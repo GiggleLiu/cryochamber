@@ -14,7 +14,7 @@ use axum::{
     Router,
 };
 
-use crate::web::state::AppState as WebAppState;
+use crate::hub::state::AppState as WebAppState;
 
 pub fn build_router(workspace_dir: PathBuf) -> Router {
     let app = Arc::new(WebAppState::new(workspace_dir));
@@ -25,62 +25,62 @@ pub fn build_router(workspace_dir: PathBuf) -> Router {
 /// Separate entry point so integration tests can inject their own `AppState`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
     Router::new()
-        .route("/", get(crate::web::routes::pages::get_index))
-        .route("/c/{id}", get(crate::web::routes::pages::get_index))
-        .route("/assets/web.css", get(crate::web::routes::pages::get_css))
+        .route("/", get(crate::hub::routes::pages::get_index))
+        .route("/c/{id}", get(crate::hub::routes::pages::get_index))
+        .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
         .route(
             "/api/chambers",
-            get(crate::web::routes::chambers::get_chambers),
+            get(crate::hub::routes::chambers::get_chambers),
         )
         .route(
             "/api/chambers/refresh",
-            post(crate::web::routes::chambers::post_refresh),
+            post(crate::hub::routes::chambers::post_refresh),
         )
         .route(
             "/api/chambers/{id}/status",
-            get(crate::web::routes::chamber::get_status),
+            get(crate::hub::routes::chamber::get_status),
         )
         .route(
             "/api/chambers/{id}/messages",
-            get(crate::web::routes::chamber::get_messages),
+            get(crate::hub::routes::chamber::get_messages),
         )
         .route(
             "/api/chambers/{id}/todos",
-            get(crate::web::routes::chamber::get_todos),
+            get(crate::hub::routes::chamber::get_todos),
         )
         .route(
             "/api/chambers/{id}/send",
-            post(crate::web::routes::chamber::post_send),
+            post(crate::hub::routes::chamber::post_send),
         )
         .route(
             "/api/chambers/{id}/wake",
-            post(crate::web::routes::chamber::post_wake),
+            post(crate::hub::routes::chamber::post_wake),
         )
         .route(
             "/api/chambers/{id}/start",
-            post(crate::web::routes::chamber::post_start),
+            post(crate::hub::routes::chamber::post_start),
         )
         .route(
             "/api/chambers/{id}/stop",
-            post(crate::web::routes::chamber::post_stop),
+            post(crate::hub::routes::chamber::post_stop),
         )
         .route(
             "/api/chambers/{id}/restart",
-            post(crate::web::routes::chamber::post_restart),
+            post(crate::hub::routes::chamber::post_restart),
         )
         .route(
             "/api/chambers/{id}/reset",
-            post(crate::web::routes::chamber::post_reset),
+            post(crate::hub::routes::chamber::post_reset),
         )
         .route(
             "/api/chambers/{id}/sync",
-            get(crate::web::routes::sync::get_sync),
+            get(crate::hub::routes::sync::get_sync),
         )
         .route(
             "/api/chambers/{id}/sync/{backend}/{verb}",
-            post(crate::web::routes::sync::post_sync_action),
+            post(crate::hub::routes::sync::post_sync_action),
         )
-        .route("/api/events", get(crate::web::routes::events::get_events))
+        .route("/api/events", get(crate::hub::routes::events::get_events))
         .with_state(app)
 }
 
@@ -91,10 +91,10 @@ pub async fn serve(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Res
     let addr = format!("{host}:{port}");
     if !host.starts_with("127.") && host != "localhost" {
         eprintln!(
-            "Warning: cryo web is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1 unless you know what you're doing."
+            "Warning: cryohub is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1 unless you know what you're doing."
         );
     }
-    println!("Cryochamber web UI: http://{addr}");
+    println!("Cryochamber hub: http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, router).await?;
     Ok(())

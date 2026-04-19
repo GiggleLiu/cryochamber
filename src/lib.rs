@@ -4,6 +4,7 @@ pub mod config;
 pub mod daemon;
 pub mod fallback;
 pub mod gh_sync;
+pub mod hub;
 pub mod log;
 pub mod message;
 pub mod process;
@@ -16,7 +17,6 @@ pub mod socket;
 pub mod state;
 pub mod sync_common;
 pub mod todo;
-pub mod web;
 pub mod zulip_sync;
 
 pub fn work_dir() -> anyhow::Result<std::path::PathBuf> {

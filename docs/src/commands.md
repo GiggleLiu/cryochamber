@@ -16,7 +16,7 @@ cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
 cryo wake ["message"]               # Send a wake message to the daemon's inbox
-cryo web [--host <ip>] [--port <n>] # Open browser chat UI
+cryohub start [--host <ip>] [--port <n>] # Open browser dashboard (workspace-level)
 cryo clean [--force]                # Remove runtime files (logs, state, messages)
 ```
 

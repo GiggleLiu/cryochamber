@@ -12,7 +12,7 @@ use serde_json::json;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::web::state::{AppState, SseEvent};
+use crate::hub::state::{AppState, SseEvent};
 
 pub async fn get_events(
     State(app): State<Arc<AppState>>,
