@@ -142,6 +142,93 @@
     };
   }
 
+  function buildHeader(pane, entry, status) {
+    const header = document.createElement('div');
+    header.style.padding = '12px 20px';
+    header.style.borderBottom = '1px solid var(--border)';
+    const top = document.createElement('div');
+    top.style.display = 'flex';
+    top.style.alignItems = 'center';
+    top.style.justifyContent = 'space-between';
+
+    const left = document.createElement('div');
+    const name = document.createElement('strong');
+    name.style.color = 'var(--accent)';
+    name.textContent = entry.name;
+    const meta = document.createElement('span');
+    meta.style.color = 'var(--text-dim)';
+    meta.style.marginLeft = '8px';
+    left.appendChild(name);
+    left.appendChild(meta);
+
+    const btns = document.createElement('div');
+    btns.className = 'lifecycle-buttons';
+
+    top.appendChild(left);
+    top.appendChild(btns);
+    header.appendChild(top);
+
+    const taskLine = document.createElement('div');
+    taskLine.style.marginTop = '6px';
+    taskLine.style.color = 'var(--text-dim)';
+    taskLine.style.fontSize = '12px';
+    header.appendChild(taskLine);
+
+    const planBox = document.createElement('div');
+    planBox.className = 'plan-complete';
+    planBox.style.display = 'none';
+    header.appendChild(planBox);
+
+    pane.appendChild(header);
+    view.headerName = name;
+    view.headerMeta = meta;
+    view.headerTaskLine = taskLine;
+    view.planCompleteBox = planBox;
+    view.lifecycleBtns = btns;
+
+    updateHeader(entry, status);
+    updateLifecycleButtons(entry);
+  }
+
+  function updateHeader(entry, status) {
+    const dot = statusDot(entry);
+    const wake = status.next_wake ? ` · Next wake: ${status.next_wake}` : '';
+    view.headerName.textContent = entry.name;
+    view.headerMeta.textContent = `${dot} session #${status.session}${wake}`;
+    if (status.completed) {
+      view.planCompleteBox.style.display = '';
+      view.planCompleteBox.textContent = `✓ Plan complete${status.completion_summary ? ': ' + status.completion_summary : ''}`;
+      view.headerTaskLine.textContent = '';
+    } else {
+      view.planCompleteBox.style.display = 'none';
+      view.headerTaskLine.textContent = status.task ? `Task: ${status.task}` : '';
+    }
+  }
+
+  function updateLifecycleButtons(entry) {
+    const sig = `${entry.source}|${entry.running}|${!!entry.config_error}`;
+    if (sig === view.lastLifecycleSig) return;
+    view.lastLifecycleSig = sig;
+    const btns = view.lifecycleBtns;
+    btns.innerHTML = '';
+    if (entry.source === 'workspace') {
+      if (entry.running) {
+        btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake')));
+        btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop')));
+        btns.appendChild(btn('restart', () => lifecycle(entry.id, 'restart')));
+      } else if (!entry.config_error) {
+        btns.appendChild(btn('start', () => lifecycle(entry.id, 'start')));
+      }
+      if (!entry.config_error) {
+        const resetBtn = btn('reset', () => confirmReset(entry.id, entry.name));
+        resetBtn.classList.add('danger');
+        btns.appendChild(resetBtn);
+      }
+    } else {
+      btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake')));
+    }
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
