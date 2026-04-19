@@ -573,6 +573,38 @@
     box.appendChild(help);
   }
 
+  function renderLog(status) {
+    const box = document.getElementById('panel-log');
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.innerHTML = 'cryo.log <span class="count">tail · live</span>';
+    box.appendChild(title);
+    const wrap = document.createElement('div');
+    wrap.className = 'log-wrap';
+    const log = document.createElement('pre');
+    log.className = 'log';
+    log.id = 'log';
+    log.textContent = status.log_tail || '';
+    const foot = document.createElement('div');
+    foot.className = 'log-foot';
+    foot.innerHTML =
+      '<span><span class="dot-live"></span>streaming · SSE</span>';
+    wrap.appendChild(log);
+    wrap.appendChild(foot);
+    box.appendChild(wrap);
+    view.logEl = log;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function appendLogLine(line) {
+    if (!view || !view.logEl) return;
+    const el = view.logEl;
+    const atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 30;
+    el.textContent += (el.textContent ? '\n' : '') + line;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
@@ -591,6 +623,7 @@
     buildCompose(pane, id);
     renderTodos(todos);
     renderSync(id, sync);
+    renderLog(status);
     document.getElementById('drawer').hidden = false;
   }
 
