@@ -5,6 +5,7 @@ Cargo.lock
 # Generated docs
 docs/reports/
 docs/plans/
+docs/superpowers/
 book/
 PR_REVIEW.md
 
