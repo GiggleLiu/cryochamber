@@ -30,13 +30,14 @@ impl FallbackAction {
         self.action == "webhook"
     }
 
-    /// Write the fallback alert to messages/outbox/ and optionally dispatch
-    /// a system notification based on the configured alert method.
+    /// Write the fallback alert to `messages/outbox/` for delivery by whatever
+    /// reads it (sync channels, external watchers, the user tailing files).
     ///
-    /// `alert_method` controls the action:
-    /// - `"notify"`: desktop notification + outbox file
-    /// - `"outbox"`: outbox file only (no popup)
-    /// - `"none"`: disable fallback alerts entirely
+    /// `alert_method` controls behavior:
+    /// - `"outbox"` (default): write the alert file
+    /// - `"none"`: suppress — no file written
+    ///
+    /// Legacy `"notify"` is accepted and treated as `"outbox"` for back-compat.
     pub fn execute(&self, work_dir: &Path, alert_method: &str) -> Result<()> {
         if alert_method == "none" {
             eprintln!("Fallback: alert suppressed (fallback_alert = \"none\")");
@@ -62,33 +63,6 @@ impl FallbackAction {
             path.strip_prefix(work_dir).unwrap_or(&path).display()
         );
 
-        if alert_method == "notify" {
-            if let Err(e) = self.send_notification() {
-                eprintln!("Fallback: desktop notification failed: {e}");
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send a desktop notification via notify-rust.
-    fn send_notification(&self) -> Result<()> {
-        let mut notification = notify_rust::Notification::new();
-        notification
-            .summary(&format!("Cryochamber Alert: {}", self.action))
-            .body(&self.message);
-        // Platform-specific alert emphasis
-        #[cfg(target_os = "linux")]
-        {
-            notification.urgency(notify_rust::Urgency::Critical);
-            notification.timeout(notify_rust::Timeout::Never);
-        }
-        #[cfg(target_os = "macos")]
-        {
-            notification.subtitle("Dead-man switch fired");
-            notification.sound_name("Sosumi");
-        }
-        notification.show()?;
         Ok(())
     }
 }

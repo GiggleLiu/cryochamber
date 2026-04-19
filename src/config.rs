@@ -55,7 +55,8 @@ pub struct CryoConfig {
     #[serde(default = "default_web_port")]
     pub web_port: u16,
 
-    /// Fallback alert method: "notify" (desktop popup), "outbox" (file only), "none"
+    /// Fallback alert method: "outbox" (write to messages/outbox/) or "none" (suppress).
+    /// Legacy "notify" is accepted and treated as "outbox".
     #[serde(default = "default_fallback_alert")]
     pub fallback_alert: String,
 
@@ -105,7 +106,7 @@ fn default_web_port() -> u16 {
 }
 
 fn default_fallback_alert() -> String {
-    "notify".to_string()
+    "outbox".to_string()
 }
 
 fn default_report_time() -> String {

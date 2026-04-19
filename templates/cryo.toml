@@ -17,12 +17,11 @@ watch_inbox = true
 # web_port = 3945
 
 # Fallback alert method when dead-man switch fires:
-#   "notify" = desktop notification popup (default)
-#   "outbox" = outbox file only (no popup)
+#   "outbox" = write alert to messages/outbox/ (default; delivered by any sync channel)
 #   "none"   = disable fallback alerts entirely
-# fallback_alert = "notify"
+# fallback_alert = "outbox"
 
-# Periodic status report:
+# Periodic status report (written to messages/outbox/ for sync delivery):
 #   report_time = "09:00" (HH:MM local time)
 #   report_interval = 24 (hours between reports; 0 = disabled)
 # report_time = "09:00"

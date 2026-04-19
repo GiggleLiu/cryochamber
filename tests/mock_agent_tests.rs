@@ -682,7 +682,7 @@ fn test_fallback_fires_on_deadline() {
 
     let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
     let config = config.replace("max_retries = 5", "max_retries = 1");
-    // fallback_alert is commented out in the default template (# fallback_alert = "notify"),
+    // fallback_alert is commented out in the default template (# fallback_alert = "outbox"),
     // so we always append the uncommented setting. TOML uses the last occurrence.
     let config = format!("{config}\nfallback_alert = \"outbox\"\n");
     fs::write(dir.path().join("cryo.toml"), config).unwrap();
@@ -742,8 +742,7 @@ fn test_fallback_suppressed_when_none() {
 
     let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
     let config = config.replace("max_retries = 5", "max_retries = 1");
-    // fallback_alert is commented out in the default template (# fallback_alert = "notify"),
-    // so we always append the uncommented setting.
+    // fallback_alert is commented out in the default template, so append to override.
     let config = format!("{config}\nfallback_alert = \"none\"\n");
     fs::write(dir.path().join("cryo.toml"), config).unwrap();
 

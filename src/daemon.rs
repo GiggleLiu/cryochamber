@@ -1601,8 +1601,10 @@ impl Daemon {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                if let Err(e) = crate::report::send_report_notification(&summary, project_name) {
-                    eprintln!("Daemon: report notification failed: {e}");
+                if let Err(e) =
+                    crate::report::write_report_to_outbox(&self.dir, &summary, project_name)
+                {
+                    eprintln!("Daemon: report outbox write failed: {e}");
                 }
                 eprintln!(
                     "Daemon: report sent ({} sessions, {} failed)",
