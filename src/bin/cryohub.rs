@@ -63,9 +63,10 @@ fn main() -> Result<()> {
 
 fn require_workspace() -> Result<std::path::PathBuf> {
     let dir = cryochamber::work_dir()?;
-    let has_chambers_dir = dir.join("chambers").is_dir();
-    let is_chamber = cryochamber::config::config_path(&dir).exists();
-    if is_chamber && !has_chambers_dir {
+    if dir.join("chambers").is_dir() {
+        return Ok(dir);
+    }
+    if cryochamber::config::config_path(&dir).exists() {
         anyhow::bail!(
             "cryohub runs in workspace mode.\n\n\
              This directory contains a cryo.toml (it's a chamber), not a chambers/ directory.\n\
@@ -79,7 +80,15 @@ fn require_workspace() -> Result<std::path::PathBuf> {
                 .unwrap_or("this-chamber"),
         );
     }
-    Ok(dir)
+    anyhow::bail!(
+        "cryohub needs a workspace: a directory containing a `chambers/` subdirectory.\n\
+         {} has no `chambers/` here.\n\
+         Create one with:\n  \
+           mkdir -p {dir}/chambers\n\
+         or symlink an existing chamber into it.",
+        dir.display(),
+        dir = dir.display(),
+    );
 }
 
 fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Result<()> {

@@ -21,7 +21,7 @@ Our goal is to automate long-running activities that are too irregular for cron.
 cargo install cryochamber
 ```
 
-This installs `cryo`, `cryo-agent`, `cryo-gh`, and `cryo-zulip` binaries.
+This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub` binaries.
 
 ### Copy-Paste Onboarding Prompt
 

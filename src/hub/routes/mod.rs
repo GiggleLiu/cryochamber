@@ -1,4 +1,4 @@
-//! HTTP route handlers for the web UI.
+//! HTTP route handlers for the hub UI.
 
 pub mod chamber;
 pub mod chambers;

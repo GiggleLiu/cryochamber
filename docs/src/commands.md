@@ -16,8 +16,18 @@ cryo log                            # Print session log
 cryo send "<message>"               # Send a message to the agent's inbox
 cryo receive                        # Read messages from the agent's outbox
 cryo wake ["message"]               # Send a wake message to the daemon's inbox
-cryohub start [--host <ip>] [--port <n>] # Open browser dashboard (workspace-level)
 cryo clean [--force]                # Remove runtime files (logs, state, messages)
+```
+
+## Hub (`cryohub`)
+
+Workspace-wide browser dashboard for managing chambers. Runs from a directory containing a `chambers/` subdirectory. See [Hub](./hub.md).
+
+```bash
+cryohub start [--host <ip>] [--port <n>]   # install service (survives reboot)
+cryohub start --foreground                  # run in the current process instead
+cryohub stop                                # uninstall the service
+cryohub status                              # show whether a service is installed
 ```
 
 ## Agent IPC (`cryo-agent`)
