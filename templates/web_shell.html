@@ -106,7 +106,7 @@
     state.currentId = id;
     window.history.pushState({}, '', `/c/${id}`);
     renderSidebar();
-    await renderDetail(id);
+    await buildDetail(id);
   }
 
   function escapeHtml(s) {
@@ -406,7 +406,7 @@
       fetchJSON(`/api/chambers/${id}/status`),
       fetchJSON(`/api/chambers/${id}/messages`),
       fetchJSON(`/api/chambers/${id}/todos`),
-      fetchJSON(`/api/chambers/${id}/sync`),
+      fetchJSON(`/api/chambers/${id}/sync`).catch(() => []),
     ]);
     pane.innerHTML = '';
     view = newView();
@@ -445,132 +445,6 @@
     if (data.messages) updateMessages(data.messages);
   }
 
-  async function renderDetail(id) {
-    const entry = state.chambers.find(c => c.id === id);
-    if (!entry) return;
-    const pane = document.getElementById('pane');
-    const [status, messages, todos] = await Promise.all([
-      fetchJSON(`/api/chambers/${id}/status`),
-      fetchJSON(`/api/chambers/${id}/messages`),
-      fetchJSON(`/api/chambers/${id}/todos`),
-    ]);
-    pane.innerHTML = '';
-
-    const header = document.createElement('div');
-    header.style.padding = '12px 20px';
-    header.style.borderBottom = '1px solid var(--border)';
-    header.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between;">
-        <div>
-          <strong style="color: var(--accent)">${escapeHtml(entry.name)}</strong>
-          <span style="color: var(--text-dim); margin-left: 8px;">${statusDot(entry)} session #${status.session}</span>
-          ${status.next_wake ? `<span style="color: var(--text-dim); margin-left: 12px;">Next wake: ${escapeHtml(status.next_wake)}</span>` : ''}
-        </div>
-        <div class="lifecycle-buttons"></div>
-      </div>
-      ${status.completed
-        ? `<div class="plan-complete">✓ Plan complete${status.completion_summary ? `: ${escapeHtml(status.completion_summary)}` : ''}</div>`
-        : (status.task ? `<div style="margin-top:6px; color: var(--text-dim); font-size:12px;">Task: ${escapeHtml(status.task)}</div>` : '')}
-    `;
-    const btns = header.querySelector('.lifecycle-buttons');
-    if (entry.source === 'workspace') {
-      if (entry.running) {
-        btns.appendChild(btn('wake', () => lifecycle(id, 'wake')));
-        btns.appendChild(btn('stop', () => lifecycle(id, 'stop')));
-        btns.appendChild(btn('restart', () => lifecycle(id, 'restart')));
-      } else if (!entry.config_error) {
-        btns.appendChild(btn('start', () => lifecycle(id, 'start')));
-      }
-      if (!entry.config_error) {
-        const resetBtn = btn('reset', () => confirmReset(id, entry.name));
-        resetBtn.classList.add('danger');
-        btns.appendChild(resetBtn);
-      }
-    } else {
-      btns.appendChild(btn('wake', () => lifecycle(id, 'wake')));
-    }
-    pane.appendChild(header);
-
-    if (todos && todos.length > 0) {
-      const todoBox = document.createElement('div');
-      todoBox.className = 'todos';
-      const title = document.createElement('div');
-      title.className = 'todos-title';
-      const pending = todos.filter(t => !t.done).length;
-      title.textContent = `Todos (${pending} pending / ${todos.length} total)`;
-      todoBox.appendChild(title);
-      for (const t of todos) {
-        const row = document.createElement('div');
-        row.className = 'todo-row' + (t.done ? ' done' : '');
-        const check = document.createElement('span');
-        check.className = 'todo-check';
-        check.textContent = t.done ? '☑' : '☐';
-        const text = document.createElement('span');
-        text.className = 'todo-text';
-        text.textContent = t.text;
-        row.appendChild(check);
-        row.appendChild(text);
-        if (t.at) {
-          const when = document.createElement('span');
-          when.className = 'todo-at';
-          when.textContent = t.at;
-          row.appendChild(when);
-        }
-        todoBox.appendChild(row);
-      }
-      pane.appendChild(todoBox);
-    }
-
-    const msgBox = document.createElement('div');
-    msgBox.style.flex = '1';
-    msgBox.style.overflowY = 'auto';
-    msgBox.style.padding = '12px 20px';
-    for (const m of messages) {
-      const row = document.createElement('div');
-      row.style.marginBottom = '10px';
-      row.style.padding = '8px';
-      row.style.background = m.direction === 'inbox' ? 'var(--inbox-bg)' : 'var(--outbox-bg)';
-      row.style.borderRadius = '3px';
-      row.innerHTML = `<div style="font-size:11px; color: var(--text-dim)">${escapeHtml(m.direction)} · ${escapeHtml(m.from)} · ${escapeHtml(m.timestamp)}</div>
-                       <div style="margin-top:4px; white-space: pre-wrap;">${escapeHtml(m.body)}</div>`;
-      msgBox.appendChild(row);
-    }
-    pane.appendChild(msgBox);
-
-    const send = document.createElement('div');
-    send.style.padding = '10px 20px';
-    send.style.borderTop = '1px solid var(--border)';
-    send.innerHTML = `
-      <input id="send-body" placeholder="Message..." style="width:70%;padding:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:inherit;">
-      <button id="send-btn" style="padding:6px 12px;background:var(--accent-dim);color:var(--accent);border:none;cursor:pointer;font-family:inherit;">send</button>
-    `;
-    send.querySelector('#send-btn').addEventListener('click', async () => {
-      const body = send.querySelector('#send-body').value.trim();
-      if (!body) return;
-      try {
-        await fetchJSON(`/api/chambers/${id}/send`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({body}),
-        });
-        send.querySelector('#send-body').value = '';
-      } catch (e) { toast(e.message, 'error'); }
-    });
-    pane.appendChild(send);
-
-    const logBox = document.createElement('pre');
-    logBox.id = 'log-box';
-    logBox.style.background = 'var(--bg)';
-    logBox.style.color = 'var(--text-dim)';
-    logBox.style.padding = '10px 20px';
-    logBox.style.maxHeight = '200px';
-    logBox.style.overflowY = 'auto';
-    logBox.style.fontSize = '11px';
-    logBox.style.borderTop = '1px solid var(--border)';
-    logBox.textContent = status.log_tail || '';
-    pane.appendChild(logBox);
-  }
-
   function confirmReset(id, name) {
     const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive cryo.log and cryo-agent.log to history/<timestamp>/\n  • start a new session (session counter resets to #1)\n\nThis cannot be undone.`;
     if (window.confirm(msg)) {
@@ -583,7 +457,7 @@
       const resp = await fetchJSON(`/api/chambers/${id}/${action}`, {method: 'POST'});
       toast(resp.message || action, resp.ok ? '' : 'error');
       await loadChambers();
-      if (state.currentId === id) await renderDetail(id);
+      if (state.currentId === id) await buildDetail(id);
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -594,7 +468,7 @@
       state.chambers = await fetchJSON('/api/chambers/refresh', {method: 'POST'});
       renderSidebar();
       renderSummary();
-      if (state.currentId) await renderDetail(state.currentId);
+      if (state.currentId) await buildDetail(state.currentId);
     } catch (e) { toast(e.message, 'error'); }
   });
 
@@ -602,19 +476,22 @@
   evt.addEventListener('message', async e => {
     const d = JSON.parse(e.data);
     if (state.currentId === d.chamber_id) {
-      await renderDetail(state.currentId);
+      await updateDetail(state.currentId, { messages: true });
     }
     await loadChambers();
   });
   evt.addEventListener('status', async e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) {
+      await updateDetail(state.currentId, { status: true, todos: true, sync: true });
+    }
     await loadChambers();
-    if (state.currentId) await renderDetail(state.currentId);
   });
   evt.addEventListener('log', e => {
     const d = JSON.parse(e.data);
-    if (state.currentId === d.chamber_id) {
-      const box = document.getElementById('log-box');
-      if (box) { box.textContent += (box.textContent ? '\n' : '') + d.line; box.scrollTop = box.scrollHeight; }
+    if (state.currentId === d.chamber_id && view && view.logBox) {
+      view.logBox.textContent += (view.logBox.textContent ? '\n' : '') + d.line;
+      view.logBox.scrollTop = view.logBox.scrollHeight;
     }
   });
   evt.addEventListener('index', async () => { await loadChambers(); });
