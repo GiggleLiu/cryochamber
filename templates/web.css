@@ -405,3 +405,62 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* ----- Sync box ----- */
+.sync-box {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+}
+.sync-title {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.sync-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+.sync-dot {
+  width: 1em;
+  text-align: center;
+  flex-shrink: 0;
+}
+.sync-dot.running { color: var(--green); }
+.sync-dot.stopped { color: var(--text-dim); }
+.sync-dot.warning { color: var(--orange); }
+.sync-backend {
+  color: var(--accent);
+  font-weight: 500;
+  min-width: 4em;
+}
+.sync-target {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.sync-actions { display: flex; gap: 6px; }
+.sync-actions button {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+.sync-actions button:hover { background: var(--accent-dim); }
