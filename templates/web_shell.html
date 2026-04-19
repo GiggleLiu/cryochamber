@@ -406,7 +406,7 @@
       fetchJSON(`/api/chambers/${id}/status`),
       fetchJSON(`/api/chambers/${id}/messages`),
       fetchJSON(`/api/chambers/${id}/todos`),
-      fetchJSON(`/api/chambers/${id}/sync`).catch(() => []),
+      fetchJSON(`/api/chambers/${id}/sync`),
     ]);
     pane.innerHTML = '';
     view = newView();
