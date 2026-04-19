@@ -321,15 +321,136 @@
     }
   }
 
+  function messageKey(m) {
+    return `${m.direction}|${m.timestamp}|${m.from}|${hash32(m.body || '')}`;
+  }
+
+  function dayKey(ts) {
+    return (ts || '').slice(0, 10); // YYYY-MM-DD
+  }
+
+  function buildMessageRow(m) {
+    const row = document.createElement('div');
+    row.className = 'msg ' + (m.direction === 'inbox' ? 'inbox' : 'outbox');
+    row.dataset.key = messageKey(m);
+    row.dataset.day = dayKey(m.timestamp);
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    const from = document.createElement('span');
+    from.className = 'from';
+    from.textContent = m.direction === 'inbox' ? m.from : `${m.from || 'chamber'} → ${m.to || 'out'}`;
+    const ts = document.createElement('span');
+    ts.textContent = (m.timestamp || '').slice(11, 16);
+    meta.appendChild(from);
+    meta.appendChild(ts);
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    body.textContent = m.body || '';
+    row.appendChild(meta);
+    row.appendChild(body);
+    return row;
+  }
+
+  function buildDayMarker(day) {
+    const el = document.createElement('div');
+    el.className = 'day-marker';
+    el.dataset.day = day;
+    el.textContent = day;
+    return el;
+  }
+
+  function appendMessages(box, messages) {
+    let currentDay = box.lastChild?.dataset?.day || null;
+    for (const m of messages) {
+      const d = dayKey(m.timestamp);
+      if (d !== currentDay) {
+        box.appendChild(buildDayMarker(d));
+        currentDay = d;
+      }
+      box.appendChild(buildMessageRow(m));
+      view.lastMsgKey = messageKey(m);
+    }
+  }
+
+  function buildThread(pane, messages) {
+    const box = document.createElement('div');
+    box.className = 'thread';
+    pane.appendChild(box);
+    view.msgBox = box;
+    appendMessages(box, messages || []);
+    // Scroll newest into view:
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function isAtBottom(el) {
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+  }
+
+  function updateMessages(messages) {
+    if (!view.msgBox) return;
+    const box = view.msgBox;
+    const wasAtBottom = isAtBottom(box);
+    let startAt = 0;
+    if (view.lastMsgKey) {
+      const idx = messages.findIndex(m => messageKey(m) === view.lastMsgKey);
+      if (idx < 0) {
+        box.innerHTML = '';
+        appendMessages(box, messages);
+        box.scrollTop = box.scrollHeight;
+        return;
+      }
+      startAt = idx + 1;
+    }
+    appendMessages(box, messages.slice(startAt));
+    if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  function buildCompose(pane, id) {
+    const wrap = document.createElement('div');
+    wrap.className = 'compose';
+    wrap.innerHTML = `
+      <div class="compose-inner">
+        <textarea id="send-body" rows="1" placeholder="Send a message to the chamber…"></textarea>
+        <div class="controls">
+          <div class="hint">⌘↵</div>
+          <button class="send">Send</button>
+        </div>
+      </div>`;
+    pane.appendChild(wrap);
+    const ta   = wrap.querySelector('#send-body');
+    const send = wrap.querySelector('.send');
+    async function submit() {
+      const body = ta.value.trim();
+      if (!body) return;
+      try {
+        await fetchJSON(`/api/chambers/${id}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body }),
+        });
+        ta.value = '';
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    send.addEventListener('click', submit);
+    ta.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submit(); }
+    });
+  }
+
   async function buildDetail(id) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
     const pane = document.getElementById('pane');
-    const status = await fetchJSON(`/api/chambers/${id}/status`);
+    const [status, messages] = await Promise.all([
+      fetchJSON(`/api/chambers/${id}/status`),
+      fetchJSON(`/api/chambers/${id}/messages`),
+    ]);
     pane.innerHTML = '';
     view = newView();
     view.chamberId = id;
     buildHead(pane, entry, status);
+    buildThread(pane, messages);
+    buildCompose(pane, id);
     document.getElementById('drawer').hidden = false;
   }
 
