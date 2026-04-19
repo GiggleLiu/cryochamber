@@ -2,7 +2,7 @@
 //! Two backends (gh, zulip) with near-identical verbs -- free functions are
 //! enough; no trait needed.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -55,23 +55,90 @@ pub fn summarize_all(dir: &Path) -> Vec<SyncSummary> {
         .collect()
 }
 
-// Lifecycle wrappers (implemented in Task B6).
-pub fn start(_backend: SyncBackend, _dir: &Path) -> Result<()> {
-    anyhow::bail!("not implemented")
+fn resolve_cli(backend: SyncBackend) -> Result<std::path::PathBuf> {
+    let (env_var, bin_name) = match backend {
+        SyncBackend::Gh => ("CRYO_GH_CLI", "cryo-gh"),
+        SyncBackend::Zulip => ("CRYO_ZULIP_CLI", "cryo-zulip"),
+    };
+    if let Ok(p) = std::env::var(env_var) {
+        return Ok(std::path::PathBuf::from(p));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let sibling = parent.join(bin_name);
+            if sibling.exists() {
+                return Ok(sibling);
+            }
+        }
+    }
+    if let Ok(output) = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {bin_name}"))
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(std::path::PathBuf::from(path));
+            }
+        }
+    }
+    anyhow::bail!("{bin_name} binary not found (tried ${env_var}, sibling of current exe, $PATH)");
 }
-pub fn stop(_backend: SyncBackend, _dir: &Path) -> Result<()> {
-    anyhow::bail!("not implemented")
+
+fn run_subcommand(backend: SyncBackend, dir: &Path, sub: &str) -> Result<()> {
+    let cli = resolve_cli(backend)?;
+    let output = std::process::Command::new(&cli)
+        .current_dir(dir)
+        .arg(sub)
+        .output()
+        .with_context(|| format!("Failed to spawn {}", cli.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let truncated: String = stderr.chars().take(500).collect();
+        anyhow::bail!(
+            "{} {sub} exited with {}: {}",
+            cli.display(),
+            output.status,
+            truncated.trim()
+        );
+    }
+    Ok(())
 }
-pub fn pull(_backend: SyncBackend, _dir: &Path) -> Result<()> {
-    anyhow::bail!("not implemented")
+
+pub fn start(backend: SyncBackend, dir: &Path) -> Result<()> {
+    run_subcommand(backend, dir, "sync")
 }
-pub fn push(_backend: SyncBackend, _dir: &Path) -> Result<()> {
-    anyhow::bail!("not implemented")
+pub fn stop(backend: SyncBackend, dir: &Path) -> Result<()> {
+    run_subcommand(backend, dir, "unsync")
+}
+pub fn pull(backend: SyncBackend, dir: &Path) -> Result<()> {
+    run_subcommand(backend, dir, "pull")
+}
+pub fn push(backend: SyncBackend, dir: &Path) -> Result<()> {
+    run_subcommand(backend, dir, "push")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn make_stub(dir: &Path, name: &str, exit_code: i32, stdout: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        let mut f = std::fs::File::create(&p).unwrap();
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(f, "echo {stdout}").unwrap();
+        writeln!(f, "exit {exit_code}").unwrap();
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&p, perms).unwrap();
+        p
+    }
 
     #[test]
     fn backend_parse_roundtrip() {
@@ -107,5 +174,41 @@ mod tests {
         assert_eq!(summaries[0].target, "alice/notes#7");
         assert_eq!(summaries[0].last_pushed_session, Some(3));
         assert!(!summaries[0].running);
+    }
+
+    #[test]
+    fn start_invokes_sync_subcommand_via_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let stub = make_stub(bin.path(), "cryo-gh-stub", 0, "ok");
+        std::env::set_var("CRYO_GH_CLI", &stub);
+        let res = start(SyncBackend::Gh, work.path());
+        std::env::remove_var("CRYO_GH_CLI");
+        assert!(res.is_ok(), "{res:?}");
+    }
+
+    #[test]
+    fn stop_propagates_non_zero_exit_as_error() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let stub = make_stub(bin.path(), "cryo-gh-stub", 7, "boom");
+        std::env::set_var("CRYO_GH_CLI", &stub);
+        let res = stop(SyncBackend::Gh, work.path());
+        std::env::remove_var("CRYO_GH_CLI");
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn pull_and_push_use_zulip_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let stub = make_stub(bin.path(), "cryo-zulip-stub", 0, "ok");
+        std::env::set_var("CRYO_ZULIP_CLI", &stub);
+        assert!(pull(SyncBackend::Zulip, work.path()).is_ok());
+        assert!(push(SyncBackend::Zulip, work.path()).is_ok());
+        std::env::remove_var("CRYO_ZULIP_CLI");
     }
 }
