@@ -61,9 +61,9 @@ What does the agent need to remember across sessions? Suggest based on task (cou
 | Primitive | What it stores | When to use |
 |---|---|---|
 | `cryo-agent todo add "..." --at <ISO>` / `todo list` / `todo done <id>` | A list of items, each with optional scheduled deadline | Anything time-scheduled: reminders, deadlines, periodic tasks. The daemon surfaces `todo list` on wake, and the `--at` values make scheduling decisions machine-readable. |
-| `cryo-agent note "..."` | Free-form append-only text | Auxiliary state: counters, fired-reminder markers, the last summary timestamp, game position snapshots, anything without a deadline. |
+| `NOTES.md` | Free-form agent-managed text | Auxiliary state: counters, fired-reminder markers, the last summary timestamp, game position snapshots, anything without a deadline. |
 
-Rule of thumb: if the thing has a **time** associated with it, prefer `todo --at`. Otherwise `note`. Use both in combination when needed (e.g. `todo` stores the reminder, `note` marks it already fired).
+Rule of thumb: if the thing has a **time** associated with it, prefer `todo --at`. Otherwise append to `NOTES.md`. Use both in combination when needed (e.g. `todo` stores the reminder, `NOTES.md` marks it already fired).
 
 ### Q6. Failure & retry strategy
 

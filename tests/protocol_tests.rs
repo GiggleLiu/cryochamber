@@ -9,7 +9,8 @@ fn test_protocol_content_contains_commands() {
     assert!(content.contains("cryo-agent receive"));
     assert!(content.contains("cryo-agent alert"));
     assert!(content.contains("NOTES.md"));
-    assert!(!content.contains("cryo-agent note"));
+    let removed_note_command = ["cryo-agent", "note"].join(" ");
+    assert!(!content.contains(&removed_note_command));
     // Phantom commands removed (code review #3)
     assert!(!content.contains("cryo-agent status"));
     assert!(!content.contains("cryo-agent inbox"));
@@ -138,7 +139,8 @@ fn test_protocol_mentions_hibernate() {
     let content = cryochamber::protocol::PROTOCOL_CONTENT;
     assert!(content.contains("cryo-agent hibernate"));
     assert!(content.contains("NOTES.md is your memory"));
-    assert!(!content.contains("cryo-agent note"));
+    let removed_note_command = ["cryo-agent", "note"].join(" ");
+    assert!(!content.contains(&removed_note_command));
     // No stale cryo status/inbox references
     assert!(!content.contains("cryo status"));
     assert!(!content.contains("cryo inbox"));

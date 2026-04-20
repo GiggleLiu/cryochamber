@@ -40,7 +40,6 @@ cryo-agent hibernate --summary "..."   # End session (more work to do)
 cryo-agent hibernate --complete        # End session (plan done)
 cryo-agent hibernate --exit 1          # Retryable failure (daemon retries)
 cryo-agent todo add "text" --at <TIME> # Schedule next wake via TODO
-cryo-agent note "text"                 # Leave a note for next session
 cryo-agent send "message"             # Send message to human (writes to outbox)
 cryo-agent receive                     # Read inbox messages from human
 cryo-agent time                        # Current time (ISO8601 local)
@@ -48,6 +47,8 @@ cryo-agent time "+30 minutes"          # Relative offset (minutes|hours|days|wee
 cryo-agent time "2026-04-25T10:00"     # ISO8601 pass-through (validates + normalizes)
 cryo-agent alert <action> <target> "msg"  # Set dead-man switch
 ```
+
+Agents keep free-form cross-session memory in `NOTES.md` in the chamber root. Read and append that file directly instead of using an IPC command.
 
 ## GitHub Sync (`cryo-gh`)
 
