@@ -49,7 +49,7 @@ pub fn status_json(dir: &Path) -> Value {
         .ok()
         .flatten()
         .unwrap_or_default();
-    let notes = crate::log::parse_latest_session_notes(&log_file).unwrap_or_default();
+    let notes_content = std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default();
     let task = crate::log::parse_latest_session_task(&log_file)
         .ok()
         .flatten();
@@ -74,7 +74,7 @@ pub fn status_json(dir: &Path) -> Value {
         "agent": agent,
         "log_tail": log_tail,
         "next_wake": next_wake_rel,
-        "notes": notes,
+        "notes_content": notes_content,
         "task": task,
         "completed": completed,
         "completion_summary": completion_summary,
@@ -299,6 +299,21 @@ mod tests {
         let v = status_json(dir.path());
         assert_eq!(v["running"], false);
         assert_eq!(v["session"], 0);
+    }
+
+    #[test]
+    fn status_json_includes_notes_content() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("NOTES.md"), "# hello\n- one\n- two\n").unwrap();
+        let v = status_json(dir.path());
+        assert_eq!(v["notes_content"], "# hello\n- one\n- two\n");
+    }
+
+    #[test]
+    fn status_json_notes_content_empty_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = status_json(dir.path());
+        assert_eq!(v["notes_content"], "");
     }
 
     #[test]
