@@ -420,4 +420,16 @@ mod tests {
             "lifecycle routes should move blocking process/service work off async handlers"
         );
     }
+
+    #[test]
+    fn post_reset_drops_stale_watcher_before_archiving() {
+        // Reset renames `messages/` into `history/<ts>/`; the notify handle
+        // would otherwise keep watching the archived dir and miss deliveries
+        // to the freshly re-created `messages/inbox/` (e.g. zulip sync).
+        let source = include_str!("chamber.rs");
+        assert!(
+            source.contains("app.watchers.drop_watcher(&path);"),
+            "post_reset must drop the stale watcher so app.refresh rebuilds it"
+        );
+    }
 }
