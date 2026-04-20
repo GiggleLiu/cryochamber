@@ -15,7 +15,6 @@ COUNT=$((COUNT + 1))
 echo "$COUNT" > "$COUNTER_FILE"
 
 if [ "$COUNT" -ge 2 ]; then
-    cryo-agent note "Session $COUNT: completing after inbox wake"
     cryo-agent hibernate --complete --summary "Plan completed after inbox wake"
 else
     # Add a TODO with a wake time 10 minutes in the past, then hibernate.

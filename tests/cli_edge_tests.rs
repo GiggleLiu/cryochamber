@@ -87,17 +87,6 @@ fn test_send_no_daemon() {
 }
 
 #[test]
-fn test_agent_note_no_daemon() {
-    let dir = tempfile::tempdir().unwrap();
-
-    agent_bin()
-        .args(["note", "test note"])
-        .current_dir(dir.path())
-        .assert()
-        .failure(); // no socket -> connection error
-}
-
-#[test]
 fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
 

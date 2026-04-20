@@ -27,11 +27,6 @@ enum Commands {
         #[arg(long)]
         summary: Option<String>,
     },
-    /// Leave a note for the next session
-    Note {
-        /// Note text
-        text: String,
-    },
     /// Send message to human (writes to outbox)
     Send {
         /// Message text
@@ -118,7 +113,6 @@ fn main() -> Result<()> {
                 summary,
             },
         ),
-        Commands::Note { text } => send(&dir, &Request::Note { text }),
         Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
         Commands::Alert {
             action,

@@ -15,21 +15,6 @@ fn agent_cmd() -> Command {
     Command::cargo_bin("cryo-agent").unwrap()
 }
 
-fn wait_for_idle_daemon(dir: &std::path::Path, timeout: std::time::Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        if let Ok(response) =
-            cryochamber::socket::send_request(dir, &cryochamber::socket::Request::Ping)
-        {
-            if response.ok && response.message == "pong" {
-                return true;
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    false
-}
-
 /// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
 fn init_dir(dir: &std::path::Path) {
     cmd().arg("init").current_dir(dir).assert().success();
@@ -771,68 +756,6 @@ fn test_restart_respects_no_service_mode() {
         .output();
 }
 
-#[test]
-fn test_agent_note_rejects_stale_instance_id() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
-    init_dir(dir.path());
-
-    cmd()
-        .args(["start", "--agent", &mock_agent_cmd()])
-        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
-        .env("CRYO_NO_SERVICE", "1")
-        .env("MOCK_AGENT_COMPLETE", "false")
-        .env("MOCK_AGENT_WAKE", "2099-12-31T23:59")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        if let Ok(log) = fs::read_to_string(dir.path().join("cryo.log")) {
-            if log.contains("session complete") {
-                break;
-            }
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "daemon should finish the first session before stale instance validation"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    assert!(
-        wait_for_idle_daemon(dir.path(), std::time::Duration::from_secs(5)),
-        "daemon should return to the idle loop before stale instance validation"
-    );
-
-    let timer_path = dir.path().join("timer.json");
-    let original_state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&timer_path).unwrap()).unwrap();
-    let mut state = original_state.clone();
-    state["instance_id"] = serde_json::Value::String("stale-instance".to_string());
-    fs::write(&timer_path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
-
-    agent_cmd()
-        .args(["note", "hello from stale state"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("instance"));
-
-    fs::write(
-        &timer_path,
-        serde_json::to_string_pretty(&original_state).unwrap(),
-    )
-    .unwrap();
-
-    let _ = cmd()
-        .arg("cancel")
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .output();
-}
-
 // --- cryo-agent binary tests ---
 
 #[test]
@@ -840,17 +763,6 @@ fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
     agent_cmd()
         .args(["hibernate", "--complete"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Cannot connect"));
-}
-
-#[test]
-fn test_agent_note_no_daemon() {
-    let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["note", "test note"])
         .current_dir(dir.path())
         .assert()
         .failure()

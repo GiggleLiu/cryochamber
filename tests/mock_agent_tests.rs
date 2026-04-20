@@ -214,11 +214,7 @@ fn test_mock_ipc_all_commands() {
 
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
 
-    // Verify all IPC commands were logged
-    assert!(
-        log.contains("note: \"Starting IPC test\""),
-        "Missing note in log: {log}"
-    );
+    // Verify the remaining IPC commands were logged
     assert!(log.contains("reply:"), "Missing reply in log: {log}");
     assert!(log.contains("alert:"), "Missing alert in log: {log}");
     assert!(
@@ -346,31 +342,6 @@ fn test_mock_double_hibernate() {
     assert!(
         wait_for_daemon_exit(dir.path(), Duration::from_secs(10)),
         "Daemon should exit after plan completion"
-    );
-}
-
-#[test]
-fn test_mock_note_after_hibernate() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "note-after-hibernate.sh");
-
-    cryo_bin()
-        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Session should complete normally despite late note
-    assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
-        "Daemon should exit after plan completion"
-    );
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("plan complete"),
-        "Session should complete normally: {log}"
     );
 }
 
