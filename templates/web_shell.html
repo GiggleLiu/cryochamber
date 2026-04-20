@@ -46,13 +46,13 @@
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-tabs">
       <div class="drawer-tab active" data-tab="todos">Todos<span class="tab-count" id="todos-count">0</span></div>
-      <div class="drawer-tab" data-tab="notes">Notes</div>
       <div class="drawer-tab" data-tab="sync">Sync</div>
+      <div class="drawer-tab" data-tab="notes">Notes</div>
       <div class="drawer-tab" data-tab="log">Log</div>
     </div>
     <div class="drawer-body" data-panel="todos" id="panel-todos"></div>
-    <div class="drawer-body hidden" data-panel="notes" id="panel-notes"></div>
     <div class="drawer-body hidden" data-panel="sync" id="panel-sync"></div>
+    <div class="drawer-body hidden" data-panel="notes" id="panel-notes"></div>
     <div class="drawer-body hidden" data-panel="log" id="panel-log"></div>
   </aside>
 
@@ -65,6 +65,8 @@
   const state = {
     chambers: [],
     currentId: null,
+    detailSeq: 0,
+    lifecyclePending: {},
   };
 
   function urlChamberId() {
@@ -74,8 +76,15 @@
 
   async function fetchJSON(url, opts) {
     const res = await fetch(url, opts);
-    if (!res.ok) throw new Error(`${url}: ${res.status}`);
-    return res.json();
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      if (res.ok) throw e;
+    }
+    if (!res.ok) throw new Error((data && data.message) || `${url}: ${res.status}`);
+    if (data && data.ok === false) throw new Error(data.message || 'Request failed');
+    return data;
   }
 
   function toast(msg, kind) {
@@ -101,7 +110,7 @@
 
   function statusClass(entry) {
     if (entry.config_error) return 'error';
-    if (entry.completed && !entry.running) return 'complete';
+    if (entry.completed) return 'complete';
     if (entry.running) return 'running';
     return 'stopped';
   }
@@ -109,11 +118,17 @@
   function renderRail() {
     const list = document.getElementById('chamber-list');
     list.innerHTML = '';
+    const filter = document.getElementById('rail-search').value.trim().toLowerCase();
     const sorted = [...state.chambers].sort((a, b) => {
       const rank = e => (e.running ? 0 : 1);
       const ra = rank(a), rb = rank(b);
       if (ra !== rb) return ra - rb;
       return a.name.localeCompare(b.name);
+    }).filter(c => {
+      if (!filter) return true;
+      return [c.name, c.task, c.last_message_preview, c.path]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(filter));
     });
     for (const c of sorted) {
       const row = document.createElement('div');
@@ -159,12 +174,29 @@
       row.addEventListener('click', () => selectChamber(c.id));
       list.appendChild(row);
     }
-    document.getElementById('rail-count').textContent = state.chambers.length;
+    document.getElementById('rail-count').textContent =
+      filter ? `${sorted.length}/${state.chambers.length}` : state.chambers.length;
   }
 
   async function loadChambers() {
     state.chambers = await fetchJSON('/api/chambers');
     renderRail();
+  }
+
+  let railRefreshTimer = null;
+  function scheduleRailRefresh(chamberId) {
+    if (railRefreshTimer) clearTimeout(railRefreshTimer);
+    railRefreshTimer = setTimeout(async () => {
+      railRefreshTimer = null;
+      try {
+        await loadChambers();
+        if (state.currentId === chamberId) {
+          await updateDetail(chamberId, { status: true, todos: true, sync: true });
+        }
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    }, 250);
   }
 
   let view = null;
@@ -177,7 +209,8 @@
       headerTaskLine: null,
       planCompleteBox: null,
       lifecycleBtns: null,
-      panels: { todos: null, notes: null, sync: null, log: null },
+      panels: { todos: null, sync: null, notes: null, log: null },
+      syncEl: null,
       notesEl: null,
       logEl: null,
       lastMsgKey: null,
@@ -191,17 +224,18 @@
     };
   }
 
-  function btn(label, onClick, cls) {
+  function btn(label, onClick, cls, pending) {
     const b = document.createElement('button');
     b.textContent = label;
     if (cls) b.className = cls;
+    b.disabled = !!pending;
     b.addEventListener('click', onClick);
     return b;
   }
 
   function statusDotChar(entry) {
     if (entry.config_error) return '✗';
-    if (entry.completed && !entry.running) return '✓';
+    if (entry.completed) return '✓';
     return entry.running ? '●' : '○';
   }
 
@@ -282,29 +316,42 @@
   }
 
   function updateLifecycleButtons(entry) {
-    const sig = `${entry.running}|${!!entry.config_error}`;
+    const pending = state.lifecyclePending[entry.id];
+    const sig = `${entry.running}|${!!entry.config_error}|${!!pending}`;
     if (sig === view.lastLifecycleSig) return;
     view.lastLifecycleSig = sig;
     const btns = view.lifecycleBtns;
     btns.innerHTML = '';
     if (entry.running) {
-      btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
-      btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop')));
-      btns.appendChild(btn('restart', () => lifecycle(entry.id, 'restart')));
+      btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
     } else if (!entry.config_error) {
-      btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary'));
+      btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary', pending));
     }
-    if (!entry.config_error) {
-      btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger'));
+    if (!entry.running && !entry.config_error) {
+      btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
+    }
+  }
+
+  function setLifecyclePending(id, pending) {
+    if (pending) {
+      state.lifecyclePending[id] = true;
+    } else {
+      delete state.lifecyclePending[id];
+    }
+    if (view && view.chamberId === id && view.lifecycleBtns) {
+      const entry = state.chambers.find(c => c.id === id);
+      if (entry) updateLifecycleButtons(entry);
     }
   }
 
   function confirmReset(id, name) {
-    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive cryo.log and cryo-agent.log to history/<timestamp>/\n  • start a new session (session counter resets to #1)\n\nThis cannot be undone.`;
+    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
     if (window.confirm(msg)) lifecycle(id, 'reset');
   }
 
   async function lifecycle(id, action) {
+    if (state.lifecyclePending[id]) return;
+    setLifecyclePending(id, true);
     try {
       const opts = { method: 'POST' };
       if (action === 'wake') {
@@ -314,15 +361,18 @@
       const resp = await fetchJSON(`/api/chambers/${id}/${action}`, opts);
       toast(resp.message || action, resp.ok ? '' : 'error');
       await loadChambers();
-      if (state.currentId === id) await buildDetail(id);
+      if (state.currentId === id) await selectChamber(id, { push: false });
     } catch (e) {
       toast(e.message, 'error');
+    } finally {
+      setLifecyclePending(id, false);
     }
   }
 
   const PAGE_SIZE = 30;
 
   function messageKey(m) {
+    if (m.id) return m.id;
     return `${m.direction}|${m.timestamp}|${m.from}|${hash32(m.body || '')}`;
   }
 
@@ -330,10 +380,10 @@
     return (ts || '').slice(0, 10); // YYYY-MM-DD
   }
 
-  // System notice = inbox message from the synthetic "operator" sender (web-UI
-  // wake pings). Rendered as a centered gray line, not a bubble.
+  // System notice = lifecycle/runtime information, rendered as centered gray
+  // text instead of a conversation bubble.
   function isSystemMessage(m) {
-    return m.direction === 'inbox' && m.from === 'operator';
+    return (m.direction === 'inbox' && m.from === 'operator') || m.from === 'cryochamber';
   }
 
   function buildSystemRow(m) {
@@ -342,7 +392,7 @@
     row.dataset.key = messageKey(m);
     row.dataset.day = dayKey(m.timestamp);
     const ts = (m.timestamp || '').slice(11, 16);
-    row.textContent = `· ${m.from} · ${ts} · ${m.body || ''} ·`;
+    row.textContent = [m.from, ts, m.body || ''].filter(Boolean).join(' · ');
     return row;
   }
 
@@ -652,17 +702,26 @@
     const sig = syncSignature(sync);
     if (sig === view.lastSyncSig) return;
     view.lastSyncSig = sig;
-    const box = document.getElementById('panel-sync');
+    const box = view.syncEl;
+    if (!box) return;
     box.innerHTML = '';
-    const running = (sync || []).filter(s => s.running).length;
+    const items = sync || [];
     const title = document.createElement('div');
     title.className = 'section-title';
-    title.innerHTML = `Sync backends <span class="count">${running} of ${(sync || []).length} running</span>`;
+    const running = items.filter(s => s.running).length;
+    title.innerHTML = `Message sync <span class="count">${running}/${items.length}</span>`;
     box.appendChild(title);
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'sync-help';
+      empty.textContent = 'No message sync is configured for this chamber.';
+      box.appendChild(empty);
+      return;
+    }
     const list = document.createElement('div');
     list.className = 'sync-list';
 
-    for (const s of (sync || [])) {
+    for (const s of items) {
       const card = document.createElement('div');
       card.className = 'sync-card';
       card.innerHTML = `
@@ -684,22 +743,16 @@
         </div>`;
       const cb = card.querySelector('input[type=checkbox]');
       cb.addEventListener('change', async () => {
-        // Revert immediately — real state re-arrives via SSE `status` event.
+        // Keep the user's click visible while the request is in flight — the
+        // SSE `status` event re-renders from truth when the backend catches up.
+        // Revert only if the request fails or the confirm is cancelled.
         const prev = s.running;
-        cb.checked = prev; // lock UI until backend confirms
         const ok = await syncToggle(id, s.backend, prev);
         if (!ok) cb.checked = prev;
       });
       list.appendChild(card);
     }
     box.appendChild(list);
-
-    const help = document.createElement('div');
-    help.className = 'sync-help';
-    help.textContent =
-      'Toggles start / stop the OS service (launchd on macOS, systemd on Linux). ' +
-      'Push and pull happen automatically on message events.';
-    box.appendChild(help);
   }
 
   function renderLog(status) {
@@ -747,7 +800,7 @@
     if (atBottom) el.scrollTop = el.scrollHeight;
   }
 
-  async function buildDetail(id) {
+  async function buildDetail(id, seq) {
     const entry = state.chambers.find(c => c.id === id);
     if (!entry) return;
     const pane = document.getElementById('pane');
@@ -757,11 +810,13 @@
       fetchJSON(`/api/chambers/${id}/todos`),
       fetchJSON(`/api/chambers/${id}/sync`),
     ]);
+    if (seq !== state.detailSeq || state.currentId !== id) return;
     pane.innerHTML = '';
     view = newView();
     view.chamberId = id;
     buildHead(pane, entry, status);
     buildThread(pane, messages);
+    view.syncEl = document.getElementById('panel-sync');
     buildCompose(pane, id);
     renderTodos(todos);
     renderSync(id, sync);
@@ -796,12 +851,46 @@
     if (data.messages) updateMessages(data.messages);
   }
 
-  async function selectChamber(id) {
+  async function selectChamber(id, options = {}) {
     state.currentId = id;
-    window.history.pushState({}, '', `/c/${id}`);
+    const seq = ++state.detailSeq;
+    const push = options.push !== false;
+    if (push && window.location.pathname !== `/c/${id}`) {
+      window.history.pushState({}, '', `/c/${id}`);
+    }
     renderRail();
-    await buildDetail(id);
+    await buildDetail(id, seq);
   }
+
+  function clearSelection() {
+    state.currentId = null;
+    ++state.detailSeq;
+    view = null;
+    document.getElementById('pane').innerHTML =
+      '<div class="pane-empty"><div>Pick a chamber from the rail</div></div>';
+    document.getElementById('drawer').hidden = true;
+    renderRail();
+  }
+
+  async function syncRouteSelection() {
+    const urlId = urlChamberId();
+    if (urlId && state.chambers.some(c => c.id === urlId)) {
+      await selectChamber(urlId, { push: false });
+    } else {
+      clearSelection();
+    }
+  }
+
+  const railSearch = document.getElementById('rail-search');
+  railSearch.addEventListener('input', renderRail);
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      railSearch.focus();
+      railSearch.select();
+    }
+  });
+  window.addEventListener('popstate', syncRouteSelection);
 
   document.getElementById('refresh').addEventListener('click', async () => {
     try {
@@ -830,6 +919,7 @@
   evt.addEventListener('log', e => {
     const d = JSON.parse(e.data);
     if (state.currentId === d.chamber_id) appendLogLine(d.line);
+    scheduleRailRefresh(d.chamber_id);
   });
   evt.addEventListener('index', async () => { await loadChambers(); });
 
@@ -838,10 +928,7 @@
 
   (async () => {
     await loadChambers();
-    const urlId = urlChamberId();
-    if (urlId && state.chambers.some(c => c.id === urlId)) {
-      await selectChamber(urlId);
-    }
+    await syncRouteSelection();
   })();
 })();
 </script>

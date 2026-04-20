@@ -58,6 +58,17 @@ impl WatcherRegistry {
         }
         map.retain(|p, _| keep.contains(p));
     }
+
+    /// Drop the watcher for a single chamber path so the next `ensure_watching`
+    /// rebuilds it. Needed after reset: `archive_runtime` renames `messages/`
+    /// out from under the notify handle, leaving it tied to the archived dir
+    /// instead of the freshly re-created one.
+    pub fn drop_watcher(&self, dir: &Path) {
+        let mut map = self.inner.lock().unwrap();
+        if let Some(handle) = map.remove(dir) {
+            handle._stop.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 fn spawn_watcher(
@@ -224,6 +235,25 @@ mod tests {
         let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
         let reg = WatcherRegistry::new();
         reg.ensure_watching("x".into(), dir.path(), tx.clone());
+        reg.ensure_watching("x".into(), dir.path(), tx);
+        assert_eq!(reg.inner.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn drop_watcher_allows_ensure_watching_to_rebuild() {
+        // Reset archives `messages/` and then re-creates it; the stale notify
+        // handle is left watching the moved directory. `drop_watcher` lets the
+        // refresh pass rebuild the watcher for the fresh path.
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
+        let reg = WatcherRegistry::new();
+        reg.ensure_watching("x".into(), dir.path(), tx.clone());
+        assert_eq!(reg.inner.lock().unwrap().len(), 1);
+
+        reg.drop_watcher(dir.path());
+        assert_eq!(reg.inner.lock().unwrap().len(), 0);
+
         reg.ensure_watching("x".into(), dir.path(), tx);
         assert_eq!(reg.inner.lock().unwrap().len(), 1);
     }

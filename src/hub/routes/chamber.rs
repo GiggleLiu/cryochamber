@@ -92,28 +92,30 @@ pub fn todos_json(dir: &Path) -> Value {
 /// Build the list of all messages (archive + inbox + outbox) for a chamber.
 pub fn messages_json(dir: &Path) -> Value {
     let mut all: Vec<Value> = Vec::new();
-    let to_json = |msg: &crate::message::Message, direction: &str| -> Value {
-        json!({
-            "direction": direction,
-            "from": msg.from,
-            "subject": msg.subject,
-            "body": msg.body,
-            "timestamp": msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
-        })
-    };
+    let to_json =
+        |filename: &str, msg: &crate::message::Message, direction: &str, source: &str| -> Value {
+            json!({
+                "id": format!("{source}/{filename}"),
+                "direction": direction,
+                "from": msg.from,
+                "subject": msg.subject,
+                "body": msg.body,
+                "timestamp": msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            })
+        };
     if let Ok(archived) = crate::message::read_inbox_archive(dir) {
-        for (_f, m) in archived {
-            all.push(to_json(&m, "inbox"));
+        for (f, m) in archived {
+            all.push(to_json(&f, &m, "inbox", "inbox/archive"));
         }
     }
     if let Ok(inbox) = crate::message::read_inbox(dir) {
-        for (_f, m) in inbox {
-            all.push(to_json(&m, "inbox"));
+        for (f, m) in inbox {
+            all.push(to_json(&f, &m, "inbox", "inbox"));
         }
     }
     if let Ok(outbox) = crate::message::read_outbox(dir) {
-        for (_f, m) in outbox {
-            all.push(to_json(&m, "outbox"));
+        for (f, m) in outbox {
+            all.push(to_json(&f, &m, "outbox", "outbox"));
         }
     }
     all.sort_by(|a, b| {
@@ -225,8 +227,7 @@ pub async fn post_start(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let result = crate::hub::lifecycle::start_chamber(&path);
-    app.refresh();
+    let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::start_chamber).await;
     match result {
         Ok(()) => Ok(Json(json!({"ok": true, "message": "Started"}))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
@@ -238,8 +239,7 @@ pub async fn post_stop(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let result = crate::hub::lifecycle::stop_chamber(&path);
-    app.refresh();
+    let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::stop_chamber).await;
     match result {
         Ok(()) => Ok(Json(json!({"ok": true, "message": "Stopped"}))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
@@ -251,8 +251,7 @@ pub async fn post_restart(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let result = crate::hub::lifecycle::restart_chamber(&path);
-    app.refresh();
+    let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::restart_chamber).await;
     match result {
         Ok(()) => Ok(Json(json!({"ok": true, "message": "Restarted"}))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
@@ -264,8 +263,11 @@ pub async fn post_reset(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let result = crate::hub::lifecycle::reset_chamber(&path);
-    app.refresh();
+    // `archive_runtime` renames `messages/` away; the existing notify handle
+    // keeps watching the archived dir. Drop it so the refresh at the end of
+    // `run_blocking_lifecycle` re-creates the watcher on the fresh `messages/`.
+    app.watchers.drop_watcher(&path);
+    let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::reset_chamber).await;
     match result {
         Ok(archive) => Ok(Json(json!({
             "ok": true,
@@ -273,6 +275,23 @@ pub async fn post_reset(
             "archive": archive.display().to_string(),
         }))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
+    }
+}
+
+async fn run_blocking_lifecycle<F, T>(
+    app: Arc<AppState>,
+    path: std::path::PathBuf,
+    action: F,
+) -> anyhow::Result<T>
+where
+    F: FnOnce(&std::path::Path) -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let result = tokio::task::spawn_blocking(move || action(&path)).await;
+    app.refresh();
+    match result {
+        Ok(result) => result,
+        Err(e) => Err(anyhow::anyhow!("Lifecycle task failed: {e}")),
     }
 }
 
@@ -359,5 +378,46 @@ mod tests {
         let arr = arr.as_array().unwrap();
         assert_eq!(arr[0]["body"], "first");
         assert_eq!(arr[1]["body"], "second");
+    }
+
+    #[test]
+    fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        let timestamp = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let msg = crate::message::Message {
+            from: "human".into(),
+            subject: "".into(),
+            body: "same body".into(),
+            timestamp,
+            metadata: Default::default(),
+        };
+        crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
+        crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
+
+        let arr = messages_json(dir.path());
+        let arr = arr.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let first = arr[0]["id"].as_str().expect("message id");
+        let second = arr[1]["id"].as_str().expect("message id");
+        assert!(!first.is_empty());
+        assert!(!second.is_empty());
+        assert_ne!(
+            first, second,
+            "duplicate timestamp/body messages need distinct ids"
+        );
+    }
+
+    #[test]
+    fn lifecycle_routes_dispatch_blocking_work_off_async_handlers() {
+        let source = include_str!("chamber.rs");
+        let needle = ["spawn", "blocking"].join("_");
+        assert!(
+            source.contains(&needle),
+            "lifecycle routes should move blocking process/service work off async handlers"
+        );
     }
 }

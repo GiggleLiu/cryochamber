@@ -310,6 +310,11 @@ body {
 .lifecycle button.primary:hover { background: #ffd58a; }
 .lifecycle button.danger { color: var(--hot); border-color: rgba(217,90,90,0.3); }
 .lifecycle button.danger:hover { background: rgba(217,90,90,0.1); }
+.lifecycle button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  pointer-events: none;
+}
 
 /* Thread body */
 .thread {
@@ -368,11 +373,15 @@ body {
 /* System notice — centered gray text, no bubble. */
 .sys-notice {
   align-self: center;
+  max-width: min(80ch, 100%);
   font-family: var(--mono);
   font-size: 11px;
   color: var(--ink-faint);
   letter-spacing: 0.04em;
+  line-height: 1.5;
   padding: 4px 10px;
+  text-align: center;
+  white-space: pre-wrap;
 }
 
 /* "Load older" pagination button at top of thread. */

@@ -266,6 +266,64 @@ fn test_cancel_no_state_file() {
         .stderr(predicate::str::contains("Nothing to cancel"));
 }
 
+// --- Clean ---
+
+#[test]
+fn test_clean_preserves_sync_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
+
+    let state = serde_json::json!({
+        "session_number": 1,
+        "pid": null,
+        "retry_count": 0
+    });
+    fs::write(
+        dir.path().join("timer.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+    fs::write(dir.path().join("cryo.log"), "log").unwrap();
+    fs::write(dir.path().join("cryo-agent.log"), "agent log").unwrap();
+    fs::write(dir.path().join("cryo-gh-sync.log"), "gh log").unwrap();
+    fs::write(dir.path().join("cryo-gh-sync.pid"), "123").unwrap();
+    fs::write(dir.path().join("cryo-zulip-sync.log"), "zulip log").unwrap();
+    fs::write(dir.path().join("cryo-zulip-sync.pid"), "456").unwrap();
+    fs::write(
+        dir.path().join("gh-sync.json"),
+        r#"{"repo":"owner/repo","discussion_number":1,"discussion_id":"D_1","self_login":"bot"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("zulip-sync.json"),
+        r#"{"site":"https://zulip.example.com","stream":"ops","stream_id":7,"self_email":"bot@example.com"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".cryo")).unwrap();
+    fs::write(dir.path().join(".cryo/cryo.sock"), "").unwrap();
+    fs::write(
+        dir.path().join(".cryo/zuliprc"),
+        "[api]\nemail=bot@example.com\nkey=secret\nsite=https://zulip.example.com\n",
+    )
+    .unwrap();
+
+    cmd()
+        .args(["clean", "--force"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(dir.path().join("gh-sync.json").exists());
+    assert!(dir.path().join("zulip-sync.json").exists());
+    assert!(dir.path().join(".cryo/zuliprc").exists());
+    assert!(!dir.path().join(".cryo/cryo.sock").exists());
+    assert!(!dir.path().join("messages").exists());
+    assert!(!dir.path().join("timer.json").exists());
+    assert!(!dir.path().join("cryo-gh-sync.pid").exists());
+    assert!(!dir.path().join("cryo-zulip-sync.pid").exists());
+    assert!(!dir.path().join("cryo-zulip-sync.log").exists());
+}
+
 // --- Start ---
 
 #[test]

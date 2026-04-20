@@ -102,7 +102,7 @@ fn test_parse_get_messages_response() {
         "found_oldest": false
     });
     let (messages, found_newest, raw_max_id) =
-        parse_get_messages_response(&json, Some("bot@example.com")).unwrap();
+        parse_get_messages_response(&json, Some("bot@example.com"), None).unwrap();
     // Should filter out bot's own message
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].from, "Alice");
@@ -129,7 +129,8 @@ fn test_parse_get_messages_response_empty() {
         "found_newest": true,
         "found_oldest": true
     });
-    let (messages, found_newest, raw_max_id) = parse_get_messages_response(&json, None).unwrap();
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, None, None).unwrap();
     assert!(messages.is_empty());
     assert!(found_newest);
     assert_eq!(raw_max_id, None);
@@ -155,7 +156,8 @@ fn test_parse_get_messages_no_self_filter() {
         "found_newest": false,
         "found_oldest": false
     });
-    let (messages, found_newest, raw_max_id) = parse_get_messages_response(&json, None).unwrap();
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, None, None).unwrap();
     assert_eq!(messages.len(), 1);
     assert!(!found_newest);
     assert_eq!(raw_max_id, Some(100));
@@ -194,10 +196,51 @@ fn test_parse_get_messages_cursor_advances_when_all_filtered() {
         "found_oldest": false
     });
     let (messages, found_newest, raw_max_id) =
-        parse_get_messages_response(&json, Some("bot@example.com")).unwrap();
+        parse_get_messages_response(&json, Some("bot@example.com"), None).unwrap();
     // All messages filtered out
     assert!(messages.is_empty());
     assert!(!found_newest);
     // But raw_max_id advances to 201 so pagination can continue
     assert_eq!(raw_max_id, Some(201));
+}
+
+#[test]
+fn test_parse_get_messages_filters_to_topic() {
+    let json = serde_json::json!({
+        "result": "success",
+        "msg": "",
+        "messages": [
+            {
+                "id": 300,
+                "sender_id": 42,
+                "sender_email": "alice@example.com",
+                "sender_full_name": "Alice",
+                "content": "Keep this",
+                "subject": "cryochamber",
+                "timestamp": 1740700000,
+                "type": "stream"
+            },
+            {
+                "id": 301,
+                "sender_id": 43,
+                "sender_email": "bob@example.com",
+                "sender_full_name": "Bob",
+                "content": "Do not import this",
+                "subject": "random",
+                "timestamp": 1740700060,
+                "type": "stream"
+            }
+        ],
+        "found_newest": true,
+        "found_oldest": false
+    });
+
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, None, Some("cryochamber")).unwrap();
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].subject, "cryochamber");
+    assert_eq!(messages[0].body, "Keep this");
+    assert!(found_newest);
+    assert_eq!(raw_max_id, Some(301));
 }

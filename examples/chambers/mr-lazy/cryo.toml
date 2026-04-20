@@ -4,7 +4,7 @@
 agent = "opencode"
 
 # Max retry attempts on agent failure (1 = no retry)
-max_retries = 1
+max_retries = 3
 
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 0

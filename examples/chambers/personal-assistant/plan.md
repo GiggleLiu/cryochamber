@@ -20,7 +20,10 @@ Each session you either:
    `cryo-agent send` with the delay details and which reminders were overdue, then
    continue normally.
 
-3. Check inbox for new messages using `cryo-agent receive`. For each message:
+3. Check inbox for new messages using `cryo-agent receive`. For each message,
+   you **must** send a user-visible response with `cryo-agent reply` before
+   hibernating. Do not treat stdout, `NOTES.md`, or `cryo.log` as a reply to the
+   user.
    - **New reminder** (e.g. "remind me to call Alice at 3pm", "ship the draft by Friday"):
      - Parse the content and deadline from the user's message. Convert the
        deadline into a **relative offset from now** (e.g. "at 3pm" → "+4 hours"
@@ -31,12 +34,12 @@ Each session you either:
        offset forms — absolute expressions like "tomorrow 09:00" are not
        accepted by `cryo-agent time`.
      - Store via `cryo-agent todo add "<content>" --at <ISO timestamp>`.
-     - Acknowledge: `cryo-agent send "Got it — will remind you about <content> at <time>."`.
+     - Acknowledge with `cryo-agent reply "Got it — will remind you about <content> at <time>."`.
    - **Mark done** (e.g. "done with X", "cancel the Alice reminder"):
      - Find the matching item in `cryo-agent todo list`, run `cryo-agent todo done <id>`.
-     - Acknowledge via `cryo-agent send`.
+     - Acknowledge via `cryo-agent reply`.
    - **Question / conversation** (e.g. "what's on my list?"):
-     - Reply with `cryo-agent todo list` content via `cryo-agent send`.
+     - Reply with `cryo-agent todo list` content via `cryo-agent reply`.
 
 4. Run `cryo-agent todo list` and fire any due reminders:
    - For each item with `--at` ≤ now: send it via `cryo-agent send` and mark done.
@@ -47,15 +50,17 @@ Each session you either:
      send a summary of pending reminders via `cryo-agent send`.
    - Append "summary sent YYYY-MM-DD" to `NOTES.md`.
 
-6. Compute the next wake time (must be an ISO8601 timestamp for `--wake`):
+6. Compute the next wake time:
    - Find the earliest pending `--at` deadline in `cryo-agent todo list`. That
-     value is already an ISO timestamp — use it directly.
+     value is already an ISO timestamp and the daemon will use it.
    - If the next 09:00 (for the daily summary) falls sooner, compute it with
-     `cryo-agent time "+<N> hours"` where N is hours until 09:00, and use that
-     instead.
+     `cryo-agent time "+<N> hours"` where N is hours until 09:00, then add or
+     keep an internal todo for the daily summary check at that ISO timestamp.
    - If no pending items and no pending summary, wake in 6 hours as a heartbeat:
-     `cryo-agent time "+6 hours"`.
-   - Run `cryo-agent hibernate --wake <ISO timestamp> --summary "..."`.
+     resolve it with `cryo-agent time "+6 hours"` and add an internal heartbeat
+     todo if needed.
+   - Run `cryo-agent hibernate --summary "..."`. The current CLI does **not**
+     support `--wake`; wake scheduling comes from pending todos.
    - Never use `--complete` — this assistant runs indefinitely.
 
 ## Configuration

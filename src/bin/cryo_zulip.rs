@@ -133,6 +133,7 @@ fn cmd_pull() -> Result<()> {
     println!("Pulling messages from stream '{}'...", sync_state.stream);
     let new_last_id = client.pull_messages(
         sync_state.stream_id,
+        Some(sync_state.topic_name()),
         sync_state.last_message_id,
         Some(&sync_state.self_email),
         &dir,
@@ -303,6 +304,7 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
         // Pull: Zulip → inbox
         match client.pull_messages(
             sync_state.stream_id,
+            Some(sync_state.topic_name()),
             sync_state.last_message_id,
             Some(&sync_state.self_email),
             &dir,

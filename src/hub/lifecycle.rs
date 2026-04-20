@@ -72,32 +72,65 @@ pub fn restart_chamber(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Move `cryo.log` and `cryo-agent.log` into `history/<timestamp>/` within the
-/// chamber dir, returning the archive directory. Missing files are skipped.
-pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
+fn new_archive_dir(dir: &Path) -> Result<PathBuf> {
     let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let archive = dir.join("history").join(&ts);
     std::fs::create_dir_all(&archive)
         .with_context(|| format!("Failed to create {}", archive.display()))?;
+    Ok(archive)
+}
+
+fn move_into_archive(dir: &Path, archive: &Path, name: &str) -> Result<()> {
+    let src = dir.join(name);
+    if !src.exists() {
+        return Ok(());
+    }
+    let dst = archive.join(name);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    std::fs::rename(&src, &dst)
+        .with_context(|| format!("Failed to move {} to {}", src.display(), dst.display()))?;
+    Ok(())
+}
+
+/// Move `cryo.log` and `cryo-agent.log` into `history/<timestamp>/` within the
+/// chamber dir, returning the archive directory. Missing files are skipped.
+pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
+    let archive = new_archive_dir(dir)?;
     for name in ["cryo.log", "cryo-agent.log"] {
-        let src = dir.join(name);
-        if !src.exists() {
-            continue;
-        }
-        let dst = archive.join(name);
-        std::fs::rename(&src, &dst)
-            .with_context(|| format!("Failed to move {} to {}", src.display(), dst.display()))?;
+        move_into_archive(dir, &archive, name)?;
     }
     Ok(archive)
 }
 
-/// Reset the chamber: stop the daemon (if running), archive logs under
-/// `history/<timestamp>/`, then start a fresh session. Destructive — the UI
-/// must confirm before calling. Returns the archive directory path.
+/// Move resettable runtime state into `history/<timestamp>/`, returning the
+/// archive directory. Missing files are skipped.
+pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
+    let archive = new_archive_dir(dir)?;
+    for name in [
+        "cryo.log",
+        "cryo-agent.log",
+        "todo.json",
+        "NOTES.md",
+        "messages",
+        "timer.json",
+    ] {
+        move_into_archive(dir, &archive, name)?;
+    }
+    Ok(archive)
+}
+
+/// Reset the chamber: stop the daemon (if running) and archive runtime state
+/// under `history/<timestamp>/`. Leaves the chamber stopped — the operator
+/// presses Start when they want a new session. Re-creates `messages/` so
+/// any still-running sync daemon (e.g. cryo-zulip) keeps delivering into the
+/// live directory. Destructive; the UI must confirm before calling.
 pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
     stop_chamber(dir)?;
-    let archive = archive_logs(dir)?;
-    start_chamber(dir)?;
+    let archive = archive_runtime(dir)?;
+    crate::message::ensure_dirs(dir)?;
     Ok(archive)
 }
 
@@ -153,26 +186,45 @@ fn daemon_responding(dir: &Path) -> bool {
 ///   2. Fall back to `which cryo` for less standard layouts.
 fn resolve_cryo_exe() -> Result<PathBuf> {
     let me = std::env::current_exe().context("Failed to resolve current executable path")?;
+    resolve_cryo_exe_from(&me, which_cryo)
+}
+
+fn resolve_cryo_exe_from(me: &Path, path_lookup: impl Fn() -> Option<PathBuf>) -> Result<PathBuf> {
     if let Some(parent) = me.parent() {
         let sibling = parent.join("cryo");
         if sibling.is_file() {
             return Ok(sibling);
         }
-    }
-    let output = std::process::Command::new("which").arg("cryo").output();
-    if let Ok(out) = output {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Ok(PathBuf::from(s));
+        if parent.file_name().is_some_and(|name| name == "deps") {
+            if let Some(debug_dir) = parent.parent() {
+                let debug_sibling = debug_dir.join("cryo");
+                if debug_sibling.is_file() {
+                    return Ok(debug_sibling);
+                }
             }
         }
+    }
+    if let Some(path_cryo) = path_lookup() {
+        return Ok(path_cryo);
     }
     anyhow::bail!(
         "Could not locate the `cryo` binary. Looked next to {} and on PATH. \
          Build with `cargo build` or install with `cargo install --path .`.",
         me.display()
     )
+}
+
+fn which_cryo() -> Option<PathBuf> {
+    let output = std::process::Command::new("which").arg("cryo").output();
+    if let Ok(out) = output {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(PathBuf::from(s));
+            }
+        }
+    }
+    None
 }
 
 fn validate_agent_command(agent_cmd: &str) -> Result<()> {
@@ -270,6 +322,79 @@ mod tests {
     }
 
     #[test]
+    fn archive_runtime_moves_todo_notes_and_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cryo.log"), "log").unwrap();
+        std::fs::write(dir.path().join("cryo-agent.log"), "agent log").unwrap();
+        std::fs::write(dir.path().join("todo.json"), "[]").unwrap();
+        std::fs::write(dir.path().join("NOTES.md"), "notes").unwrap();
+        std::fs::write(dir.path().join("timer.json"), "{}").unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("messages").join("inbox").join("hello.md"),
+            "message",
+        )
+        .unwrap();
+
+        let archive = archive_runtime(dir.path()).unwrap();
+
+        for name in [
+            "cryo.log",
+            "cryo-agent.log",
+            "todo.json",
+            "NOTES.md",
+            "timer.json",
+            "messages/inbox/hello.md",
+        ] {
+            assert!(
+                archive.join(name).exists(),
+                "{name} should be archived under {}",
+                archive.display()
+            );
+            assert!(
+                !dir.path().join(name).exists(),
+                "{name} should be removed from the chamber root"
+            );
+        }
+    }
+
+    #[test]
+    fn reset_chamber_leaves_chamber_stopped_with_fresh_messages_dir() {
+        // Reset must not auto-start the daemon (previously confusing UX: the
+        // operator pressed reset and was left staring at only a Stop button).
+        // Reset must also re-create `messages/` so a still-running sync daemon
+        // (e.g. cryo-zulip) keeps delivering into the live directory instead of
+        // the archived one.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&crate::config::config_path(dir.path()), &cfg).unwrap();
+        std::fs::write(dir.path().join("plan.md"), "plan").unwrap();
+        std::fs::write(dir.path().join("cryo.log"), "old log").unwrap();
+        std::fs::write(dir.path().join("timer.json"), "{\"session_number\":5}").unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+
+        let archive = reset_chamber(dir.path()).unwrap();
+
+        assert!(archive.join("cryo.log").exists(), "logs should be archived");
+        assert!(
+            archive.join("timer.json").exists(),
+            "timer.json should be archived so session counter starts fresh"
+        );
+        assert!(
+            !dir.path().join("timer.json").exists(),
+            "reset should leave chamber stopped (no timer.json until next start)"
+        );
+        assert!(
+            dir.path().join("messages").join("inbox").is_dir(),
+            "reset should re-create messages/inbox for in-flight sync delivery"
+        );
+        assert!(
+            dir.path().join("messages").join("outbox").is_dir(),
+            "reset should re-create messages/outbox for in-flight sync delivery"
+        );
+    }
+
+    #[test]
     fn resolve_cryo_exe_prefers_sibling_of_current_exe() {
         // `current_exe()` here is the test binary (under target/debug/deps/...).
         // The fix only kicks in when `cryo` exists next to the running binary.
@@ -296,5 +421,20 @@ mod tests {
         }
         // If resolve_cryo_exe errors (no cryo on disk), that's fine for the
         // test — we only assert the regression: never return cryohub.
+    }
+
+    #[test]
+    fn resolve_cryo_exe_from_test_binary_prefers_target_debug_cryo() {
+        let dir = tempfile::tempdir().unwrap();
+        let debug = dir.path().join("target").join("debug");
+        let deps = debug.join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let test_bin = deps.join("hub_multi_chamber-abc123");
+        std::fs::write(&test_bin, "test binary").unwrap();
+        let cryo = debug.join("cryo");
+        std::fs::write(&cryo, "cryo binary").unwrap();
+
+        let resolved = resolve_cryo_exe_from(&test_bin, || None).unwrap();
+        assert_eq!(resolved, cryo);
     }
 }

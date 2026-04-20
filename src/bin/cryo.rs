@@ -553,9 +553,9 @@ fn cmd_clean(force: bool) -> Result<()> {
         "cryo.log",
         "cryo-agent.log",
         "cryo-gh-sync.log",
-        "gh-sync.json",
+        "cryo-gh-sync.pid",
         "cryo-zulip-sync.log",
-        "zulip-sync.json",
+        "cryo-zulip-sync.pid",
         "cryohub.log",
     ];
     for name in &runtime_files {
@@ -566,14 +566,26 @@ fn cmd_clean(force: bool) -> Result<()> {
         }
     }
 
-    // Remove runtime directories
-    let runtime_dirs = ["messages", ".cryo"];
+    // Remove runtime directories. Keep sync configuration such as
+    // gh-sync.json, zulip-sync.json, and .cryo/zuliprc.
+    let runtime_dirs = ["messages"];
     for name in &runtime_dirs {
         let path = dir.join(name);
         if path.exists() {
             std::fs::remove_dir_all(&path)?;
             println!("Removed {name}/");
         }
+    }
+
+    let sock_path = cryochamber::socket::socket_path(&dir);
+    if sock_path.exists() {
+        std::fs::remove_file(&sock_path)?;
+        println!("Removed .cryo/cryo.sock");
+    }
+    let cryo_dir = dir.join(".cryo");
+    if cryo_dir.exists() && cryo_dir.read_dir()?.next().is_none() {
+        std::fs::remove_dir(&cryo_dir)?;
+        println!("Removed .cryo/");
     }
 
     println!("Clean.");

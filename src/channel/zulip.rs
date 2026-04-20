@@ -146,11 +146,22 @@ impl ZulipClient {
     pub fn get_messages(
         &self,
         stream_id: u64,
+        topic: Option<&str>,
         anchor: &str,
         num_after: u32,
         skip_email: Option<&str>,
     ) -> Result<(Vec<Message>, bool, Option<u64>)> {
-        let narrow = format!(r#"[{{"operator":"stream","operand":{}}}]"#, stream_id);
+        let mut narrow = vec![serde_json::json!({
+            "operator": "stream",
+            "operand": stream_id
+        })];
+        if let Some(topic) = topic {
+            narrow.push(serde_json::json!({
+                "operator": "topic",
+                "operand": topic
+            }));
+        }
+        let narrow = serde_json::to_string(&narrow)?;
         let num_after_str = num_after.to_string();
         let json = self.get(
             "/messages",
@@ -162,7 +173,7 @@ impl ZulipClient {
                 ("apply_markdown", "false"),
             ],
         )?;
-        parse_get_messages_response(&json, skip_email)
+        parse_get_messages_response(&json, skip_email, topic)
     }
 
     /// POST /api/v1/messages -- send a message to a stream+topic.
@@ -188,6 +199,7 @@ impl ZulipClient {
     pub fn pull_messages(
         &self,
         stream_id: u64,
+        topic: Option<&str>,
         last_message_id: Option<u64>,
         skip_email: Option<&str>,
         work_dir: &Path,
@@ -201,7 +213,7 @@ impl ZulipClient {
 
         loop {
             let (messages, found_newest, raw_max_id) =
-                self.get_messages(stream_id, &anchor, 1000, skip_email)?;
+                self.get_messages(stream_id, topic, &anchor, 1000, skip_email)?;
 
             for msg in &messages {
                 if let Some(id_str) = msg.metadata.get("zulip_message_id") {
@@ -257,6 +269,7 @@ pub fn parse_get_stream_id_response(json: &serde_json::Value) -> Result<u64> {
 pub fn parse_get_messages_response(
     json: &serde_json::Value,
     skip_email: Option<&str>,
+    topic: Option<&str>,
 ) -> Result<(Vec<Message>, bool, Option<u64>)> {
     let found_newest = json["found_newest"].as_bool().unwrap_or(false);
     let msgs = json["messages"]
@@ -286,6 +299,11 @@ pub fn parse_get_messages_response(
             .to_string();
         let content = msg["content"].as_str().unwrap_or("").to_string();
         let subject = msg["subject"].as_str().unwrap_or("").to_string();
+        if let Some(topic) = topic {
+            if subject != topic {
+                continue;
+            }
+        }
         let ts_unix = msg["timestamp"].as_i64().unwrap_or(0);
         let timestamp = chrono::DateTime::from_timestamp(ts_unix, 0)
             .map(|dt| dt.naive_utc())

@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::hub::state::AppState;
 
 pub async fn get_chambers(State(app): State<Arc<AppState>>) -> Json<Value> {
-    let idx = app.chambers.read().unwrap();
+    let mut idx = app.chambers.write().unwrap();
+    crate::hub::discovery::populate_runtime(&mut idx);
     let list: Vec<&crate::hub::discovery::ChamberEntry> = idx.values().collect();
     Json(serde_json::to_value(&list).unwrap_or(Value::Array(vec![])))
 }
@@ -58,5 +59,55 @@ mod tests {
         let arr = after.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["name"], "beta");
+    }
+
+    #[tokio::test]
+    async fn get_chambers_refreshes_runtime_fields_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let chambers = dir.path().join("chambers");
+        let alpha = chambers.join("alpha");
+        std::fs::create_dir_all(&alpha).unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
+        crate::state::save_state(
+            &crate::state::state_path(&alpha),
+            &crate::state::CryoState {
+                session_number: 5,
+                pid: None,
+                retry_count: 0,
+                agent_override: None,
+                max_retries_override: None,
+                max_session_duration_override: None,
+                last_report_time: None,
+                provider_index: None,
+                instance_id: None,
+                pending_fallback: None,
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            alpha.join("cryo.log"),
+            "--- CRYO SESSION 5 | 2026-04-20T16:32:59Z ---\n\
+             task: Continue the plan\n\
+             agent: opencode\n\
+             [16:33:52] hibernate: plan complete, exit=0, summary=\"done\"\n\
+             --- CRYO END ---\n",
+        )
+        .unwrap();
+
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let mut stale = crate::hub::discovery::scan_workspace(dir.path());
+        for entry in stale.values_mut() {
+            entry.running = true;
+            entry.completed = false;
+        }
+        *app.chambers.write().unwrap() = stale;
+
+        let Json(v) = get_chambers(State(app)).await;
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["running"], false);
+        assert_eq!(arr[0]["completed"], true);
+        assert_eq!(arr[0]["session"], 5);
     }
 }

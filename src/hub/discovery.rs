@@ -46,7 +46,11 @@ pub struct ChamberEntry {
     pub running: bool,
     pub session: Option<u32>,
     pub next_wake: Option<String>,
+    pub next_wake_display: Option<String>,
+    pub wake_imminent: bool,
     pub unread: usize,
+    pub task: Option<String>,
+    pub last_message_preview: Option<String>,
     pub completed: bool,
     pub sync: Vec<SyncBadge>,
 }
@@ -93,7 +97,11 @@ pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
                 running: false,
                 session: None,
                 next_wake: None,
+                next_wake_display: None,
+                wake_imminent: false,
                 unread: 0,
+                task: None,
+                last_message_preview: None,
                 completed: false,
                 sync: vec![],
             },
@@ -118,11 +126,27 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
         entry.next_wake = crate::todo::TodoList::load(&todo_path)
             .ok()
             .and_then(|list| list.next_wake_time().map(String::from));
+        entry.next_wake_display = entry.next_wake.clone();
+        entry.wake_imminent = entry
+            .next_wake
+            .as_deref()
+            .and_then(|w| chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok())
+            .map(|wake| {
+                let diff = wake - chrono::Local::now().naive_local();
+                let diff_ms = diff.num_milliseconds();
+                (0..=3_600_000).contains(&diff_ms)
+            })
+            .unwrap_or(false);
 
         // Unread = pending inbox messages (not archived)
         entry.unread = crate::message::read_inbox(dir)
             .map(|v| v.len())
             .unwrap_or(0);
+
+        entry.task = crate::log::parse_latest_session_task(&crate::log::log_path(dir))
+            .ok()
+            .flatten();
+        entry.last_message_preview = last_message_preview(dir);
 
         // Plan completion flag from the last session in cryo.log
         let log_file = crate::log::log_path(dir);
@@ -147,6 +171,36 @@ pub fn discover(workspace: &Path) -> ChamberIndex {
     let mut idx = scan_workspace(workspace);
     populate_runtime(&mut idx);
     idx
+}
+
+fn last_message_preview(dir: &Path) -> Option<String> {
+    let mut messages = Vec::new();
+    if let Ok(archived) = crate::message::read_inbox_archive(dir) {
+        messages.extend(archived);
+    }
+    if let Ok(inbox) = crate::message::read_inbox(dir) {
+        messages.extend(inbox);
+    }
+    if let Ok(outbox) = crate::message::read_outbox(dir) {
+        messages.extend(outbox);
+    }
+    messages
+        .into_iter()
+        .max_by(|(file_a, msg_a), (file_b, msg_b)| {
+            msg_a
+                .timestamp
+                .cmp(&msg_b.timestamp)
+                .then_with(|| file_a.cmp(file_b))
+        })
+        .and_then(|(_, msg)| preview_body(&msg.body))
+}
+
+fn preview_body(body: &str) -> Option<String> {
+    let line = body.lines().find(|line| !line.trim().is_empty())?.trim();
+    if line.chars().count() <= 120 {
+        return Some(line.to_string());
+    }
+    Some(line.chars().take(117).collect::<String>() + "...")
 }
 
 #[cfg(test)]
@@ -273,5 +327,49 @@ mod tests {
         assert_eq!(entry.sync.len(), 1);
         assert_eq!(entry.sync[0].backend, "gh");
         assert!(!entry.sync[0].running);
+    }
+
+    #[test]
+    fn populate_runtime_exposes_rail_display_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let chambers = dir.path().join("chambers");
+        let alpha = chambers.join("alpha");
+        std::fs::create_dir_all(&alpha).unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
+        std::fs::write(
+            alpha.join("cryo.log"),
+            "--- CRYO SESSION 1 | 2026-01-01T00:00:00Z ---\n\
+             task: Review inbox\n\
+             agent: true\n",
+        )
+        .unwrap();
+
+        let mut todos = crate::todo::TodoList::new();
+        todos.add("next step".into(), "2099-05-01T10:00".into());
+        todos.save(&alpha.join("todo.json")).unwrap();
+
+        crate::message::ensure_dirs(&alpha).unwrap();
+        let msg = crate::message::Message {
+            from: "tester".into(),
+            subject: "preview".into(),
+            body: "hello preview\nsecond line".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap(),
+            metadata: Default::default(),
+        };
+        crate::message::write_message(&alpha, "inbox", &msg).unwrap();
+
+        let mut idx = scan_workspace(dir.path());
+        populate_runtime(&mut idx);
+        let entry = idx.values().next().unwrap();
+        let value = serde_json::to_value(entry).unwrap();
+
+        assert_eq!(value["task"], "Review inbox");
+        assert_eq!(value["next_wake_display"], "2099-05-01T10:00");
+        assert_eq!(value["wake_imminent"], false);
+        assert_eq!(value["last_message_preview"], "hello preview");
     }
 }
