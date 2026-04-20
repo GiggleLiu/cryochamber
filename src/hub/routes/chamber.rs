@@ -118,6 +118,11 @@ pub fn messages_json(dir: &Path) -> Value {
             all.push(to_json(&f, &m, "outbox", "outbox"));
         }
     }
+    if let Ok(archived) = crate::message::read_outbox_archive(dir) {
+        for (f, m) in archived {
+            all.push(to_json(&f, &m, "outbox", "outbox/archive"));
+        }
+    }
     all.sort_by(|a, b| {
         a["timestamp"]
             .as_str()
@@ -378,6 +383,35 @@ mod tests {
         let arr = arr.as_array().unwrap();
         assert_eq!(arr[0]["body"], "first");
         assert_eq!(arr[1]["body"], "second");
+    }
+
+    #[test]
+    fn messages_json_includes_outbox_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        let msg = crate::message::Message {
+            from: "agent".into(),
+            subject: "".into(),
+            body: "archived outbox body".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            metadata: Default::default(),
+        };
+        let path = crate::message::write_message(dir.path(), "outbox", &msg).unwrap();
+        // Simulate sync daemon archiving the delivered outbox message.
+        let archive = dir.path().join("messages").join("outbox").join("archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        std::fs::rename(&path, archive.join(path.file_name().unwrap())).unwrap();
+
+        let arr = messages_json(dir.path());
+        let arr = arr.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["body"], "archived outbox body");
+        assert_eq!(arr[0]["direction"], "outbox");
+        let id = arr[0]["id"].as_str().unwrap();
+        assert!(id.starts_with("outbox/archive/"), "id was {id}");
     }
 
     #[test]

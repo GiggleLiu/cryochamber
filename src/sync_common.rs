@@ -55,6 +55,30 @@ pub fn summarize_all(dir: &Path) -> Vec<SyncSummary> {
         .collect()
 }
 
+/// RAII guard for sync daemon pid files. Writes the current PID on
+/// construction and unlinks the file on `Drop`, so the pid file is cleaned up
+/// even when setup code below the write returns an error via `?`. Without
+/// this, a crashed daemon can leave a stale pid file whose PID is later
+/// recycled to an unrelated process — `libc::kill(pid, 0)` would then report
+/// the daemon as "running" in the hub UI.
+pub struct PidFile {
+    path: PathBuf,
+}
+
+impl PidFile {
+    pub fn create(path: PathBuf) -> Result<Self> {
+        std::fs::write(&path, std::process::id().to_string())
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for PidFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 fn resolve_cli(backend: SyncBackend) -> Result<std::path::PathBuf> {
     let (env_var, bin_name) = match backend {
         SyncBackend::Gh => ("CRYO_GH_CLI", "cryo-gh"),

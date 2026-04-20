@@ -184,6 +184,9 @@ fn last_message_preview(dir: &Path) -> Option<String> {
     if let Ok(outbox) = crate::message::read_outbox(dir) {
         messages.extend(outbox);
     }
+    if let Ok(archived) = crate::message::read_outbox_archive(dir) {
+        messages.extend(archived);
+    }
     messages
         .into_iter()
         .max_by(|(file_a, msg_a), (file_b, msg_b)| {

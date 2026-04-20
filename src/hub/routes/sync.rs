@@ -30,13 +30,21 @@ pub async fn post_sync_action(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let backend = SyncBackend::parse(&backend_str).ok_or(StatusCode::BAD_REQUEST)?;
-    let result = match verb.as_str() {
-        "start" => sync_common::start(backend, &path),
-        "stop" => sync_common::stop(backend, &path),
-        "pull" => sync_common::pull(backend, &path),
-        "push" => sync_common::push(backend, &path),
-        _ => return Err(StatusCode::BAD_REQUEST),
-    };
+    // Validate verb before spawning so BAD_REQUEST stays synchronous.
+    if !matches!(verb.as_str(), "start" | "stop" | "pull" | "push") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let path_for_task = path.clone();
+    let verb_for_task = verb.clone();
+    let result = tokio::task::spawn_blocking(move || match verb_for_task.as_str() {
+        "start" => sync_common::start(backend, &path_for_task),
+        "stop" => sync_common::stop(backend, &path_for_task),
+        "pull" => sync_common::pull(backend, &path_for_task),
+        "push" => sync_common::push(backend, &path_for_task),
+        _ => unreachable!("verb validated above"),
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let _ = app.tx.send(SseEvent::StatusChange {
         chamber_id: entry.id.clone(),
     });

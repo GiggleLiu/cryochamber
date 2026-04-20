@@ -250,8 +250,11 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
 
     eprintln!("Zulip sync daemon started (PID {})", std::process::id());
     let pid_path = cryochamber::zulip_sync::sync_pid_path(&dir);
-    std::fs::write(&pid_path, std::process::id().to_string())
-        .context("Failed to write cryo-zulip-sync.pid")?;
+    // RAII guard: unlinks the pid file on any return, including early `?`
+    // propagation from signal_hook / notify setup or per-cycle save_sync_state
+    // failures below. Without this, a stale pid file lingers and a recycled
+    // PID can make the hub report the daemon as running forever.
+    let _pid_guard = cryochamber::sync_common::PidFile::create(pid_path)?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
@@ -339,7 +342,7 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     }
 
     eprintln!("Zulip sync: stopped");
-    let _ = std::fs::remove_file(&pid_path);
+    // _pid_guard drops here, unlinking the pid file.
     Ok(())
 }
 
