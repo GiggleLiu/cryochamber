@@ -40,7 +40,8 @@ fn test_build_prompt_contains_cli_reminders() {
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("cryo-agent hibernate"));
-    assert!(prompt.contains("cryo-agent note"));
+    assert!(prompt.contains("NOTES.md"));
+    assert!(!prompt.contains("cryo-agent note"));
     assert!(prompt.contains("cryo-agent send"));
     assert!(prompt.contains("cryo-agent reply"));
     assert!(prompt.contains("cryo-agent.log"));

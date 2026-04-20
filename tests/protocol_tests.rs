@@ -5,10 +5,11 @@ use cryochamber::protocol;
 fn test_protocol_content_contains_commands() {
     let content = protocol::PROTOCOL_CONTENT;
     assert!(content.contains("cryo-agent hibernate"));
-    assert!(content.contains("cryo-agent note"));
     assert!(content.contains("cryo-agent send"));
     assert!(content.contains("cryo-agent receive"));
     assert!(content.contains("cryo-agent alert"));
+    assert!(content.contains("NOTES.md"));
+    assert!(!content.contains("cryo-agent note"));
     // Phantom commands removed (code review #3)
     assert!(!content.contains("cryo-agent status"));
     assert!(!content.contains("cryo-agent inbox"));
@@ -136,7 +137,8 @@ fn test_write_template_plan_skips_existing() {
 fn test_protocol_mentions_hibernate() {
     let content = cryochamber::protocol::PROTOCOL_CONTENT;
     assert!(content.contains("cryo-agent hibernate"));
-    assert!(content.contains("cryo-agent note"));
+    assert!(content.contains("NOTES.md is your memory"));
+    assert!(!content.contains("cryo-agent note"));
     // No stale cryo status/inbox references
     assert!(!content.contains("cryo status"));
     assert!(!content.contains("cryo inbox"));

@@ -10,6 +10,7 @@ Execute these steps in order. **Do not skip or reorder steps.**
 ### Step 1: Orient
 
 - Read `plan.md` for your objectives and task list.
+- Read `NOTES.md` for context from previous sessions.
 - Run `cryo-agent todo list` for pending tasks.
 - Check your prompt for inbox messages and previous session log.
 
@@ -23,7 +24,7 @@ Execute these steps in order. **Do not skip or reorder steps.**
 
 ### Step 3: Record
 
-- Leave notes for your future self: `cryo-agent note "what I did and what's next"`
+- Update `NOTES.md` with what you did and what's next. It is your memory across sessions — read it at Step 1, append at Step 3, trim when it grows.
 - Set up a dead-man switch if needed: `cryo-agent alert <action> <target> "message"`
 
 ### Step 4: Schedule next wake via TODO
@@ -74,7 +75,6 @@ cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 ## Command Reference
 
 ```
-cryo-agent note "text"                        # Leave a note for next session
 cryo-agent send "message"                     # Send message to human (outbox)
 cryo-agent reply "message"                    # Reply to inbox messages
 cryo-agent receive                            # Read inbox messages from human
@@ -92,7 +92,7 @@ cryo-agent time "+1 day"                      # Relative time computation
 - **TODO list drives your schedule.** The daemon wakes at the earliest pending TODO's `at` time.
 - **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
 - **Human communication goes through `cryo-agent`.** Use `send`/`reply`; stdout/stderr are logs only.
-- **Notes survive across sessions.** Use `cryo-agent note` liberally — it's your memory.
+- **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.
 - **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.
 - **Delayed wakes happen.** If the machine was suspended, you'll see a system notice. Adjust accordingly.
 - **Hibernate is terminal.** Nothing you do after hibernate will take effect. Put all work before it.

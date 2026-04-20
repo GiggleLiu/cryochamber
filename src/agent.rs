@@ -115,7 +115,7 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 - Use `cryo-agent todo done <id>` to mark tasks complete
 - Use `cryo-agent hibernate` to end your session (--complete when plan is done)
 - Use `cryo-agent hibernate --exit 1` only for genuine retryable failure
-- Use `cryo-agent note` to leave context for your next session
+- Read `NOTES.md` at start of session; append to it as you work
 - Read plan.md before starting work
 "#,
         session_number = config.session_number,
