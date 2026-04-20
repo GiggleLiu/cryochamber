@@ -1,17 +1,12 @@
-//! Chamber discovery: scan `./chambers/*/cryo.toml` and merge with the daemon registry.
+//! Chamber discovery: scan `<workspace>/chambers/*/cryo.toml`.
+//!
+//! Hub only surfaces chambers that live under the current workspace. Daemons
+//! running elsewhere on the machine (e.g. test leftovers under `/tmp/`) are
+//! intentionally not merged in — they would clutter the rail and can't be
+//! managed from this hub instance anyway.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-/// Where a chamber was sourced from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Source {
-    /// Under `./chambers/` in the workspace.
-    Workspace,
-    /// Running daemon registered elsewhere on the machine.
-    External,
-}
 
 /// Encode a canonicalized absolute path as a URL-safe chamber id.
 pub fn encode_id(path: &Path) -> String {
@@ -47,7 +42,6 @@ pub struct ChamberEntry {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
-    pub source: Source,
     pub config_error: Option<String>,
     pub running: bool,
     pub session: Option<u32>,
@@ -95,7 +89,6 @@ pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
                 id,
                 name,
                 path: canonical,
-                source: Source::Workspace,
                 config_error,
                 running: false,
                 session: None,
@@ -109,54 +102,15 @@ pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
     out
 }
 
-/// Merge running daemons from `entries` into `idx`. Entries whose path is
-/// already present in the index (keyed by canonicalized path) simply flip
-/// `running = true`; entries whose path is new get added with
-/// `source = External`.
-pub fn merge_registry(idx: &mut ChamberIndex, entries: &[crate::registry::DaemonEntry]) {
-    for entry in entries {
-        let raw = PathBuf::from(&entry.dir);
-        let canonical = raw.canonicalize().unwrap_or(raw);
-        let id = encode_id(&canonical);
-        if let Some(existing) = idx.get_mut(&id) {
-            existing.running = true;
-            continue;
-        }
-        let name = canonical
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "(unknown)".into());
-        idx.insert(
-            id.clone(),
-            ChamberEntry {
-                id,
-                name,
-                path: canonical,
-                source: Source::External,
-                config_error: None,
-                running: true,
-                session: None,
-                next_wake: None,
-                unread: 0,
-                completed: false,
-                sync: vec![],
-            },
-        );
-    }
-}
-
 /// Fill in runtime fields on each entry from its on-disk state.
-/// `running` is left as-is if already true (set by `merge_registry`).
 pub fn populate_runtime(idx: &mut ChamberIndex) {
     for entry in idx.values_mut() {
         let dir = &entry.path;
 
-        // Session # and pid from timer.json
+        // Session # and running flag from timer.json
         if let Ok(Some(st)) = crate::state::load_state(&crate::state::state_path(dir)) {
             entry.session = Some(st.session_number);
-            if !entry.running {
-                entry.running = crate::state::is_locked(&st);
-            }
+            entry.running = crate::state::is_locked(&st);
         }
 
         // Next wake from todo.json
@@ -188,12 +142,9 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
     }
 }
 
-/// One-shot discovery: scan workspace, merge registry, populate runtime.
+/// One-shot discovery: scan workspace and populate runtime fields.
 pub fn discover(workspace: &Path) -> ChamberIndex {
     let mut idx = scan_workspace(workspace);
-    if let Ok(entries) = crate::registry::list() {
-        merge_registry(&mut idx, &entries);
-    }
     populate_runtime(&mut idx);
     idx
 }
@@ -219,14 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn source_serialises_lowercase() {
-        let json = serde_json::to_string(&Source::Workspace).unwrap();
-        assert_eq!(json, "\"workspace\"");
-        let json = serde_json::to_string(&Source::External).unwrap();
-        assert_eq!(json, "\"external\"");
-    }
-
-    #[test]
     fn scan_empty_workspace_returns_empty_index() {
         let dir = tempfile::tempdir().unwrap();
         let idx = scan_workspace(dir.path());
@@ -249,7 +192,6 @@ mod tests {
         assert!(names.contains(&"alpha".to_string()));
         assert!(names.contains(&"beta".to_string()));
         for entry in idx.values() {
-            assert_eq!(entry.source, Source::Workspace);
             assert!(entry.config_error.is_none());
         }
     }
@@ -262,78 +204,6 @@ mod tests {
         assert_eq!(idx.len(), 1);
         let entry = idx.values().next().unwrap();
         assert!(entry.config_error.is_some());
-    }
-
-    #[test]
-    fn external_daemon_appears_with_external_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let external = dir.path().join("somewhere-else");
-        std::fs::create_dir_all(&external).unwrap();
-        let mut idx = ChamberIndex::new();
-        merge_registry(
-            &mut idx,
-            &[crate::registry::DaemonEntry {
-                pid: 1,
-                dir: external.to_string_lossy().into_owned(),
-                socket_path: None,
-            }],
-        );
-        assert_eq!(idx.len(), 1);
-        let entry = idx.values().next().unwrap();
-        assert_eq!(entry.source, Source::External);
-        assert!(entry.running);
-    }
-
-    #[test]
-    fn running_workspace_chamber_flips_running_not_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        std::fs::create_dir_all(chambers.join("alpha")).unwrap();
-        let cfg = crate::config::CryoConfig::default();
-        crate::config::save_config(&chambers.join("alpha").join("cryo.toml"), &cfg).unwrap();
-
-        let mut idx = scan_workspace(dir.path());
-        let alpha_path = chambers.join("alpha").canonicalize().unwrap();
-        merge_registry(
-            &mut idx,
-            &[crate::registry::DaemonEntry {
-                pid: 42,
-                dir: alpha_path.to_string_lossy().into_owned(),
-                socket_path: None,
-            }],
-        );
-        let entry = idx.values().next().unwrap();
-        assert_eq!(entry.source, Source::Workspace);
-        assert!(entry.running);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn symlinked_chamber_is_deduped() {
-        let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("real-chamber");
-        std::fs::create_dir_all(&real).unwrap();
-        let cfg = crate::config::CryoConfig::default();
-        crate::config::save_config(&real.join("cryo.toml"), &cfg).unwrap();
-
-        let chambers = dir.path().join("chambers");
-        std::fs::create_dir_all(&chambers).unwrap();
-        std::os::unix::fs::symlink(&real, chambers.join("alpha")).unwrap();
-
-        let mut idx = scan_workspace(dir.path());
-        let real_canonical = real.canonicalize().unwrap();
-        merge_registry(
-            &mut idx,
-            &[crate::registry::DaemonEntry {
-                pid: 1,
-                dir: real_canonical.to_string_lossy().into_owned(),
-                socket_path: None,
-            }],
-        );
-        assert_eq!(idx.len(), 1);
-        let entry = idx.values().next().unwrap();
-        assert_eq!(entry.source, Source::Workspace);
-        assert!(entry.running);
     }
 
     #[test]

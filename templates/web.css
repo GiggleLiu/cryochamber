@@ -157,7 +157,6 @@ body {
 }
 .status-dot.running { background: var(--ok); box-shadow: 0 0 0 3px rgba(122,171,106,0.12); }
 .status-dot.stopped { background: var(--ink-faint); }
-.status-dot.external { background: var(--warn); }
 .status-dot.complete { background: var(--cool); }
 .status-dot.error { background: var(--hot); }
 .chamber-name {
@@ -337,12 +336,12 @@ body {
   border-radius: 10px;
   position: relative;
 }
-.msg.inbox {
+.msg.agent {
   align-self: flex-start;
   background: var(--panel);
   border: 1px solid var(--line);
 }
-.msg.outbox {
+.msg.human {
   align-self: flex-end;
   background: rgba(244,198,120,0.07);
   border: 1px solid rgba(244,198,120,0.18);
@@ -355,8 +354,8 @@ body {
   letter-spacing: 0.04em;
   display:flex; gap: 10px;
 }
-.msg-meta .from { color: var(--cool); }
-.msg.outbox .msg-meta .from { color: var(--accent); }
+.msg.agent .msg-meta .from { color: var(--cool); }
+.msg.human .msg-meta .from { color: var(--accent); }
 .msg-body {
   font-family: var(--sans);
   font-size: 14px;
@@ -365,6 +364,32 @@ body {
   white-space: pre-wrap;
 }
 .msg-body em { font-family: var(--serif); font-style: italic; color: var(--ink); }
+
+/* System notice — centered gray text, no bubble. */
+.sys-notice {
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+}
+
+/* "Load older" pagination button at top of thread. */
+.load-older {
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 6px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.load-older:hover { color: var(--ink); border-color: var(--ink-faint); }
 
 .event-log {
   font-family: var(--mono);
@@ -597,6 +622,40 @@ body {
   flex-shrink: 0;
 }
 .todo .when.soon { color: var(--accent); }
+.todo-more {
+  padding: 6px 8px 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+.todo-history {
+  margin-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+.todo-history > summary {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: none;
+}
+.todo-history > summary::-webkit-details-marker { display: none; }
+.todo-history > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform 0.15s ease;
+}
+.todo-history[open] > summary::before {
+  content: "▾ ";
+}
+.todo-history > summary:hover { color: var(--ink-dim); }
+.todo-history > .todos { margin-top: 8px; }
 
 /* Sync */
 .sync-list { display:flex; flex-direction: column; gap: 6px; margin-top: 8px; }
@@ -681,36 +740,6 @@ body {
 .notes {
   min-height: 180px;
 }
-.log-foot {
-  display:flex; justify-content: space-between; align-items: center;
-  padding: 6px 10px;
-  border-top: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--ink-faint);
-  background: #0a0c10;
-}
-.log-foot .dot-live {
-  display:inline-block;
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--ok);
-  margin-right: 6px;
-  animation: pulse 1.8s infinite;
-  vertical-align: 1px;
-}
-.log-foot button {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--ink-faint);
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.log-foot button:hover { color: var(--ink-dim); border-color: var(--ink-faint); }
-
 /* Utility */
 .divider {
   height: 1px; background: var(--line-soft); margin: 18px 0;

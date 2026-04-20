@@ -1,5 +1,5 @@
 //! Per-chamber sync backend handlers. Delegates to `sync_common` for
-//! summaries; `require_workspace` guards the mutating endpoints.
+//! summaries.
 
 use std::sync::Arc;
 
@@ -10,16 +10,8 @@ use axum::{
 };
 use serde_json::Value;
 
-use crate::hub::discovery::Source;
 use crate::hub::state::{AppState, SseEvent};
 use crate::sync_common::{self, SyncBackend};
-
-fn require_workspace(entry: &crate::hub::discovery::ChamberEntry) -> Result<(), StatusCode> {
-    if entry.source == Source::External {
-        return Err(StatusCode::CONFLICT);
-    }
-    Ok(())
-}
 
 pub async fn get_sync(
     State(app): State<Arc<AppState>>,
@@ -37,7 +29,6 @@ pub async fn post_sync_action(
     AxumPath((id, backend_str, verb)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    require_workspace(&entry)?;
     let backend = SyncBackend::parse(&backend_str).ok_or(StatusCode::BAD_REQUEST)?;
     let result = match verb.as_str() {
         "start" => sync_common::start(backend, &path),
@@ -64,7 +55,7 @@ pub async fn post_sync_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hub::discovery::{encode_id, ChamberEntry, Source};
+    use crate::hub::discovery::encode_id;
 
     #[tokio::test]
     async fn get_sync_returns_empty_for_unconfigured_chamber() {
@@ -108,34 +99,6 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["backend"], "gh");
         assert_eq!(arr[0]["target"], "alice/x#1");
-    }
-
-    #[tokio::test]
-    async fn post_sync_start_returns_409_for_external_chamber() {
-        let dir = tempfile::tempdir().unwrap();
-        let external = dir.path().join("outside");
-        std::fs::create_dir_all(&external).unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        let id = encode_id(&external.canonicalize().unwrap());
-        let entry = ChamberEntry {
-            id: id.clone(),
-            name: "outside".into(),
-            path: external.canonicalize().unwrap(),
-            source: Source::External,
-            config_error: None,
-            running: true,
-            session: None,
-            next_wake: None,
-            unread: 0,
-            completed: false,
-            sync: vec![],
-        };
-        app.chambers.write().unwrap().insert(id.clone(), entry);
-
-        let err = post_sync_action(State(app), AxumPath((id, "gh".into(), "start".into())))
-            .await
-            .unwrap_err();
-        assert_eq!(err, StatusCode::CONFLICT);
     }
 
     #[tokio::test]

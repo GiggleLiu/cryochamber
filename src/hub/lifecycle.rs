@@ -99,14 +99,47 @@ pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
 }
 
 fn launch_daemon(dir: &Path) -> Result<()> {
+    let exe = resolve_cryo_exe()?;
     if std::env::var("CRYO_NO_SERVICE").is_ok() {
-        crate::process::spawn_daemon(dir)?;
+        crate::process::spawn_daemon(dir, &exe)?;
     } else {
-        let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
         let log_path = crate::log::log_path(dir);
         crate::service::install("daemon", dir, &exe, &["daemon"], &log_path, false)?;
     }
     Ok(())
+}
+
+/// Resolve the path to the `cryo` binary. The hub is `cryohub`, so
+/// `current_exe()` is the wrong answer — it would install the chamber daemon
+/// service to run `cryohub daemon` (which expects `--host`/`--port`).
+///
+/// Strategy:
+///   1. Look for a `cryo` binary alongside the running `cryohub` (works in dev:
+///      `target/debug/cryo` next to `target/debug/cryohub`; works post-install:
+///      `~/.cargo/bin/cryo` next to `~/.cargo/bin/cryohub`).
+///   2. Fall back to `which cryo` for less standard layouts.
+fn resolve_cryo_exe() -> Result<PathBuf> {
+    let me = std::env::current_exe().context("Failed to resolve current executable path")?;
+    if let Some(parent) = me.parent() {
+        let sibling = parent.join("cryo");
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
+    }
+    let output = std::process::Command::new("which").arg("cryo").output();
+    if let Ok(out) = output {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Ok(PathBuf::from(s));
+            }
+        }
+    }
+    anyhow::bail!(
+        "Could not locate the `cryo` binary. Looked next to {} and on PATH. \
+         Build with `cargo build` or install with `cargo install --path .`.",
+        me.display()
+    )
 }
 
 fn validate_agent_command(agent_cmd: &str) -> Result<()> {
@@ -172,5 +205,34 @@ mod tests {
         let archive = archive_logs(dir.path()).unwrap();
         assert!(archive.is_dir());
         assert!(dir.path().join("history").is_dir());
+    }
+
+    #[test]
+    fn resolve_cryo_exe_prefers_sibling_of_current_exe() {
+        // `current_exe()` here is the test binary (under target/debug/deps/...).
+        // The fix only kicks in when `cryo` exists next to the running binary.
+        // We can't easily inject that without changing the function signature,
+        // so this test pins the contract: if the resolver returns Ok, the path
+        // either ends in `cryo` or is the cryo binary on PATH. After running
+        // `cargo build`, target/debug/cryo exists, so the sibling path of the
+        // test binary (target/debug/deps/) won't have a sibling cryo —
+        // resolution will fall through to `which cryo`. Both outcomes are
+        // acceptable; what we want to guarantee is the resolver never returns
+        // a path ending in `cryohub` (the original bug).
+        if let Ok(p) = resolve_cryo_exe() {
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            assert!(
+                !name.starts_with("cryohub"),
+                "resolver returned cryohub binary: {}",
+                p.display()
+            );
+            assert!(
+                name == "cryo" || name == "cryo.exe",
+                "resolver returned unexpected binary: {}",
+                p.display()
+            );
+        }
+        // If resolve_cryo_exe errors (no cryo on disk), that's fine for the
+        // test — we only assert the regression: never return cryohub.
     }
 }

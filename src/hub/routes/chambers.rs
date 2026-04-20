@@ -33,17 +33,12 @@ mod tests {
         crate::config::save_config(&chambers.join("alpha").join("cryo.toml"), &cfg).unwrap();
 
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        // Populate index without calling registry::list() so tests are
-        // isolated from any real daemons the machine might have running.
-        let mut idx = crate::hub::discovery::scan_workspace(dir.path());
-        crate::hub::discovery::populate_runtime(&mut idx);
-        *app.chambers.write().unwrap() = idx;
+        app.refresh();
 
         let Json(v) = get_chambers(State(app)).await;
         let arr = v.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["name"], "alpha");
-        assert_eq!(arr[0]["source"], "workspace");
     }
 
     #[tokio::test]
@@ -51,15 +46,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("chambers")).unwrap();
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        // Start with empty index (avoid calling refresh, which hits the
-        // global registry — not reliable for isolation). The first
-        // post_refresh below is the one we're actually testing.
         let Json(initial) = get_chambers(State(app.clone())).await;
         assert_eq!(initial.as_array().unwrap().len(), 0);
 
-        // Add a chamber, then refresh (this still calls the registry but
-        // will add the new workspace chamber on top of whatever's in the
-        // registry, so we only assert the new chamber is present).
         let new_dir = dir.path().join("chambers").join("beta");
         std::fs::create_dir_all(&new_dir).unwrap();
         let cfg = crate::config::CryoConfig::default();
@@ -67,7 +56,7 @@ mod tests {
 
         let Json(after) = post_refresh(State(app)).await;
         let arr = after.as_array().unwrap();
-        // At least one entry, and one must be named "beta"
-        assert!(arr.iter().any(|e| e["name"] == "beta"));
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["name"], "beta");
     }
 }

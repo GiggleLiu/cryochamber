@@ -101,7 +101,6 @@
 
   function statusClass(entry) {
     if (entry.config_error) return 'error';
-    if (entry.source === 'external') return 'external';
     if (entry.completed && !entry.running) return 'complete';
     if (entry.running) return 'running';
     return 'stopped';
@@ -111,7 +110,7 @@
     const list = document.getElementById('chamber-list');
     list.innerHTML = '';
     const sorted = [...state.chambers].sort((a, b) => {
-      const rank = e => (e.running ? 0 : (e.source === 'external' ? 2 : 1));
+      const rank = e => (e.running ? 0 : 1);
       const ra = rank(a), rb = rank(b);
       if (ra !== rb) return ra - rb;
       return a.name.localeCompare(b.name);
@@ -185,6 +184,10 @@
       lastTodoSig: null,
       lastSyncSig: null,
       lastLifecycleSig: null,
+      msgBox: null,
+      allMessages: [],
+      shownFrom: 0,
+      loadOlderBtn: null,
     };
   }
 
@@ -198,7 +201,6 @@
 
   function statusDotChar(entry) {
     if (entry.config_error) return '✗';
-    if (entry.source === 'external') return '⚠';
     if (entry.completed && !entry.running) return '✓';
     return entry.running ? '●' : '○';
   }
@@ -280,27 +282,20 @@
   }
 
   function updateLifecycleButtons(entry) {
-    const sig = `${entry.source}|${entry.running}|${!!entry.config_error}`;
+    const sig = `${entry.running}|${!!entry.config_error}`;
     if (sig === view.lastLifecycleSig) return;
     view.lastLifecycleSig = sig;
     const btns = view.lifecycleBtns;
     btns.innerHTML = '';
-    const disabled = entry.source === 'external';
-    if (entry.source === 'workspace') {
-      if (entry.running) {
-        btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
-        btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop')));
-        btns.appendChild(btn('restart', () => lifecycle(entry.id, 'restart')));
-      } else if (!entry.config_error) {
-        btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary'));
-      }
-      if (!entry.config_error) {
-        btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger'));
-      }
-    } else if (!disabled) {
+    if (entry.running) {
       btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
-    } else {
-      btns.appendChild(btn('wake', () => lifecycle(entry.id, 'wake'), 'primary'));
+      btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop')));
+      btns.appendChild(btn('restart', () => lifecycle(entry.id, 'restart')));
+    } else if (!entry.config_error) {
+      btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary'));
+    }
+    if (!entry.config_error) {
+      btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger'));
     }
   }
 
@@ -325,6 +320,8 @@
     }
   }
 
+  const PAGE_SIZE = 30;
+
   function messageKey(m) {
     return `${m.direction}|${m.timestamp}|${m.from}|${hash32(m.body || '')}`;
   }
@@ -333,16 +330,34 @@
     return (ts || '').slice(0, 10); // YYYY-MM-DD
   }
 
-  function buildMessageRow(m) {
+  // System notice = inbox message from the synthetic "operator" sender (web-UI
+  // wake pings). Rendered as a centered gray line, not a bubble.
+  function isSystemMessage(m) {
+    return m.direction === 'inbox' && m.from === 'operator';
+  }
+
+  function buildSystemRow(m) {
     const row = document.createElement('div');
-    row.className = 'msg ' + (m.direction === 'inbox' ? 'inbox' : 'outbox');
+    row.className = 'sys-notice';
+    row.dataset.key = messageKey(m);
+    row.dataset.day = dayKey(m.timestamp);
+    const ts = (m.timestamp || '').slice(11, 16);
+    row.textContent = `· ${m.from} · ${ts} · ${m.body || ''} ·`;
+    return row;
+  }
+
+  function buildMessageRow(m) {
+    if (isSystemMessage(m)) return buildSystemRow(m);
+    const row = document.createElement('div');
+    // outbox = agent (left), inbox = human (right)
+    row.className = 'msg ' + (m.direction === 'outbox' ? 'agent' : 'human');
     row.dataset.key = messageKey(m);
     row.dataset.day = dayKey(m.timestamp);
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
     const from = document.createElement('span');
     from.className = 'from';
-    from.textContent = m.direction === 'inbox' ? m.from : `${m.from || 'chamber'} → ${m.to || 'out'}`;
+    from.textContent = m.direction === 'inbox' ? m.from : (m.from || 'agent');
     const ts = document.createElement('span');
     ts.textContent = (m.timestamp || '').slice(11, 16);
     meta.appendChild(from);
@@ -363,8 +378,16 @@
     return el;
   }
 
+  function lastDayInBox(box) {
+    for (let i = box.children.length - 1; i >= 0; i--) {
+      const d = box.children[i].dataset?.day;
+      if (d) return d;
+    }
+    return null;
+  }
+
   function appendMessages(box, messages) {
-    let currentDay = box.lastChild?.dataset?.day || null;
+    let currentDay = lastDayInBox(box);
     for (const m of messages) {
       const d = dayKey(m.timestamp);
       if (d !== currentDay) {
@@ -376,14 +399,72 @@
     }
   }
 
+  // Prepend `messages` (oldest-first slice) to the top of the thread, after the
+  // load-older button. Preserves user scroll position.
+  function prependMessages(box, messages) {
+    if (!messages.length) return;
+    const prevHeight = box.scrollHeight;
+    const prevTop = box.scrollTop;
+    // Build into a fragment, then insert after the load-older button.
+    const frag = document.createDocumentFragment();
+    let currentDay = null;
+    for (const m of messages) {
+      const d = dayKey(m.timestamp);
+      if (d !== currentDay) {
+        frag.appendChild(buildDayMarker(d));
+        currentDay = d;
+      }
+      frag.appendChild(buildMessageRow(m));
+    }
+    const anchor = view.loadOlderBtn ? view.loadOlderBtn.nextSibling : box.firstChild;
+    box.insertBefore(frag, anchor);
+    // The first day-marker of the previously-visible window is now redundant
+    // if it equals the last day-marker of the just-prepended slice. Drop it.
+    // (Cheap to skip — duplicates render as a thin separator line and look ok.)
+    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+  }
+
+  function ensureLoadOlderButton(box, hiddenCount) {
+    if (hiddenCount <= 0) {
+      if (view.loadOlderBtn) {
+        view.loadOlderBtn.remove();
+        view.loadOlderBtn = null;
+      }
+      return;
+    }
+    if (!view.loadOlderBtn) {
+      const btn = document.createElement('button');
+      btn.className = 'load-older';
+      btn.addEventListener('click', loadOlder);
+      box.insertBefore(btn, box.firstChild);
+      view.loadOlderBtn = btn;
+    }
+    const shownOlder = Math.min(PAGE_SIZE, hiddenCount);
+    view.loadOlderBtn.textContent =
+      `▴ Load ${shownOlder} older (${hiddenCount} hidden)`;
+  }
+
+  function loadOlder() {
+    if (!view.allMessages || view.shownFrom <= 0) return;
+    const newFrom = Math.max(0, view.shownFrom - PAGE_SIZE);
+    const slice = view.allMessages.slice(newFrom, view.shownFrom);
+    view.shownFrom = newFrom;
+    prependMessages(view.msgBox, slice);
+    ensureLoadOlderButton(view.msgBox, view.shownFrom);
+  }
+
   function buildThread(pane, messages) {
     const box = document.createElement('div');
     box.className = 'thread';
     pane.appendChild(box);
     view.msgBox = box;
-    appendMessages(box, messages || []);
-    // Scroll newest into view:
-    box.scrollTop = box.scrollHeight;
+    view.allMessages = messages || [];
+    const total = view.allMessages.length;
+    view.shownFrom = Math.max(0, total - PAGE_SIZE);
+    ensureLoadOlderButton(box, view.shownFrom);
+    appendMessages(box, view.allMessages.slice(view.shownFrom));
+    // Scroll to bottom after layout settles (deep-link + font load timing).
+    requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
   }
 
   function isAtBottom(el) {
@@ -394,12 +475,17 @@
     if (!view.msgBox) return;
     const box = view.msgBox;
     const wasAtBottom = isAtBottom(box);
+    view.allMessages = messages;
     let startAt = 0;
     if (view.lastMsgKey) {
       const idx = messages.findIndex(m => messageKey(m) === view.lastMsgKey);
       if (idx < 0) {
+        // Lost our marker — full rerender.
         box.innerHTML = '';
-        appendMessages(box, messages);
+        view.loadOlderBtn = null;
+        view.shownFrom = Math.max(0, messages.length - PAGE_SIZE);
+        ensureLoadOlderButton(box, view.shownFrom);
+        appendMessages(box, messages.slice(view.shownFrom));
         box.scrollTop = box.scrollHeight;
         return;
       }
@@ -461,45 +547,81 @@
     });
   }
 
+  const TODO_PENDING_CAP = 20;
+
   function todoSignature(todos) {
     if (!todos || !todos.length) return '0:';
     return todos.length + ':' + todos.map(t => `${t.id}|${t.done ? 1 : 0}|${t.at || ''}`).join(',');
+  }
+
+  function buildTodoRow(t) {
+    const row = document.createElement('div');
+    row.className = 'todo' + (t.done ? ' done' : '');
+    const check = document.createElement('span');
+    check.className = 'check';
+    const text = document.createElement('span');
+    text.className = 'text';
+    text.textContent = t.text;
+    row.appendChild(check);
+    row.appendChild(text);
+    if (t.at) {
+      const when = document.createElement('span');
+      when.className = 'when' + (t.at_soon ? ' soon' : '');
+      when.textContent = t.at;
+      row.appendChild(when);
+    }
+    return row;
   }
 
   function renderTodos(todos) {
     const sig = todoSignature(todos);
     if (sig === view.lastTodoSig) return;
     view.lastTodoSig = sig;
+    const all = todos || [];
+    // Partition + sort: pending by `at` ascending (undated last), done by id
+    // descending (most recently added first).
+    const pending = all.filter(t => !t.done).slice().sort((a, b) => {
+      if (a.at && b.at) return a.at < b.at ? -1 : a.at > b.at ? 1 : 0;
+      if (a.at) return -1;
+      if (b.at) return 1;
+      return a.id - b.id;
+    });
+    const done = all.filter(t => t.done).slice().sort((a, b) => b.id - a.id);
+
     const box = document.getElementById('panel-todos');
-    const pending = (todos || []).filter(t => !t.done).length;
-    const done    = (todos || []).filter(t =>  t.done).length;
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'section-title';
-    title.innerHTML = `Todos <span class="count">${pending} pending · ${done} done</span>`;
+    title.innerHTML =
+      `Todos <span class="count">${pending.length} pending · ${done.length} done</span>`;
     box.appendChild(title);
+
     const list = document.createElement('div');
     list.className = 'todos';
-    for (const t of (todos || [])) {
-      const row = document.createElement('div');
-      row.className = 'todo' + (t.done ? ' done' : '');
-      const check = document.createElement('span');
-      check.className = 'check';
-      const text = document.createElement('span');
-      text.className = 'text';
-      text.textContent = t.text;
-      row.appendChild(check);
-      row.appendChild(text);
-      if (t.at) {
-        const when = document.createElement('span');
-        when.className = 'when' + (t.at_soon ? ' soon' : '');
-        when.textContent = t.at;
-        row.appendChild(when);
-      }
-      list.appendChild(row);
+    const visible = pending.slice(0, TODO_PENDING_CAP);
+    for (const t of visible) list.appendChild(buildTodoRow(t));
+    if (pending.length > TODO_PENDING_CAP) {
+      const more = document.createElement('div');
+      more.className = 'todo-more';
+      more.textContent = `+${pending.length - TODO_PENDING_CAP} more pending`;
+      list.appendChild(more);
     }
     box.appendChild(list);
-    document.getElementById('todos-count').textContent = pending;
+
+    if (done.length) {
+      const details = document.createElement('details');
+      details.className = 'todo-history';
+      const summary = document.createElement('summary');
+      summary.textContent = `History (${done.length})`;
+      details.appendChild(summary);
+      const histList = document.createElement('div');
+      histList.className = 'todos';
+      for (const t of done) histList.appendChild(buildTodoRow(t));
+      details.appendChild(histList);
+      box.appendChild(details);
+    }
+
+    document.getElementById('todos-count').textContent = pending.length;
   }
 
   function syncSignature(sync) {
@@ -585,7 +707,7 @@
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'section-title';
-    title.innerHTML = 'cryo.log <span class="count">tail · live</span>';
+    title.textContent = 'cryo.log';
     box.appendChild(title);
     const wrap = document.createElement('div');
     wrap.className = 'log-wrap';
@@ -593,12 +715,7 @@
     log.className = 'log';
     log.id = 'log';
     log.textContent = status.log_tail || '';
-    const foot = document.createElement('div');
-    foot.className = 'log-foot';
-    foot.innerHTML =
-      '<span><span class="dot-live"></span>streaming · SSE</span>';
     wrap.appendChild(log);
-    wrap.appendChild(foot);
     box.appendChild(wrap);
     view.logEl = log;
     log.scrollTop = log.scrollHeight;

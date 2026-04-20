@@ -52,16 +52,19 @@ pub fn terminate_pid(pid: u32) -> Result<()> {
     Ok(())
 }
 
-/// Spawn the daemon subprocess in the background.
-pub fn spawn_daemon(dir: &Path) -> Result<()> {
-    let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
+/// Spawn the `cryo daemon` subprocess in the background.
+///
+/// `exe` must be the path to the `cryo` binary. Callers are responsible for
+/// resolving it — when the caller is itself `cryo`, `std::env::current_exe()`
+/// works; from another binary (e.g. `cryohub`), use a sibling/PATH lookup.
+pub fn spawn_daemon(dir: &Path, exe: &Path) -> Result<()> {
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(dir.join("cryo.log"))
         .context("Failed to open cryo.log")?;
     let err_file = log_file.try_clone().context("Failed to clone log handle")?;
-    std::process::Command::new(&exe)
+    std::process::Command::new(exe)
         .arg("daemon")
         .current_dir(dir)
         .stdin(std::process::Stdio::null())

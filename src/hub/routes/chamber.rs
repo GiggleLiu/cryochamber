@@ -220,21 +220,11 @@ pub async fn post_wake(
     })))
 }
 
-use crate::hub::discovery::Source;
-
-fn require_workspace(entry: &crate::hub::discovery::ChamberEntry) -> Result<(), StatusCode> {
-    if entry.source == Source::External {
-        return Err(StatusCode::CONFLICT);
-    }
-    Ok(())
-}
-
 pub async fn post_start(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    require_workspace(&entry)?;
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = crate::hub::lifecycle::start_chamber(&path);
     app.refresh();
     match result {
@@ -247,8 +237,7 @@ pub async fn post_stop(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    require_workspace(&entry)?;
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = crate::hub::lifecycle::stop_chamber(&path);
     app.refresh();
     match result {
@@ -261,8 +250,7 @@ pub async fn post_restart(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    require_workspace(&entry)?;
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = crate::hub::lifecycle::restart_chamber(&path);
     app.refresh();
     match result {
@@ -275,8 +263,7 @@ pub async fn post_reset(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    require_workspace(&entry)?;
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = crate::hub::lifecycle::reset_chamber(&path);
     app.refresh();
     match result {
@@ -372,51 +359,5 @@ mod tests {
         let arr = arr.as_array().unwrap();
         assert_eq!(arr[0]["body"], "first");
         assert_eq!(arr[1]["body"], "second");
-    }
-
-    #[tokio::test]
-    async fn start_stop_restart_return_409_for_external() {
-        let dir = tempfile::tempdir().unwrap();
-        let external = dir.path().join("outside");
-        std::fs::create_dir_all(&external).unwrap();
-
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        // Inject a synthetic external entry directly into the index
-        let id = {
-            let id = crate::hub::discovery::encode_id(&external.canonicalize().unwrap());
-            let entry = crate::hub::discovery::ChamberEntry {
-                id: id.clone(),
-                name: "outside".into(),
-                path: external.canonicalize().unwrap(),
-                source: Source::External,
-                config_error: None,
-                running: true,
-                session: None,
-                next_wake: None,
-                unread: 0,
-                completed: false,
-                sync: vec![],
-            };
-            app.chambers.write().unwrap().insert(id.clone(), entry);
-            id
-        };
-
-        let err = post_start(State(app.clone()), AxumPath(id.clone()))
-            .await
-            .unwrap_err();
-        assert_eq!(err, StatusCode::CONFLICT);
-
-        let err = post_stop(State(app.clone()), AxumPath(id.clone()))
-            .await
-            .unwrap_err();
-        assert_eq!(err, StatusCode::CONFLICT);
-
-        let err = post_restart(State(app.clone()), AxumPath(id.clone()))
-            .await
-            .unwrap_err();
-        assert_eq!(err, StatusCode::CONFLICT);
-
-        let err = post_reset(State(app), AxumPath(id)).await.unwrap_err();
-        assert_eq!(err, StatusCode::CONFLICT);
     }
 }
