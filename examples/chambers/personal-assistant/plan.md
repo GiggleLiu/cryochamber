@@ -40,12 +40,12 @@ Each session you either:
 
 4. Run `cryo-agent todo list` and fire any due reminders:
    - For each item with `--at` ≤ now: send it via `cryo-agent send` and mark done.
-   - Skip items already fired (check `cryo-agent note` for fired markers).
+   - Skip items already fired (check `NOTES.md` for fired markers).
 
 5. Daily morning summary (09:00 local):
-   - If current hour is 09 and you have not sent today's summary (check notes),
+   - If current hour is 09 and you have not sent today's summary (check `NOTES.md`),
      send a summary of pending reminders via `cryo-agent send`.
-   - Record "summary sent YYYY-MM-DD" in `cryo-agent note`.
+   - Append "summary sent YYYY-MM-DD" to `NOTES.md`.
 
 6. Compute the next wake time (must be an ISO8601 timestamp for `--wake`):
    - Find the earliest pending `--at` deadline in `cryo-agent todo list`. That
@@ -69,7 +69,7 @@ Each session you either:
 
 - Use `cryo-agent todo add "..." --at <ISO>` for every reminder. This is your
   only persistent reminder store.
-- Use `cryo-agent note` for auxiliary state: which reminders were already fired,
+- Use `NOTES.md` for auxiliary state: which reminders were already fired,
   when the last daily summary was sent.
 - Use `cryo-agent time` for all time calculations — never hardcode timestamps.
 - Every session must end with `cryo-agent hibernate`. Failure to hibernate is

@@ -31,7 +31,7 @@ Exit codes: 0 = success, 1 = illegal move, 2 = game over.
    d. Send the updated board, your move, and the human's suggested moves via `cryo-agent send`.
 3. If no move is received, hibernate and wake again later. **Never stop checking.** The human may take minutes, hours, or days to respond — that is normal for correspondence chess. Always hibernate with a wake time; never use `--complete` unless the game is over.
 
-   **Adaptive timing:** Match the human's pace. Track how long the human took to reply (record it in your notes). If they're fast, check back soon. If they're slow, take your time. No reply yet? Gradually wait longer. Clamp between 5 seconds and 1 day.
+   **Adaptive timing:** Match the human's pace. Track how long the human took to reply (record it in `NOTES.md`). If they're fast, check back soon. If they're slow, take your time. No reply yet? Gradually wait longer. Clamp between 5 seconds and 1 day.
 4. Detect checkmate, stalemate, draw, or resignation (exit code 2 from chess_engine.py). This is the **only** condition that ends the session. Announce the result and run `cryo-agent hibernate --complete`.
 
 ## Configuration
@@ -42,8 +42,8 @@ Exit codes: 0 = success, 1 = illegal move, 2 = game over.
 
 ## Notes
 
-- Store the board as a FEN string in your `cryo-agent note` so you can reconstruct it on wake.
-- Store the full move history (e.g., `1. e4 e5 2. Nf3`) in notes as well.
+- Store the board as a FEN string in `NOTES.md` so you can reconstruct it on wake.
+- Store the full move history (e.g., `1. e4 e5 2. Nf3`) in `NOTES.md` as well.
 - If the human sends multiple moves at once, process them in order and respond to each.
 - Use `cryo-agent time "+10 minutes"` to compute your next wake time.
 - Use `cryo-agent send` to send your moves and commentary to the human.
