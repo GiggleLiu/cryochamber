@@ -1,7 +1,7 @@
 // tests/log_tests.rs
 use cryochamber::log::{
-    parse_latest_session_notes, parse_latest_session_task, parse_latest_session_wake,
-    read_current_session, read_latest_session, session_count, EventLogger,
+    parse_latest_session_task, parse_latest_session_wake, read_current_session,
+    read_latest_session, session_count, EventLogger,
 };
 use std::fs;
 
@@ -125,59 +125,6 @@ fn test_event_logger_no_inbox() {
 }
 
 #[test]
-fn test_parse_latest_session_notes() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_path = dir.path().join("cryo.log");
-
-    let mut logger = EventLogger::begin(&log_path, 1, "Build feature", "agent", &[]).unwrap();
-    logger.log_event("agent started (pid 1234)").unwrap();
-    logger.log_event("note: \"First note\"").unwrap();
-    logger.log_event("note: \"Second note\"").unwrap();
-    logger.finish("done").unwrap();
-
-    let notes = parse_latest_session_notes(&log_path).unwrap();
-    assert_eq!(notes, vec!["First note", "Second note"]);
-}
-
-#[test]
-fn test_parse_latest_session_notes_empty() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_path = dir.path().join("cryo.log");
-
-    let logger = EventLogger::begin(&log_path, 1, "task", "agent", &[]).unwrap();
-    logger.finish("done").unwrap();
-
-    let notes = parse_latest_session_notes(&log_path).unwrap();
-    assert!(notes.is_empty());
-}
-
-#[test]
-fn test_parse_latest_session_notes_no_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_path = dir.path().join("nonexistent.log");
-
-    let notes = parse_latest_session_notes(&log_path).unwrap();
-    assert!(notes.is_empty());
-}
-
-#[test]
-fn test_parse_latest_session_notes_only_latest() {
-    let dir = tempfile::tempdir().unwrap();
-    let log_path = dir.path().join("cryo.log");
-
-    let mut logger1 = EventLogger::begin(&log_path, 1, "task1", "agent", &[]).unwrap();
-    logger1.log_event("note: \"Old note\"").unwrap();
-    logger1.finish("done").unwrap();
-
-    let mut logger2 = EventLogger::begin(&log_path, 2, "task2", "agent", &[]).unwrap();
-    logger2.log_event("note: \"New note\"").unwrap();
-    logger2.finish("done").unwrap();
-
-    let notes = parse_latest_session_notes(&log_path).unwrap();
-    assert_eq!(notes, vec!["New note"]);
-}
-
-#[test]
 fn test_parse_latest_session_task() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
@@ -209,7 +156,7 @@ fn test_read_current_session_in_progress() {
 
     // Start second session without finishing (in-progress)
     let mut logger2 = EventLogger::begin(&log_path, 2, "Current task", "agent", &[]).unwrap();
-    logger2.log_event("note: \"WIP note\"").unwrap();
+    logger2.log_event("work in progress").unwrap();
 
     // read_latest_session returns None (no completed latest session)
     assert!(read_latest_session(&log_path).unwrap().is_none());
@@ -217,38 +164,30 @@ fn test_read_current_session_in_progress() {
     // read_current_session returns the in-progress session
     let current = read_current_session(&log_path).unwrap().unwrap();
     assert!(current.contains("Current task"));
-    assert!(current.contains("WIP note"));
+    assert!(current.contains("work in progress"));
 
-    // task and notes should work from in-progress session
+    // task should work from an in-progress session
     let task = parse_latest_session_task(&log_path).unwrap();
     assert_eq!(task, Some("Current task".to_string()));
-
-    let notes = parse_latest_session_notes(&log_path).unwrap();
-    assert_eq!(notes, vec!["WIP note"]);
 
     // Suppress drop warning by finishing
     logger2.finish("done").unwrap();
 }
 
 #[test]
-fn test_notes_fallback_to_previous_session() {
+fn test_wake_fallback_to_previous_session() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");
 
-    // Session 1: has notes
+    // Session 1: has the last hibernate wake line.
     let mut logger1 = EventLogger::begin(&log_path, 1, "task1", "agent", &[]).unwrap();
-    logger1.log_event("note: \"Important note\"").unwrap();
     logger1
         .log_event("hibernate: wake=2026-03-01T09:00, exit=0, summary=\"done\"")
         .unwrap();
     logger1.finish("session complete").unwrap();
 
-    // Session 2: just started (no notes, no hibernate)
+    // Session 2: just started (no hibernate)
     let _logger2 = EventLogger::begin(&log_path, 2, "task2", "agent", &[]).unwrap();
-
-    // Notes should fall back to session 1
-    let notes = parse_latest_session_notes(&log_path).unwrap();
-    assert_eq!(notes, vec!["Important note"]);
 
     // Wake should find session 1's hibernate line
     let wake = parse_latest_session_wake(&log_path).unwrap();

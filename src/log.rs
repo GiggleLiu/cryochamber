@@ -64,40 +64,6 @@ pub fn session_count(log_path: &Path) -> Result<u32> {
     Ok(contents.matches(SESSION_START).count() as u32)
 }
 
-/// Extract `note: "..."` lines from the most recent session that has notes.
-/// Scans backward through sessions so a restart doesn't hide previous notes.
-pub fn parse_latest_session_notes(log_path: &Path) -> Result<Vec<String>> {
-    if !log_path.exists() {
-        return Ok(Vec::new());
-    }
-    let contents = fs::read_to_string(log_path)?;
-
-    // Iterate sessions from newest to oldest
-    let starts: Vec<usize> = contents
-        .match_indices(SESSION_START)
-        .map(|(i, _)| i)
-        .collect();
-    for &start in starts.iter().rev() {
-        let session = &contents[start..];
-        let notes: Vec<String> = session
-            .lines()
-            .enumerate()
-            .take_while(|(i, l)| *i == 0 || !l.starts_with(SESSION_START))
-            .map(|(_, l)| l)
-            .filter_map(|line| {
-                let after = line.find("note: \"")?.checked_add("note: \"".len())?;
-                let rest = line.get(after..)?;
-                let end = rest.rfind('"')?;
-                Some(rest[..end].to_string())
-            })
-            .collect();
-        if !notes.is_empty() {
-            return Ok(notes);
-        }
-    }
-    Ok(Vec::new())
-}
-
 /// Extract the most recent wake time from the log.
 /// Scans the entire log backward so the value survives session restarts.
 /// Returns the raw time string (e.g. "2026-03-01T09:00").
@@ -527,55 +493,6 @@ mod tests {
         );
         assert!(!result.contains("first session"));
         assert!(!result.contains("second session"));
-    }
-
-    #[test]
-    fn test_parse_notes_empty_session() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cryo.log");
-        // Session with no note: lines — should return empty vec
-        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
-                       [12:00:01] agent started\n\
-                       [12:00:02] hibernate: wake=2026-03-02T09:00, exit=0\n\
-                       --- CRYO END ---\n";
-        std::fs::write(&path, content).unwrap();
-        let notes = parse_latest_session_notes(&path).unwrap();
-        assert!(
-            notes.is_empty(),
-            "Session with no notes should return empty vec"
-        );
-    }
-
-    #[test]
-    fn test_parse_notes_with_quotes() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cryo.log");
-        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
-                       [12:00:01] note: \"simple note\"\n\
-                       --- CRYO END ---\n";
-        std::fs::write(&path, content).unwrap();
-        let notes = parse_latest_session_notes(&path).unwrap();
-        assert_eq!(notes.len(), 1);
-        assert_eq!(notes[0], "simple note");
-    }
-
-    #[test]
-    fn test_parse_notes_truncated_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cryo.log");
-        // note: "unclosed — missing closing quote
-        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
-                       [12:00:01] note: \"unclosed\n\
-                       --- CRYO END ---\n";
-        std::fs::write(&path, content).unwrap();
-        let notes = parse_latest_session_notes(&path).unwrap();
-        // The parser uses rfind('"') which won't find a closing quote
-        // after the content (only the opening quote), so rfind returns
-        // index 0 and the slice [..0] is empty — the note is skipped.
-        assert!(
-            notes.is_empty(),
-            "Truncated note with no closing quote should be skipped"
-        );
     }
 
     #[test]
