@@ -678,6 +678,9 @@ body {
 .log .ts { color: var(--ink-faint); }
 .log .k { color: var(--cool); }
 .log .v { color: var(--accent); }
+.notes {
+  min-height: 180px;
+}
 .log-foot {
   display:flex; justify-content: space-between; align-items: center;
   padding: 6px 10px;

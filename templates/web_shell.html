@@ -46,10 +46,12 @@
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-tabs">
       <div class="drawer-tab active" data-tab="todos">Todos<span class="tab-count" id="todos-count">0</span></div>
+      <div class="drawer-tab" data-tab="notes">Notes</div>
       <div class="drawer-tab" data-tab="sync">Sync</div>
       <div class="drawer-tab" data-tab="log">Log</div>
     </div>
     <div class="drawer-body" data-panel="todos" id="panel-todos"></div>
+    <div class="drawer-body hidden" data-panel="notes" id="panel-notes"></div>
     <div class="drawer-body hidden" data-panel="sync" id="panel-sync"></div>
     <div class="drawer-body hidden" data-panel="log" id="panel-log"></div>
   </aside>
@@ -176,7 +178,9 @@
       headerTaskLine: null,
       planCompleteBox: null,
       lifecycleBtns: null,
-      panels: { todos: null, sync: null, log: null },
+      panels: { todos: null, notes: null, sync: null, log: null },
+      notesEl: null,
+      logEl: null,
       lastMsgKey: null,
       lastTodoSig: null,
       lastSyncSig: null,
@@ -450,6 +454,9 @@
         if (name === 'log' && view && view.logEl) {
           view.logEl.scrollTop = view.logEl.scrollHeight;
         }
+        if (name === 'notes' && view && view.notesEl) {
+          view.notesEl.scrollTop = 0;
+        }
       });
     });
   }
@@ -597,6 +604,24 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  function renderNotes(status) {
+    const box = document.getElementById('panel-notes');
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.textContent = 'NOTES.md';
+    box.appendChild(title);
+    const wrap = document.createElement('div');
+    wrap.className = 'log-wrap notes-wrap';
+    const pre = document.createElement('pre');
+    pre.className = 'log notes';
+    pre.id = 'notes';
+    pre.textContent = status.notes_content || '';
+    wrap.appendChild(pre);
+    box.appendChild(wrap);
+    view.notesEl = pre;
+  }
+
   function appendLogLine(line) {
     if (!view || !view.logEl) return;
     const el = view.logEl;
@@ -624,6 +649,7 @@
     renderTodos(todos);
     renderSync(id, sync);
     renderLog(status);
+    renderNotes(status);
     document.getElementById('drawer').hidden = false;
   }
 
@@ -646,6 +672,7 @@
       updateHead(entry, data.status);
       updateLifecycleButtons(entry);
       renderLog(data.status); // refreshes log_tail baseline
+      renderNotes(data.status);
     }
     if (data.sync)     renderSync(id, data.sync);
     if (data.todos)    renderTodos(data.todos);
