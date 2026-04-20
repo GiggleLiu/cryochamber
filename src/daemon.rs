@@ -881,8 +881,7 @@ impl Daemon {
                     }
                 }
             }
-            crate::socket::Request::Note { .. }
-            | crate::socket::Request::Hibernate { .. }
+            crate::socket::Request::Hibernate { .. }
             | crate::socket::Request::Alert { .. }
             | crate::socket::Request::Reply { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
@@ -1325,10 +1324,6 @@ impl Daemon {
         match request {
             crate::socket::Request::Ping => {
                 let _ = runtime.respond(true, "pong".into());
-            }
-            crate::socket::Request::Note { text } => {
-                logger.log_event(&format!("note: \"{text}\""))?;
-                let _ = runtime.respond(true, "Note recorded".into());
             }
             crate::socket::Request::Hibernate {
                 complete,

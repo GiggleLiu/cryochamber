@@ -14,9 +14,6 @@ pub enum Request {
         exit_code: u8,
         summary: Option<String>,
     },
-    Note {
-        text: String,
-    },
     Alert {
         action: String,
         target: String,
@@ -178,15 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn test_serialize_note_request() {
-        let req = Request::Note {
-            text: "progress update".to_string(),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("progress update"));
-    }
-
-    #[test]
     fn test_serialize_response_ok() {
         let resp = Response {
             ok: true,
@@ -228,7 +216,7 @@ mod tests {
     #[test]
     fn test_send_request_no_server() {
         let dir = tempfile::tempdir().unwrap();
-        let result = send_request(dir.path(), &Request::Note { text: "hi".into() });
+        let result = send_request(dir.path(), &Request::Ping);
         assert!(result.is_err()); // no server listening
     }
 
@@ -272,7 +260,7 @@ mod tests {
         save_state(&dir.path().join("timer.json"), &state).unwrap();
         let resp = send_request(
             dir.path(),
-            &Request::Note {
+            &Request::Reply {
                 text: "hello".into(),
             },
         )
@@ -282,7 +270,7 @@ mod tests {
 
         // Server received the request
         let received = rx.recv().unwrap();
-        assert!(matches!(received, Request::Note { .. }));
+        assert!(matches!(received, Request::Reply { text } if text == "hello"));
 
         handle.join().unwrap();
     }
@@ -343,8 +331,8 @@ mod tests {
             move || {
                 let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
                 use std::io::{BufRead, BufReader, Write};
-                // Note request with an extra unknown field
-                let json = r#"{"cmd":"note","text":"hello","unknown_field":42}"#;
+                // Reply request with an extra unknown field
+                let json = r#"{"cmd":"reply","text":"hello","unknown_field":42}"#;
                 stream.write_all(json.as_bytes()).unwrap();
                 stream.write_all(b"\n").unwrap();
                 stream.flush().unwrap();
@@ -359,7 +347,7 @@ mod tests {
         // serde ignores unknown fields by default (no deny_unknown_fields set)
         match result {
             Ok(Some((req, responder))) => {
-                assert!(matches!(req, Request::Note { text } if text == "hello"));
+                assert!(matches!(req, Request::Reply { text } if text == "hello"));
                 responder
                     .respond(&Response {
                         ok: true,
@@ -385,7 +373,7 @@ mod tests {
             move || {
                 let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
                 use std::io::{BufRead, BufReader, Write};
-                let json = r#"{"instance_id":"wrong-instance","cmd":"note","text":"hello"}"#;
+                let json = r#"{"instance_id":"wrong-instance","cmd":"ping"}"#;
                 stream.write_all(json.as_bytes()).unwrap();
                 stream.write_all(b"\n").unwrap();
                 stream.flush().unwrap();
