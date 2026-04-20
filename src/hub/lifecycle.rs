@@ -43,6 +43,7 @@ pub fn start_chamber(dir: &Path) -> Result<()> {
     state::save_state(&state::state_path(dir), &cryo_state)?;
 
     launch_daemon(dir)?;
+    wait_for_live_daemon(dir)?;
     Ok(())
 }
 
@@ -66,7 +67,9 @@ pub fn stop_chamber(dir: &Path) -> Result<()> {
 pub fn restart_chamber(dir: &Path) -> Result<()> {
     stop_chamber(dir)?;
     // `stop_chamber` cleared the PID lock, so launching again is safe.
-    launch_daemon(dir)
+    launch_daemon(dir)?;
+    wait_for_live_daemon(dir)?;
+    Ok(())
 }
 
 /// Move `cryo.log` and `cryo-agent.log` into `history/<timestamp>/` within the
@@ -107,6 +110,36 @@ fn launch_daemon(dir: &Path) -> Result<()> {
         crate::service::install("daemon", dir, &exe, &["daemon"], &log_path, false)?;
     }
     Ok(())
+}
+
+/// Block until the daemon for `dir` has locked its PID in `timer.json` and is
+/// answering on its IPC socket. Mirrors the CLI `cmd_start` behaviour so the
+/// `app.refresh()` that follows reads a live, not stale, state. Bails after
+/// 10 seconds.
+fn wait_for_live_daemon(dir: &Path) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    wait_for_live_daemon_until(dir, deadline)
+}
+
+fn wait_for_live_daemon_until(dir: &Path, deadline: std::time::Instant) -> Result<()> {
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(st) = state::load_state(&state::state_path(dir))? {
+            if state::is_locked(&st) && daemon_responding(dir) {
+                return Ok(());
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
+        }
+    }
+}
+
+fn daemon_responding(dir: &Path) -> bool {
+    matches!(
+        crate::socket::send_request(dir, &crate::socket::Request::Ping),
+        Ok(resp) if resp.ok
+    )
 }
 
 /// Resolve the path to the `cryo` binary. The hub is `cryohub`, so
@@ -179,6 +212,35 @@ mod tests {
     fn stop_chamber_is_idempotent_on_nothing_running() {
         let dir = tempfile::tempdir().unwrap();
         stop_chamber(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn wait_for_live_daemon_times_out_when_no_daemon_registers() {
+        let dir = tempfile::tempdir().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        let err = wait_for_live_daemon_until(dir.path(), deadline).unwrap_err();
+        assert!(err.to_string().contains("Daemon did not start"));
+    }
+
+    #[test]
+    fn wait_for_live_daemon_times_out_with_unlocked_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = crate::state::CryoState {
+            session_number: 0,
+            pid: None,
+            retry_count: 0,
+            agent_override: None,
+            max_retries_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+            instance_id: None,
+            pending_fallback: None,
+        };
+        crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        let err = wait_for_live_daemon_until(dir.path(), deadline).unwrap_err();
+        assert!(err.to_string().contains("Daemon did not start"));
     }
 
     #[test]
