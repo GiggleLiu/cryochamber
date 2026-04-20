@@ -61,6 +61,42 @@ fn test_init_creates_protocol_and_plan() {
 }
 
 #[test]
+fn test_init_creates_notes_md() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .arg("init")
+        .arg("--agent")
+        .arg("opencode")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let notes = dir.path().join("NOTES.md");
+    assert!(notes.exists(), "NOTES.md should be created by `cryo init`");
+    let content = std::fs::read_to_string(&notes).unwrap();
+    assert!(content.contains("Agent Notes"));
+    assert!(content.contains("persistent memory"));
+}
+
+#[test]
+fn test_init_preserves_existing_notes_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes_path = dir.path().join("NOTES.md");
+    std::fs::write(&notes_path, "# My custom notes\n").unwrap();
+
+    cmd()
+        .arg("init")
+        .arg("--agent")
+        .arg("opencode")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&notes_path).unwrap();
+    assert_eq!(content, "# My custom notes\n");
+}
+
+#[test]
 fn test_init_claude_agent() {
     let dir = tempfile::tempdir().unwrap();
     cmd()

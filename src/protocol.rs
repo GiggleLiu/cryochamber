@@ -18,6 +18,10 @@ pub const CONFIG_TEMPLATE: &str = include_str!("../templates/cryo.toml");
 /// Source: templates/README.md
 pub const README_TEMPLATE: &str = include_str!("../templates/README.md");
 
+/// NOTES.md template written by `cryo init`.
+/// Source: templates/notes.md
+pub const NOTES_TEMPLATE: &str = include_str!("../templates/notes.md");
+
 /// Determine the protocol filename based on the agent command.
 /// Returns `"CLAUDE.md"` if the executable name contains "claude", otherwise `"AGENTS.md"`.
 /// Only inspects the first token (executable), so flags like `--model claude-3.7` are ignored.
@@ -94,5 +98,15 @@ pub fn write_readme(dir: &Path) -> Result<bool> {
         .unwrap_or("cryochamber-project");
     let content = README_TEMPLATE.replace("{{project_name}}", project_name);
     std::fs::write(path, content)?;
+    Ok(true)
+}
+
+/// Write NOTES.md if none exists. Returns true if written.
+pub fn write_notes_file(dir: &Path) -> Result<bool> {
+    let path = dir.join("NOTES.md");
+    if path.exists() {
+        return Ok(false);
+    }
+    std::fs::write(path, NOTES_TEMPLATE)?;
     Ok(true)
 }

@@ -193,6 +193,12 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         println!("  README.md (exists, kept)");
     }
 
+    if protocol::write_notes_file(&dir)? {
+        println!("  NOTES.md (created)");
+    } else {
+        println!("  NOTES.md (exists, kept)");
+    }
+
     message::ensure_dirs(&dir)?;
 
     println!("\nCryochamber initialized. Next steps:");
