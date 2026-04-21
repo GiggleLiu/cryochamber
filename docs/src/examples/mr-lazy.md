@@ -4,14 +4,14 @@ The laziest cryochamber example: an AI agent that refuses to get out of bed.
 
 Every time cryochamber wakes Mr. Lazy, he rolls a die — 25% chance he actually gets up. Otherwise, he delivers a dramatic, unique complaint and hits snooze for a few more minutes. Repeat until he finally rolls a 4.
 
-**Demonstrates:** repeated wake cycles, `cryo-agent time` for scheduling, `cryo-agent note` for cross-session memory, probabilistic plan completion.
+**Demonstrates:** repeated wake cycles, `cryo-agent time` for scheduling, `NOTES.md` for cross-session memory, probabilistic plan completion.
 
 ## Quick Start
 
 ```bash
-cd examples/mr-lazy
+cd examples/chambers/mr-lazy
 cryo init && cryo start
-cryo web   # open the browser chat UI (port 3946)
+cd .. && cryohub start --foreground   # open the browser chat UI for all chambers in examples/chambers/
 ```
 
 Or use the Makefile target (runs in daemon mode, Ctrl-C to stop):

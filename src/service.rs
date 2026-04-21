@@ -3,7 +3,17 @@
 //! user services that survive reboots.
 
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// One installed service discovered by `list_installed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledService {
+    /// The full service label, e.g. `com.cryo.hub.abc1234567890def`.
+    pub label: String,
+    /// The working directory the service was installed for, parsed from the
+    /// unit/plist file. May be `None` if the file is malformed.
+    pub dir: Option<PathBuf>,
+}
 
 /// Derive a short hex hash from a path for unique service naming.
 fn path_hash(dir: &Path) -> String {
@@ -114,18 +124,68 @@ pub fn install(
         log = xml_escape(&log_file.display().to_string()),
     );
 
-    std::fs::write(&plist_path, plist)?;
+    // Every touch of `~/Library/LaunchAgents/` can fire a macOS 13+
+    // "Background items added" popup, so we only rewrite the plist when the
+    // content actually changed. A Start click on a chamber whose plist is
+    // already correct stays silent.
+    let plist_changed = match std::fs::read_to_string(&plist_path) {
+        Ok(existing) => existing != plist,
+        Err(_) => true,
+    };
+    let label_loaded = launchctl_tracks(&label);
 
-    let status = std::process::Command::new("launchctl")
-        .args(["load", "-w"])
-        .arg(&plist_path)
-        .status()
-        .context("Failed to run launchctl")?;
-    if !status.success() {
-        anyhow::bail!("launchctl load failed");
+    if plist_changed {
+        if label_loaded {
+            // Unload the stale version before overwriting — launchd keeps a
+            // handle on the old file otherwise.
+            let _ = std::process::Command::new("launchctl")
+                .args(["unload", "-w"])
+                .arg(&plist_path)
+                .status();
+        }
+        std::fs::write(&plist_path, plist)?;
+        let status = std::process::Command::new("launchctl")
+            .args(["load", "-w"])
+            .arg(&plist_path)
+            .status()
+            .context("Failed to run launchctl")?;
+        if !status.success() {
+            anyhow::bail!("launchctl load failed");
+        }
+    } else if !label_loaded {
+        // Plist is already up to date but launchd forgot about it (e.g. after
+        // a logout). A plain `load -w` is enough.
+        let status = std::process::Command::new("launchctl")
+            .args(["load", "-w"])
+            .arg(&plist_path)
+            .status()
+            .context("Failed to run launchctl")?;
+        if !status.success() {
+            anyhow::bail!("launchctl load failed");
+        }
+    } else {
+        // Plist unchanged and launchd knows the label — but the daemon may
+        // have exited on its own (hibernate --complete, plan finished). Use
+        // `kickstart -k` to restart it without rewriting the plist, so no
+        // "Background items added" popup fires.
+        let uid = unsafe { libc::getuid() };
+        let _ = std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
+            .status();
     }
 
     Ok(())
+}
+
+/// Returns true if launchd knows about the given label (loaded, regardless
+/// of whether the process is currently running).
+#[cfg(target_os = "macos")]
+fn launchctl_tracks(label: &str) -> bool {
+    std::process::Command::new("launchctl")
+        .args(["list", label])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Uninstall a system service. Returns true if a service was found and removed.
@@ -160,6 +220,31 @@ pub fn is_installed(label_prefix: &str, dir: &Path) -> bool {
                 .exists()
         })
         .unwrap_or(false)
+}
+
+/// List every installed user service whose label starts with
+/// `com.cryo.{label_prefix}.`. Each entry includes the directory the service
+/// was installed for, parsed out of the unit/plist file.
+#[cfg(target_os = "macos")]
+pub fn list_installed(label_prefix: &str) -> Vec<InstalledService> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let agents = home.join("Library/LaunchAgents");
+    let prefix = format!("com.cryo.{label_prefix}.");
+    let suffix = ".plist";
+    list_installed_in(&agents, &prefix, suffix, parse_plist_working_directory)
+}
+
+/// Extract `<key>WorkingDirectory</key><string>...</string>` from a plist.
+#[cfg(target_os = "macos")]
+fn parse_plist_working_directory(text: &str) -> Option<String> {
+    let key_end = text.find("<key>WorkingDirectory</key>")?;
+    let after = &text[key_end..];
+    let str_open = after.find("<string>")?;
+    let str_start = str_open + "<string>".len();
+    let str_end_rel = after[str_start..].find("</string>")?;
+    Some(after[str_start..str_start + str_end_rel].to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -265,6 +350,32 @@ pub fn is_installed(label_prefix: &str, dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// List every installed user service whose label starts with
+/// `com.cryo.{label_prefix}.`. Each entry includes the directory the service
+/// was installed for, parsed out of the unit file.
+#[cfg(target_os = "linux")]
+pub fn list_installed(label_prefix: &str) -> Vec<InstalledService> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let units = home.join(".config/systemd/user");
+    let prefix = format!("com.cryo.{label_prefix}.");
+    let suffix = ".service";
+    list_installed_in(&units, &prefix, suffix, parse_unit_working_directory)
+}
+
+/// Extract `WorkingDirectory=...` from a systemd unit file.
+#[cfg(target_os = "linux")]
+fn parse_unit_working_directory(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("WorkingDirectory=") {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn install(
     _label_prefix: &str,
@@ -285,4 +396,44 @@ pub fn uninstall(_label_prefix: &str, _dir: &Path) -> Result<bool> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn is_installed(_label_prefix: &str, _dir: &Path) -> bool {
     false
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn list_installed(_label_prefix: &str) -> Vec<InstalledService> {
+    Vec::new()
+}
+
+/// Scan `dir` for files whose name starts with `prefix` and ends with `suffix`,
+/// reading each file with `parse_dir` to extract its working directory. Used
+/// by both the macOS and Linux implementations of `list_installed`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn list_installed_in(
+    dir: &Path,
+    prefix: &str,
+    suffix: &str,
+    parse_dir: fn(&str) -> Option<String>,
+) -> Vec<InstalledService> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !name.starts_with(prefix) || !name.ends_with(suffix) {
+            continue;
+        }
+        let label = name[..name.len() - suffix.len()].to_string();
+        let working_dir = std::fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|s| parse_dir(&s))
+            .map(PathBuf::from);
+        out.push(InstalledService {
+            label,
+            dir: working_dir,
+        });
+    }
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out
 }

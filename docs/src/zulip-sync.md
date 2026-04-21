@@ -93,7 +93,7 @@ cryo-zulip push    # post the latest session log to the stream
 Play correspondence chess against an AI agent, sending moves from the Zulip web UI:
 
 ```bash
-cd examples/chess-by-mail
+cd examples/chambers/chess-by-mail
 cryo-zulip init --config ~/.zuliprc --stream chess-game
 cryo init && cryo start
 cryo-zulip sync --interval 30

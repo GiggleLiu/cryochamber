@@ -82,7 +82,16 @@ fn cmd_init(config_path: &str, stream_name: &str, topic: Option<&str>) -> Result
     println!("Authenticated as {self_email}");
 
     println!("Resolving stream '{stream_name}'...");
-    let stream_id = client.get_stream_id(stream_name)?;
+    let stream_id = client.get_stream_id(stream_name).map_err(|e| {
+        anyhow::anyhow!(
+            "Could not resolve stream '{stream_name}'. Likely causes:\n  \
+             1. The stream does not exist — verify the name in Zulip.\n  \
+             2. The bot ({self_email}) is not subscribed to the stream —\n     \
+                add it in Zulip: stream settings → Subscribers → add user.\n  \
+             3. The stream is private and the bot lacks access.\n\n\
+             Underlying error: {e}"
+        )
+    })?;
     println!("Stream ID: {stream_id}");
 
     let sync_state = cryochamber::zulip_sync::ZulipSyncState {
@@ -124,6 +133,7 @@ fn cmd_pull() -> Result<()> {
     println!("Pulling messages from stream '{}'...", sync_state.stream);
     let new_last_id = client.pull_messages(
         sync_state.stream_id,
+        Some(sync_state.topic_name()),
         sync_state.last_message_id,
         Some(&sync_state.self_email),
         &dir,
@@ -239,6 +249,12 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let sync_path = zulip_sync_path(&dir);
 
     eprintln!("Zulip sync daemon started (PID {})", std::process::id());
+    let pid_path = cryochamber::zulip_sync::sync_pid_path(&dir);
+    // RAII guard: unlinks the pid file on any return, including early `?`
+    // propagation from signal_hook / notify setup or per-cycle save_sync_state
+    // failures below. Without this, a stale pid file lingers and a recycled
+    // PID can make the hub report the daemon as running forever.
+    let _pid_guard = cryochamber::sync_common::PidFile::create(pid_path)?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
@@ -291,6 +307,7 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
         // Pull: Zulip → inbox
         match client.pull_messages(
             sync_state.stream_id,
+            Some(sync_state.topic_name()),
             sync_state.last_message_id,
             Some(&sync_state.self_email),
             &dir,
@@ -325,7 +342,41 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     }
 
     eprintln!("Zulip sync: stopped");
+    // _pid_guard drops here, unlinking the pid file.
     Ok(())
+}
+
+/// Format an outbox message for posting to a Zulip stream.
+///
+/// Zulip already shows the sender's bot name above each message, so we don't
+/// re-state who wrote it in the body.
+///
+/// - Agent replies (`from == "agent"`): post the body as-is. The subject is
+///   always "Reply", which adds no information.
+/// - System messages (`from == "cryochamber"`: reports, fallback alerts):
+///   render as a Zulip blockquote with the subject as a bold header. The
+///   blockquote visually marks them as machine-generated rather than a
+///   human-style reply.
+/// - Anything else: keep the original `**from** (subject)\n\nbody` shape so
+///   non-system, non-agent senders remain attributable.
+fn format_outbox_post(msg: &cryochamber::message::Message) -> String {
+    if msg.from == "agent" {
+        msg.body.clone()
+    } else if msg.from == "cryochamber" {
+        let mut out = format!("> **{}**\n>\n", msg.subject);
+        for line in msg.body.lines() {
+            out.push_str("> ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        // Trim the trailing newline that the loop added.
+        if out.ends_with('\n') {
+            out.pop();
+        }
+        out
+    } else {
+        format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
+    }
 }
 
 fn push_outbox(
@@ -345,7 +396,7 @@ fn push_outbox(
     let topic = sync_state.topic_name();
 
     for (filename, msg) in &messages {
-        let body = format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body);
+        let body = format_outbox_post(msg);
         match client.send_message(sync_state.stream_id, topic, &body) {
             Ok(_) => {
                 eprintln!("Zulip sync: posted outbox/{filename}");
@@ -391,3 +442,7 @@ fn cmd_status() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "unit_tests/cryo_zulip.rs"]
+mod format_tests;

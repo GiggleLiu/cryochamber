@@ -1,0 +1,23 @@
+# cryo.toml — Personal Assistant
+
+# Agent command
+agent = "opencode"
+
+# Max retry attempts on agent failure (1 = no retry)
+max_retries = 5
+
+# Session timeout in seconds (0 = no timeout)
+max_session_duration = 0
+
+# Watch inbox for reactive wake (two-way interaction with user via Zulip)
+watch_inbox = true
+
+# Periodic daily summary: desktop notification at 09:00 every 24 hours
+report_time = "09:00"
+report_interval = 24
+
+# Zulip sync polling interval (seconds)
+zulip_poll_interval = 30
+
+# Provider rotation — deferred for now. To enable later, set rotate_on and add [[providers]].
+# rotate_on = "quick-exit"

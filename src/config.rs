@@ -47,14 +47,6 @@ pub struct CryoConfig {
     #[serde(default = "default_watch_inbox")]
     pub watch_inbox: bool,
 
-    /// Web UI host (default: 127.0.0.1)
-    #[serde(default = "default_web_host")]
-    pub web_host: String,
-
-    /// Web UI port (default: 3945)
-    #[serde(default = "default_web_port")]
-    pub web_port: u16,
-
     /// Fallback alert method: "outbox" (write to messages/outbox/) or "none" (suppress).
     /// Legacy "notify" is accepted and treated as "outbox".
     #[serde(default = "default_fallback_alert")]
@@ -97,14 +89,6 @@ fn default_watch_inbox() -> bool {
     true
 }
 
-fn default_web_host() -> String {
-    "127.0.0.1".to_string()
-}
-
-fn default_web_port() -> u16 {
-    3945
-}
-
 fn default_fallback_alert() -> String {
     "outbox".to_string()
 }
@@ -124,8 +108,6 @@ impl Default for CryoConfig {
             max_retries: default_max_retries(),
             max_session_duration: 0,
             watch_inbox: default_watch_inbox(),
-            web_host: default_web_host(),
-            web_port: default_web_port(),
             fallback_alert: default_fallback_alert(),
             report_time: default_report_time(),
             report_interval: 0,
@@ -173,72 +155,5 @@ pub fn save_config(path: &Path, config: &CryoConfig) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_load_malformed_toml() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cryo.toml");
-        std::fs::write(&path, "this is {{{{ not valid toml").unwrap();
-        let result = load_config(&path);
-        assert!(result.is_err(), "Should return error for malformed TOML");
-    }
-
-    #[test]
-    fn test_load_partial_toml() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cryo.toml");
-        std::fs::write(&path, "agent = \"claude\"\n").unwrap();
-        let config = load_config(&path).unwrap().unwrap();
-        assert_eq!(config.agent, "claude");
-        assert_eq!(config.max_retries, 5, "Should use default max_retries");
-        assert_eq!(config.max_session_duration, 0, "Should use default timeout");
-        assert!(config.watch_inbox, "Should use default watch_inbox");
-    }
-
-    #[test]
-    fn test_apply_overrides_all_fields() {
-        let mut config = CryoConfig::default();
-        let state = crate::state::CryoState {
-            session_number: 1,
-            pid: None,
-            retry_count: 0,
-            agent_override: Some("claude".to_string()),
-            max_retries_override: Some(10),
-            max_session_duration_override: Some(300),
-
-            last_report_time: None,
-            provider_index: None,
-            instance_id: None,
-            pending_fallback: None,
-        };
-        config.apply_overrides(&state);
-        assert_eq!(config.agent, "claude");
-        assert_eq!(config.max_retries, 10);
-        assert_eq!(config.max_session_duration, 300);
-    }
-
-    #[test]
-    fn test_apply_overrides_none_fields() {
-        let original = CryoConfig::default();
-        let mut config = CryoConfig::default();
-        let state = crate::state::CryoState {
-            session_number: 1,
-            pid: None,
-            retry_count: 0,
-            agent_override: None,
-            max_retries_override: None,
-            max_session_duration_override: None,
-
-            last_report_time: None,
-            provider_index: None,
-            instance_id: None,
-            pending_fallback: None,
-        };
-        config.apply_overrides(&state);
-        assert_eq!(config.agent, original.agent);
-        assert_eq!(config.max_retries, original.max_retries);
-        assert_eq!(config.max_session_duration, original.max_session_duration);
-    }
-}
+#[path = "unit_tests/config.rs"]
+mod tests;

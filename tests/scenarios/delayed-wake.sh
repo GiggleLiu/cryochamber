@@ -18,13 +18,11 @@ echo "$COUNT" > "$COUNTER_FILE"
 echo "Mock agent session $COUNT (delayed-wake scenario)"
 
 if [ "$COUNT" -ge 2 ]; then
-    cryo-agent note "Session $COUNT: completing plan after delayed wake"
     cryo-agent hibernate --complete --summary "Plan completed after delayed wake"
 else
     # Add a TODO with a wake time 10 minutes in the past to trigger delayed wake detection.
     # The daemon will immediately wake and detect the delay.
     PAST_WAKE=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M 2>/dev/null || date -u -v-10M +%Y-%m-%dT%H:%M 2>/dev/null)
-    cryo-agent note "Session $COUNT: hibernating with past wake time"
     cryo-agent todo add "past wake" --at "$PAST_WAKE"
     cryo-agent hibernate --summary "Session $COUNT done, testing delayed wake"
 fi

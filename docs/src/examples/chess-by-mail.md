@@ -19,9 +19,9 @@ A cron job can't do this because:
 ## Quick Start
 
 ```bash
-cd examples/chess-by-mail
+cd examples/chambers/chess-by-mail
 cryo init && cryo start
-cryo web   # open the browser chat UI (port 3947)
+cd .. && cryohub start --foreground   # open the browser chat UI for all chambers in examples/chambers/
 ```
 
 ## Playing
@@ -31,8 +31,8 @@ cryo web   # open the browser chat UI (port 3947)
 cryo send "e2e4"
 cryo send "Nf3" --wake  # wake the AI immediately
 
-# Or use the web UI
-cryo web
+# Or use the hub UI; cd to a parent of your chamber subdirs first
+cd <chambers-parent-dir> && cryohub start
 ```
 
 ## How It Works
@@ -44,7 +44,7 @@ The AI uses `chess_engine.py` (powered by `python-chess` via uv) for all chess o
 You can play from the Zulip web UI instead of the terminal by connecting a Zulip stream. See [Zulip Sync](../zulip-sync.md) for full setup details.
 
 ```bash
-cd examples/chess-by-mail
+cd examples/chambers/chess-by-mail
 cryo-zulip init --config ~/.zuliprc --stream chess-game
 cryo init && cryo start
 cryo-zulip sync --interval 30

@@ -59,8 +59,16 @@ impl TodoList {
         Ok(())
     }
 
-    /// Add item. Returns the new item's ID.
+    /// Add item. Returns the new item's ID, or the id of an existing open item
+    /// with identical text + at (dedup).
     pub fn add(&mut self, text: String, at: String) -> u32 {
+        if let Some(existing) = self
+            .items
+            .iter()
+            .find(|i| !i.done && i.text == text && i.at == at)
+        {
+            return existing.id;
+        }
         let id = self.items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
         let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         self.items.push(TodoItem {
@@ -122,64 +130,5 @@ impl TodoList {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_next_wake_time_picks_earliest_pending() {
-        let mut list = TodoList::new();
-        list.add("later task".into(), "2026-03-02T16:00".into());
-        list.add("earlier task".into(), "2026-03-02T14:00".into());
-        let wake = list.next_wake_time();
-        assert_eq!(wake, Some("2026-03-02T14:00"));
-    }
-
-    #[test]
-    fn test_next_wake_time_skips_done_items() {
-        let mut list = TodoList::new();
-        let id = list.add("done task".into(), "2026-03-02T10:00".into());
-        list.done(id).unwrap();
-        list.add("pending task".into(), "2026-03-02T16:00".into());
-        let wake = list.next_wake_time();
-        assert_eq!(wake, Some("2026-03-02T16:00"));
-    }
-
-    #[test]
-    fn test_next_wake_time_none_when_all_done() {
-        let mut list = TodoList::new();
-        let id = list.add("task".into(), "2026-03-02T10:00".into());
-        list.done(id).unwrap();
-        assert!(list.next_wake_time().is_none());
-    }
-
-    #[test]
-    fn test_next_wake_time_none_when_empty() {
-        let list = TodoList::new();
-        assert!(list.next_wake_time().is_none());
-    }
-
-    #[test]
-    fn test_backward_compat_missing_at_field() {
-        // Legacy JSON without the `at` field should deserialize with default empty string
-        let json = r#"[{"id":1,"text":"old item","done":false,"created":"unknown"}]"#;
-        let items: Vec<TodoItem> = serde_json::from_str(json).unwrap();
-        assert_eq!(items[0].at, "", "Missing at should default to empty string");
-    }
-
-    #[test]
-    fn test_next_wake_time_skips_empty_at() {
-        let mut list = TodoList::new();
-        // Simulate a legacy item with empty `at`
-        list.items.push(TodoItem {
-            id: 1,
-            text: "legacy".into(),
-            done: false,
-            at: "".into(),
-            created: "unknown".into(),
-        });
-        list.add("scheduled".into(), "2026-03-02T14:00".into());
-        // next_wake_time should skip empty `at` and return the scheduled item
-        let wake = list.next_wake_time();
-        assert_eq!(wake, Some("2026-03-02T14:00"));
-    }
-}
+#[path = "unit_tests/todo.rs"]
+mod tests;

@@ -15,21 +15,6 @@ fn agent_cmd() -> Command {
     Command::cargo_bin("cryo-agent").unwrap()
 }
 
-fn wait_for_idle_daemon(dir: &std::path::Path, timeout: std::time::Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        if let Ok(response) =
-            cryochamber::socket::send_request(dir, &cryochamber::socket::Request::Ping)
-        {
-            if response.ok && response.message == "pong" {
-                return true;
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    false
-}
-
 /// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
 fn init_dir(dir: &std::path::Path) {
     cmd().arg("init").current_dir(dir).assert().success();
@@ -58,6 +43,42 @@ fn test_init_creates_protocol_and_plan() {
     // Verify cryo.toml contains the default agent
     let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
     assert!(config_content.contains("agent = \"opencode\""));
+}
+
+#[test]
+fn test_init_creates_notes_md() {
+    let dir = tempfile::tempdir().unwrap();
+    cmd()
+        .arg("init")
+        .arg("--agent")
+        .arg("opencode")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let notes = dir.path().join("NOTES.md");
+    assert!(notes.exists(), "NOTES.md should be created by `cryo init`");
+    let content = std::fs::read_to_string(&notes).unwrap();
+    assert!(content.contains("Agent Notes"));
+    assert!(content.contains("persistent memory"));
+}
+
+#[test]
+fn test_init_preserves_existing_notes_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let notes_path = dir.path().join("NOTES.md");
+    std::fs::write(&notes_path, "# My custom notes\n").unwrap();
+
+    cmd()
+        .arg("init")
+        .arg("--agent")
+        .arg("opencode")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&notes_path).unwrap();
+    assert_eq!(content, "# My custom notes\n");
 }
 
 #[test]
@@ -243,6 +264,64 @@ fn test_cancel_no_state_file() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Nothing to cancel"));
+}
+
+// --- Clean ---
+
+#[test]
+fn test_clean_preserves_sync_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    init_dir(dir.path());
+
+    let state = serde_json::json!({
+        "session_number": 1,
+        "pid": null,
+        "retry_count": 0
+    });
+    fs::write(
+        dir.path().join("timer.json"),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+    fs::write(dir.path().join("cryo.log"), "log").unwrap();
+    fs::write(dir.path().join("cryo-agent.log"), "agent log").unwrap();
+    fs::write(dir.path().join("cryo-gh-sync.log"), "gh log").unwrap();
+    fs::write(dir.path().join("cryo-gh-sync.pid"), "123").unwrap();
+    fs::write(dir.path().join("cryo-zulip-sync.log"), "zulip log").unwrap();
+    fs::write(dir.path().join("cryo-zulip-sync.pid"), "456").unwrap();
+    fs::write(
+        dir.path().join("gh-sync.json"),
+        r#"{"repo":"owner/repo","discussion_number":1,"discussion_id":"D_1","self_login":"bot"}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("zulip-sync.json"),
+        r#"{"site":"https://zulip.example.com","stream":"ops","stream_id":7,"self_email":"bot@example.com"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join(".cryo")).unwrap();
+    fs::write(dir.path().join(".cryo/cryo.sock"), "").unwrap();
+    fs::write(
+        dir.path().join(".cryo/zuliprc"),
+        "[api]\nemail=bot@example.com\nkey=secret\nsite=https://zulip.example.com\n",
+    )
+    .unwrap();
+
+    cmd()
+        .args(["clean", "--force"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(dir.path().join("gh-sync.json").exists());
+    assert!(dir.path().join("zulip-sync.json").exists());
+    assert!(dir.path().join(".cryo/zuliprc").exists());
+    assert!(!dir.path().join(".cryo/cryo.sock").exists());
+    assert!(!dir.path().join("messages").exists());
+    assert!(!dir.path().join("timer.json").exists());
+    assert!(!dir.path().join("cryo-gh-sync.pid").exists());
+    assert!(!dir.path().join("cryo-zulip-sync.pid").exists());
+    assert!(!dir.path().join("cryo-zulip-sync.log").exists());
 }
 
 // --- Start ---
@@ -735,68 +814,6 @@ fn test_restart_respects_no_service_mode() {
         .output();
 }
 
-#[test]
-fn test_agent_note_rejects_stale_instance_id() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
-    init_dir(dir.path());
-
-    cmd()
-        .args(["start", "--agent", &mock_agent_cmd()])
-        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
-        .env("CRYO_NO_SERVICE", "1")
-        .env("MOCK_AGENT_COMPLETE", "false")
-        .env("MOCK_AGENT_WAKE", "2099-12-31T23:59")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        if let Ok(log) = fs::read_to_string(dir.path().join("cryo.log")) {
-            if log.contains("session complete") {
-                break;
-            }
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "daemon should finish the first session before stale instance validation"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    assert!(
-        wait_for_idle_daemon(dir.path(), std::time::Duration::from_secs(5)),
-        "daemon should return to the idle loop before stale instance validation"
-    );
-
-    let timer_path = dir.path().join("timer.json");
-    let original_state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&timer_path).unwrap()).unwrap();
-    let mut state = original_state.clone();
-    state["instance_id"] = serde_json::Value::String("stale-instance".to_string());
-    fs::write(&timer_path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
-
-    agent_cmd()
-        .args(["note", "hello from stale state"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("instance"));
-
-    fs::write(
-        &timer_path,
-        serde_json::to_string_pretty(&original_state).unwrap(),
-    )
-    .unwrap();
-
-    let _ = cmd()
-        .arg("cancel")
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .output();
-}
-
 // --- cryo-agent binary tests ---
 
 #[test]
@@ -804,17 +821,6 @@ fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
     agent_cmd()
         .args(["hibernate", "--complete"])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Cannot connect"));
-}
-
-#[test]
-fn test_agent_note_no_daemon() {
-    let dir = tempfile::tempdir().unwrap();
-    agent_cmd()
-        .args(["note", "test note"])
         .current_dir(dir.path())
         .assert()
         .failure()

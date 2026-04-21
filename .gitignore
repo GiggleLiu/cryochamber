@@ -1,10 +1,13 @@
 /target
 Cargo.lock
 *.log
+*.pid
+NOTES.md
 
 # Generated docs
 docs/reports/
 docs/plans/
+docs/superpowers/
 book/
 PR_REVIEW.md
 
@@ -18,12 +21,13 @@ docs/logo/logo.png
 zuliprc
 
 messages/
-examples/*/messages
-examples/*/*.log
-examples/*/*.json
-examples/*/CLAUDE.md
-examples/*/AGENTS.md
-examples/*/Makefile
-examples/chess-by-mail/game_state.txt
-examples/*/.cryo
-examples/*/.ruff_cache
+examples/chambers/*/messages
+examples/chambers/*/*.log
+examples/chambers/*/*.json
+examples/chambers/*/CLAUDE.md
+examples/chambers/*/AGENTS.md
+examples/chambers/*/Makefile
+examples/chambers/chess-by-mail/game_state.txt
+examples/chambers/*/.cryo
+examples/chambers/*/.ruff_cache
+examples/chambers/*/history/

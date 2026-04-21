@@ -102,7 +102,7 @@ fn test_parse_get_messages_response() {
         "found_oldest": false
     });
     let (messages, found_newest, raw_max_id) =
-        parse_get_messages_response(&json, Some("bot@example.com")).unwrap();
+        parse_get_messages_response(&json, Some("bot@example.com"), None).unwrap();
     // Should filter out bot's own message
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].from, "Alice");
@@ -121,6 +121,43 @@ fn test_parse_get_messages_response() {
 }
 
 #[test]
+fn test_parse_get_messages_response_converts_utc_timestamp_to_local() {
+    // Zulip delivers unix seconds (UTC). We store message timestamps as
+    // naive *local* datetimes so the UI renders them in the operator's
+    // wall-clock time — otherwise a message sent at 10:00 local in a UTC+8
+    // zone would show up as 02:00 in the thread.
+    let ts_unix: i64 = 1_740_700_000;
+    let json = serde_json::json!({
+        "result": "success",
+        "msg": "",
+        "messages": [
+            {
+                "id": 100,
+                "sender_id": 42,
+                "sender_email": "alice@example.com",
+                "sender_full_name": "Alice",
+                "content": "Hello",
+                "subject": "general-topic",
+                "timestamp": ts_unix,
+                "type": "stream"
+            }
+        ],
+        "found_newest": true,
+        "found_oldest": false
+    });
+    let (messages, _, _) = parse_get_messages_response(&json, None, None).unwrap();
+    assert_eq!(messages.len(), 1);
+    let expected = chrono::DateTime::from_timestamp(ts_unix, 0)
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .naive_local();
+    assert_eq!(
+        messages[0].timestamp, expected,
+        "zulip timestamps must be converted from UTC to local naive time"
+    );
+}
+
+#[test]
 fn test_parse_get_messages_response_empty() {
     let json = serde_json::json!({
         "result": "success",
@@ -129,7 +166,8 @@ fn test_parse_get_messages_response_empty() {
         "found_newest": true,
         "found_oldest": true
     });
-    let (messages, found_newest, raw_max_id) = parse_get_messages_response(&json, None).unwrap();
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, None, None).unwrap();
     assert!(messages.is_empty());
     assert!(found_newest);
     assert_eq!(raw_max_id, None);
@@ -155,7 +193,8 @@ fn test_parse_get_messages_no_self_filter() {
         "found_newest": false,
         "found_oldest": false
     });
-    let (messages, found_newest, raw_max_id) = parse_get_messages_response(&json, None).unwrap();
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, None, None).unwrap();
     assert_eq!(messages.len(), 1);
     assert!(!found_newest);
     assert_eq!(raw_max_id, Some(100));
@@ -194,10 +233,51 @@ fn test_parse_get_messages_cursor_advances_when_all_filtered() {
         "found_oldest": false
     });
     let (messages, found_newest, raw_max_id) =
-        parse_get_messages_response(&json, Some("bot@example.com")).unwrap();
+        parse_get_messages_response(&json, Some("bot@example.com"), None).unwrap();
     // All messages filtered out
     assert!(messages.is_empty());
     assert!(!found_newest);
     // But raw_max_id advances to 201 so pagination can continue
     assert_eq!(raw_max_id, Some(201));
+}
+
+#[test]
+fn test_parse_get_messages_filters_to_topic() {
+    let json = serde_json::json!({
+        "result": "success",
+        "msg": "",
+        "messages": [
+            {
+                "id": 300,
+                "sender_id": 42,
+                "sender_email": "alice@example.com",
+                "sender_full_name": "Alice",
+                "content": "Keep this",
+                "subject": "cryochamber",
+                "timestamp": 1740700000,
+                "type": "stream"
+            },
+            {
+                "id": 301,
+                "sender_id": 43,
+                "sender_email": "bob@example.com",
+                "sender_full_name": "Bob",
+                "content": "Do not import this",
+                "subject": "random",
+                "timestamp": 1740700060,
+                "type": "stream"
+            }
+        ],
+        "found_newest": true,
+        "found_oldest": false
+    });
+
+    let (messages, found_newest, raw_max_id) =
+        parse_get_messages_response(&json, None, Some("cryochamber")).unwrap();
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].subject, "cryochamber");
+    assert_eq!(messages[0].body, "Keep this");
+    assert!(found_newest);
+    assert_eq!(raw_max_id, Some(301));
 }

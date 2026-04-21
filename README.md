@@ -21,7 +21,7 @@ Our goal is to automate long-running activities that are too irregular for cron.
 cargo install cryochamber
 ```
 
-This installs `cryo`, `cryo-agent`, `cryo-gh`, and `cryo-zulip` binaries.
+This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub` binaries.
 
 ### Copy-Paste Onboarding Prompt
 
@@ -31,7 +31,7 @@ If you want your coding agent to set up a new Cryochamber project for you, paste
 Set up a new Cryochamber project for me in this directory.
 
 1. If `cryo` is not installed, install it with `cargo install cryochamber`.
-2. If the `make-plan` skill is not installed and your coding agent supports custom skills, install it from the Cryochamber repo: clone https://github.com/GiggleLiu/cryochamber somewhere local, then use your agent's skill installation mechanism to install `/path/to/cryochamber/skills/make-plan`.
+2. If the `make-plan` skill is not installed and your coding agent supports custom skills, install it from the Cryochamber repo: clone https://github.com/GiggleLiu/cryochamber somewhere local, then use your agent's skill installation mechanism to install `/path/to/cryochamber/.claude/skills/make-plan`.
 3. Invoke the `make-plan` skill to create the Cryochamber project and generate the initial plan/config files.
 4. Start the daemon with `cryo start`.
 5. Tell me which files were created or updated, and whether the service started successfully.
@@ -59,7 +59,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryo web                                                      # if using the web UI
+cd <chambers-parent-dir> && cryohub start                     # if using the web UI
 ```
 
 ### 4. Manage the running service
@@ -72,13 +72,39 @@ cryo send "message"  # send a message to the agent
 cryo cancel          # stop the daemon
 ```
 
+## Cryohub (multi-chamber)
+
+`cryohub` runs a directory-scoped dashboard. `cd` into a directory whose immediate subdirectories are chambers (each has its own `cryo.toml`), then start it:
+
+```
+~/my-chambers/
+  chess-by-mail/
+  mr-lazy/
+  reports/
+```
+
+```bash
+cd ~/my-chambers
+cryohub start
+```
+
+`cryohub` always operates on the current directory; it rejects starting from a chamber dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside the hub's cwd) appear as **external** chambers for monitoring only.
+
+**Single-chamber layout:**
+
+```bash
+mkdir -p ~/cryo-chambers
+ln -s $(pwd) ~/cryo-chambers/my-chamber
+cd ~/cryo-chambers && cryohub start
+```
+
 ## Messaging Channels
 
 Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary. These are configured automatically when using `/make-plan`.
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Web UI | `cryo web` | Built-in HTTP server | [Web UI](https://giggleliu.github.io/cryochamber/web-ui.html) |
+| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Hub](https://giggleliu.github.io/cryochamber/hub.html) |
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 

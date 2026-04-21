@@ -42,7 +42,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryo web                                                      # if using the web UI
+cd <chambers-parent-dir> && cryohub start                     # if using the web UI
 cryo watch                                                    # follow the live log
 ```
 
@@ -85,7 +85,7 @@ inbox: 0 messages
 ```bash
 cryo status          # quick health check
 cryo log             # read full session history
-cryo web             # visual overview in the browser
+cryohub start        # visual overview (run from a parent of chamber dirs)
 cryo send "message"  # send a message to the agent's inbox
 cryo receive         # read messages the agent sent you
 cryo wake            # force an immediate wake
@@ -96,8 +96,8 @@ cryo ps              # list all running daemons
 
 ## Example Run
 
-The [`examples/mr-lazy/`](https://github.com/GiggleLiu/cryochamber/tree/main/examples/mr-lazy) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
+The [`examples/chambers/mr-lazy/`](https://github.com/GiggleLiu/cryochamber/tree/main/examples/chambers/mr-lazy) example demonstrates the full daemon lifecycle. The agent has a 25% chance of waking up each session — otherwise it complains and goes back to sleep.
 
 ```bash
-cd examples/mr-lazy && cryo init && cryo start && cryo watch
+cd examples/chambers/mr-lazy && cryo init && cryo start && cryo watch
 ```

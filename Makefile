@@ -1,6 +1,10 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel example-hub time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
+
+RUNNER ?= codex
+CLAUDE_MODEL ?= opus
+CODEX_MODEL ?= gpt-5.4
 
 # Default target
 help:
@@ -15,9 +19,10 @@ help:
 	@echo "  clean        - Clean build artifacts (cargo clean)"
 	@echo "  example-clean - Remove auto-generated files from examples"
 	@echo "  logo         - Compile logo (requires typst)"
-	@echo "  run-plan     - Execute a plan with Claude headless autorun"
-	@echo "  example      - Run an example (DIR=examples/mr-lazy or DIR=examples/chess-by-mail)"
+	@echo "  run-plan     - Execute a plan with Codex or Claude"
+	@echo "  example      - Run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)"
 	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
+	@echo "  example-hub  - Start cryohub workspace over examples/ (PORT=8765)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
@@ -30,6 +35,9 @@ help:
 	@echo "  book-deploy  - Deploy mdbook to GitHub Pages (gh-pages branch)"
 	@echo "  copilot-review - Request Copilot code review on current PR"
 	@echo "  release V=x.y.z - Tag and push a release (triggers CI publish)"
+	@echo ""
+	@echo "  Set RUNNER=claude to use Claude instead of Codex (default: codex)"
+	@echo "  Override CODEX_MODEL or CLAUDE_MODEL to pick a different model"
 
 # Build the project
 build:
@@ -71,61 +79,72 @@ clean:
 
 # Remove auto-generated files from examples (cancels running daemons first)
 example-clean:
-	@for dir in examples/*/; do \
+	@for dir in examples/chambers/*/; do \
 		if [ -f "$(CURDIR)/$$dir/timer.json" ]; then \
 			cd "$(CURDIR)/$$dir" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null; \
 		fi; \
 	done; true
-	rm -f examples/*/CLAUDE.md examples/*/AGENTS.md
-	rm -f examples/*/*.log examples/*/*.json
-	rm -rf examples/*/messages examples/*/.cryo
+	rm -f examples/chambers/*/CLAUDE.md examples/chambers/*/AGENTS.md
+	rm -f examples/chambers/*/*.log examples/chambers/*/*.json
+	rm -rf examples/chambers/*/messages examples/chambers/*/.cryo
 
-# Run a plan with Claude in headless mode
-# Usage: make run-plan [INSTRUCTIONS="..."] [OUTPUT=output.log] [AGENT_TYPE=claude]
+# Run a plan with Codex or Claude
+# Usage: make run-plan [INSTRUCTIONS="..."] [OUTPUT=output.log] [AGENT_TYPE=<codex|claude>]
 # PLAN_FILE defaults to the most recently modified file in docs/plans/
 INSTRUCTIONS ?=
-OUTPUT ?= claude-output.log
-AGENT_TYPE ?= claude
+OUTPUT ?= run-plan-output.log
+AGENT_TYPE ?= $(RUNNER)
 PLAN_FILE ?= $(shell ls -t docs/plans/*.md 2>/dev/null | head -1)
 
 run-plan:
-	@NL=$$'\n'; \
+	@. scripts/make_helpers.sh; \
+	NL=$$(printf '\n.'); \
+	NL=$${NL%.}; \
 	BRANCH=$$(git branch --show-current); \
+	PLAN_FILE="$(PLAN_FILE)"; \
 	if [ "$(AGENT_TYPE)" = "claude" ]; then \
-		PROCESS="1. Read the plan file$${NL}2. Use /subagent-driven-development to execute tasks$${NL}3. Push: git push origin $$BRANCH$${NL}4. Create a pull request"; \
+		PROCESS="1. Read the plan file$${NL}2. Execute the plan; it specifies which skill(s) to use$${NL}3. Push: git push origin $$BRANCH$${NL}4. If a PR already exists for this branch, skip. Otherwise create one."; \
 	else \
-		PROCESS="1. Read the plan file$${NL}2. Execute the tasks step by step. For each task, implement and test before moving on.$${NL}3. Push: git push origin $$BRANCH$${NL}4. Create a pull request"; \
+		PROCESS="1. Read the plan file$${NL}2. Treat slash-command references as workflow instructions rather than requiring Claude slash-command support.$${NL}3. Execute the tasks step by step. For each task, implement and test before moving on.$${NL}4. Push: git push origin $$BRANCH$${NL}5. If a PR already exists for this branch, skip. Otherwise create one."; \
 	fi; \
-	PROMPT="Execute the plan in '$(PLAN_FILE)'."; \
+	PROMPT="Execute the plan in '$$PLAN_FILE'."; \
+	if [ "$(AGENT_TYPE)" != "claude" ]; then \
+		PROMPT="$${PROMPT}$${NL}$${NL}Treat any slash-command references in the plan as workflow instructions; do not assume Claude slash-command support."; \
+	fi; \
 	if [ -n "$(INSTRUCTIONS)" ]; then \
 		PROMPT="$${PROMPT}$${NL}$${NL}## Additional Instructions$${NL}$(INSTRUCTIONS)"; \
 	fi; \
 	PROMPT="$${PROMPT}$${NL}$${NL}## Process$${NL}$${PROCESS}$${NL}$${NL}## Rules$${NL}- Tests should be strong enough to catch regressions.$${NL}- Do not modify tests to make them pass.$${NL}- Test failure must be reported."; \
 	echo "=== Prompt ===" && echo "$$PROMPT" && echo "===" ; \
-	claude --dangerously-skip-permissions \
-		--model opus \
-		--verbose \
-		--max-turns 500 \
-		-p "$$PROMPT" 2>&1 | tee "$(OUTPUT)"
+	RUNNER="$(AGENT_TYPE)" run_agent "$(OUTPUT)" "$$PROMPT"
 
 # Install the cryo CLI
 cli:
 	cargo install --path .
 
 # Run an example
-# Usage: make example DIR=examples/mr-lazy
-#        make example DIR=examples/chess-by-mail AGENT=claude
+# Usage: make example DIR=examples/chambers/mr-lazy
+#        make example DIR=examples/chambers/chess-by-mail AGENT=claude
 example: build
-	@if [ -z "$(DIR)" ]; then echo "Usage: make example DIR=examples/mr-lazy"; exit 1; fi
+	@if [ -z "$(DIR)" ]; then echo "Usage: make example DIR=examples/chambers/mr-lazy"; exit 1; fi
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
-	$(CURDIR)/target/debug/cryo web
+	cd "$(CURDIR)/$(dir $(DIR))" && $(CURDIR)/target/debug/cryohub start --foreground
 
 # Stop a running example
-# Usage: make example-cancel DIR=examples/chess-by-mail
+# Usage: make example-cancel DIR=examples/chambers/chess-by-mail
 example-cancel:
 	cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel
+
+# Start cryohub against examples/ as a multi-chamber workspace.
+# Each examples/chambers/<name>/ is a chamber; the server runs in the foreground.
+# Usage: make example-hub
+#        make example-hub PORT=8080
+PORT ?= 8765
+
+example-hub: build
+	cd examples/chambers && $(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
 
 # Quick smoke test: force one agent wakeup cycle
 # Usage: make check-agent                 # check default (opencode)
@@ -135,7 +154,7 @@ CHECK_TIMEOUT ?= 3000
 
 check-agent: build
 	@TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
-	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cp examples/chambers/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	echo "=== Agent Health Check ==="; \
 	echo "Agent: $(AGENT)"; \
@@ -175,7 +194,7 @@ check-round-trip: build
 	echo ""; \
 	echo "2. Starting mr-lazy daemon..."; \
 	TMPDIR=$$(mktemp -d /tmp/cryo-check-XXXXXX); \
-	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cp examples/chambers/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo start \
 		--agent "$(AGENT)" \
@@ -257,7 +276,7 @@ check-service: build
 	@echo ""
 	@echo "1. Setting up test project..."
 	@TMPDIR=$$(mktemp -d /tmp/cryo-check-svc-XXXXXX); \
-	cp examples/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
+	cp examples/chambers/mr-lazy/plan.md "$$TMPDIR/plan.md"; \
 	cd "$$TMPDIR" && $(CURDIR)/target/debug/cryo init --agent "$(AGENT)"; \
 	echo "   OK: $$TMPDIR"; \
 	echo ""; \

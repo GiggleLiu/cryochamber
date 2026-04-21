@@ -87,17 +87,6 @@ fn test_send_no_daemon() {
 }
 
 #[test]
-fn test_agent_note_no_daemon() {
-    let dir = tempfile::tempdir().unwrap();
-
-    agent_bin()
-        .args(["note", "test note"])
-        .current_dir(dir.path())
-        .assert()
-        .failure(); // no socket -> connection error
-}
-
-#[test]
 fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -245,30 +234,10 @@ fn test_send_creates_inbox_directory() {
     );
 }
 
-#[test]
-fn test_receive_empty_inbox() {
-    let dir = tempfile::tempdir().unwrap();
-
-    agent_bin()
-        .args(["receive"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-}
-
-#[test]
-fn test_receive_malformed_message() {
-    let dir = tempfile::tempdir().unwrap();
-    let inbox = dir.path().join("messages/inbox");
-    fs::create_dir_all(&inbox).unwrap();
-    fs::write(inbox.join("bad-message.md"), "not valid frontmatter {{{").unwrap();
-
-    agent_bin()
-        .args(["receive"])
-        .current_dir(dir.path())
-        .assert()
-        .success(); // should not crash on malformed messages
-}
+// Note: `cryo-agent receive` now routes through the daemon socket so that
+// archiving and the "receive" event log entry are atomic with the read. It is
+// therefore no longer a local-only command; edge-case tests for it live in
+// the daemon unit tests.
 
 // --- Time subcommand ---
 

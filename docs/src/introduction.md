@@ -20,4 +20,4 @@ cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate �
 
 **The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates with the daemon via `cryo-agent` CLI commands over a Unix domain socket.
 
-**Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's event log as context. The agent uses `cryo-agent note` to leave memory for future sessions.
+**Sessions** are the unit of work. Each session gets the plan, any new inbox messages, and the previous session's event log as context. The agent reads and appends `NOTES.md` for cross-session memory.

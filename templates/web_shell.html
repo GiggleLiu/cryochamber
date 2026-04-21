@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cryohub</title>
+<link rel="icon" type="image/svg+xml" href="/assets/mark.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/web.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <img src="/assets/logo.svg" class="logo" alt="cryochamber">
+  </div>
+</div>
+
+<div class="app">
+
+  <aside class="rail">
+    <div class="rail-head">
+      <span class="title">Chambers</span>
+      <span class="count" id="rail-count">0</span>
+    </div>
+    <input class="rail-search" id="rail-search" placeholder="Filter chambers…">
+    <div class="rail-list" id="chamber-list"></div>
+    <div class="rail-foot">
+      <span>auto-refresh · on</span>
+      <span><button id="refresh">⟳</button></span>
+    </div>
+  </aside>
+
+  <section class="center" id="pane">
+    <div class="pane-empty">
+      <div>Pick a chamber from the rail</div>
+    </div>
+  </section>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-tabs">
+      <div class="drawer-tab active" data-tab="todos">Todos<span class="tab-count" id="todos-count">0</span></div>
+      <div class="drawer-tab" data-tab="sync">Sync</div>
+      <div class="drawer-tab" data-tab="notes">Notes</div>
+      <div class="drawer-tab" data-tab="log">Log</div>
+    </div>
+    <div class="drawer-body" data-panel="todos" id="panel-todos"></div>
+    <div class="drawer-body hidden" data-panel="sync" id="panel-sync"></div>
+    <div class="drawer-body hidden" data-panel="notes" id="panel-notes"></div>
+    <div class="drawer-body hidden" data-panel="log" id="panel-log"></div>
+  </aside>
+
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(function() {
+  const state = {
+    chambers: [],
+    currentId: null,
+    detailSeq: 0,
+    lifecyclePending: {},
+    chamberHistoryOpen: false,
+  };
+
+  function urlChamberId() {
+    const m = window.location.pathname.match(/^\/c\/(.+)$/);
+    return m ? m[1] : null;
+  }
+
+  async function fetchJSON(url, opts) {
+    const res = await fetch(url, opts);
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      if (res.ok) throw e;
+    }
+    if (!res.ok) throw new Error((data && data.message) || `${url}: ${res.status}`);
+    if (data && data.ok === false) throw new Error(data.message || 'Request failed');
+    return data;
+  }
+
+  function toast(msg, kind) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast' + (kind === 'error' ? ' error' : '');
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function hash32(s) {
+    let h = 0x811c9dc5 >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(36);
+  }
+
+  function statusClass(entry) {
+    if (entry.config_error) return 'error';
+    if (entry.completed) return 'complete';
+    if (entry.running) return 'running';
+    return 'stopped';
+  }
+
+  function buildChamberRow(c) {
+    const row = document.createElement('div');
+    row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
+    row.dataset.id = c.id;
+
+    const row1 = document.createElement('div');
+    row1.className = 'chamber-row1';
+    const dot = document.createElement('span');
+    dot.className = 'status-dot ' + statusClass(c);
+    const name = document.createElement('span');
+    name.className = 'chamber-name';
+    name.textContent = c.name;
+    row1.appendChild(dot);
+    row1.appendChild(name);
+    if (c.unread > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'unread';
+      badge.textContent = c.unread;
+      row1.appendChild(badge);
+    }
+    row.appendChild(row1);
+
+    if (c.last_message_preview) {
+      const prev = document.createElement('div');
+      prev.className = 'chamber-preview';
+      prev.textContent = c.last_message_preview;
+      row.appendChild(prev);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'chamber-meta';
+    const task = document.createElement('span');
+    task.className = 'task';
+    task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
+    const when = document.createElement('span');
+    when.className = 'when' + (c.wake_imminent ? ' soon' : '');
+    when.textContent = c.next_wake_display || '';
+    meta.appendChild(task);
+    meta.appendChild(when);
+    row.appendChild(meta);
+
+    row.addEventListener('click', () => selectChamber(c.id));
+    return row;
+  }
+
+  function renderRail() {
+    const list = document.getElementById('chamber-list');
+    list.innerHTML = '';
+    const filter = document.getElementById('rail-search').value.trim().toLowerCase();
+    const matchesFilter = c => {
+      if (!filter) return true;
+      return [c.name, c.task, c.last_message_preview, c.path]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(filter));
+    };
+    // Split active vs completed: completed plans get folded into a
+    // collapsible `<details>` section, same pattern as the TODO panel's
+    // "History" fold. Keeps the rail focused on chambers that still need
+    // attention.
+    const active = [];
+    const completed = [];
+    for (const c of state.chambers) {
+      if (!matchesFilter(c)) continue;
+      // Group by completion alone. The daemon can still be winding down
+      // (running=true) right after `hibernate --complete`; `statusClass` and
+      // the header glyph already prioritise "completed" in that window, so
+      // the fold must too — otherwise the rail shows the chamber as active
+      // while every other signal says it's done.
+      if (c.completed) completed.push(c);
+      else active.push(c);
+    }
+    const runningFirst = (a, b) => {
+      const rank = e => (e.running ? 0 : 1);
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    };
+    active.sort(runningFirst);
+    completed.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const c of active) list.appendChild(buildChamberRow(c));
+
+    if (completed.length) {
+      const details = document.createElement('details');
+      details.className = 'chamber-history';
+      // Keep the fold open if (a) the user had it open last render, or (b)
+      // the currently-selected chamber lives inside it — otherwise clicking
+      // Complete on the active chamber would silently fold the selection
+      // away and the operator loses visual feedback of what's selected.
+      const selectedIsInside = completed.some(c => c.id === state.currentId);
+      if (state.chamberHistoryOpen || selectedIsInside) details.open = true;
+      details.addEventListener('toggle', () => {
+        state.chamberHistoryOpen = details.open;
+      });
+      const summary = document.createElement('summary');
+      summary.textContent = `Completed (${completed.length})`;
+      details.appendChild(summary);
+      for (const c of completed) details.appendChild(buildChamberRow(c));
+      list.appendChild(details);
+    }
+
+    const shown = active.length + completed.length;
+    document.getElementById('rail-count').textContent =
+      filter ? `${shown}/${state.chambers.length}` : state.chambers.length;
+  }
+
+  async function loadChambers() {
+    state.chambers = await fetchJSON('/api/chambers');
+    renderRail();
+  }
+
+  let railRefreshTimer = null;
+  function scheduleRailRefresh(chamberId) {
+    if (railRefreshTimer) clearTimeout(railRefreshTimer);
+    railRefreshTimer = setTimeout(async () => {
+      railRefreshTimer = null;
+      try {
+        await loadChambers();
+        if (state.currentId === chamberId) {
+          await updateDetail(chamberId, { status: true, todos: true, sync: true });
+        }
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    }, 250);
+  }
+
+  let view = null;
+
+  function newView() {
+    return {
+      chamberId: null,
+      headerName: null,
+      headerMeta: null,
+      headerTaskLine: null,
+      planCompleteBox: null,
+      lifecycleBtns: null,
+      panels: { todos: null, sync: null, notes: null, log: null },
+      syncEl: null,
+      notesEl: null,
+      logEl: null,
+      lastMsgKey: null,
+      lastTodoSig: null,
+      lastSyncSig: null,
+      lastLifecycleSig: null,
+      msgBox: null,
+      allMessages: [],
+      historyEl: null,
+      historyCount: 0,
+    };
+  }
+
+  function btn(label, onClick, cls, pending) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.disabled = !!pending;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function statusDotChar(entry) {
+    if (entry.config_error) return '✗';
+    if (entry.completed) return '✓';
+    return entry.running ? '●' : '○';
+  }
+
+  function buildHead(pane, entry, status) {
+    const head = document.createElement('div');
+    head.className = 'thread-head';
+
+    const left = document.createElement('div');
+    left.className = 'left';
+    const title = document.createElement('div');
+    title.className = 'title';
+    const name = document.createElement('span');
+    name.textContent = entry.name;
+    const session = document.createElement('span');
+    session.className = 'session';
+    left.appendChild(title);
+    title.appendChild(name);
+    title.appendChild(session);
+
+    const task = document.createElement('div');
+    task.className = 'task';
+    left.appendChild(task);
+
+    const plan = document.createElement('div');
+    plan.className = 'plan-complete';
+    plan.style.display = 'none';
+    left.appendChild(plan);
+
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'lifecycle';
+    left.appendChild(lifecycle);
+
+    const right = document.createElement('div');
+    const wake = document.createElement('span');
+    wake.className = 'wake-chip';
+    right.appendChild(wake);
+
+    head.appendChild(left);
+    head.appendChild(right);
+    pane.appendChild(head);
+
+    view.headerName = name;
+    view.headerMeta = session;
+    view.headerTaskLine = task;
+    view.planCompleteBox = plan;
+    view.lifecycleBtns = lifecycle;
+    view.wakeChip = wake;
+
+    updateHead(entry, status);
+    updateLifecycleButtons(entry);
+  }
+
+  function updateHead(entry, status) {
+    const dot = statusDotChar(entry);
+    view.headerName.textContent = entry.name;
+    view.headerMeta.textContent = `SESSION #${status.session}`;
+    if (status.completed) {
+      view.planCompleteBox.style.display = '';
+      view.planCompleteBox.textContent = '✓ Plan complete' +
+        (status.completion_summary ? ': ' + status.completion_summary : '');
+      view.headerTaskLine.textContent = '';
+    } else {
+      view.planCompleteBox.style.display = 'none';
+      if (status.task) {
+        view.headerTaskLine.innerHTML =
+          '<span class="label">Task</span>' + escapeHtml(status.task);
+      } else {
+        view.headerTaskLine.textContent = '';
+      }
+    }
+    if (status.next_wake) {
+      view.wakeChip.innerHTML = '<span class="pulse"></span>next wake · ' +
+        escapeHtml(status.next_wake);
+      view.wakeChip.style.display = '';
+    } else {
+      view.wakeChip.style.display = 'none';
+    }
+  }
+
+  function updateLifecycleButtons(entry) {
+    const pending = state.lifecyclePending[entry.id];
+    const sig = `${entry.running}|${!!entry.config_error}|${!!entry.completed}|${!!pending}`;
+    if (sig === view.lastLifecycleSig) return;
+    view.lastLifecycleSig = sig;
+    const btns = view.lifecycleBtns;
+    btns.innerHTML = '';
+    if (entry.running) {
+      btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
+    } else if (!entry.config_error && !entry.completed) {
+      // A completed plan has nothing to resume — hide Start. Reset stays
+      // available so the operator can archive the run and begin a new plan.
+      btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary', pending));
+    }
+    if (!entry.running && !entry.config_error) {
+      btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
+    }
+  }
+
+  function setLifecyclePending(id, pending) {
+    if (pending) {
+      state.lifecyclePending[id] = true;
+    } else {
+      delete state.lifecyclePending[id];
+    }
+    if (view && view.chamberId === id && view.lifecycleBtns) {
+      const entry = state.chambers.find(c => c.id === id);
+      if (entry) updateLifecycleButtons(entry);
+    }
+  }
+
+  function confirmReset(id, name) {
+    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
+    if (window.confirm(msg)) lifecycle(id, 'reset');
+  }
+
+  async function lifecycle(id, action) {
+    if (state.lifecyclePending[id]) return;
+    setLifecyclePending(id, true);
+    try {
+      const opts = { method: 'POST' };
+      if (action === 'wake') {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify({});
+      }
+      const resp = await fetchJSON(`/api/chambers/${id}/${action}`, opts);
+      toast(resp.message || action, resp.ok ? '' : 'error');
+      await loadChambers();
+      if (state.currentId === id) await selectChamber(id, { push: false });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setLifecyclePending(id, false);
+    }
+  }
+
+  const PAGE_SIZE = 30;
+
+  function messageKey(m) {
+    if (m.id) return m.id;
+    return `${m.direction}|${m.timestamp}|${m.from}|${hash32(m.body || '')}`;
+  }
+
+  function dayKey(ts) {
+    return (ts || '').slice(0, 10); // YYYY-MM-DD
+  }
+
+  // System notice = lifecycle/runtime information, rendered as centered gray
+  // text instead of a conversation bubble.
+  function isSystemMessage(m) {
+    return (m.direction === 'inbox' && m.from === 'operator') || m.from === 'cryochamber';
+  }
+
+  function buildSystemRow(m) {
+    const row = document.createElement('div');
+    row.className = 'sys-notice';
+    row.dataset.key = messageKey(m);
+    row.dataset.day = dayKey(m.timestamp);
+    if (m.session != null) row.dataset.session = String(m.session);
+    const ts = (m.timestamp || '').slice(11, 16);
+    row.textContent = [m.from, ts, m.body || ''].filter(Boolean).join(' · ');
+    return row;
+  }
+
+  function buildMessageRow(m) {
+    if (isSystemMessage(m)) return buildSystemRow(m);
+    const row = document.createElement('div');
+    // outbox = agent (left), inbox = human (right)
+    row.className = 'msg ' + (m.direction === 'outbox' ? 'agent' : 'human');
+    row.dataset.key = messageKey(m);
+    row.dataset.day = dayKey(m.timestamp);
+    if (m.session != null) row.dataset.session = String(m.session);
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    const from = document.createElement('span');
+    from.className = 'from';
+    from.textContent = m.direction === 'inbox' ? m.from : (m.from || 'agent');
+    const ts = document.createElement('span');
+    ts.textContent = (m.timestamp || '').slice(11, 16);
+    meta.appendChild(from);
+    meta.appendChild(ts);
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    body.textContent = m.body || '';
+    row.appendChild(meta);
+    row.appendChild(body);
+    return row;
+  }
+
+  function buildDayMarker(day) {
+    const el = document.createElement('div');
+    el.className = 'day-marker';
+    el.dataset.day = day;
+    el.textContent = day;
+    return el;
+  }
+
+  function buildSessionMarker(session, day) {
+    const el = document.createElement('div');
+    el.className = 'session-marker';
+    el.dataset.day = day;
+    el.dataset.session = String(session);
+    el.textContent = `Session ${session}`;
+    return el;
+  }
+
+  // Last visible (session, day) outside the history fold. Skips the
+  // <details> child so freshly-appended messages don't re-emit a marker.
+  function lastVisibleState(box) {
+    for (let i = box.children.length - 1; i >= 0; i--) {
+      const child = box.children[i];
+      if (child.tagName === 'DETAILS') continue;
+      const day = child.dataset?.day;
+      if (!day) continue;
+      const sessRaw = child.dataset?.session;
+      return {
+        day,
+        session: sessRaw === undefined || sessRaw === '' ? null : Number(sessRaw),
+      };
+    }
+    return { day: null, session: null };
+  }
+
+  // Group messages by session when session info is present; fall back to
+  // day-only grouping for messages with no `session`. A session change emits
+  // a `.session-marker`; within a session, a day change emits a subtle
+  // `.day-marker`.
+  function appendMessagesInto(target, messages, state) {
+    for (const m of messages) {
+      const d = dayKey(m.timestamp);
+      const sess = m.session == null ? null : Number(m.session);
+      if (sess !== state.session) {
+        if (sess != null) target.appendChild(buildSessionMarker(sess, d));
+        else if (d !== state.day) target.appendChild(buildDayMarker(d));
+        state.session = sess;
+        state.day = d;
+      } else if (d !== state.day) {
+        target.appendChild(buildDayMarker(d));
+        state.day = d;
+      }
+      target.appendChild(buildMessageRow(m));
+    }
+  }
+
+  // Render the entire thread: older messages go inside a collapsible
+  // `<details class="thread-history">` fold, latest PAGE_SIZE stay visible
+  // below. Matches the TODO / Completed Chambers fold pattern so the
+  // dashboard stays consistent.
+  function renderThreadContents() {
+    const box = view.msgBox;
+    box.innerHTML = '';
+    view.historyEl = null;
+    view.historyCount = 0;
+    const messages = view.allMessages;
+    const total = messages.length;
+    const historyCount = Math.max(0, total - PAGE_SIZE);
+    if (historyCount > 0) {
+      const details = document.createElement('details');
+      details.className = 'thread-history';
+      const summary = document.createElement('summary');
+      summary.textContent = `History (${historyCount} older)`;
+      details.appendChild(summary);
+      const body = document.createElement('div');
+      body.className = 'thread-history-body';
+      const state = { session: null, day: null };
+      appendMessagesInto(body, messages.slice(0, historyCount), state);
+      details.appendChild(body);
+      box.appendChild(details);
+      view.historyEl = details;
+      view.historyCount = historyCount;
+    }
+    const state = { session: null, day: null };
+    appendMessagesInto(box, messages.slice(historyCount), state);
+    view.lastMsgKey = total > 0 ? messageKey(messages[total - 1]) : null;
+  }
+
+  function buildThread(pane, messages) {
+    const box = document.createElement('div');
+    box.className = 'thread';
+    pane.appendChild(box);
+    view.msgBox = box;
+    view.allMessages = messages || [];
+    renderThreadContents();
+    // Scroll to bottom after layout settles (deep-link + font load timing).
+    requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+  }
+
+  function isAtBottom(el) {
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+  }
+
+  function updateMessages(messages) {
+    if (!view.msgBox) return;
+    const box = view.msgBox;
+    const wasAtBottom = isAtBottom(box);
+    view.allMessages = messages;
+    let startAt = 0;
+    if (view.lastMsgKey) {
+      const idx = messages.findIndex(m => messageKey(m) === view.lastMsgKey);
+      if (idx < 0) {
+        // Lost our marker — full rerender.
+        renderThreadContents();
+        box.scrollTop = box.scrollHeight;
+        return;
+      }
+      startAt = idx + 1;
+    }
+    if (startAt < messages.length) {
+      // New messages append outside the fold so the thread keeps growing
+      // downward. The fold boundary is frozen at build time — we don't move
+      // already-visible messages back into history just because the list
+      // grew past PAGE_SIZE.
+      const state = lastVisibleState(box);
+      appendMessagesInto(box, messages.slice(startAt), state);
+      view.lastMsgKey = messageKey(messages[messages.length - 1]);
+    }
+    if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  function buildCompose(pane, id) {
+    const wrap = document.createElement('div');
+    wrap.className = 'compose';
+    wrap.innerHTML = `
+      <div class="compose-inner">
+        <textarea id="send-body" rows="1" placeholder="Send a message to the chamber… (Enter for newline, ⌘↵ to send)"></textarea>
+        <div class="controls">
+          <div class="hint">⌘↵</div>
+          <button class="send">Send</button>
+        </div>
+      </div>`;
+    pane.appendChild(wrap);
+    const ta   = wrap.querySelector('#send-body');
+    const send = wrap.querySelector('.send');
+    // Auto-grow with content so multi-line drafts are visible up to the CSS
+    // `max-height` cap (after which the textarea scrolls). Without this, the
+    // `rows="1"` control hides all but the last line of a long message.
+    const autoGrow = () => {
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    };
+    ta.addEventListener('input', autoGrow);
+    async function submit() {
+      const body = ta.value.trim();
+      if (!body) return;
+      try {
+        await fetchJSON(`/api/chambers/${id}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body }),
+        });
+        ta.value = '';
+        autoGrow();
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    send.addEventListener('click', submit);
+    ta.addEventListener('keydown', e => {
+      // Enter inserts a newline (default textarea behaviour). ⌘/Ctrl+Enter
+      // submits — this matches the keymap hint rendered on the button.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submit(); }
+    });
+  }
+
+  function initDrawerTabs() {
+    const tabs   = document.querySelectorAll('.drawer-tab');
+    const panels = document.querySelectorAll('.drawer-body');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const name = tab.getAttribute('data-tab');
+        tabs.forEach(t => t.classList.toggle('active', t === tab));
+        panels.forEach(p => {
+          p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
+        });
+        if (name === 'log' && view && view.logEl) {
+          view.logEl.scrollTop = view.logEl.scrollHeight;
+        }
+        if (name === 'notes' && view && view.notesEl) {
+          view.notesEl.scrollTop = 0;
+        }
+      });
+    });
+  }
+
+  const TODO_PENDING_CAP = 20;
+
+  function todoSignature(todos) {
+    if (!todos || !todos.length) return '0:';
+    return todos.length + ':' + todos.map(t => `${t.id}|${t.done ? 1 : 0}|${t.at || ''}`).join(',');
+  }
+
+  function buildTodoRow(t) {
+    const row = document.createElement('div');
+    row.className = 'todo' + (t.done ? ' done' : '');
+    const check = document.createElement('span');
+    check.className = 'check';
+    const text = document.createElement('span');
+    text.className = 'text';
+    text.textContent = t.text;
+    row.appendChild(check);
+    row.appendChild(text);
+    if (t.at) {
+      const when = document.createElement('span');
+      when.className = 'when' + (t.at_soon ? ' soon' : '');
+      when.textContent = t.at;
+      row.appendChild(when);
+    }
+    return row;
+  }
+
+  function renderTodos(todos) {
+    const sig = todoSignature(todos);
+    if (sig === view.lastTodoSig) return;
+    view.lastTodoSig = sig;
+    const all = todos || [];
+    // Partition + sort: pending by `at` ascending (undated last), done by id
+    // descending (most recently added first).
+    const pending = all.filter(t => !t.done).slice().sort((a, b) => {
+      if (a.at && b.at) return a.at < b.at ? -1 : a.at > b.at ? 1 : 0;
+      if (a.at) return -1;
+      if (b.at) return 1;
+      return a.id - b.id;
+    });
+    const done = all.filter(t => t.done).slice().sort((a, b) => b.id - a.id);
+
+    const box = document.getElementById('panel-todos');
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.innerHTML =
+      `Todos <span class="count">${pending.length} pending · ${done.length} done</span>`;
+    box.appendChild(title);
+
+    const list = document.createElement('div');
+    list.className = 'todos';
+    const visible = pending.slice(0, TODO_PENDING_CAP);
+    for (const t of visible) list.appendChild(buildTodoRow(t));
+    if (pending.length > TODO_PENDING_CAP) {
+      const more = document.createElement('div');
+      more.className = 'todo-more';
+      more.textContent = `+${pending.length - TODO_PENDING_CAP} more pending`;
+      list.appendChild(more);
+    }
+    box.appendChild(list);
+
+    if (done.length) {
+      const details = document.createElement('details');
+      details.className = 'todo-history';
+      const summary = document.createElement('summary');
+      summary.textContent = `History (${done.length})`;
+      details.appendChild(summary);
+      const histList = document.createElement('div');
+      histList.className = 'todos';
+      for (const t of done) histList.appendChild(buildTodoRow(t));
+      details.appendChild(histList);
+      box.appendChild(details);
+    }
+
+    document.getElementById('todos-count').textContent = pending.length;
+  }
+
+  function syncSignature(sync) {
+    if (!sync || !sync.length) return '0:';
+    return sync.length + ':' + sync.map(s =>
+      `${s.backend}|${s.running}|${s.installed}|${s.target}|${s.last_pushed_session ?? ''}`
+    ).join(',');
+  }
+
+  async function syncToggle(id, backend, running) {
+    if (running) {
+      if (!window.confirm(`Stop ${backend} sync and uninstall its service?`)) return false;
+    }
+    try {
+      const resp = await fetchJSON(
+        `/api/chambers/${id}/sync/${backend}/${running ? 'stop' : 'start'}`,
+        { method: 'POST' }
+      );
+      toast(resp.message || (running ? 'stopped' : 'started'), resp.ok ? '' : 'error');
+      return true;
+    } catch (e) {
+      toast(e.message, 'error');
+      return false;
+    }
+  }
+
+  function renderSync(id, sync) {
+    const sig = syncSignature(sync);
+    if (sig === view.lastSyncSig) return;
+    view.lastSyncSig = sig;
+    const box = view.syncEl;
+    if (!box) return;
+    box.innerHTML = '';
+    const items = sync || [];
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    const running = items.filter(s => s.running).length;
+    title.innerHTML = `Message sync <span class="count">${running}/${items.length}</span>`;
+    box.appendChild(title);
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'sync-help';
+      empty.textContent = 'No message sync is configured for this chamber.';
+      box.appendChild(empty);
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'sync-list';
+
+    for (const s of items) {
+      const card = document.createElement('div');
+      card.className = 'sync-card';
+      card.innerHTML = `
+        <div class="sync-card-head">
+          <div class="sync-card-name">
+            ${escapeHtml(s.backend)}
+            <span class="badge${s.running ? '' : ' stopped'}">${s.running ? 'running' : 'off'}</span>
+          </div>
+          <label class="sync-toggle">
+            <input type="checkbox" ${s.running ? 'checked' : ''}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="sync-target">${escapeHtml(s.target || '—')}</div>
+        <div class="sync-foot">
+          <span>${s.last_pushed_session != null
+            ? 'last push · session #' + s.last_pushed_session
+            : (s.configured ? 'configured' : '')}</span>
+        </div>`;
+      const cb = card.querySelector('input[type=checkbox]');
+      cb.addEventListener('change', async () => {
+        // Keep the user's click visible while the request is in flight — the
+        // SSE `status` event re-renders from truth when the backend catches up.
+        // Revert only if the request fails or the confirm is cancelled.
+        const prev = s.running;
+        const ok = await syncToggle(id, s.backend, prev);
+        if (!ok) cb.checked = prev;
+      });
+      list.appendChild(card);
+    }
+    box.appendChild(list);
+  }
+
+  function renderLog(status) {
+    const box = document.getElementById('panel-log');
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.textContent = 'cryo.log';
+    box.appendChild(title);
+    const wrap = document.createElement('div');
+    wrap.className = 'log-wrap';
+    const log = document.createElement('pre');
+    log.className = 'log';
+    log.id = 'log';
+    log.textContent = status.log_tail || '';
+    wrap.appendChild(log);
+    box.appendChild(wrap);
+    view.logEl = log;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function renderNotes(status) {
+    const box = document.getElementById('panel-notes');
+    const nextContent = status.notes_content || '';
+    // Every SSE status tick re-renders the whole panel — rebuilding the DOM
+    // would reset scrollTop to 0 and yank the reader back to the top. Reuse
+    // the existing `<pre>` and preserve its scroll position when the content
+    // didn't meaningfully change.
+    if (view.notesEl && box.contains(view.notesEl)) {
+      if (view.notesEl.textContent === nextContent) return;
+      const prevScroll = view.notesEl.scrollTop;
+      view.notesEl.textContent = nextContent;
+      view.notesEl.scrollTop = prevScroll;
+      return;
+    }
+    box.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.textContent = 'NOTES.md';
+    box.appendChild(title);
+    const wrap = document.createElement('div');
+    wrap.className = 'notes-wrap';
+    const pre = document.createElement('pre');
+    pre.className = 'notes';
+    pre.id = 'notes';
+    pre.textContent = nextContent;
+    wrap.appendChild(pre);
+    box.appendChild(wrap);
+    view.notesEl = pre;
+  }
+
+  function appendLogLine(line) {
+    if (!view || !view.logEl) return;
+    const el = view.logEl;
+    const atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 30;
+    el.textContent += (el.textContent ? '\n' : '') + line;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+
+  async function buildDetail(id, seq) {
+    const entry = state.chambers.find(c => c.id === id);
+    if (!entry) return;
+    const pane = document.getElementById('pane');
+    const [status, messages, todos, sync] = await Promise.all([
+      fetchJSON(`/api/chambers/${id}/status`),
+      fetchJSON(`/api/chambers/${id}/messages`),
+      fetchJSON(`/api/chambers/${id}/todos`),
+      fetchJSON(`/api/chambers/${id}/sync`),
+    ]);
+    if (seq !== state.detailSeq || state.currentId !== id) return;
+    pane.innerHTML = '';
+    view = newView();
+    view.chamberId = id;
+    buildHead(pane, entry, status);
+    buildThread(pane, messages);
+    view.syncEl = document.getElementById('panel-sync');
+    buildCompose(pane, id);
+    renderTodos(todos);
+    renderSync(id, sync);
+    renderLog(status);
+    renderNotes(status);
+    document.getElementById('drawer').hidden = false;
+  }
+
+  async function updateDetail(id, parts) {
+    if (!view || view.chamberId !== id) return;
+    const fetches = {};
+    if (parts.status)   fetches.status   = fetchJSON(`/api/chambers/${id}/status`);
+    if (parts.messages) fetches.messages = fetchJSON(`/api/chambers/${id}/messages`);
+    if (parts.todos)    fetches.todos    = fetchJSON(`/api/chambers/${id}/todos`);
+    if (parts.sync)     fetches.sync     = fetchJSON(`/api/chambers/${id}/sync`);
+    const entries = await Promise.allSettled(
+      Object.entries(fetches).map(async ([k, p]) => [k, await p])
+    );
+    const data = {};
+    for (const r of entries) {
+      if (r.status === 'fulfilled') data[r.value[0]] = r.value[1];
+    }
+    const entry = state.chambers.find(c => c.id === id);
+    if (entry && data.status) {
+      updateHead(entry, data.status);
+      updateLifecycleButtons(entry);
+      renderLog(data.status); // refreshes log_tail baseline
+      renderNotes(data.status);
+    }
+    if (data.sync)     renderSync(id, data.sync);
+    if (data.todos)    renderTodos(data.todos);
+    if (data.messages) updateMessages(data.messages);
+  }
+
+  async function selectChamber(id, options = {}) {
+    state.currentId = id;
+    const seq = ++state.detailSeq;
+    const push = options.push !== false;
+    if (push && window.location.pathname !== `/c/${id}`) {
+      window.history.pushState({}, '', `/c/${id}`);
+    }
+    renderRail();
+    await buildDetail(id, seq);
+  }
+
+  function clearSelection() {
+    state.currentId = null;
+    ++state.detailSeq;
+    view = null;
+    document.getElementById('pane').innerHTML =
+      '<div class="pane-empty"><div>Pick a chamber from the rail</div></div>';
+    document.getElementById('drawer').hidden = true;
+    renderRail();
+  }
+
+  async function syncRouteSelection() {
+    const urlId = urlChamberId();
+    if (urlId && state.chambers.some(c => c.id === urlId)) {
+      await selectChamber(urlId, { push: false });
+    } else {
+      clearSelection();
+    }
+  }
+
+  const railSearch = document.getElementById('rail-search');
+  railSearch.addEventListener('input', renderRail);
+  window.addEventListener('popstate', syncRouteSelection);
+
+  document.getElementById('refresh').addEventListener('click', async () => {
+    try {
+      state.chambers = await fetchJSON('/api/chambers/refresh', { method: 'POST' });
+      renderRail();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  initDrawerTabs();
+
+  const evt = new EventSource('/api/events');
+  evt.addEventListener('message', async e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) {
+      await updateDetail(state.currentId, { messages: true });
+    }
+    await loadChambers();
+  });
+  evt.addEventListener('status', async e => {
+    const d = JSON.parse(e.data);
+    await loadChambers();
+    if (state.currentId === d.chamber_id) {
+      await updateDetail(state.currentId, { status: true, todos: true, sync: true });
+    }
+  });
+  evt.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    if (state.currentId === d.chamber_id) appendLogLine(d.line);
+    scheduleRailRefresh(d.chamber_id);
+  });
+  evt.addEventListener('index', async () => { await loadChambers(); });
+
+  // Expose for subsequent task wiring.
+  window.__hub = { state, fetchJSON, toast, escapeHtml, hash32, renderRail, loadChambers, selectChamber };
+
+  (async () => {
+    await loadChambers();
+    await syncRouteSelection();
+  })();
+})();
+</script>
+</body>
+</html>

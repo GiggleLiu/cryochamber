@@ -238,6 +238,10 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let sync_path = gh_sync_path(&dir);
 
     eprintln!("Sync daemon started (PID {})", std::process::id());
+    let pid_path = cryochamber::gh_sync::sync_pid_path(&dir);
+    // RAII guard: keeps the pid file on disk for the daemon's lifetime and
+    // unlinks it on any return, including early `?` propagation below.
+    let _pid_guard = cryochamber::sync_common::PidFile::create(pid_path)?;
 
     // Register signal handlers
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -321,6 +325,7 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     }
 
     eprintln!("Sync: stopped");
+    // _pid_guard drops here, unlinking the pid file.
     Ok(())
 }
 

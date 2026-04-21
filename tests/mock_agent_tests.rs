@@ -214,11 +214,7 @@ fn test_mock_ipc_all_commands() {
 
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
 
-    // Verify all IPC commands were logged
-    assert!(
-        log.contains("note: \"Starting IPC test\""),
-        "Missing note in log: {log}"
-    );
+    // Verify the remaining IPC commands were logged
     assert!(log.contains("reply:"), "Missing reply in log: {log}");
     assert!(log.contains("alert:"), "Missing alert in log: {log}");
     assert!(
@@ -278,15 +274,15 @@ fn test_mock_invalid_wake_time() {
         .success();
 
     // The agent adds a TODO with "banana" as the time, then hibernates.
-    // The hibernate succeeds, but "banana" is unparseable as NaiveDateTime,
-    // so next_wake_from_todos returns None and the daemon idles.
+    // "banana" is unparseable as NaiveDateTime, so no pending TODO has a valid
+    // wake — the daemon rejects the hibernate attempt and logs the refusal.
     assert!(
         wait_for_log_content(
             dir.path(),
-            "no pending TODOs, idling",
+            "hibernate refused: no pending TODO",
             Duration::from_secs(15)
         ),
-        "Daemon should idle since 'banana' is not a valid wake time"
+        "Daemon should refuse hibernate when no TODO has a valid wake time"
     );
 
     cancel_and_wait(dir.path());
@@ -346,31 +342,6 @@ fn test_mock_double_hibernate() {
     assert!(
         wait_for_daemon_exit(dir.path(), Duration::from_secs(10)),
         "Daemon should exit after plan completion"
-    );
-}
-
-#[test]
-fn test_mock_note_after_hibernate() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "note-after-hibernate.sh");
-
-    cryo_bin()
-        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Session should complete normally despite late note
-    assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
-        "Daemon should exit after plan completion"
-    );
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("plan complete"),
-        "Session should complete normally: {log}"
     );
 }
 

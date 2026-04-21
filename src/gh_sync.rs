@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Persistent state for the GitHub Discussion sync utility.
 /// Stored in `gh-sync.json`, separate from `timer.json`.
@@ -46,3 +46,43 @@ pub fn load_sync_state(path: &Path) -> Result<Option<GhSyncState>> {
     let state: GhSyncState = serde_json::from_str(&contents)?;
     Ok(Some(state))
 }
+
+pub fn sync_pid_path(dir: &Path) -> PathBuf {
+    dir.join("cryo-gh-sync.pid")
+}
+
+pub fn read_sync_pid(dir: &Path) -> Option<u32> {
+    let content = std::fs::read_to_string(sync_pid_path(dir)).ok()?;
+    content.trim().parse::<u32>().ok()
+}
+
+pub fn is_sync_running(dir: &Path) -> bool {
+    match read_sync_pid(dir) {
+        Some(pid) => {
+            let ret = unsafe { libc::kill(pid as i32, 0) };
+            if ret == 0 {
+                return true;
+            }
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            errno == libc::EPERM
+        }
+        None => false,
+    }
+}
+
+pub fn summarize(dir: &Path) -> Option<crate::sync_common::SyncSummary> {
+    let state = load_sync_state(&dir.join("gh-sync.json")).ok().flatten()?;
+    Some(crate::sync_common::SyncSummary {
+        backend: crate::sync_common::SyncBackend::Gh,
+        configured: true,
+        installed: crate::service::is_installed("gh-sync", dir),
+        running: is_sync_running(dir),
+        target: format!("{}#{}", state.repo, state.discussion_number),
+        last_pushed_session: state.last_pushed_session,
+        log_tail_path: dir.join("cryo-gh-sync.log"),
+    })
+}
+
+#[cfg(test)]
+#[path = "unit_tests/gh_sync.rs"]
+mod pid_tests;
