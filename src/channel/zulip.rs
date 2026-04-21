@@ -151,6 +151,18 @@ impl ZulipClient {
         num_after: u32,
         skip_email: Option<&str>,
     ) -> Result<(Vec<Message>, bool, Option<u64>)> {
+        self.get_messages_window(stream_id, topic, anchor, 0, num_after, skip_email)
+    }
+
+    fn get_messages_window(
+        &self,
+        stream_id: u64,
+        topic: Option<&str>,
+        anchor: &str,
+        num_before: u32,
+        num_after: u32,
+        skip_email: Option<&str>,
+    ) -> Result<(Vec<Message>, bool, Option<u64>)> {
         let mut narrow = vec![serde_json::json!({
             "operator": "stream",
             "operand": stream_id
@@ -162,18 +174,26 @@ impl ZulipClient {
             }));
         }
         let narrow = serde_json::to_string(&narrow)?;
+        let num_before_str = num_before.to_string();
         let num_after_str = num_after.to_string();
         let json = self.get(
             "/messages",
             &[
                 ("narrow", &narrow),
                 ("anchor", anchor),
-                ("num_before", "0"),
+                ("num_before", &num_before_str),
                 ("num_after", &num_after_str),
                 ("apply_markdown", "false"),
             ],
         )?;
         parse_get_messages_response(&json, skip_email, topic)
+    }
+
+    /// Return the newest existing message ID in a stream/topic, if one exists.
+    pub fn newest_message_id(&self, stream_id: u64, topic: Option<&str>) -> Result<Option<u64>> {
+        let (_, _, raw_max_id) =
+            self.get_messages_window(stream_id, topic, "newest", 1, 0, None)?;
+        Ok(raw_max_id)
     }
 
     /// POST /api/v1/messages -- send a message to a stream+topic.
@@ -214,6 +234,7 @@ impl ZulipClient {
         loop {
             let (messages, found_newest, raw_max_id) =
                 self.get_messages(stream_id, topic, &anchor, 1000, skip_email)?;
+            newest_id = crate::zulip_sync::remember_seen_message_id(newest_id, raw_max_id);
 
             for msg in &messages {
                 if let Some(id_str) = msg.metadata.get("zulip_message_id") {
@@ -221,9 +242,6 @@ impl ZulipClient {
                         // Skip the anchor message itself when resuming
                         if Some(id) == last_message_id {
                             continue;
-                        }
-                        if newest_id.is_none() || id > newest_id.unwrap() {
-                            newest_id = Some(id);
                         }
                     }
                 }

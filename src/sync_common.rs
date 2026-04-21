@@ -2,9 +2,14 @@
 //! Two backends (gh, zulip) with near-identical verbs -- free functions are
 //! enough; no trait needed.
 
+use crate::message::Message;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -77,6 +82,123 @@ impl Drop for PidFile {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncLoopCommand {
+    Send,
+    SkipSend,
+}
+
+pub trait SyncLoopBackend {
+    fn receive(&mut self) -> Result<SyncLoopCommand>;
+    fn send(&mut self) -> Result<()>;
+}
+
+/// Format an outbox message before posting it to an external sync backend.
+///
+/// Agent replies use the body alone because the external service already
+/// shows which integration posted it. System messages are quoted so reports
+/// and fallback alerts read as generated status. Other senders keep explicit
+/// attribution in the body.
+pub fn format_outbox_post(msg: &Message) -> String {
+    if msg.from == "agent" {
+        msg.body.clone()
+    } else if msg.from == "cryochamber" {
+        let mut out = format!("> **{}**\n>\n", msg.subject);
+        for line in msg.body.lines() {
+            out.push_str("> ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        if out.ends_with('\n') {
+            out.pop();
+        }
+        out
+    } else {
+        format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
+    }
+}
+
+pub fn watch_outbox(dir: &Path, tx: Sender<()>) -> Result<notify::RecommendedWatcher> {
+    use notify::Watcher;
+
+    let outbox_path = dir.join("messages").join("outbox");
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            if event.kind.is_create() {
+                let _ = tx.send(());
+            }
+        }
+    })
+    .context("Failed to create outbox watcher")?;
+    watcher
+        .watch(&outbox_path, notify::RecursiveMode::NonRecursive)
+        .context("Failed to watch messages/outbox/")?;
+    Ok(watcher)
+}
+
+pub fn spawn_shutdown_notifier(shutdown: Arc<AtomicBool>, tx: Sender<()>) {
+    std::thread::spawn(move || {
+        while !shutdown.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let _ = tx.send(());
+    });
+}
+
+pub fn run_sync_loop<B: SyncLoopBackend + ?Sized>(
+    label: &str,
+    shutdown: Arc<AtomicBool>,
+    event_rx: Receiver<()>,
+    interval: Duration,
+    backend: &mut B,
+) -> Result<()> {
+    run_sync_loop_with_settle_delay(
+        label,
+        shutdown,
+        event_rx,
+        interval,
+        Duration::from_millis(200),
+        backend,
+    )
+}
+
+fn run_sync_loop_with_settle_delay<B: SyncLoopBackend + ?Sized>(
+    label: &str,
+    shutdown: Arc<AtomicBool>,
+    event_rx: Receiver<()>,
+    interval: Duration,
+    settle_delay: Duration,
+    backend: &mut B,
+) -> Result<()> {
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            eprintln!("{label}: shutting down");
+            break;
+        }
+
+        match backend.receive()? {
+            SyncLoopCommand::Send => backend.send()?,
+            SyncLoopCommand::SkipSend => {}
+        }
+
+        if shutdown.load(Ordering::Relaxed) {
+            eprintln!("{label}: shutting down");
+            break;
+        }
+
+        match event_rx.recv_timeout(interval) {
+            Ok(()) => {
+                std::thread::sleep(settle_delay);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    eprintln!("{label}: stopped");
+    Ok(())
 }
 
 fn resolve_cli(backend: SyncBackend) -> Result<std::path::PathBuf> {

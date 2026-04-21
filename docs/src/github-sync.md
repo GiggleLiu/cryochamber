@@ -94,7 +94,7 @@ The sync daemon uses the `gh` CLI which makes authenticated GitHub API requests.
 
 | File | Purpose |
 |------|---------|
-| `gh-sync.json` | Sync state: repo, Discussion number/ID, cursor |
+| `gh-sync.json` | Sync state: repo, Discussion number/ID, last read position |
 | `cryo-gh-sync.log` | Sync daemon log output |
 | `messages/inbox/` | Incoming messages (from Discussion comments) |
 | `messages/outbox/` | Outgoing messages (posted to Discussion) |

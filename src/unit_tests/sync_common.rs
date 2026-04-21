@@ -1,9 +1,23 @@
 use super::*;
+use crate::message::Message;
+use chrono::NaiveDateTime;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn message(from: &str, subject: &str, body: &str) -> Message {
+    Message {
+        from: from.into(),
+        subject: subject.into(),
+        body: body.into(),
+        timestamp: NaiveDateTime::default(),
+        metadata: BTreeMap::new(),
+    }
+}
 
 fn make_stub(dir: &Path, name: &str, exit_code: i32, stdout: &str) -> std::path::PathBuf {
     let p = dir.join(name);
@@ -140,4 +154,136 @@ fn wait_for_state_returns_false_on_timeout() {
         std::time::Duration::from_millis(250),
     );
     assert!(!ok, "no pid file will ever appear — must time out");
+}
+
+struct RecordingLoopBackend {
+    log: Arc<Mutex<Vec<&'static str>>>,
+    shutdown: Arc<AtomicBool>,
+    receive_calls: usize,
+    skip_first_send: bool,
+}
+
+impl RecordingLoopBackend {
+    fn new(log: Arc<Mutex<Vec<&'static str>>>, shutdown: Arc<AtomicBool>) -> Self {
+        Self {
+            log,
+            shutdown,
+            receive_calls: 0,
+            skip_first_send: false,
+        }
+    }
+
+    fn skip_first_send(mut self) -> Self {
+        self.skip_first_send = true;
+        self
+    }
+}
+
+impl SyncLoopBackend for RecordingLoopBackend {
+    fn receive(&mut self) -> anyhow::Result<SyncLoopCommand> {
+        self.log.lock().unwrap().push("receive");
+        self.receive_calls += 1;
+        if self.receive_calls == 2 {
+            self.shutdown.store(true, Ordering::Relaxed);
+        }
+        if self.skip_first_send && self.receive_calls == 1 {
+            Ok(SyncLoopCommand::SkipSend)
+        } else {
+            Ok(SyncLoopCommand::Send)
+        }
+    }
+
+    fn send(&mut self) -> anyhow::Result<()> {
+        self.log.lock().unwrap().push("send");
+        Ok(())
+    }
+}
+
+#[test]
+fn sync_loop_receives_then_sends_each_cycle_after_outbox_event() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(()).unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = RecordingLoopBackend::new(Arc::clone(&log), Arc::clone(&shutdown));
+
+    let started = std::time::Instant::now();
+    run_sync_loop_with_settle_delay(
+        "test sync",
+        Arc::clone(&shutdown),
+        rx,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_millis(0),
+        &mut backend,
+    )
+    .unwrap();
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "queued outbox event should start the next receive/send cycle without waiting for the interval"
+    );
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["receive", "send", "receive", "send"]
+    );
+}
+
+#[test]
+fn sync_loop_can_skip_send_for_a_receive_cycle() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(()).unwrap();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut backend =
+        RecordingLoopBackend::new(Arc::clone(&log), Arc::clone(&shutdown)).skip_first_send();
+
+    run_sync_loop_with_settle_delay(
+        "test sync",
+        Arc::clone(&shutdown),
+        rx,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_millis(0),
+        &mut backend,
+    )
+    .unwrap();
+
+    assert_eq!(*log.lock().unwrap(), vec!["receive", "receive", "send"]);
+}
+
+#[test]
+fn format_outbox_post_uses_body_only_for_agent_reply() {
+    let out = format_outbox_post(&message("agent", "Reply", "hello human"));
+    assert_eq!(out, "hello human");
+}
+
+#[test]
+fn format_outbox_post_marks_system_messages_as_quotes() {
+    let out = format_outbox_post(&message(
+        "cryochamber",
+        "Cryochamber Report: demo",
+        "Last 24h: 3 sessions, 0 failed",
+    ));
+    assert_eq!(
+        out,
+        "> **Cryochamber Report: demo**\n>\n> Last 24h: 3 sessions, 0 failed"
+    );
+}
+
+#[test]
+fn format_outbox_post_quotes_each_system_message_line() {
+    let out = format_outbox_post(&message(
+        "cryochamber",
+        "Fallback Alert: deadline_missed",
+        "Agent exceeded max retries.\nNext attempt in 60s.",
+    ));
+    assert_eq!(
+        out,
+        "> **Fallback Alert: deadline_missed**\n>\n> Agent exceeded max retries.\n> Next attempt in 60s."
+    );
+}
+
+#[test]
+fn format_outbox_post_keeps_attribution_for_other_senders() {
+    let out = format_outbox_post(&message("teammate", "Question", "Are you free?"));
+    assert_eq!(out, "**teammate** (Question)\n\nAre you free?");
 }

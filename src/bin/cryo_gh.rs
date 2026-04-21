@@ -2,8 +2,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
+use cryochamber::sync_common::{format_outbox_post, SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
 #[command(name = "cryo-gh", about = "Cryochamber GitHub Discussion sync")]
@@ -88,14 +90,15 @@ fn cmd_gh_init(repo: &str, title: Option<&str>) -> Result<()> {
         cryochamber::channel::github::create_discussion(owner, repo_name, title, &body)?;
     println!("Created Discussion #{number}");
 
-    let self_login = cryochamber::channel::github::whoami().ok();
+    let self_login = cryochamber::channel::github::whoami()
+        .context("Failed to identify current GitHub user. Run `gh auth login` and retry.")?;
 
     let sync_state = cryochamber::gh_sync::GhSyncState {
         repo: repo.to_string(),
         discussion_number: number,
         discussion_node_id: node_id,
         last_read_cursor: None,
-        self_login,
+        self_login: Some(self_login),
         last_pushed_session: None,
     };
     cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
@@ -104,10 +107,26 @@ fn cmd_gh_init(repo: &str, title: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+fn load_gh_sync_state_with_self_login(
+    sync_path: &Path,
+) -> Result<cryochamber::gh_sync::GhSyncState> {
+    let mut sync_state = cryochamber::gh_sync::load_sync_state(sync_path)?
+        .context("gh-sync.json not found. Run 'cryo-gh init' first.")?;
+
+    if sync_state.ensure_self_login_with(|| {
+        cryochamber::channel::github::whoami()
+            .context("Failed to identify current GitHub user. Run `gh auth login` and retry.")
+    })? {
+        cryochamber::gh_sync::save_sync_state(sync_path, &sync_state)?;
+    }
+
+    Ok(sync_state)
+}
+
 fn cmd_gh_pull() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let mut sync_state = cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))?
-        .context("gh-sync.json not found. Run 'cryo-gh init' first.")?;
+    let sync_path = gh_sync_path(&dir);
+    let mut sync_state = load_gh_sync_state_with_self_login(&sync_path)?;
 
     let (owner, repo) = sync_state.owner_repo()?;
 
@@ -126,7 +145,7 @@ fn cmd_gh_pull() -> Result<()> {
 
     if let Some(cursor) = new_cursor {
         sync_state.last_read_cursor = Some(cursor);
-        cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
+        cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state)?;
     }
 
     let inbox = cryochamber::message::read_inbox(&dir)?;
@@ -137,8 +156,8 @@ fn cmd_gh_pull() -> Result<()> {
 
 fn cmd_gh_push() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let mut sync_state = cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))?
-        .context("gh-sync.json not found. Run 'cryo-gh init' first.")?;
+    let sync_path = gh_sync_path(&dir);
+    let mut sync_state = load_gh_sync_state_with_self_login(&sync_path)?;
 
     let log = cryochamber::log::log_path(&dir);
     let latest = cryochamber::log::read_latest_session(&log)?;
@@ -167,7 +186,7 @@ fn cmd_gh_push() -> Result<()> {
     cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &comment)?;
 
     sync_state.last_pushed_session = Some(session_num);
-    cryochamber::gh_sync::save_sync_state(&gh_sync_path(&dir), &sync_state)?;
+    cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state)?;
 
     println!("Push complete.");
     Ok(())
@@ -192,8 +211,7 @@ fn cmd_gh_sync(interval_override: Option<u64>) -> Result<()> {
 
     // Require initialized gh-sync.json
     let sync_path = gh_sync_path(&dir);
-    let sync_state = cryochamber::gh_sync::load_sync_state(&sync_path)?
-        .context("gh-sync.json not found. Run 'cryo-gh init' first.")?;
+    let sync_state = load_gh_sync_state_with_self_login(&sync_path)?;
 
     // Ensure message dirs exist
     cryochamber::message::ensure_dirs(&dir)?;
@@ -232,6 +250,54 @@ fn cmd_gh_unsync() -> Result<()> {
     Ok(())
 }
 
+struct GhSyncLoopBackend {
+    dir: PathBuf,
+    sync_path: PathBuf,
+    sync_state: Option<cryochamber::gh_sync::GhSyncState>,
+}
+
+impl SyncLoopBackend for GhSyncLoopBackend {
+    fn receive(&mut self) -> Result<SyncLoopCommand> {
+        // Reload sync state each cycle (pull updates the cursor)
+        let mut sync_state = load_gh_sync_state_with_self_login(&self.sync_path)?;
+
+        // Pull: Discussion -> inbox
+        let (owner, repo) = sync_state.owner_repo()?;
+        match cryochamber::channel::github::pull_comments(
+            owner,
+            repo,
+            sync_state.discussion_number,
+            sync_state.last_read_cursor.as_deref(),
+            sync_state.self_login.as_deref(),
+            &self.dir,
+        ) {
+            Ok(new_cursor) => {
+                if let Some(cursor) = new_cursor {
+                    sync_state.last_read_cursor = Some(cursor);
+                    cryochamber::gh_sync::save_sync_state(&self.sync_path, &sync_state)?;
+                }
+            }
+            Err(e) => eprintln!("Sync: pull error: {e}"),
+        }
+
+        self.sync_state = Some(sync_state);
+        Ok(SyncLoopCommand::Send)
+    }
+
+    fn send(&mut self) -> Result<()> {
+        let Some(sync_state) = self.sync_state.as_ref() else {
+            return Ok(());
+        };
+
+        // Push: outbox -> Discussion
+        if let Err(e) = push_outbox(&self.dir, sync_state) {
+            eprintln!("Sync: push error: {e}");
+        }
+
+        Ok(())
+    }
+}
+
 fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let interval = resolve_interval(interval_override)?;
     let dir = cryochamber::work_dir()?;
@@ -249,82 +315,26 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))?;
 
     // Set up outbox watcher for immediate push on new messages
-    use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel();
-    let outbox_path = dir.join("messages").join("outbox");
-    let _watcher = {
-        let tx = tx.clone();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                if event.kind.is_create() {
-                    let _ = tx.send(());
-                }
-            }
-        })
-        .context("Failed to create outbox watcher")?;
-        watcher
-            .watch(&outbox_path, notify::RecursiveMode::NonRecursive)
-            .context("Failed to watch messages/outbox/")?;
-        watcher
-    };
+    let _watcher = cryochamber::sync_common::watch_outbox(&dir, tx.clone())?;
 
     // Spawn a thread to forward shutdown signals to the event channel
-    let shutdown_flag = Arc::clone(&shutdown);
-    std::thread::spawn(move || {
-        while !shutdown_flag.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-        let _ = tx.send(()); // unblock recv_timeout
-    });
+    cryochamber::sync_common::spawn_shutdown_notifier(Arc::clone(&shutdown), tx);
 
     let interval_dur = std::time::Duration::from_secs(interval);
+    let mut backend = GhSyncLoopBackend {
+        dir: dir.clone(),
+        sync_path,
+        sync_state: None,
+    };
 
-    loop {
-        if shutdown.load(Ordering::Relaxed) {
-            eprintln!("Sync: shutting down");
-            break;
-        }
-
-        // Reload sync state each cycle (pull updates the cursor)
-        let mut sync_state = cryochamber::gh_sync::load_sync_state(&sync_path)?
-            .context("gh-sync.json disappeared")?;
-
-        // Pull: Discussion → inbox
-        let (owner, repo) = sync_state.owner_repo()?;
-        match cryochamber::channel::github::pull_comments(
-            owner,
-            repo,
-            sync_state.discussion_number,
-            sync_state.last_read_cursor.as_deref(),
-            sync_state.self_login.as_deref(),
-            &dir,
-        ) {
-            Ok(new_cursor) => {
-                if let Some(cursor) = new_cursor {
-                    sync_state.last_read_cursor = Some(cursor);
-                    cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state)?;
-                }
-            }
-            Err(e) => eprintln!("Sync: pull error: {e}"),
-        }
-
-        // Push: outbox → Discussion
-        if let Err(e) = push_outbox(&dir, &sync_state) {
-            eprintln!("Sync: push error: {e}");
-        }
-
-        // Wait for outbox event or interval timeout
-        match rx.recv_timeout(interval_dur) {
-            Ok(()) => {
-                // Outbox changed or shutdown — small delay to let file writes complete
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    eprintln!("Sync: stopped");
+    cryochamber::sync_common::run_sync_loop(
+        "Sync",
+        Arc::clone(&shutdown),
+        rx,
+        interval_dur,
+        &mut backend,
+    )?;
     // _pid_guard drops here, unlinking the pid file.
     Ok(())
 }
@@ -341,7 +351,7 @@ fn push_outbox(dir: &Path, sync_state: &cryochamber::gh_sync::GhSyncState) -> Re
     std::fs::create_dir_all(&archive)?;
 
     for (filename, msg) in &messages {
-        let body = format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body);
+        let body = format_outbox_post(msg);
         match cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &body) {
             Ok(()) => {
                 eprintln!("Sync: posted outbox/{filename} to Discussion");
@@ -365,15 +375,9 @@ fn cmd_gh_status() -> Result<()> {
     match cryochamber::gh_sync::load_sync_state(&gh_sync_path(&dir))? {
         None => println!("GitHub sync not configured. Run 'cryo-gh init' first."),
         Some(state) => {
-            println!("Repo: {}", state.repo);
-            println!("Discussion: #{}", state.discussion_number);
-            println!(
-                "Last read cursor: {}",
-                state
-                    .last_read_cursor
-                    .as_deref()
-                    .unwrap_or("(none — will read all)")
-            );
+            for line in state.status_lines() {
+                println!("{line}");
+            }
         }
     }
     Ok(())

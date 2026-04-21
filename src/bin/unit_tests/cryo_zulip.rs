@@ -1,5 +1,6 @@
 use super::*;
 use chrono::NaiveDateTime;
+use clap::Parser;
 use cryochamber::message::Message;
 use std::collections::BTreeMap;
 
@@ -55,4 +56,59 @@ fn unknown_sender_keeps_attribution() {
     // Anything that isn't agent/cryochamber should still identify itself.
     let out = format_outbox_post(&mk("teammate", "Question", "Are you free?"));
     assert_eq!(out, "**teammate** (Question)\n\nAre you free?");
+}
+
+#[test]
+fn init_defaults_to_new_messages_only() {
+    let cli = Cli::try_parse_from([
+        "cryo-zulip",
+        "init",
+        "--config",
+        "zuliprc",
+        "--stream",
+        "ops",
+    ])
+    .unwrap();
+
+    match cli.command {
+        Commands::Init { history, .. } => assert!(!history),
+        _ => panic!("expected init command"),
+    }
+}
+
+#[test]
+fn init_history_flag_imports_existing_messages() {
+    let cli = Cli::try_parse_from([
+        "cryo-zulip",
+        "init",
+        "--config",
+        "zuliprc",
+        "--stream",
+        "ops",
+        "--history",
+    ])
+    .unwrap();
+
+    match cli.command {
+        Commands::Init { history, .. } => assert!(history),
+        _ => panic!("expected init command"),
+    }
+}
+
+#[test]
+fn copy_zuliprc_to_project_keeps_existing_file_when_source_is_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let cryo_dir = dir.path().join(".cryo");
+    std::fs::create_dir_all(&cryo_dir).unwrap();
+    let config_path = cryo_dir.join("zuliprc");
+    std::fs::write(
+        &config_path,
+        "[api]\nemail=bot@example.com\nkey=secret\nsite=https://zulip.example.com\n",
+    )
+    .unwrap();
+
+    copy_zuliprc_to_project(&config_path, dir.path()).unwrap();
+
+    let copied = std::fs::read_to_string(&config_path).unwrap();
+    assert!(copied.contains("key=secret"));
 }

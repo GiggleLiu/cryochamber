@@ -1,4 +1,7 @@
-use cryochamber::zulip_sync::{load_sync_state, save_sync_state, ZulipSyncState};
+use cryochamber::zulip_sync::{
+    initial_last_message_id, load_sync_state, remember_seen_message_id, save_sync_state,
+    ZulipSyncState,
+};
 
 #[test]
 fn test_zulip_sync_state_roundtrip() {
@@ -69,4 +72,24 @@ fn test_zulip_sync_state_legacy_json_compat() {
     assert!(loaded.topic.is_none());
     assert!(loaded.last_message_id.is_none());
     assert!(loaded.last_pushed_session.is_none());
+}
+
+#[test]
+fn test_initial_last_message_id_defaults_to_new_messages_only() {
+    assert_eq!(initial_last_message_id(false, Some(55)), Some(55));
+}
+
+#[test]
+fn test_initial_last_message_id_history_mode_reads_existing_messages() {
+    assert_eq!(initial_last_message_id(true, Some(55)), None);
+}
+
+#[test]
+fn test_remember_seen_message_id_advances_for_skipped_messages() {
+    assert_eq!(remember_seen_message_id(Some(10), Some(12)), Some(12));
+}
+
+#[test]
+fn test_remember_seen_message_id_keeps_later_existing_value() {
+    assert_eq!(remember_seen_message_id(Some(12), Some(10)), Some(12));
 }
