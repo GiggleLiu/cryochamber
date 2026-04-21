@@ -130,7 +130,7 @@ example: build
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
-	$(CURDIR)/target/debug/cryohub start --foreground
+	cd "$(CURDIR)/$(dir $(DIR))" && $(CURDIR)/target/debug/cryohub start --foreground
 
 # Stop a running example
 # Usage: make example-cancel DIR=examples/chambers/chess-by-mail
@@ -144,7 +144,7 @@ example-cancel:
 PORT ?= 8765
 
 example-hub: build
-	cd examples && $(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
+	cd examples/chambers && $(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
 
 # Quick smoke test: force one agent wakeup cycle
 # Usage: make check-agent                 # check default (opencode)

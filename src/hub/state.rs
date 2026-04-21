@@ -103,8 +103,7 @@ mod tests {
     #[test]
     fn resolve_finds_known_chamber() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();

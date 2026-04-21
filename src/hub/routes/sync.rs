@@ -96,8 +96,7 @@ mod tests {
     #[tokio::test]
     async fn get_sync_returns_empty_for_unconfigured_chamber() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
@@ -112,8 +111,7 @@ mod tests {
     #[tokio::test]
     async fn get_sync_reports_configured_gh_backend() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
@@ -140,8 +138,7 @@ mod tests {
     #[tokio::test]
     async fn post_sync_action_rejects_unknown_backend() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
@@ -157,8 +154,7 @@ mod tests {
     #[tokio::test]
     async fn post_sync_action_rejects_unknown_verb() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();

@@ -21,7 +21,7 @@ A cron job can't do this because:
 ```bash
 cd examples/chambers/chess-by-mail
 cryo init && cryo start
-cd ../.. && cryohub start --foreground   # open the browser chat UI from the workspace dir
+cd .. && cryohub start --foreground   # open the browser chat UI for all chambers in examples/chambers/
 ```
 
 ## Playing
@@ -31,8 +31,8 @@ cd ../.. && cryohub start --foreground   # open the browser chat UI from the wor
 cryo send "e2e4"
 cryo send "Nf3" --wake  # wake the AI immediately
 
-# Or use the hub UI from the workspace dir
-cryohub start
+# Or use the hub UI; cd to a parent of your chamber subdirs first
+cd <chambers-parent-dir> && cryohub start
 ```
 
 ## How It Works

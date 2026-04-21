@@ -21,13 +21,13 @@ cryo clean [--force]                # Remove runtime files (logs, state, message
 
 ## Hub (`cryohub`)
 
-Workspace-wide browser dashboard for managing chambers. Runs from a directory containing a `chambers/` subdirectory. See [Hub](./hub.md).
+Browser dashboard for managing chambers. Always operates on the current directory — `cd` into a parent of chamber subdirectories first. See [Hub](./hub.md).
 
 ```bash
 cryohub start [--host <ip>] [--port <n>]   # install service (survives reboot)
 cryohub start --foreground                  # run in the current process instead
-cryohub stop                                # uninstall the service
-cryohub status                              # show whether a service is installed
+cryohub stop                                # uninstall the service for this dir
+cryohub status                              # show this dir's service + any others
 ```
 
 ## Agent IPC (`cryo-agent`)

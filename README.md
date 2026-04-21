@@ -59,7 +59,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryohub start                                                 # if using the web UI
+cd <chambers-parent-dir> && cryohub start                     # if using the web UI
 ```
 
 ### 4. Manage the running service
@@ -74,24 +74,28 @@ cryo cancel          # stop the daemon
 
 ## Cryohub (multi-chamber)
 
-`cryohub` runs a workspace-wide dashboard. A **workspace** is a directory that contains a `chambers/` subdirectory; each `chambers/<name>/` is a cryo project (a **chamber**).
+`cryohub` runs a directory-scoped dashboard. `cd` into a directory whose immediate subdirectories are chambers (each has its own `cryo.toml`), then start it:
 
 ```
-~/my-cryo-workspace/
-  chambers/
-    chess-by-mail/
-    mr-lazy/
-    reports/
+~/my-chambers/
+  chess-by-mail/
+  mr-lazy/
+  reports/
 ```
 
-Run `cryohub start` from the workspace dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside `./chambers/`) appear as **external** chambers for monitoring only.
+```bash
+cd ~/my-chambers
+cryohub start
+```
+
+`cryohub` always operates on the current directory; it rejects starting from a chamber dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside the hub's cwd) appear as **external** chambers for monitoring only.
 
 **Single-chamber layout:**
 
 ```bash
-mkdir -p ~/cryo-workspace/chambers
-ln -s $(pwd) ~/cryo-workspace/chambers/my-chamber
-cd ~/cryo-workspace && cryohub start
+mkdir -p ~/cryo-chambers
+ln -s $(pwd) ~/cryo-chambers/my-chamber
+cd ~/cryo-chambers && cryohub start
 ```
 
 ## Messaging Channels

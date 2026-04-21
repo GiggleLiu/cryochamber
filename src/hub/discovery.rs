@@ -1,9 +1,10 @@
-//! Chamber discovery: scan `<workspace>/chambers/*/cryo.toml`.
+//! Chamber discovery: scan `<dir>/*/cryo.toml`.
 //!
-//! Hub only surfaces chambers that live under the current workspace. Daemons
-//! running elsewhere on the machine (e.g. test leftovers under `/tmp/`) are
-//! intentionally not merged in — they would clutter the rail and can't be
-//! managed from this hub instance anyway.
+//! Hub only surfaces chambers that live under the directory `cryohub` was
+//! started in (the server's cwd). Daemons running elsewhere on the machine
+//! (e.g. test leftovers under `/tmp/`) are intentionally not merged in —
+//! they would clutter the rail and can't be managed from this hub instance
+//! anyway.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -58,14 +59,13 @@ pub struct ChamberEntry {
 /// A map from chamber id → entry.
 pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
 
-/// Scan `<workspace>/chambers/*` for chambers. Returns entries for every
-/// subdirectory (even ones with broken or missing `cryo.toml` — those get a
+/// Scan `<dir>/*` for chambers. Returns entries for every subdirectory
+/// (even ones with broken or missing `cryo.toml` — those get a
 /// `config_error`). Runtime fields (`running`, `session`, `next_wake`,
 /// `unread`) are filled in by `populate_runtime`, not here.
-pub fn scan_workspace(workspace: &Path) -> ChamberIndex {
-    let chambers_dir = workspace.join("chambers");
+pub fn scan_workspace(dir: &Path) -> ChamberIndex {
     let mut out = ChamberIndex::new();
-    let Ok(rd) = std::fs::read_dir(&chambers_dir) else {
+    let Ok(rd) = std::fs::read_dir(dir) else {
         return out;
     };
     for entry in rd.flatten() {
@@ -236,12 +236,11 @@ mod tests {
     #[test]
     fn scan_finds_chambers_with_valid_config() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        std::fs::create_dir_all(chambers.join("alpha")).unwrap();
-        std::fs::create_dir_all(chambers.join("beta")).unwrap();
+        std::fs::create_dir_all(dir.path().join("alpha")).unwrap();
+        std::fs::create_dir_all(dir.path().join("beta")).unwrap();
         let cfg = crate::config::CryoConfig::default();
-        crate::config::save_config(&chambers.join("alpha").join("cryo.toml"), &cfg).unwrap();
-        crate::config::save_config(&chambers.join("beta").join("cryo.toml"), &cfg).unwrap();
+        crate::config::save_config(&dir.path().join("alpha").join("cryo.toml"), &cfg).unwrap();
+        crate::config::save_config(&dir.path().join("beta").join("cryo.toml"), &cfg).unwrap();
 
         let idx = scan_workspace(dir.path());
         assert_eq!(idx.len(), 2);
@@ -256,7 +255,7 @@ mod tests {
     #[test]
     fn scan_flags_missing_cryo_toml_as_error() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("chambers").join("broken")).unwrap();
+        std::fs::create_dir_all(dir.path().join("broken")).unwrap();
         let idx = scan_workspace(dir.path());
         assert_eq!(idx.len(), 1);
         let entry = idx.values().next().unwrap();
@@ -266,8 +265,7 @@ mod tests {
     #[test]
     fn populate_reads_session_and_unread() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
@@ -309,8 +307,7 @@ mod tests {
     #[test]
     fn populate_reports_configured_gh_sync() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
@@ -335,8 +332,7 @@ mod tests {
     #[test]
     fn populate_runtime_exposes_rail_display_fields() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();

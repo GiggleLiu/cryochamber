@@ -14,7 +14,7 @@ cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync
 cryo-gh init --repo owner/repo                                # if using GitHub Discussions
 cryo-gh sync
-cryohub start                                                 # if using the web UI
+cd <chambers-parent-dir> && cryohub start                     # if using the web UI
 ```
 
 ## Manage the running service

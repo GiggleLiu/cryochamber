@@ -27,7 +27,7 @@ make cli            # cargo install --path .
 make logo           # compile logo with typst
 make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)
 make example-cancel # stop a running example (DIR=examples/chambers/...)
-make example-hub    # start cryohub over examples/ workspace (PORT=8765)
+make example-hub    # start cryohub over examples/chambers/ (PORT=8765)
 make example-clean  # remove auto-generated files from all examples
 make run-plan       # execute a plan with Codex by default (RUNNER=claude for Claude)
 make check-agent    # quick agent smoke test (AGENT=opencode|claude)
@@ -53,7 +53,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | Binary | Purpose |
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
-| `cryo-agent` | Agent IPC CLI — `hibernate`, `note`, `send`, `reply`, `receive`, `alert`, `time`, `todo` (most commands send requests to the daemon via socket; `receive` and `time` are local) |
+| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `reply`, `receive`, `alert`, `time`, `todo` (most commands send requests to the daemon via socket; `receive` and `time` are local) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |
 | `cryohub` | Workspace-wide web dashboard — `start`, `stop`, `status`, `daemon` (installs a launchd/systemd service that serves the hub UI over HTTP). |
@@ -65,7 +65,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `socket` | Unix domain socket IPC — message types (`Request`/`Response`), client (`send_request`), server (`SocketServer`). |
 | `config` | TOML persistence for project config (`cryo.toml`). `CryoConfig` struct, load/save, `apply_overrides` merges CLI overrides from state. |
 | `state` | JSON persistence to `timer.json` — runtime-only state (session number, PID lock, CLI overrides). PID-based locking via `libc::kill(pid, 0)`. |
-| `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, notes, hibernate, exit). |
+| `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, hibernate, exit). |
 | `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, cryo.toml). Written by `init`/`start`. |
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (stdout/stderr redirected to `cryo-agent.log`). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
@@ -92,14 +92,16 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
 - **Default agent**: The CLI defaults to `opencode` as the agent command (headless mode, not the TUI).
+- **Agent notes via `NOTES.md`**: The agent's persistent memory across sessions is a plain markdown file (`NOTES.md`) the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes drawer tab, and updated by the agent on its own. The removed `cryo-agent note` subcommand and `Request::Note` IPC variant are historical.
 - **`cryo-agent time` input grammar**: Accepts three forms only — empty (current time), `+N minutes|hours|days|weeks` (relative offset), and ISO8601 (`2026-04-25T10:00` or date-only) as validated pass-through. Natural-language parsing is deliberately **not** supported: the agent is an LLM that can reason about "tomorrow 9am" itself, so the tool stays small and documentable. Unknown input prints the accepted forms.
-- **`cryohub` is workspace-level**: The `cryohub` binary (not `cryo`) runs the web dashboard. Host and port come from CLI flags (`cryohub start --host --port`, defaults `127.0.0.1:8765`), not from `cryo.toml`. It requires a `chambers/` subdirectory (workspace mode) and rejects chamber-cwd invocations. The service label is `"hub"` (plist/unit `com.cryo.hub.<hash>`), and the log file is `cryohub.log`. Per-chamber `web_host`/`web_port` fields are not part of `CryoConfig`.
+- **`cryohub` is cwd-scoped**: The `cryohub` binary (not `cryo`) runs the web dashboard and always operates on the current directory — there is no `--dir` flag. The cwd must not itself be a chamber (no `cryo.toml` directly inside). Discovery scans `<cwd>/*` for chamber subdirectories. Host and port are CLI flags (`--host`, `--port`, defaults `127.0.0.1:8765`), not `cryo.toml` fields. The service label is `"hub"` (plist/unit `com.cryo.hub.<hash>`), and the log file is `cryohub.log`. `cryohub status`/`stop` operate on the cwd's service and additionally list every other `com.cryo.hub.*` service installed on the machine (via `service::list_installed`) so users can find services started from a different cwd. Per-chamber `web_host`/`web_port` fields are not part of `CryoConfig`.
 
 ### Files Created by `cryo init`
 
 - `cryo.toml` — project configuration (agent, max_retries, max_session_duration, watch_inbox)
 - `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `plan.md` — template plan file
+- `NOTES.md` — agent's persistent memory across sessions (seeded from `templates/notes.md`; agent reads/writes directly)
 - `README.md` — quickstart guide for the project (service commands, messaging channels)
 
 ### Files Created at Runtime (per project directory)
@@ -115,7 +117,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - `gh-sync.json` — GitHub Discussion sync state (if configured)
 - `cryo-gh-sync.log` — GitHub sync daemon log output (if configured)
 - `zulip-sync.json` — Zulip sync state (if configured)
-- `.cryo/zuliprc` — Zulip credentials copied from user's zuliprc (if configured)
+- `.cryo/zuliprc` — Zulip credentials copied from user's zuliprc (if configured). **Never sync, commit, or push this file** — it holds API credentials. Already gitignored; sync channels (`cryo-gh`, `cryo-zulip`) must never include it in any payload.
 - `cryo-zulip-sync.log` — Zulip sync daemon log output (if configured)
 - `~/Library/LaunchAgents/com.cryo.*.plist` — macOS launchd service files (auto-managed)
 - `~/.config/systemd/user/com.cryo.*.service` — Linux systemd service files (auto-managed)

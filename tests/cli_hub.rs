@@ -2,9 +2,9 @@ use assert_cmd::Command;
 use predicates::str::contains;
 
 #[test]
-fn cryohub_start_rejects_chamber_cwd_with_workspace_message() {
+fn cryohub_start_rejects_chamber_cwd() {
     let tmp = tempfile::tempdir().unwrap();
-    // Simulate a chamber: a cryo.toml but no chambers/ subdir.
+    // Simulate a chamber: a cryo.toml directly in the dir.
     let cfg = cryochamber::config::CryoConfig::default();
     cryochamber::config::save_config(&tmp.path().join("cryo.toml"), &cfg).unwrap();
 
@@ -17,24 +17,7 @@ fn cryohub_start_rejects_chamber_cwd_with_workspace_message() {
         .timeout(std::time::Duration::from_secs(3))
         .assert()
         .failure()
-        .stderr(contains("workspace mode"));
-}
-
-#[test]
-fn cryohub_start_rejects_non_workspace_dir() {
-    // An empty dir with neither cryo.toml nor chambers/ is not a workspace.
-    let tmp = tempfile::tempdir().unwrap();
-
-    #[allow(deprecated)]
-    Command::cargo_bin("cryohub")
-        .unwrap()
-        .current_dir(tmp.path())
-        .arg("start")
-        .arg("--foreground")
-        .timeout(std::time::Duration::from_secs(3))
-        .assert()
-        .failure()
-        .stderr(contains("needs a workspace"));
+        .stderr(contains("is a chamber"));
 }
 
 #[test]
@@ -110,6 +93,58 @@ fn cryohub_stop_reports_nothing_when_no_service() {
         .assert()
         .success()
         .stdout(contains("No cryohub service installed"));
+}
+
+#[test]
+fn cryohub_status_lists_other_installed_services_anchored_elsewhere() {
+    // Install a fake hub service for /some/other/dir, then run `cryohub status`
+    // from a different cwd and confirm the other service is surfaced. This is
+    // the cwd-mismatch mitigation: users who started from a different dir can
+    // still find their service.
+    let cwd = tempfile::tempdir().unwrap();
+    let fake_home = tempfile::tempdir().unwrap();
+    let other_dir = std::path::PathBuf::from("/tmp/cryohub-test-other-dir-xyz");
+
+    let other_label = cryochamber::service::service_label("hub", &other_dir);
+
+    #[cfg(target_os = "macos")]
+    let (unit_path, unit_body) = {
+        let agents = fake_home.path().join("Library/LaunchAgents");
+        std::fs::create_dir_all(&agents).unwrap();
+        let body = format!(
+            "<plist><dict><key>WorkingDirectory</key><string>{}</string></dict></plist>",
+            other_dir.display()
+        );
+        (agents.join(format!("{other_label}.plist")), body)
+    };
+    #[cfg(target_os = "linux")]
+    let (unit_path, unit_body) = {
+        let units = fake_home.path().join(".config/systemd/user");
+        std::fs::create_dir_all(&units).unwrap();
+        let body = format!(
+            "[Service]\nExecStart=/x\nWorkingDirectory={}\n",
+            other_dir.display()
+        );
+        (units.join(format!("{other_label}.service")), body)
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let (unit_path, unit_body): (std::path::PathBuf, String) = {
+        return; // list_installed returns empty on unsupported platforms.
+    };
+
+    std::fs::write(&unit_path, unit_body).unwrap();
+
+    #[allow(deprecated)]
+    Command::cargo_bin("cryohub")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("HOME", fake_home.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("Other cryohub services installed"))
+        .stdout(contains(&other_label))
+        .stdout(contains(other_dir.to_str().unwrap()));
 }
 
 #[test]

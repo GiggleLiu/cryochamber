@@ -6,13 +6,12 @@ use cryochamber::config;
 use cryochamber::hub::{build_router_with_state, discovery, state::AppState};
 use tower::ServiceExt;
 
-/// Build a workspace with two chambers. Populate the AppState index
+/// Build a workspace dir with two chambers. Populate the AppState index
 /// *without* calling `registry::list()` so the test is isolated from whatever
 /// daemons happen to be running on the developer's or CI machine.
 fn setup_app(tmp: &tempfile::TempDir) -> Arc<AppState> {
-    let chambers = tmp.path().join("chambers");
     for name in ["alpha", "beta"] {
-        let d = chambers.join(name);
+        let d = tmp.path().join(name);
         std::fs::create_dir_all(&d).unwrap();
         let cfg = config::CryoConfig::default();
         config::save_config(&d.join("cryo.toml"), &cfg).unwrap();
@@ -106,22 +105,12 @@ async fn send_message_writes_to_correct_chamber() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let alpha_dir = tmp
-        .path()
-        .join("chambers")
-        .join("alpha")
-        .canonicalize()
-        .unwrap();
+    let alpha_dir = tmp.path().join("alpha").canonicalize().unwrap();
     let msgs = cryochamber::message::read_inbox(&alpha_dir).unwrap();
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].1.body, "hello alpha");
 
-    let beta_dir = tmp
-        .path()
-        .join("chambers")
-        .join("beta")
-        .canonicalize()
-        .unwrap();
+    let beta_dir = tmp.path().join("beta").canonicalize().unwrap();
     let beta_msgs = cryochamber::message::read_inbox(&beta_dir).unwrap();
     assert_eq!(beta_msgs.len(), 0);
 }
@@ -150,8 +139,7 @@ async fn start_chamber_via_api_creates_background_daemon() {
     std::env::set_var("CRYO_NO_SERVICE", "1");
 
     let tmp = tempfile::tempdir().unwrap();
-    let chambers = tmp.path().join("chambers");
-    let alpha = chambers.join("alpha");
+    let alpha = tmp.path().join("alpha");
     std::fs::create_dir_all(&alpha).unwrap();
     let cfg = config::CryoConfig {
         agent: "true".into(),

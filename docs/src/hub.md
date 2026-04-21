@@ -1,50 +1,51 @@
 # Cryohub
 
-`cryohub` runs a workspace-scoped web dashboard on `http://127.0.0.1:8765` by default.
+`cryohub` runs a directory-scoped web dashboard on `http://127.0.0.1:8765` by default.
 
 ## Workspace layout
 
-A workspace is a directory containing a `chambers/` subdirectory. Each chamber is a regular cryochamber project (a dir with `cryo.toml`):
+`cryohub` always operates on the current directory. `cd` into a directory whose immediate subdirectories are chambers (each subdirectory has its own `cryo.toml`):
 
 ```
-~/my-cryo-workspace/
-  chambers/
-    chess-by-mail/     # cryo.toml + plan.md here
-    mr-lazy/
-    reports/
+~/my-chambers/
+  chess-by-mail/     # cryo.toml + plan.md here
+  mr-lazy/
+  reports/
 ```
 
-Start the hub from the workspace dir:
+Then start the hub from that directory:
 
 ```bash
-cd ~/my-cryo-workspace
+cd ~/my-chambers
 cryohub start              # installs a service that survives reboot
 cryohub start --foreground # run in foreground (no service)
-cryohub stop               # stop and remove the service
-cryohub status             # show whether a service is installed
+cryohub stop               # stop and remove the service for this dir
+cryohub status             # show whether a service is installed for this dir
 ```
+
+`cryohub` rejects starting from a chamber dir (one with `cryo.toml`) — `cd` to the parent.
+
+`cryohub status` and `cryohub stop` always also list any **other** cryohub services installed elsewhere on the machine, so you can find services started from a different cwd.
 
 ## What the UI does
 
 - **Sidebar** — every chamber, sorted by running → stopped → external. Shows status dot, name, unread-message badge.
 - **Main pane** — full detail for the selected chamber: status, task, next wake, notes, message history, log tail, send widget.
-- **Lifecycle buttons** — `start` / `stop` / `restart` for workspace chambers. External chambers show no lifecycle buttons.
+- **Lifecycle buttons** — `start` / `stop` / `restart` for chambers under the hub's cwd. External chambers show no lifecycle buttons.
 
 ## External chambers
 
-Running daemons anywhere on the machine (registered via `cryo start` from any working directory) appear as **external** chambers if they aren't under the current workspace's `./chambers/`. They're monitor-only from the UI.
+Running daemons anywhere on the machine (registered via `cryo start` from any working directory) appear as **external** chambers if they aren't under the hub's cwd. They're monitor-only from the UI.
 
 ## Single-chamber layout
 
-If you only have one chamber, still point the hub at a workspace dir. Symlink the chamber into a `chambers/` folder:
+If you only have one chamber, `cd` to a parent directory and symlink the chamber into it:
 
 ```bash
-mkdir -p ~/cryo-workspace/chambers
-ln -s $(pwd) ~/cryo-workspace/chambers/my-chamber
-cd ~/cryo-workspace && cryohub start
+mkdir -p ~/cryo-chambers
+ln -s $(pwd) ~/cryo-chambers/my-chamber
+cd ~/cryo-chambers && cryohub start
 ```
-
-Running `cryohub start` from a chamber dir prints a workspace-mode error.
 
 ## Security
 

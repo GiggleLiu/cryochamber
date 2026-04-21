@@ -11,7 +11,7 @@ Every time cryochamber wakes Mr. Lazy, he rolls a die — 25% chance he actually
 ```bash
 cd examples/chambers/mr-lazy
 cryo init && cryo start
-cd ../.. && cryohub start --foreground   # open the browser chat UI from the workspace dir
+cd .. && cryohub start --foreground   # open the browser chat UI for all chambers in examples/chambers/
 ```
 
 Or use the Makefile target (runs in daemon mode, Ctrl-C to stop):

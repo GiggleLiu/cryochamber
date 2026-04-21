@@ -29,9 +29,11 @@ watch_inbox = true        # Watch inbox for reactive wake
 | `report_time` | `"09:00"` | Local wall-clock time for periodic status reports, formatted as `HH:MM`. |
 | `report_interval` | `0` | Hours between periodic reports. `0` disables reports; common values are `24` for daily and `168` for weekly. Reports are written to `messages/outbox/`. |
 
-`cryohub` host and port are not `cryo.toml` fields — they are CLI flags
-(`cryohub start --host 0.0.0.0 --port 8765`, defaults `127.0.0.1:8765`).
-`cryohub` runs at the workspace level (expects a `chambers/` directory), not per-chamber.
+`cryohub` settings are not `cryo.toml` fields — they are CLI flags
+(`cryohub start [--host 0.0.0.0] [--port 8765]`, host/port default to
+`127.0.0.1:8765`). `cryohub` always operates on the current directory; `cd`
+into a directory whose immediate subdirectories are chambers (not into a
+chamber itself) before running it.
 
 ## CLI Overrides
 

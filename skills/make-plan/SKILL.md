@@ -98,7 +98,7 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 How should the agent communicate with the user?
 - **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval. **Before Phase 3:** the bot (whoever owns the API key in the zuliprc) must be subscribed to the target stream; otherwise `cryo-zulip init` fails when resolving the stream. Remind the user to add the bot in Zulip's stream settings.
 - **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
-- **Hub (Web UI) only** — simplest, browser via `cryohub start`. Host and port are CLI flags (`cryohub start --host 0.0.0.0 --port 8765`), not `cryo.toml` fields. Default is `127.0.0.1:8765`. For remote access use `--host 0.0.0.0`. If 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user. Note: `cryohub` runs at the workspace level (expects a `chambers/` directory), not per-chamber.
+- **Hub (Web UI) only** — simplest, browser via `cryohub start`. `cryohub` always operates on the current directory and expects to be run from a directory whose immediate subdirectories are chambers (not from a chamber dir itself). Host/port are CLI flags (`cryohub start --host 0.0.0.0 --port 8765`), not `cryo.toml` fields; default is `127.0.0.1:8765`. For remote access use `--host 0.0.0.0`. If 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user.
 - **None** — agent runs silently, check logs manually.
 
 ### Q10. Periodic reports

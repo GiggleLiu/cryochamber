@@ -48,10 +48,9 @@ mod tests {
     #[tokio::test]
     async fn get_chambers_lists_workspace_scans() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        std::fs::create_dir_all(chambers.join("alpha")).unwrap();
+        std::fs::create_dir_all(dir.path().join("alpha")).unwrap();
         let cfg = crate::config::CryoConfig::default();
-        crate::config::save_config(&chambers.join("alpha").join("cryo.toml"), &cfg).unwrap();
+        crate::config::save_config(&dir.path().join("alpha").join("cryo.toml"), &cfg).unwrap();
 
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
         app.refresh();
@@ -65,12 +64,11 @@ mod tests {
     #[tokio::test]
     async fn refresh_picks_up_new_chamber() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("chambers")).unwrap();
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
         let Json(initial) = get_chambers(State(app.clone())).await;
         assert_eq!(initial.as_array().unwrap().len(), 0);
 
-        let new_dir = dir.path().join("chambers").join("beta");
+        let new_dir = dir.path().join("beta");
         std::fs::create_dir_all(&new_dir).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&new_dir.join("cryo.toml"), &cfg).unwrap();
@@ -84,8 +82,7 @@ mod tests {
     #[tokio::test]
     async fn get_chambers_refreshes_runtime_fields_from_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let chambers = dir.path().join("chambers");
-        let alpha = chambers.join("alpha");
+        let alpha = dir.path().join("alpha");
         std::fs::create_dir_all(&alpha).unwrap();
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();

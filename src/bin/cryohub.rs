@@ -1,8 +1,9 @@
 // src/bin/cryohub.rs
-//! Cryohub — workspace-wide web dashboard for managing cryochambers.
+//! Cryohub — directory-scoped web dashboard for managing cryochambers.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::path::{Path, PathBuf};
 
 const SERVICE_LABEL: &str = "hub";
 const LOG_FILENAME: &str = "cryohub.log";
@@ -12,7 +13,7 @@ const DEFAULT_PORT: u16 = 8765;
 #[derive(Parser)]
 #[command(
     name = "cryohub",
-    about = "Cryochamber hub: workspace-wide web dashboard"
+    about = "Cryochamber hub: directory-scoped web dashboard"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -21,7 +22,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the hub (installs an OS service that survives reboot unless --foreground)
+    /// Start the hub from the current directory (installs an OS service that
+    /// survives reboot unless --foreground)
     Start {
         /// Host to listen on (default: 127.0.0.1)
         #[arg(long)]
@@ -33,9 +35,10 @@ enum Commands {
         #[arg(long)]
         foreground: bool,
     },
-    /// Stop and remove the hub service
+    /// Stop and remove the hub service for the current directory
     Stop,
-    /// Show whether a hub service is installed for this workspace
+    /// Show whether a hub service is installed for the current directory.
+    /// Always also lists every other cryohub service installed on the machine.
     Status,
     /// Run the server in the current process (internal — used by the service)
     #[command(hide = true)]
@@ -61,38 +64,21 @@ fn main() -> Result<()> {
     }
 }
 
-fn require_workspace() -> Result<std::path::PathBuf> {
+fn require_chambers_dir() -> Result<PathBuf> {
     let dir = cryochamber::work_dir()?;
-    if dir.join("chambers").is_dir() {
-        return Ok(dir);
-    }
     if cryochamber::config::config_path(&dir).exists() {
         anyhow::bail!(
-            "cryohub runs in workspace mode.\n\n\
-             This directory contains a cryo.toml (it's a chamber), not a chambers/ directory.\n\
-             Create a workspace:\n  \
-               mkdir -p ~/cryo-workspace/chambers\n  \
-               ln -s {} ~/cryo-workspace/chambers/{}\n  \
-               cd ~/cryo-workspace && cryohub start\n",
-            dir.display(),
-            dir.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("this-chamber"),
+            "{} is a chamber (contains cryo.toml), not a directory of chambers.\n\
+             cd to the parent directory that holds your chamber subdirectories\n\
+             and run cryohub from there.",
+            dir.display()
         );
     }
-    anyhow::bail!(
-        "cryohub needs a workspace: a directory containing a `chambers/` subdirectory.\n\
-         {} has no `chambers/` here.\n\
-         Create one with:\n  \
-           mkdir -p {dir}/chambers\n\
-         or symlink an existing chamber into it.",
-        dir.display(),
-        dir = dir.display(),
-    );
+    Ok(dir)
 }
 
 fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Result<()> {
-    let dir = require_workspace()?;
+    let dir = require_chambers_dir()?;
     let host = host.unwrap_or_else(|| DEFAULT_HOST.to_string());
     let port = port.unwrap_or(DEFAULT_PORT);
 
@@ -113,8 +99,12 @@ fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Resul
         true,
     )?;
     println!("Cryohub service installed: http://{host}:{port}");
+    println!("Serving chambers from: {}", dir.display());
     println!("Log: {}", log_path.display());
-    println!("Survives reboot. Stop with: cryohub stop");
+    println!(
+        "Survives reboot. Stop with: cd {} && cryohub stop",
+        dir.display()
+    );
     Ok(())
 }
 
@@ -122,9 +112,10 @@ fn cmd_stop() -> Result<()> {
     let dir = cryochamber::work_dir()?;
     if cryochamber::service::uninstall(SERVICE_LABEL, &dir)? {
         println!("Cryohub service stopped and removed.");
-    } else {
-        println!("No cryohub service installed for this directory.");
+        return Ok(());
     }
+    println!("No cryohub service installed for {}.", dir.display());
+    print_other_installed(&dir);
     Ok(())
 }
 
@@ -142,11 +133,34 @@ fn cmd_status() -> Result<()> {
     } else {
         println!("Cryohub service: not installed for {}", dir.display());
     }
+    print_other_installed(&dir);
     Ok(())
 }
 
+/// List every cryohub service on the machine *except* the one anchored at
+/// `dir` (which the caller has already reported on). Helps users find services
+/// they started from a different cwd.
+fn print_other_installed(dir: &Path) {
+    let installed = cryochamber::service::list_installed(SERVICE_LABEL);
+    let others: Vec<_> = installed
+        .into_iter()
+        .filter(|s| s.dir.as_deref() != Some(dir))
+        .collect();
+    if others.is_empty() {
+        return;
+    }
+    println!("\nOther cryohub services installed on this machine:");
+    for s in others {
+        match s.dir {
+            Some(d) => println!("  {} → {}", s.label, d.display()),
+            None => println!("  {} → (working directory not parseable)", s.label),
+        }
+    }
+    println!("(cd into the listed directory and run `cryohub stop` to remove one.)");
+}
+
 fn cmd_daemon(host: String, port: u16) -> Result<()> {
-    let dir = cryochamber::work_dir()?;
+    let dir = require_chambers_dir()?;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(cryochamber::hub::serve(dir, &host, port))
 }

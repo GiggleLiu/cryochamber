@@ -326,7 +326,9 @@ fn cmd_start(
         }
     }
 
-    println!("Use `cryo watch` or `cryohub start` to follow progress.");
+    println!(
+        "Use `cryo watch` or `cryohub start` (from a parent of chamber dirs) to follow progress."
+    );
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -443,7 +445,9 @@ fn cmd_restart() -> Result<()> {
         DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),
         DaemonLaunchMode::Service => println!("Restarted (service reinstalled)."),
     }
-    println!("Use `cryo watch` or `cryohub start` to follow progress.");
+    println!(
+        "Use `cryo watch` or `cryohub start` (from a parent of chamber dirs) to follow progress."
+    );
     Ok(())
 }
 

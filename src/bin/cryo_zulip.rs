@@ -348,13 +348,32 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
 
 /// Format an outbox message for posting to a Zulip stream.
 ///
-/// The agent's replies (`from == "agent"`) always carry `subject = "Reply"`,
-/// which is redundant in the thread — the body is the reply. Drop the
-/// parenthetical in that case. Operator-facing messages (reports, fallback
-/// alerts) keep their subject because it carries real information.
+/// Zulip already shows the sender's bot name above each message, so we don't
+/// re-state who wrote it in the body.
+///
+/// - Agent replies (`from == "agent"`): post the body as-is. The subject is
+///   always "Reply", which adds no information.
+/// - System messages (`from == "cryochamber"`: reports, fallback alerts):
+///   render as a Zulip blockquote with the subject as a bold header. The
+///   blockquote visually marks them as machine-generated rather than a
+///   human-style reply.
+/// - Anything else: keep the original `**from** (subject)\n\nbody` shape so
+///   non-system, non-agent senders remain attributable.
 fn format_outbox_post(msg: &cryochamber::message::Message) -> String {
     if msg.from == "agent" {
-        format!("**{}**\n\n{}", msg.from, msg.body)
+        msg.body.clone()
+    } else if msg.from == "cryochamber" {
+        let mut out = format!("> **{}**\n>\n", msg.subject);
+        for line in msg.body.lines() {
+            out.push_str("> ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        // Trim the trailing newline that the loop added.
+        if out.ends_with('\n') {
+            out.pop();
+        }
+        out
     } else {
         format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
     }
@@ -442,18 +461,18 @@ mod format_tests {
     }
 
     #[test]
-    fn agent_reply_drops_subject_parenthetical() {
-        // The agent's reply subject is always "Reply" (see daemon::write_reply).
-        // Showing it in the Zulip thread just produces "**agent** (Reply)" noise.
+    fn agent_reply_posts_body_only() {
+        // Zulip already shows the bot name above the message — re-stating
+        // "**agent**" in the body just adds noise. The subject is always
+        // "Reply" anyway, which is information-free.
         let out = format_outbox_post(&mk("agent", "Reply", "hello human"));
-        assert_eq!(out, "**agent**\n\nhello human");
-        assert!(!out.contains("(Reply)"));
+        assert_eq!(out, "hello human");
     }
 
     #[test]
-    fn cryochamber_report_keeps_subject() {
-        // Reports and fallback alerts carry information in the subject — we
-        // must not strip it just because agent replies do.
+    fn cryochamber_report_renders_as_blockquote() {
+        // Reports are machine-generated; render them as a Zulip blockquote
+        // so they read as system info rather than a human-style reply.
         let out = format_outbox_post(&mk(
             "cryochamber",
             "Cryochamber Report: demo",
@@ -461,17 +480,27 @@ mod format_tests {
         ));
         assert_eq!(
             out,
-            "**cryochamber** (Cryochamber Report: demo)\n\nLast 24h: 3 sessions, 0 failed"
+            "> **Cryochamber Report: demo**\n>\n> Last 24h: 3 sessions, 0 failed"
         );
     }
 
     #[test]
-    fn fallback_alert_keeps_subject() {
+    fn cryochamber_multiline_body_quotes_each_line() {
         let out = format_outbox_post(&mk(
             "cryochamber",
             "Fallback Alert: deadline_missed",
-            "Agent exceeded max retries",
+            "Agent exceeded max retries.\nNext attempt in 60s.",
         ));
-        assert!(out.starts_with("**cryochamber** (Fallback Alert: deadline_missed)\n\n"));
+        assert_eq!(
+            out,
+            "> **Fallback Alert: deadline_missed**\n>\n> Agent exceeded max retries.\n> Next attempt in 60s."
+        );
+    }
+
+    #[test]
+    fn unknown_sender_keeps_attribution() {
+        // Anything that isn't agent/cryochamber should still identify itself.
+        let out = format_outbox_post(&mk("teammate", "Question", "Are you free?"));
+        assert_eq!(out, "**teammate** (Question)\n\nAre you free?");
     }
 }

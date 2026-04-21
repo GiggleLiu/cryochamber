@@ -14,7 +14,7 @@ for cross-session memory, probabilistic plan completion.
 ```bash
 cd examples/chambers/mr-lazy
 cryo init && cryo start
-cd ../.. && cryohub start --foreground   # open the browser chat UI from the workspace dir
+cd .. && cryohub start --foreground   # open the browser chat UI for all chambers in examples/chambers/
 ```
 
 Or use the health check target (runs in daemon mode, Ctrl-C to stop):
