@@ -31,7 +31,7 @@ If you want your coding agent to set up a new Cryochamber project for you, paste
 Set up a new Cryochamber project for me in this directory.
 
 1. If `cryo` is not installed, install it with `cargo install cryochamber`.
-2. If the `make-plan` skill is not installed and your coding agent supports custom skills, install it from the Cryochamber repo: clone https://github.com/GiggleLiu/cryochamber somewhere local, then use your agent's skill installation mechanism to install `/path/to/cryochamber/skills/make-plan`.
+2. If the `make-plan` skill is not installed and your coding agent supports custom skills, install it from the Cryochamber repo: clone https://github.com/GiggleLiu/cryochamber somewhere local, then use your agent's skill installation mechanism to install `/path/to/cryochamber/.claude/skills/make-plan`.
 3. Invoke the `make-plan` skill to create the Cryochamber project and generate the initial plan/config files.
 4. Start the daemon with `cryo start`.
 5. Tell me which files were created or updated, and whether the service started successfully.

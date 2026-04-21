@@ -4,6 +4,19 @@
 
 Play a correspondence chess game against a human opponent. Maintain the board state across sessions, respond to moves received via inbox messages, and adapt your checking schedule based on activity.
 
+## Closing ritual — every session
+
+Every session of this plan ends with the standard two-call ritual (see `CLAUDE.md` / `AGENTS.md`):
+
+```
+cryo-agent todo add "<next step>" --at <WAKE_TIME>
+cryo-agent hibernate --summary "<what I did>"
+```
+
+Wake times come **only** from TODOs. `hibernate` does not schedule anything. The sole exception is game-over, where you use `hibernate --complete` and no TODO.
+
+If you forget the TODO, the chamber goes silent. If you forget `hibernate`, the daemon retries. Do both, in order, at the end of every path below.
+
 ## Chess Engine
 
 Use `chess_engine.py` for all board operations. It handles move validation, board display, and move suggestions. Run it with `uv run chess_engine.py` (uv auto-installs the dependency).
@@ -21,29 +34,85 @@ uv run chess_engine.py parse FEN INPUT       # Parse human input to UCI/SAN
 
 Exit codes: 0 = success, 1 = illegal move, 2 = game over.
 
-## Tasks
+## Session Decision Tree
 
-1. Initialize the board. Run `uv run chess_engine.py board` to print the starting position. Run `uv run chess_engine.py suggest FEN 3` to recommend 3 moves for the human (white) with explanations. Send the board and suggestions via `cryo-agent send`.
-2. Each session: check inbox for human moves. For each move:
-   a. Validate and apply with `uv run chess_engine.py move FEN MOVE`.
-   b. If the game is not over, compute your response move using `uv run chess_engine.py suggest FEN` to evaluate candidates, pick one, and apply it with `uv run chess_engine.py move FEN YOUR_MOVE`.
-   c. After your move, run `uv run chess_engine.py suggest FEN 3` to recommend 3 moves for the human with explanations of each (tactical, positional, defensive, etc.).
-   d. Send the updated board, your move, and the human's suggested moves via `cryo-agent send`.
-3. If no move is received, hibernate and wake again later. **Never stop checking.** The human may take minutes, hours, or days to respond — that is normal for correspondence chess. Always hibernate with a wake time; never use `--complete` unless the game is over.
+Every wake, pick exactly one branch based on state.
 
-   **Adaptive timing:** Match the human's pace. Track how long the human took to reply (record it in `NOTES.md`). If they're fast, check back soon. If they're slow, take your time. No reply yet? Gradually wait longer. Clamp between 5 seconds and 1 day.
-4. Detect checkmate, stalemate, draw, or resignation (exit code 2 from chess_engine.py). This is the **only** condition that ends the session. Announce the result and run `cryo-agent hibernate --complete`.
+### Branch A — First session (no game in progress)
+
+State: `NOTES.md` has no FEN, or this is session #1.
+
+1. Run `uv run chess_engine.py board` to print the starting position.
+2. Run `uv run chess_engine.py suggest FEN 3` for 3 opening-move suggestions with explanations.
+3. `cryo-agent send "<board + suggestions + instructions for reply>"`.
+4. Save the starting FEN and an empty move history to `NOTES.md`.
+5. **Closing ritual:** human may take hours to reply — schedule a default check-in.
+   ```
+   cryo-agent todo add "Check inbox for white's opening move" --at $(cryo-agent time "+30 minutes")
+   cryo-agent hibernate --summary "Sent opening board; waiting for white's first move."
+   ```
+
+### Branch B — Inbox has new move(s) from the human
+
+State: one or more messages in `messages/inbox/` that you have not yet processed.
+
+1. For each move, in order received:
+   a. Parse with `uv run chess_engine.py parse FEN INPUT` if the move isn't already in UCI form.
+   b. Apply with `uv run chess_engine.py move FEN MOVE` — update FEN.
+   c. If game over (exit code 2) → go to Branch D.
+   d. Otherwise compute your response: `uv run chess_engine.py suggest FEN` to pick a candidate, then `uv run chess_engine.py move FEN YOUR_MOVE`.
+   e. If your move ends the game (exit code 2) → go to Branch D.
+   f. Otherwise run `uv run chess_engine.py suggest FEN 3` for 3 suggestions for the human.
+   g. `cryo-agent send "<updated board + your move + 3 suggestions>"`.
+2. Update `NOTES.md` with new FEN, move history, and how long the human took to reply (for adaptive timing).
+3. Mark the inbox-check TODO(s) done: `cryo-agent todo done <id>`.
+4. **Closing ritual:** schedule the next inbox check based on the human's pace.
+   ```
+   cryo-agent todo add "Check inbox for white's next move" --at <ADAPTIVE_WAKE>
+   cryo-agent hibernate --summary "Processed move(s); waiting for white."
+   ```
+
+**Adaptive timing for the next-wake TODO:**
+- If the human replies within seconds → next check in ~1 min.
+- Within minutes → ~5 min.
+- Within hours → ~30 min.
+- Within a day → ~4 hours.
+- Clamp: minimum 1 min, maximum 1 day.
+- Unsure → default to 30 min.
+
+### Branch C — No new moves (just a scheduled wake)
+
+State: inbox empty, game in progress, you woke because of your own TODO.
+
+1. Confirm inbox is empty: `cryo-agent receive`.
+2. Mark the triggering TODO done: `cryo-agent todo done <id>`.
+3. **Closing ritual:** back off slightly (human is still thinking).
+   ```
+   cryo-agent todo add "Check inbox for white's next move" --at <NEXT_CHECK>
+   cryo-agent hibernate --summary "No reply yet; rechecking at <NEXT_CHECK>."
+   ```
+
+   Back-off guidance: if this is the Nth consecutive empty check, roughly double the interval (clamped to 1 day). Don't spam the inbox.
+
+### Branch D — Game over (checkmate, stalemate, draw, or resignation)
+
+State: `uv run chess_engine.py move` exited 2, or the human sent "resign" / "draw".
+
+1. `cryo-agent send "<final board + result announcement + thanks for the game>"`.
+2. Append the final result to `NOTES.md`.
+3. **Terminal hibernate — no TODO this time:**
+   ```
+   cryo-agent hibernate --complete --summary "Game over: <result>"
+   ```
 
 ## Configuration
 
 - AI plays: black
-- Check interval: adaptive (mirrors the human's response speed, 1 min – 1 day)
 - Notation: accept both algebraic (e4, Nf3, O-O) and coordinate (e2e4)
 
 ## Notes
 
 - Store the board as a FEN string in `NOTES.md` so you can reconstruct it on wake.
-- Store the full move history (e.g., `1. e4 e5 2. Nf3`) in `NOTES.md` as well.
-- If the human sends multiple moves at once, process them in order and respond to each.
-- Use `cryo-agent time "+10 minutes"` to compute your next wake time.
-- Use `cryo-agent send` to send your moves and commentary to the human.
+- Store the full move history (e.g., `1. e4 e5 2. Nf3`) in `NOTES.md`.
+- If the human sends multiple moves at once, process them in order and respond to each, but only send one consolidated `cryo-agent send` at the end (avoid spamming).
+- Use `cryo-agent time "+10 minutes"` to compute wake times — never hand-write timestamps.
