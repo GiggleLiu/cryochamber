@@ -1005,6 +1005,24 @@ fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
 }
 
 #[test]
+fn test_session_loop_outcome_is_crash() {
+    // `previous_session_crashed` is derived from this; the mapping is the
+    // single source of truth and must cover every outcome variant.
+    assert!(!SessionLoopOutcome::PlanComplete.is_crash());
+    assert!(!SessionLoopOutcome::Hibernate { fallback: None }.is_crash());
+    assert!(!SessionLoopOutcome::Hibernate {
+        fallback: Some(FallbackAction {
+            action: "email".into(),
+            target: "ops".into(),
+            message: "m".into()
+        })
+    }
+    .is_crash());
+    assert!(SessionLoopOutcome::ValidationFailed { quick_exit: false }.is_crash());
+    assert!(SessionLoopOutcome::ValidationFailed { quick_exit: true }.is_crash());
+}
+
+#[test]
 fn test_resolve_interrupted_session_prefers_hibernate_outcome() {
     let hibernate = SessionLoopOutcome::Hibernate { fallback: None };
 

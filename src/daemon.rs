@@ -212,6 +212,16 @@ pub enum SessionLoopOutcome {
     ValidationFailed { quick_exit: bool },
 }
 
+impl SessionLoopOutcome {
+    /// The single source of truth for whether a session ended in a crash /
+    /// validation failure. Used to update `CryoState::previous_session_crashed`;
+    /// an outer-loop `Err` from `run_one_session` is also a crash but is
+    /// handled separately because there is no outcome to ask.
+    fn is_crash(&self) -> bool {
+        matches!(self, SessionLoopOutcome::ValidationFailed { .. })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionInterruption {
     Shutdown,
@@ -1317,11 +1327,12 @@ impl Daemon {
                     provider_name,
                 ) {
                     Ok(outcome) => {
+                        // Single source of truth: outcome decides crash-status.
+                        cryo_state.previous_session_crashed = outcome.is_crash();
                         // Persist session number only after successful completion
                         state::save_state(&self.state_path, cryo_state)?;
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
-                                cryo_state.previous_session_crashed = false;
                                 retry.reset();
                                 pending_fallback = None;
                                 self.sync_pending_fallback_state(
@@ -1333,7 +1344,6 @@ impl Daemon {
                                 break;
                             }
                             SessionLoopOutcome::Hibernate { fallback } => {
-                                cryo_state.previous_session_crashed = false;
                                 retry.reset();
                                 next_wake = next_wake_from_todos(&self.dir);
                                 pending_fallback = next_wake
@@ -1354,7 +1364,6 @@ impl Daemon {
                                 }
                             }
                             SessionLoopOutcome::ValidationFailed { quick_exit } => {
-                                cryo_state.previous_session_crashed = true;
                                 let _ = state::save_state(&self.state_path, cryo_state);
                                 next_wake = next_wake_from_todos(&self.dir);
 
