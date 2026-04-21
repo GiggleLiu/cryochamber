@@ -1211,6 +1211,47 @@ fn test_set_pending_fallback_propagates_save_error() {
 }
 
 #[test]
+fn test_scheduled_fallback_for_deadline_is_wake_plus_one_hour() {
+    let wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let fb = FallbackAction {
+        action: "email".into(),
+        target: "ops".into(),
+        message: "m".into(),
+    };
+
+    // Both present: deadline = wake + 1h.
+    let armed = scheduled_fallback_for(Some(wake), Some(fb.clone())).unwrap();
+    assert_eq!(armed.0, wake + chrono::Duration::hours(1));
+    assert_eq!(armed.1, fb);
+
+    // No wake: nothing to arm against.
+    assert!(scheduled_fallback_for(None, Some(fb.clone())).is_none());
+    // No fallback: nothing to arm.
+    assert!(scheduled_fallback_for(Some(wake), None).is_none());
+    assert!(scheduled_fallback_for(None, None).is_none());
+}
+
+#[test]
+fn test_should_rotate_provider() {
+    use crate::config::RotateOn;
+    // <2 providers: never rotate, regardless of policy.
+    assert!(!should_rotate_provider(&RotateOn::AnyFailure, true, 0));
+    assert!(!should_rotate_provider(&RotateOn::AnyFailure, true, 1));
+    // Never: always false.
+    assert!(!should_rotate_provider(&RotateOn::Never, true, 3));
+    assert!(!should_rotate_provider(&RotateOn::Never, false, 3));
+    // AnyFailure: always true when >=2 providers.
+    assert!(should_rotate_provider(&RotateOn::AnyFailure, false, 2));
+    assert!(should_rotate_provider(&RotateOn::AnyFailure, true, 2));
+    // QuickExit: only when quick_exit is true.
+    assert!(!should_rotate_provider(&RotateOn::QuickExit, false, 2));
+    assert!(should_rotate_provider(&RotateOn::QuickExit, true, 2));
+}
+
+#[test]
 fn test_session_loop_outcome_is_crash() {
     // `previous_session_crashed` is derived from this; the mapping is the
     // single source of truth and must cover every outcome variant.

@@ -222,6 +222,34 @@ impl SessionLoopOutcome {
     }
 }
 
+/// Pure: given the next scheduled wake and (optionally) a session-registered
+/// fallback action, produce the `(deadline, action)` to arm. We arm the
+/// fallback one hour after the scheduled wake so a missed wake fires the
+/// alert rather than silently dropping it.
+fn scheduled_fallback_for(
+    next_wake: Option<NaiveDateTime>,
+    fallback: Option<FallbackAction>,
+) -> Option<(NaiveDateTime, FallbackAction)> {
+    next_wake.and_then(|w| fallback.map(|f| (w + chrono::Duration::hours(1), f)))
+}
+
+/// Pure: given the configured rotate-on policy and the provider pool, decide
+/// whether a failed session should trigger provider rotation.
+fn should_rotate_provider(
+    rotate_on: &crate::config::RotateOn,
+    quick_exit: bool,
+    provider_count: usize,
+) -> bool {
+    if provider_count < 2 {
+        return false;
+    }
+    match rotate_on {
+        crate::config::RotateOn::QuickExit => quick_exit,
+        crate::config::RotateOn::AnyFailure => true,
+        crate::config::RotateOn::Never => false,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionInterruption {
     Shutdown,
@@ -1426,9 +1454,7 @@ impl Daemon {
                             SessionLoopOutcome::Hibernate { fallback } => {
                                 retry.reset();
                                 next_wake = next_wake_from_todos(&self.dir);
-                                let new_pending = next_wake.and_then(|w| {
-                                    fallback.map(|f| (w + chrono::Duration::hours(1), f))
-                                });
+                                let new_pending = scheduled_fallback_for(next_wake, fallback);
                                 // Save-failure policy: escalate to failure retry.
                                 // If we can't persist the armed fallback, do not
                                 // sleep — a crash before the next save would
@@ -1463,16 +1489,11 @@ impl Daemon {
                                 let _ = self.save_state(cryo_state);
                                 next_wake = next_wake_from_todos(&self.dir);
 
-                                // Check if we should rotate provider
-                                let should_rotate = !config.providers.is_empty()
-                                    && config.providers.len() > 1
-                                    && match config.rotate_on {
-                                        crate::config::RotateOn::QuickExit => quick_exit,
-                                        crate::config::RotateOn::AnyFailure => true,
-                                        crate::config::RotateOn::Never => false,
-                                    };
-
-                                if should_rotate {
+                                if should_rotate_provider(
+                                    &config.rotate_on,
+                                    quick_exit,
+                                    config.providers.len(),
+                                ) {
                                     let old_name = config
                                         .providers
                                         .get(retry.provider_index)
