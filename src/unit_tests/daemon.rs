@@ -1004,6 +1004,147 @@ fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
     );
 }
 
+/// A `StateStore` that always returns an error — used to drive the
+/// save-failure policy paths in unit tests without depending on
+/// filesystem permissions.
+struct FailingStateStore;
+
+impl StateStore for FailingStateStore {
+    fn save(&self, _path: &Path, _state: &CryoState) -> Result<()> {
+        Err(anyhow::anyhow!("save failed (test stub)"))
+    }
+}
+
+/// A `StateStore` that records each save and forwards to the real
+/// filesystem store, so tests can assert disk state after the call.
+struct RecordingStateStore {
+    inner: FsStateStore,
+    saves: Mutex<u32>,
+}
+
+impl RecordingStateStore {
+    fn new() -> Self {
+        Self {
+            inner: FsStateStore,
+            saves: Mutex::new(0),
+        }
+    }
+
+    fn save_count(&self) -> u32 {
+        *self.saves.lock().unwrap()
+    }
+}
+
+impl StateStore for RecordingStateStore {
+    fn save(&self, path: &Path, state: &CryoState) -> Result<()> {
+        *self.saves.lock().unwrap() += 1;
+        self.inner.save(path, state)
+    }
+}
+
+#[test]
+fn test_set_pending_fallback_updates_slot_and_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new(
+        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap(),
+    ));
+    let store = Arc::new(RecordingStateStore::new());
+    let daemon = Daemon::new_with_state_store(
+        dir.path().to_path_buf(),
+        clock,
+        Arc::new(ProcessSessionLauncher),
+        store.clone(),
+    );
+
+    let mut cryo_state = test_cryo_state();
+    let mut slot: Option<(NaiveDateTime, FallbackAction)> = None;
+
+    let deadline = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        + chrono::Duration::hours(1);
+    let fallback = FallbackAction {
+        action: "email".into(),
+        target: "ops".into(),
+        message: "stuck".into(),
+    };
+
+    daemon
+        .set_pending_fallback(
+            &mut cryo_state,
+            &mut slot,
+            Some((deadline, fallback.clone())),
+        )
+        .expect("save succeeds");
+
+    assert!(slot.is_some(), "in-memory slot must be set");
+    assert!(
+        cryo_state.pending_fallback.is_some(),
+        "CryoState.pending_fallback must be synced"
+    );
+    assert_eq!(store.save_count(), 1);
+
+    // Clearing round-trips: both in-memory and CryoState go back to None.
+    daemon
+        .set_pending_fallback(&mut cryo_state, &mut slot, None)
+        .expect("save succeeds");
+    assert!(slot.is_none());
+    assert!(cryo_state.pending_fallback.is_none());
+    assert_eq!(store.save_count(), 2);
+}
+
+#[test]
+fn test_set_pending_fallback_propagates_save_error() {
+    // Per the Step C plan: the helper returns the error so each caller can
+    // apply its own save-failure policy. This test pins that contract.
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new(
+        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap(),
+    ));
+    let daemon = Daemon::new_with_state_store(
+        dir.path().to_path_buf(),
+        clock,
+        Arc::new(ProcessSessionLauncher),
+        Arc::new(FailingStateStore),
+    );
+
+    let mut cryo_state = test_cryo_state();
+    let mut slot: Option<(NaiveDateTime, FallbackAction)> = None;
+
+    let err = daemon
+        .set_pending_fallback(
+            &mut cryo_state,
+            &mut slot,
+            Some((
+                chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap(),
+                FallbackAction {
+                    action: "email".into(),
+                    target: "ops".into(),
+                    message: "m".into(),
+                },
+            )),
+        )
+        .expect_err("FailingStateStore must surface the error");
+    assert!(
+        err.to_string().contains("save failed"),
+        "error should bubble up verbatim: {err}"
+    );
+    // In-memory mutation still happened — the contract is "mutate, then try
+    // to persist"; callers decide whether to roll back or log and continue.
+    assert!(slot.is_some());
+    assert!(cryo_state.pending_fallback.is_some());
+}
+
 #[test]
 fn test_session_loop_outcome_is_crash() {
     // `previous_session_crashed` is derived from this; the mapping is the
