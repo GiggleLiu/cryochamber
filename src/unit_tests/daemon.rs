@@ -873,11 +873,11 @@ fn test_check_fallback_uses_injected_clock() {
 
 #[test]
 fn test_resolve_hibernate_request_failure_retries() {
-    let mut pending_fallback = Some(FallbackAction {
+    let fallback = FallbackAction {
         action: "email".into(),
         target: "ops@example.com".into(),
         message: "stuck".into(),
-    });
+    };
 
     // Failure path does not require a pending TODO — daemon will retry.
     let decision = resolve_hibernate_request(
@@ -885,7 +885,7 @@ fn test_resolve_hibernate_request_failure_retries() {
         7,
         Some("provider failed"),
         false,
-        &mut pending_fallback,
+        Some(fallback.clone()),
     );
 
     assert_eq!(
@@ -901,22 +901,23 @@ fn test_resolve_hibernate_request_failure_retries() {
         decision.log_event,
         "hibernate failed: exit=7, summary=\"provider failed\""
     );
-    assert!(
-        pending_fallback.is_some(),
-        "failure should not consume fallback"
+    assert_eq!(
+        decision.remaining_session_fallback,
+        Some(fallback),
+        "failure should preserve the session fallback"
     );
 }
 
 #[test]
 fn test_resolve_hibernate_request_complete_ignores_fallback() {
-    let mut pending_fallback = Some(FallbackAction {
+    let fallback = FallbackAction {
         action: "email".into(),
         target: "ops@example.com".into(),
         message: "stuck".into(),
-    });
+    };
 
     // `--complete` means the plan is truly finished; no TODO needed.
-    let decision = resolve_hibernate_request(true, 0, None, false, &mut pending_fallback);
+    let decision = resolve_hibernate_request(true, 0, None, false, Some(fallback));
 
     assert_eq!(decision.outcome, Some(SessionLoopOutcome::PlanComplete));
     assert!(decision.response_ok);
@@ -925,9 +926,9 @@ fn test_resolve_hibernate_request_complete_ignores_fallback() {
         decision.log_event,
         "hibernate: plan complete, exit=0, summary=\"(no summary)\""
     );
-    assert!(
-        pending_fallback.is_some(),
-        "complete should not consume fallback"
+    assert_eq!(
+        decision.remaining_session_fallback, None,
+        "plan-complete discards the session fallback"
     );
 }
 
@@ -938,14 +939,13 @@ fn test_resolve_hibernate_request_uses_pending_fallback() {
         target: "ops".into(),
         message: "waiting".into(),
     };
-    let mut pending_fallback = Some(fallback.clone());
 
     let decision = resolve_hibernate_request(
         false,
         0,
         Some("waiting on reply"),
         true,
-        &mut pending_fallback,
+        Some(fallback.clone()),
     );
 
     assert_eq!(
@@ -960,24 +960,24 @@ fn test_resolve_hibernate_request_uses_pending_fallback() {
         decision.log_event,
         "hibernate: exit=0, summary=\"waiting on reply\""
     );
-    assert!(
-        pending_fallback.is_none(),
-        "successful hibernate should consume pending fallback"
+    assert_eq!(
+        decision.remaining_session_fallback, None,
+        "successful hibernate consumes the session fallback into the outcome"
     );
 }
 
 #[test]
 fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
-    let mut pending_fallback = Some(FallbackAction {
+    let fallback = FallbackAction {
         action: "webhook".into(),
         target: "ops".into(),
         message: "waiting".into(),
-    });
+    };
 
     // Non-complete hibernate with no pending TODO: session must stay alive
     // so the agent can observe the error and correct.
     let decision =
-        resolve_hibernate_request(false, 0, Some("forgot todo"), false, &mut pending_fallback);
+        resolve_hibernate_request(false, 0, Some("forgot todo"), false, Some(fallback.clone()));
 
     assert_eq!(
         decision.outcome, None,
@@ -997,9 +997,10 @@ fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
         decision.log_event,
         "hibernate refused: no pending TODO, summary=\"forgot todo\""
     );
-    assert!(
-        pending_fallback.is_some(),
-        "rejected hibernate must not consume pending fallback"
+    assert_eq!(
+        decision.remaining_session_fallback,
+        Some(fallback),
+        "rejected hibernate must preserve the session fallback"
     );
 }
 

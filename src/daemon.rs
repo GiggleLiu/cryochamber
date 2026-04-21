@@ -224,6 +224,12 @@ struct HibernateDecision {
     /// hibernate attempt and leaves the session running so the agent can
     /// observe the error and correct itself (e.g. register a TODO).
     outcome: Option<SessionLoopOutcome>,
+    /// What the caller's session-fallback slot should be after this call.
+    /// The caller assigns this verbatim; there is no asymmetry between branches.
+    /// - Rejected / failure-retry branches: return the input unchanged (fallback still relevant).
+    /// - `PlanComplete`: `None` (plan is done; fallback no longer meaningful).
+    /// - `Hibernate`: `None` (consumed into `SessionLoopOutcome::Hibernate { fallback }`).
+    remaining_session_fallback: Option<FallbackAction>,
     response_ok: bool,
     response_message: &'static str,
     log_event: String,
@@ -539,12 +545,13 @@ fn resolve_hibernate_request(
     exit_code: u8,
     summary: Option<&str>,
     has_pending_todos: bool,
-    pending_fallback: &mut Option<FallbackAction>,
+    session_fallback: Option<FallbackAction>,
 ) -> HibernateDecision {
     let summary = summary.unwrap_or("(no summary)");
     if exit_code != 0 {
         return HibernateDecision {
             outcome: Some(SessionLoopOutcome::ValidationFailed { quick_exit: false }),
+            remaining_session_fallback: session_fallback,
             response_ok: true,
             response_message: "Failure recorded. Daemon will retry.",
             log_event: format!("hibernate failed: exit={exit_code}, summary=\"{summary}\""),
@@ -554,6 +561,7 @@ fn resolve_hibernate_request(
     if complete {
         return HibernateDecision {
             outcome: Some(SessionLoopOutcome::PlanComplete),
+            remaining_session_fallback: None,
             response_ok: true,
             response_message: "Plan complete. Shutting down.",
             log_event: format!("hibernate: plan complete, exit={exit_code}, summary=\"{summary}\""),
@@ -565,6 +573,7 @@ fn resolve_hibernate_request(
         // the agent can observe the error, add a TODO, and retry hibernate.
         return HibernateDecision {
             outcome: None,
+            remaining_session_fallback: session_fallback,
             response_ok: false,
             response_message:
                 "hibernate refused: no pending TODO with a valid `--at` time. Every session \
@@ -578,8 +587,9 @@ fn resolve_hibernate_request(
 
     HibernateDecision {
         outcome: Some(SessionLoopOutcome::Hibernate {
-            fallback: pending_fallback.take(),
+            fallback: session_fallback,
         }),
+        remaining_session_fallback: None,
         response_ok: true,
         response_message: "Hibernating.",
         log_event: format!("hibernate: exit={exit_code}, summary=\"{summary}\""),
@@ -1511,9 +1521,10 @@ impl Daemon {
                     exit_code,
                     summary.as_deref(),
                     effects.has_pending_todo_with_valid_wake(),
-                    pending_fallback,
+                    pending_fallback.take(),
                 );
                 logger.log_event(&decision.log_event)?;
+                *pending_fallback = decision.remaining_session_fallback;
                 if let Some(outcome) = decision.outcome {
                     *hibernate_outcome = Some(outcome);
                 }

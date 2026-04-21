@@ -154,13 +154,14 @@ proptest! {
 
 proptest! {
     /// Exit table (derived from the function spec):
-    ///   exit_code != 0               → ValidationFailed{quick_exit:false}
-    ///   complete && exit_code == 0   → PlanComplete
-    ///   !has_pending_todos           → outcome=None, response_ok=false
-    ///   otherwise                    → Hibernate{ fallback: takes from pending }
+    ///   exit_code != 0               → ValidationFailed, remaining_session_fallback = input
+    ///   complete && exit_code == 0   → PlanComplete, remaining_session_fallback = None
+    ///   !has_pending_todos           → outcome=None, remaining_session_fallback = input
+    ///   otherwise                    → Hibernate{fallback: input}, remaining_session_fallback = None
     ///
-    /// The property is that these four mutually exclusive branches match the
-    /// function's actual output on arbitrary inputs.
+    /// `resolve_hibernate_request` is pure: it takes `session_fallback` by value
+    /// and returns what the caller's slot should be after the call. No aliased
+    /// mutable state, no asymmetry across branches.
     #[test]
     fn prop_resolve_hibernate_request_matches_spec(
         complete in any::<bool>(),
@@ -169,13 +170,12 @@ proptest! {
         has_pending_todos in any::<bool>(),
         fallback in prop::option::of(fallback_strategy()),
     ) {
-        let mut pending = fallback.clone();
         let decision = resolve_hibernate_request(
             complete,
             exit_code,
             summary.as_deref(),
             has_pending_todos,
-            &mut pending,
+            fallback.clone(),
         );
 
         if exit_code != 0 {
@@ -184,26 +184,37 @@ proptest! {
                 Some(SessionLoopOutcome::ValidationFailed { quick_exit: false })
             );
             prop_assert!(decision.response_ok, "failure path still ACKs the agent");
-            // exit_code branch fires before the complete/fallback paths, so the
-            // pending fallback must NOT be consumed.
-            prop_assert_eq!(pending, fallback);
+            prop_assert_eq!(
+                decision.remaining_session_fallback,
+                fallback,
+                "failure preserves the session fallback"
+            );
         } else if complete {
             prop_assert_eq!(decision.outcome, Some(SessionLoopOutcome::PlanComplete));
-            // plan-complete doesn't consume the fallback either (the fallback
-            // is cancelled by dropping pending_fallback outside this function).
-            prop_assert_eq!(pending, fallback);
+            prop_assert_eq!(
+                decision.remaining_session_fallback,
+                None,
+                "plan-complete discards the session fallback"
+            );
         } else if !has_pending_todos {
             prop_assert_eq!(decision.outcome, None);
             prop_assert!(!decision.response_ok);
-            prop_assert_eq!(pending, fallback, "rejected hibernate kept fallback");
+            prop_assert_eq!(
+                decision.remaining_session_fallback,
+                fallback,
+                "rejected hibernate preserves the session fallback"
+            );
         } else {
             prop_assert_eq!(
                 decision.outcome,
                 Some(SessionLoopOutcome::Hibernate { fallback: fallback.clone() })
             );
             prop_assert!(decision.response_ok);
-            // Hibernate consumed the pending fallback so it fires on timeout.
-            prop_assert!(pending.is_none(), "pending fallback must be taken on accept");
+            prop_assert_eq!(
+                decision.remaining_session_fallback,
+                None,
+                "accepted hibernate moves the fallback into the outcome payload"
+            );
         }
     }
 }
