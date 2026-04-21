@@ -429,30 +429,17 @@ fn test_mock_hibernate_exit_code_retries() {
 }
 
 // --- Provider rotation tests ---
-
-#[test]
-fn test_rotate_on_quick_exit_rotates() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "quick-exit.sh");
-    write_provider_config(dir.path(), "quick-exit", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // After quick exit with rotate_on=quick-exit, daemon should rotate to provider-1.
-    // The rotation is logged via eprintln (stderr), but the next session logs
-    // "provider: provider-1" to cryo.log via EventLogger.
-    assert!(
-        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
-        "Should rotate to provider-1 on quick exit"
-    );
-
-    cancel_and_wait(dir.path());
-}
+//
+// The `rotate_on=quick-exit` and `rotate_on=any-failure` positive cases, plus
+// the 2-provider wrap-around, are covered by in-process tests in
+// `src/unit_tests/daemon.rs` (`test_rotate_on_quick_exit_rotates_in_process`,
+// `test_rotate_on_any_failure_rotates_on_crash_in_process`,
+// `test_provider_wrap_all_exhausted_in_process`) — those versions run in
+// milliseconds via `ScriptedSessionLauncher` + `TestClock`.
+//
+// The tests kept here are "rotation should NOT fire" cases: they're cheap
+// enough to run against a real daemon and still serve as smoke that the
+// real spawn path honors the rotate_on configuration.
 
 #[test]
 fn test_rotate_on_quick_exit_no_rotate_on_slow_crash() {
@@ -499,29 +486,6 @@ fn test_rotate_on_quick_exit_no_rotate_on_slow_crash() {
 }
 
 #[test]
-fn test_rotate_on_any_failure_rotates_on_crash() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "crash.sh");
-    write_provider_config(dir.path(), "any-failure", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // With rotate_on=any-failure, any ValidationFailed triggers rotation.
-    // The next session should use provider-1.
-    assert!(
-        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
-        "Should rotate to provider-1 on crash with rotate_on=any-failure"
-    );
-
-    cancel_and_wait(dir.path());
-}
-
-#[test]
 fn test_rotate_on_never_no_rotation() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "crash.sh");
@@ -562,55 +526,6 @@ fn test_rotate_on_never_no_rotation() {
     assert!(
         log.contains("provider: provider-0"),
         "Should be using provider-0: {log}"
-    );
-
-    cancel_and_wait(dir.path());
-}
-
-#[test]
-fn test_provider_wrap_all_exhausted() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "quick-exit.sh");
-    write_provider_config(dir.path(), "any-failure", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // With 2 providers and any-failure rotation: session 1 uses provider-0 (fails),
-    // rotates to provider-1 (session 2, fails), wraps back to provider-0 (session 3).
-    // After wrap, daemon backs off 60s. We detect the wrap by seeing provider-0
-    // appear in the log at least twice (initial + after wrap).
-    // First, wait for provider-1 to appear (first rotation).
-    assert!(
-        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
-        "Should rotate to provider-1 first"
-    );
-
-    // Then wait for provider-0 to appear again (wrap completed).
-    // The daemon sleeps 60s after wrap, but provider-0 is logged at session start,
-    // so we need to wait for the second occurrence.
-    // Count occurrences: we need provider-0 to appear at least twice.
-    let found = {
-        let deadline = std::time::Instant::now() + Duration::from_secs(90);
-        loop {
-            if std::time::Instant::now() > deadline {
-                break false;
-            }
-            if let Ok(log) = fs::read_to_string(dir.path().join("cryo.log")) {
-                if log.matches("provider: provider-0").count() >= 2 {
-                    break true;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-    };
-    assert!(
-        found,
-        "Should wrap back to provider-0 after all providers exhausted"
     );
 
     cancel_and_wait(dir.path());

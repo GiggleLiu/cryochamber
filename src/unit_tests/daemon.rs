@@ -1594,3 +1594,523 @@ fn test_prepare_runtime_startup_propagates_socket_bind_failure() {
     assert_eq!(platform.bind_calls(), 1);
     assert_eq!(platform.watcher_calls(), 0);
 }
+
+// ---------- In-process multi-session event-loop tests ----------
+//
+// These tests exercise `run_event_loop` without spawning subprocesses or
+// installing real OS resources. A `ScriptedSessionLauncher` returns canned
+// outcomes so the loop's state-management (retry reset, next_wake refresh,
+// pending_fallback handling, plan-complete shutdown) can be verified in
+// milliseconds. The virtual `TestClock` keeps `compute_sleep_timeout` in the
+// past so each iteration returns from `wait_for_idle_event` immediately.
+
+/// SessionLauncher that pops outcomes from a scripted queue. If the queue runs
+/// dry it returns `PlanComplete` so the loop always terminates. Each call is
+/// recorded with the session number and active provider name so tests can
+/// assert on rotation sequences.
+struct ScriptedSessionLauncher {
+    outcomes: Mutex<VecDeque<SessionLoopOutcome>>,
+    invocations: Mutex<Vec<ScriptedInvocation>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScriptedInvocation {
+    session: u32,
+    provider: Option<String>,
+}
+
+impl ScriptedSessionLauncher {
+    fn new(outcomes: Vec<SessionLoopOutcome>) -> Self {
+        Self {
+            outcomes: Mutex::new(outcomes.into()),
+            invocations: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn session_numbers(&self) -> Vec<u32> {
+        self.invocations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| i.session)
+            .collect()
+    }
+
+    fn providers(&self) -> Vec<Option<String>> {
+        self.invocations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| i.provider.clone())
+            .collect()
+    }
+}
+
+impl SessionLauncher for ScriptedSessionLauncher {
+    fn run_session(
+        &self,
+        _daemon: &Daemon,
+        _config: &CryoConfig,
+        cryo_state: &CryoState,
+        _server: &crate::socket::SocketServer,
+        _delayed_wake: Option<&str>,
+        _provider_env: &std::collections::HashMap<String, String>,
+        provider_name: Option<&str>,
+    ) -> Result<SessionLoopOutcome> {
+        self.invocations.lock().unwrap().push(ScriptedInvocation {
+            session: cryo_state.session_number,
+            provider: provider_name.map(str::to_string),
+        });
+        let outcome = self
+            .outcomes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(SessionLoopOutcome::PlanComplete);
+        Ok(outcome)
+    }
+}
+
+fn provider_config(n: usize) -> Vec<crate::config::ProviderConfig> {
+    (0..n)
+        .map(|i| crate::config::ProviderConfig {
+            name: format!("provider-{i}"),
+            env: std::collections::HashMap::new(),
+        })
+        .collect()
+}
+
+/// Seed a single pending TODO so the daemon always has a "next wake" it can
+/// compute. The wake time is in the past relative to the virtual clock, so
+/// `wait_for_idle_event` returns `WakeFromSchedule` immediately on every
+/// idle iteration.
+fn seed_past_todo(dir: &Path) {
+    let mut todos = crate::todo::TodoList::new();
+    todos.add("keep going".into(), "2026-01-01T00:00".into());
+    todos.save(&dir.join("todo.json")).unwrap();
+}
+
+#[test]
+fn test_run_event_loop_drives_multiple_sessions_in_process() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::Hibernate { fallback: None },
+        SessionLoopOutcome::Hibernate { fallback: None },
+        SessionLoopOutcome::PlanComplete,
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    // A real SocketServer is required, but nothing connects to it — the loop
+    // only polls it via non-blocking accept.
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        pending_fallback: None,
+        watch_inbox_path: None,
+        cleared_invalid_pending_fallback: false,
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    let start = std::time::Instant::now();
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        launcher.session_numbers(),
+        vec![1, 2, 3],
+        "launcher should see session numbers 1, 2, 3"
+    );
+    assert_eq!(cryo_state.session_number, 3);
+    // Plan-complete cleanup clears pid + instance_id.
+    assert!(cryo_state.pid.is_none());
+    assert!(cryo_state.instance_id.is_none());
+
+    // In-process sessions should be dramatically faster than wall-clock
+    // subprocess-based ones. The existing multi-session integration test
+    // takes >3s; this one should be <1s even on a loaded CI machine.
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "in-process multi-session loop should be fast; took {elapsed:?}"
+    );
+}
+
+#[test]
+fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
+    // After each Hibernate, the loop calls `next_wake_from_todos`. If the
+    // TODO file changes between sessions, the next iteration should see the
+    // new wake time. We simulate that by having the scripted launcher's
+    // outcomes happen to coincide with a test-side TODO update.
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::Hibernate { fallback: None },
+        SessionLoopOutcome::PlanComplete,
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        pending_fallback: None,
+        watch_inbox_path: None,
+        cleared_invalid_pending_fallback: false,
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    // Both sessions ran; second was triggered by the past-TODO wake.
+    assert_eq!(launcher.session_numbers(), vec![1, 2]);
+    assert!(!cryo_state.previous_session_crashed);
+}
+
+#[test]
+fn test_run_event_loop_validation_failure_triggers_retry_alert_and_backoff() {
+    // After `max_retries` ValidationFailed outcomes, the daemon sends a
+    // retry-exhaustion alert to the outbox and keeps retrying with
+    // exponential backoff. Using virtual time the backoff sleeps are free:
+    // what we actually assert is that (a) the alert was written and (b)
+    // multiple sessions ran — proving the outer loop retried rather than
+    // exiting after the first failure.
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+    crate::message::ensure_dirs(dir.path()).unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    // Two failures, then plan complete (from the scripted launcher's
+    // fallthrough). The two failures exercise the retry path; plan complete
+    // lets the loop terminate deterministically.
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        pending_fallback: None,
+        watch_inbox_path: None,
+        cleared_invalid_pending_fallback: false,
+    };
+
+    let config = CryoConfig {
+        max_retries: 1,
+        fallback_alert: "outbox".into(),
+        ..CryoConfig::default()
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+
+    // Both failures were observed before the fallthrough PlanComplete.
+    let invocations = launcher.session_numbers();
+    assert!(
+        invocations.len() >= 3,
+        "expected 2 failures + 1 plan-complete = 3 invocations, got {invocations:?}"
+    );
+
+    // The retry-exhaustion alert should have been written to the outbox.
+    let outbox = dir.path().join("messages/outbox");
+    let alert_file = std::fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().to_string_lossy().contains("retry-exhausted"));
+    assert!(
+        alert_file.is_some(),
+        "retry-exhaustion alert should have been written to outbox"
+    );
+}
+
+// ---------- Provider rotation (ported from mock_agent_tests.rs) ----------
+//
+// These tests previously drove real `cryo start` subprocesses and wall-clock
+// sleeps; `test_provider_wrap_all_exhausted` alone could run 60-90s because
+// of the real 60s post-wrap backoff. The in-process versions below exercise
+// the same `RetryState` + `cryo_state.provider_index` transitions in
+// milliseconds by scripting `ValidationFailed` outcomes and letting the
+// virtual clock absorb the backoff sleeps.
+
+#[test]
+fn test_rotate_on_quick_exit_rotates_in_process() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    // Session 1 quick-exits; launcher queue empties → session 2 PlanComplete.
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: true },
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        pending_fallback: None,
+        watch_inbox_path: None,
+        cleared_invalid_pending_fallback: false,
+    };
+
+    let config = CryoConfig {
+        rotate_on: crate::config::RotateOn::QuickExit,
+        providers: provider_config(2),
+        ..CryoConfig::default()
+    };
+
+    let (_tx, rx) = mpsc::channel();
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+
+    // Session 1 used provider-0, then rotated. Session 2 used provider-1.
+    let providers = launcher.providers();
+    assert_eq!(
+        providers,
+        vec![Some("provider-0".into()), Some("provider-1".into())],
+        "quick-exit with rotate_on=quick-exit should rotate: {providers:?}"
+    );
+}
+
+#[test]
+fn test_rotate_on_any_failure_rotates_on_crash_in_process() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    // Slow crash (quick_exit=false) — would NOT rotate under rotate_on=quick-exit,
+    // but SHOULD rotate under rotate_on=any-failure. This is the contrast the
+    // original integration test verified end-to-end.
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        pending_fallback: None,
+        watch_inbox_path: None,
+        cleared_invalid_pending_fallback: false,
+    };
+
+    let config = CryoConfig {
+        rotate_on: crate::config::RotateOn::AnyFailure,
+        providers: provider_config(2),
+        ..CryoConfig::default()
+    };
+
+    let (_tx, rx) = mpsc::channel();
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+
+    let providers = launcher.providers();
+    assert_eq!(
+        providers,
+        vec![Some("provider-0".into()), Some("provider-1".into())],
+        "any-failure rotation should fire on a slow crash: {providers:?}"
+    );
+}
+
+#[test]
+fn test_provider_wrap_all_exhausted_in_process() {
+    // With 2 providers and rotate_on=any-failure, every failure rotates. After
+    // p0 → p1 → p0 (wrap), the daemon applies a 60s backoff before the next
+    // cycle. The real integration test paid that 60s in wall-clock time; here
+    // the virtual clock absorbs it instantly.
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    // Three failures drive the full wrap cycle: p0 → p1 → p0 (wrap) → next
+    // session uses p0 again. Fourth outcome is PlanComplete (fallthrough).
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: true },
+        SessionLoopOutcome::ValidationFailed { quick_exit: true },
+        SessionLoopOutcome::ValidationFailed { quick_exit: true },
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        pending_fallback: None,
+        watch_inbox_path: None,
+        cleared_invalid_pending_fallback: false,
+    };
+
+    let config = CryoConfig {
+        rotate_on: crate::config::RotateOn::AnyFailure,
+        providers: provider_config(2),
+        ..CryoConfig::default()
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    let start = std::time::Instant::now();
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    // Expected provider sequence: p0, p1, p0 (after wrap), p0 (fallthrough).
+    let providers = launcher.providers();
+    assert!(
+        providers.len() >= 3,
+        "expected at least 3 invocations to drive the wrap, got {providers:?}"
+    );
+    assert_eq!(providers[0], Some("provider-0".into()));
+    assert_eq!(providers[1], Some("provider-1".into()));
+    assert_eq!(
+        providers[2],
+        Some("provider-0".into()),
+        "after wrap the sequence restarts at provider-0"
+    );
+
+    // The old integration test was >60s because of the real 60s backoff.
+    // The virtual clock absorbs that — this whole thing should be <1s.
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "provider wrap with virtual clock should be sub-second; took {elapsed:?}"
+    );
+}

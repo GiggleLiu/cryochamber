@@ -468,6 +468,27 @@ impl<'a> ProcessSessionRuntime<'a> {
     }
 }
 
+/// Materializes a single agent session.
+///
+/// Production code spawns a real child via [`ProcessSessionLauncher`]; tests
+/// can swap in a scripted implementation that bypasses process creation and
+/// drives the session purely through the injected `Clock` and event source.
+/// This is what makes multi-session behavior (wake → run → hibernate → sleep
+/// → wake) testable in-process without wall-clock delays.
+trait SessionLauncher: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
+    fn run_session(
+        &self,
+        daemon: &Daemon,
+        config: &CryoConfig,
+        cryo_state: &CryoState,
+        server: &crate::socket::SocketServer,
+        delayed_wake: Option<&str>,
+        provider_env: &std::collections::HashMap<String, String>,
+        provider_name: Option<&str>,
+    ) -> Result<SessionLoopOutcome>;
+}
+
 impl SessionRuntime for ProcessSessionRuntime<'_> {
     fn accept_request(
         &mut self,
@@ -609,6 +630,118 @@ fn resolve_child_exit(
     }
 }
 
+/// Production `SessionLauncher`: spawns a real agent subprocess, wraps it in
+/// `ProcessSessionRuntime`, and delegates to `Daemon::drive_active_session`.
+struct ProcessSessionLauncher;
+
+impl SessionLauncher for ProcessSessionLauncher {
+    #[allow(clippy::too_many_arguments)]
+    fn run_session(
+        &self,
+        daemon: &Daemon,
+        config: &CryoConfig,
+        cryo_state: &CryoState,
+        server: &crate::socket::SocketServer,
+        delayed_wake: Option<&str>,
+        provider_env: &std::collections::HashMap<String, String>,
+        provider_name: Option<&str>,
+    ) -> Result<SessionLoopOutcome> {
+        let agent_cmd = config.agent.clone();
+
+        let task = daemon
+            .get_task()
+            .unwrap_or_else(|| "Continue the plan".to_string());
+
+        let timeout_secs = config.max_session_duration;
+
+        eprintln!(
+            "Daemon: Session #{}: Running agent...",
+            cryo_state.session_number
+        );
+
+        let inbox_filenames: Vec<String> = crate::message::list_inbox(&daemon.dir)?;
+
+        let todo_path = daemon.dir.join("todo.json");
+        let todo_display = match crate::todo::TodoList::load(&todo_path) {
+            Ok(list) => list.display(),
+            Err(err) => {
+                eprintln!(
+                    "Daemon: Error loading TODO list from {}: {}",
+                    todo_path.display(),
+                    err
+                );
+                format!("Error loading TODO list ({err}). Please check todo.json.")
+            }
+        };
+
+        let crash_notice = if cryo_state.previous_session_crashed {
+            Some(
+                "PREVIOUS SESSION CRASHED: The agent exited without calling \
+                 `cryo-agent hibernate`. A reply may have been partially sent. \
+                 Check `messages/inbox/archive/` for any message that arrived \
+                 during the crashed session; if it still needs a user-visible \
+                 response, send it now via `cryo-agent reply` or \
+                 `cryo-agent send` before doing the normal session work."
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+        let notice = match (delayed_wake, crash_notice.as_deref()) {
+            (Some(d), Some(c)) => Some(format!("{d}\n\n{c}")),
+            (Some(d), None) => Some(d.to_string()),
+            (None, Some(c)) => Some(c.to_string()),
+            (None, None) => None,
+        };
+
+        let agent_config = crate::agent::AgentConfig {
+            session_number: cryo_state.session_number,
+            task: task.clone(),
+            delayed_wake: notice,
+            todo_list: todo_display,
+        };
+        let prompt = crate::agent::build_prompt(&agent_config);
+
+        let mut logger = crate::log::EventLogger::begin(
+            &daemon.log_path,
+            cryo_state.session_number,
+            &task,
+            &agent_cmd,
+            &inbox_filenames,
+        )?;
+
+        if let Some(notice) = delayed_wake {
+            logger.log_event(&format!("delayed wake: {notice}"))?;
+        }
+        if cryo_state.previous_session_crashed {
+            logger.log_event("previous session crashed — agent advised to check inbox archive")?;
+        }
+
+        let agent_log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(crate::log::agent_log_path(&daemon.dir))?;
+
+        let mut child =
+            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
+        let child_pid = child.id();
+        let spawn_time = daemon.clock.monotonic_now();
+        logger.log_event(&format!("agent started (pid {child_pid})"))?;
+        if let Some(name) = provider_name {
+            logger.log_event(&format!("provider: {name}"))?;
+        }
+
+        let mut runtime = ProcessSessionRuntime::new(server, &mut child, Arc::clone(&daemon.clock));
+        let mut effects = FsSessionEffects::new(&daemon.dir);
+        let context = ActiveSessionContext {
+            cryo_state,
+            timeout_secs,
+            spawn_time,
+        };
+        daemon.drive_active_session(&mut runtime, &mut effects, context, logger)
+    }
+}
+
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
 fn terminate_child(child: &mut std::process::Child, pid: u32, clock: &dyn Clock) {
     send_signal(pid, libc::SIGTERM);
@@ -704,14 +837,15 @@ pub struct Daemon {
     shutdown: Arc<AtomicBool>,
     wake_requested: Arc<AtomicBool>,
     clock: Arc<dyn Clock>,
+    launcher: Arc<dyn SessionLauncher>,
 }
 
 impl Daemon {
     pub fn new(dir: PathBuf) -> Self {
-        Self::with_clock(dir, Arc::new(SystemClock))
+        Self::with_deps(dir, Arc::new(SystemClock), Arc::new(ProcessSessionLauncher))
     }
 
-    fn with_clock(dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
+    fn with_deps(dir: PathBuf, clock: Arc<dyn Clock>, launcher: Arc<dyn SessionLauncher>) -> Self {
         let state_path = dir.join("timer.json");
         let log_path = dir.join("cryo.log");
         Self {
@@ -721,12 +855,26 @@ impl Daemon {
             shutdown: Arc::new(AtomicBool::new(false)),
             wake_requested: Arc::new(AtomicBool::new(false)),
             clock,
+            launcher,
         }
     }
 
     #[cfg(test)]
     fn new_with_clock(dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
-        Self::with_clock(dir, clock)
+        Self::with_deps(dir, clock, Arc::new(ProcessSessionLauncher))
+    }
+
+    /// Test-only constructor: inject both the clock and the session launcher.
+    /// Production always uses `ProcessSessionLauncher`; tests pass a
+    /// `ScriptedSessionLauncher` to drive the outer event loop without
+    /// spawning real subprocesses.
+    #[cfg(test)]
+    fn new_with_clock_and_launcher(
+        dir: PathBuf,
+        clock: Arc<dyn Clock>,
+        launcher: Arc<dyn SessionLauncher>,
+    ) -> Self {
+        Self::with_deps(dir, clock, launcher)
     }
 
     fn sync_pending_fallback_state(
@@ -1059,6 +1207,31 @@ impl Daemon {
             }
         });
 
+        // The event loop persists final state (pid, pending_fallback) before
+        // returning. All we need to do after is release external OS resources.
+        let loop_result = self.run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx);
+        crate::registry::unregister(&self.dir);
+        crate::socket::SocketServer::cleanup(&sock_path);
+        eprintln!("Daemon: exited cleanly");
+        loop_result
+    }
+
+    /// The core event loop, extracted so tests can drive it without installing
+    /// real signal handlers or inotify watchers.
+    ///
+    /// Callers are responsible for populating `cryo_state.pid`/`instance_id`,
+    /// binding the socket server, and wiring whatever they want on `rx`
+    /// (inbox watcher, signal-forwarding thread, scripted events, etc.).
+    /// The loop exits on plan completion, explicit shutdown, or channel
+    /// disconnection. Final state cleanup happens in the caller.
+    fn run_event_loop(
+        &self,
+        config: &CryoConfig,
+        cryo_state: &mut CryoState,
+        bootstrap: DaemonBootstrapState,
+        server: &crate::socket::SocketServer,
+        rx: &mpsc::Receiver<DaemonEvent>,
+    ) -> Result<()> {
         let mut next_report_time = bootstrap.next_report_time;
         if config.report_interval > 0 && next_report_time.is_none() {
             eprintln!(
@@ -1110,14 +1283,14 @@ impl Daemon {
                 };
                 if delayed_wake.is_some() && pending_fallback.is_some() {
                     pending_fallback = None;
-                    self.sync_pending_fallback_state(&mut cryo_state, pending_fallback.as_ref());
-                    let _ = state::save_state(&self.state_path, &cryo_state);
+                    self.sync_pending_fallback_state(cryo_state, pending_fallback.as_ref());
+                    let _ = state::save_state(&self.state_path, cryo_state);
                 }
                 cryo_state.session_number += 1;
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
                 }
-                let _ = state::save_state(&self.state_path, &cryo_state);
+                let _ = state::save_state(&self.state_path, cryo_state);
 
                 // Build provider env for this session
                 let active_provider = config.providers.get(retry.provider_index);
@@ -1126,26 +1299,26 @@ impl Daemon {
                 let provider_name = active_provider.map(|p| p.name.as_str());
 
                 match self.run_one_session(
-                    &config,
-                    &cryo_state,
-                    &server,
+                    config,
+                    cryo_state,
+                    server,
                     delayed_wake.as_deref(),
                     &provider_env,
                     provider_name,
                 ) {
                     Ok(outcome) => {
                         // Persist session number only after successful completion
-                        state::save_state(&self.state_path, &cryo_state)?;
+                        state::save_state(&self.state_path, cryo_state)?;
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
                                 cryo_state.previous_session_crashed = false;
                                 retry.reset();
                                 pending_fallback = None;
                                 self.sync_pending_fallback_state(
-                                    &mut cryo_state,
+                                    cryo_state,
                                     pending_fallback.as_ref(),
                                 );
-                                let _ = state::save_state(&self.state_path, &cryo_state);
+                                let _ = state::save_state(&self.state_path, cryo_state);
                                 eprintln!("Daemon: plan complete. Shutting down.");
                                 break;
                             }
@@ -1157,10 +1330,10 @@ impl Daemon {
                                     .map(|w| (w + chrono::Duration::hours(1), fallback))
                                     .and_then(|(deadline, fb)| fb.map(|f| (deadline, f)));
                                 self.sync_pending_fallback_state(
-                                    &mut cryo_state,
+                                    cryo_state,
                                     pending_fallback.as_ref(),
                                 );
-                                let _ = state::save_state(&self.state_path, &cryo_state);
+                                let _ = state::save_state(&self.state_path, cryo_state);
                                 if let Some(w) = next_wake {
                                     eprintln!(
                                         "Daemon: next wake at {}",
@@ -1172,7 +1345,7 @@ impl Daemon {
                             }
                             SessionLoopOutcome::ValidationFailed { quick_exit } => {
                                 cryo_state.previous_session_crashed = true;
-                                let _ = state::save_state(&self.state_path, &cryo_state);
+                                let _ = state::save_state(&self.state_path, cryo_state);
                                 next_wake = next_wake_from_todos(&self.dir);
 
                                 // Check if we should rotate provider
@@ -1205,7 +1378,7 @@ impl Daemon {
 
                                     // Persist immediately so `cryo status` reflects the change
                                     cryo_state.provider_index = Some(retry.provider_index);
-                                    let _ = state::save_state(&self.state_path, &cryo_state);
+                                    let _ = state::save_state(&self.state_path, cryo_state);
 
                                     if wrapped {
                                         // All providers tried — apply backoff before next cycle
@@ -1230,7 +1403,7 @@ impl Daemon {
                     Err(e) => {
                         cryo_state.session_number -= 1;
                         cryo_state.previous_session_crashed = true;
-                        let _ = state::save_state(&self.state_path, &cryo_state);
+                        let _ = state::save_state(&self.state_path, cryo_state);
                         next_wake = next_wake_from_todos(&self.dir);
                         eprintln!("Daemon: session failed: {e}");
                         if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
@@ -1243,19 +1416,15 @@ impl Daemon {
             }
 
             let expected_instance_id = cryo_state.instance_id.as_deref();
-            self.service_idle_socket_requests(&server, expected_instance_id);
+            self.service_idle_socket_requests(server, expected_instance_id);
 
             // Check fallback only when idle (not about to run a session)
-            self.check_fallback(
-                &mut cryo_state,
-                &mut pending_fallback,
-                &config.fallback_alert,
-            );
+            self.check_fallback(cryo_state, &mut pending_fallback, &config.fallback_alert);
 
             // Check if periodic report is due
             if let Some(report_time) = next_report_time {
                 if self.clock.local_now() >= report_time {
-                    self.send_periodic_report(&config, &mut cryo_state, &mut next_report_time);
+                    self.send_periodic_report(config, cryo_state, &mut next_report_time);
                 }
             }
 
@@ -1264,7 +1433,7 @@ impl Daemon {
                 compute_sleep_timeout(next_wake, next_report_time, self.clock.local_now())
                     .min(Duration::from_millis(250));
 
-            match wait_for_idle_event(&rx, timeout, next_wake, || self.clock.local_now()) {
+            match wait_for_idle_event(rx, timeout, next_wake, || self.clock.local_now()) {
                 IdleWaitOutcome::WakeFromInbox => {
                     eprintln!("Daemon: inbox changed, waking up");
                     run_now = true;
@@ -1283,18 +1452,22 @@ impl Daemon {
             }
         }
 
-        // Cleanup: always unregister and remove socket, even if state save fails
-        self.prepare_shutdown_state(&mut cryo_state, pending_fallback.as_ref());
-        if let Err(e) = state::save_state(&self.state_path, &cryo_state) {
+        // Persist pid=None and final pending_fallback so external observers
+        // (e.g. the hub, `cryo status`) see a consistent shutdown state.
+        self.prepare_shutdown_state(cryo_state, pending_fallback.as_ref());
+        if let Err(e) = state::save_state(&self.state_path, cryo_state) {
             eprintln!("Daemon: failed to save final state: {e}");
         }
-        crate::registry::unregister(&self.dir);
-        crate::socket::SocketServer::cleanup(&sock_path);
-        eprintln!("Daemon: exited cleanly");
 
         Ok(())
     }
 
+    /// Delegate to the injected `SessionLauncher`.
+    ///
+    /// In production the launcher is `ProcessSessionLauncher`, which spawns a
+    /// real agent. In tests a `ScriptedSessionLauncher` returns canned
+    /// outcomes so the outer event loop can be exercised without wall-clock
+    /// delays or subprocess management.
     fn run_one_session(
         &self,
         config: &CryoConfig,
@@ -1304,109 +1477,15 @@ impl Daemon {
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
-        let agent_cmd = config.agent.clone();
-
-        let task = self
-            .get_task()
-            .unwrap_or_else(|| "Continue the plan".to_string());
-
-        let timeout_secs = config.max_session_duration;
-
-        eprintln!(
-            "Daemon: Session #{}: Running agent...",
-            cryo_state.session_number
-        );
-
-        // List inbox filenames for logging (agent reads files itself)
-        let inbox_filenames: Vec<String> = crate::message::list_inbox(&self.dir)?;
-
-        // Load TODO list for agent prompt
-        let todo_path = self.dir.join("todo.json");
-        let todo_display = match crate::todo::TodoList::load(&todo_path) {
-            Ok(list) => list.display(),
-            Err(err) => {
-                eprintln!(
-                    "Daemon: Error loading TODO list from {}: {}",
-                    todo_path.display(),
-                    err
-                );
-                format!("Error loading TODO list ({}). Please check todo.json.", err)
-            }
-        };
-
-        // Build system notice: delayed wake and/or previous-session crash.
-        // Both are orthogonal system-level facts the agent should know about
-        // before it starts work. They are joined with a blank line.
-        let crash_notice = if cryo_state.previous_session_crashed {
-            Some(
-                "PREVIOUS SESSION CRASHED: The agent exited without calling \
-                 `cryo-agent hibernate`. A reply may have been partially sent. \
-                 Check `messages/inbox/archive/` for any message that arrived \
-                 during the crashed session; if it still needs a user-visible \
-                 response, send it now via `cryo-agent reply` or \
-                 `cryo-agent send` before doing the normal session work."
-                    .to_string(),
-            )
-        } else {
-            None
-        };
-        let notice = match (delayed_wake, crash_notice.as_deref()) {
-            (Some(d), Some(c)) => Some(format!("{d}\n\n{c}")),
-            (Some(d), None) => Some(d.to_string()),
-            (None, Some(c)) => Some(c.to_string()),
-            (None, None) => None,
-        };
-
-        // Build prompt with task context and TODO list
-        let agent_config = crate::agent::AgentConfig {
-            session_number: cryo_state.session_number,
-            task: task.clone(),
-            delayed_wake: notice,
-            todo_list: todo_display,
-        };
-        let prompt = crate::agent::build_prompt(&agent_config);
-
-        // Begin event log
-        let mut logger = crate::log::EventLogger::begin(
-            &self.log_path,
-            cryo_state.session_number,
-            &task,
-            &agent_cmd,
-            &inbox_filenames,
-        )?;
-
-        // Log delayed wake notice
-        if let Some(notice) = delayed_wake {
-            logger.log_event(&format!("delayed wake: {notice}"))?;
-        }
-        if cryo_state.previous_session_crashed {
-            logger.log_event("previous session crashed — agent advised to check inbox archive")?;
-        }
-
-        // Open agent log file for stdout/stderr redirection
-        let agent_log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(crate::log::agent_log_path(&self.dir))?;
-
-        // Spawn agent with stdout/stderr redirected to cryo-agent.log
-        let mut child =
-            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
-        let child_pid = child.id();
-        let spawn_time = self.clock.monotonic_now();
-        logger.log_event(&format!("agent started (pid {child_pid})"))?;
-        if let Some(name) = provider_name {
-            logger.log_event(&format!("provider: {name}"))?;
-        }
-
-        let mut runtime = ProcessSessionRuntime::new(server, &mut child, Arc::clone(&self.clock));
-        let mut effects = FsSessionEffects::new(&self.dir);
-        let context = ActiveSessionContext {
+        self.launcher.run_session(
+            self,
+            config,
             cryo_state,
-            timeout_secs,
-            spawn_time,
-        };
-        self.drive_active_session(&mut runtime, &mut effects, context, logger)
+            server,
+            delayed_wake,
+            provider_env,
+            provider_name,
+        )
     }
 
     fn handle_active_request(
