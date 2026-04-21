@@ -143,6 +143,43 @@ pub fn push(backend: SyncBackend, dir: &Path) -> Result<()> {
     run_subcommand(backend, dir, "push")
 }
 
+/// Ground-truth running check — reads the per-backend pid file and verifies
+/// the process is alive. The hub uses this to decide what to show in the
+/// sync toggle.
+pub fn is_running(backend: SyncBackend, dir: &Path) -> bool {
+    match backend {
+        SyncBackend::Gh => crate::gh_sync::is_sync_running(dir),
+        SyncBackend::Zulip => crate::zulip_sync::is_sync_running(dir),
+    }
+}
+
+/// Poll `is_running` until it matches `expected` or the deadline elapses.
+/// Used after start/stop so the HTTP response (and the SSE status event that
+/// follows) reflects the settled pid-file state. Without this wait, the hub
+/// toggle would flip back to "off" right after a start click — `launchctl
+/// load -w` / `launchctl unload -w` return before the daemon has written or
+/// cleared its pid file, and nothing re-fetches sync state after that race
+/// window closes.
+///
+/// Returns `true` if `expected` was observed before the deadline.
+pub fn wait_for_state(
+    backend: SyncBackend,
+    dir: &Path,
+    expected: bool,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if is_running(backend, dir) == expected {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +271,58 @@ mod tests {
         assert!(pull(SyncBackend::Zulip, work.path()).is_ok());
         assert!(push(SyncBackend::Zulip, work.path()).is_ok());
         std::env::remove_var("CRYO_ZULIP_CLI");
+    }
+
+    #[test]
+    fn wait_for_state_returns_immediately_when_already_matching() {
+        let work = tempfile::tempdir().unwrap();
+        // No pid file → not running. Expect `false` to match right away.
+        let start = std::time::Instant::now();
+        let ok = wait_for_state(
+            SyncBackend::Zulip,
+            work.path(),
+            false,
+            std::time::Duration::from_secs(2),
+        );
+        assert!(ok);
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(200),
+            "fast-path should not sleep when already matching"
+        );
+    }
+
+    #[test]
+    fn wait_for_state_observes_transition_before_deadline() {
+        let work = tempfile::tempdir().unwrap();
+        let pid_path = crate::zulip_sync::sync_pid_path(work.path());
+        let pid_path_writer = pid_path.clone();
+
+        // Drop a live pid file ~300ms after we start waiting — our own PID is
+        // alive by definition, so `is_sync_running` will flip to true.
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::fs::write(&pid_path_writer, std::process::id().to_string()).unwrap();
+        });
+
+        let ok = wait_for_state(
+            SyncBackend::Zulip,
+            work.path(),
+            true,
+            std::time::Duration::from_secs(2),
+        );
+        writer.join().unwrap();
+        assert!(ok, "wait_for_state should observe the transition");
+    }
+
+    #[test]
+    fn wait_for_state_returns_false_on_timeout() {
+        let work = tempfile::tempdir().unwrap();
+        let ok = wait_for_state(
+            SyncBackend::Zulip,
+            work.path(),
+            true,
+            std::time::Duration::from_millis(250),
+        );
+        assert!(!ok, "no pid file will ever appear — must time out");
     }
 }

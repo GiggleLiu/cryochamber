@@ -37,8 +37,36 @@ pub async fn post_sync_action(
     let path_for_task = path.clone();
     let verb_for_task = verb.clone();
     let result = tokio::task::spawn_blocking(move || match verb_for_task.as_str() {
-        "start" => sync_common::start(backend, &path_for_task),
-        "stop" => sync_common::stop(backend, &path_for_task),
+        // `launchctl load -w` returns before the sync daemon has written its
+        // pid file, and `unload -w` returns before the daemon has cleared it.
+        // Wait for the observable state to settle so the SSE event that fires
+        // below sees the settled state — otherwise the hub toggle bounces back
+        // because GET /sync reports running=false while the daemon is still
+        // booting.
+        "start" => {
+            let r = sync_common::start(backend, &path_for_task);
+            if r.is_ok() {
+                let _ = sync_common::wait_for_state(
+                    backend,
+                    &path_for_task,
+                    true,
+                    std::time::Duration::from_secs(3),
+                );
+            }
+            r
+        }
+        "stop" => {
+            let r = sync_common::stop(backend, &path_for_task);
+            if r.is_ok() {
+                let _ = sync_common::wait_for_state(
+                    backend,
+                    &path_for_task,
+                    false,
+                    std::time::Duration::from_secs(3),
+                );
+            }
+            r
+        }
         "pull" => sync_common::pull(backend, &path_for_task),
         "push" => sync_common::push(backend, &path_for_task),
         _ => unreachable!("verb validated above"),

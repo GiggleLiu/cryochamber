@@ -346,6 +346,20 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     Ok(())
 }
 
+/// Format an outbox message for posting to a Zulip stream.
+///
+/// The agent's replies (`from == "agent"`) always carry `subject = "Reply"`,
+/// which is redundant in the thread — the body is the reply. Drop the
+/// parenthetical in that case. Operator-facing messages (reports, fallback
+/// alerts) keep their subject because it carries real information.
+fn format_outbox_post(msg: &cryochamber::message::Message) -> String {
+    if msg.from == "agent" {
+        format!("**{}**\n\n{}", msg.from, msg.body)
+    } else {
+        format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
+    }
+}
+
 fn push_outbox(
     dir: &Path,
     client: &ZulipClient,
@@ -363,7 +377,7 @@ fn push_outbox(
     let topic = sync_state.topic_name();
 
     for (filename, msg) in &messages {
-        let body = format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body);
+        let body = format_outbox_post(msg);
         match client.send_message(sync_state.stream_id, topic, &body) {
             Ok(_) => {
                 eprintln!("Zulip sync: posted outbox/{filename}");
@@ -408,4 +422,56 @@ fn cmd_status() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+    use chrono::NaiveDateTime;
+    use cryochamber::message::Message;
+    use std::collections::BTreeMap;
+
+    fn mk(from: &str, subject: &str, body: &str) -> Message {
+        Message {
+            from: from.into(),
+            subject: subject.into(),
+            body: body.into(),
+            timestamp: NaiveDateTime::default(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn agent_reply_drops_subject_parenthetical() {
+        // The agent's reply subject is always "Reply" (see daemon::write_reply).
+        // Showing it in the Zulip thread just produces "**agent** (Reply)" noise.
+        let out = format_outbox_post(&mk("agent", "Reply", "hello human"));
+        assert_eq!(out, "**agent**\n\nhello human");
+        assert!(!out.contains("(Reply)"));
+    }
+
+    #[test]
+    fn cryochamber_report_keeps_subject() {
+        // Reports and fallback alerts carry information in the subject — we
+        // must not strip it just because agent replies do.
+        let out = format_outbox_post(&mk(
+            "cryochamber",
+            "Cryochamber Report: demo",
+            "Last 24h: 3 sessions, 0 failed",
+        ));
+        assert_eq!(
+            out,
+            "**cryochamber** (Cryochamber Report: demo)\n\nLast 24h: 3 sessions, 0 failed"
+        );
+    }
+
+    #[test]
+    fn fallback_alert_keeps_subject() {
+        let out = format_outbox_post(&mk(
+            "cryochamber",
+            "Fallback Alert: deadline_missed",
+            "Agent exceeded max retries",
+        ));
+        assert!(out.starts_with("**cryochamber** (Fallback Alert: deadline_missed)\n\n"));
+    }
 }

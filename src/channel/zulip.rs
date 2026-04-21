@@ -304,9 +304,14 @@ pub fn parse_get_messages_response(
                 continue;
             }
         }
+        // Zulip returns unix seconds (UTC). The rest of the codebase stores
+        // message timestamps as naive *local* datetimes (see `Message::from`
+        // callers that use `Local::now().naive_local()`), so convert to local
+        // here — otherwise the thread renders Zulip messages off by the local
+        // UTC offset.
         let ts_unix = msg["timestamp"].as_i64().unwrap_or(0);
         let timestamp = chrono::DateTime::from_timestamp(ts_unix, 0)
-            .map(|dt| dt.naive_utc())
+            .map(|dt| dt.with_timezone(&chrono::Local).naive_local())
             .unwrap_or_default();
 
         let mut metadata = BTreeMap::from([("source".to_string(), "zulip".to_string())]);

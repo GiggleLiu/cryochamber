@@ -45,7 +45,9 @@ pub fn status_json(dir: &Path) -> Value {
     };
 
     let log_file = crate::log::log_path(dir);
-    let log_tail = crate::log::read_current_session(&log_file)
+    // Surface the last few sessions so the operator has context for wake/retry
+    // patterns without having to tail cryo.log manually.
+    let log_tail = crate::log::read_recent_sessions(&log_file, 5)
         .ok()
         .flatten()
         .unwrap_or_default();
@@ -318,6 +320,37 @@ mod tests {
         std::fs::write(dir.path().join("NOTES.md"), "# hello\n- one\n- two\n").unwrap();
         let v = status_json(dir.path());
         assert_eq!(v["notes_content"], "# hello\n- one\n- two\n");
+    }
+
+    #[test]
+    fn status_json_log_tail_spans_last_five_sessions() {
+        // The log panel should default to the last 5 sessions, not just the
+        // current one, so the operator can scan recent wake/retry history.
+        let dir = tempfile::tempdir().unwrap();
+        let mut content = String::new();
+        for i in 1..=7 {
+            content.push_str(&format!(
+                "--- CRYO SESSION {i} | 2026-03-01T{:02}:00:00Z ---\n\
+                 [xx:xx:xx] marker s{i}\n\
+                 --- CRYO END ---\n",
+                9 + i
+            ));
+        }
+        std::fs::write(crate::log::log_path(dir.path()), content).unwrap();
+        let v = status_json(dir.path());
+        let tail = v["log_tail"].as_str().unwrap_or("");
+        for i in 3..=7 {
+            assert!(
+                tail.contains(&format!("marker s{i}")),
+                "session {i} should be visible in log_tail"
+            );
+        }
+        for i in 1..=2 {
+            assert!(
+                !tail.contains(&format!("marker s{i}")),
+                "session {i} should be outside the last-5 window"
+            );
+        }
     }
 
     #[test]

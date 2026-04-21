@@ -121,6 +121,43 @@ fn test_parse_get_messages_response() {
 }
 
 #[test]
+fn test_parse_get_messages_response_converts_utc_timestamp_to_local() {
+    // Zulip delivers unix seconds (UTC). We store message timestamps as
+    // naive *local* datetimes so the UI renders them in the operator's
+    // wall-clock time — otherwise a message sent at 10:00 local in a UTC+8
+    // zone would show up as 02:00 in the thread.
+    let ts_unix: i64 = 1_740_700_000;
+    let json = serde_json::json!({
+        "result": "success",
+        "msg": "",
+        "messages": [
+            {
+                "id": 100,
+                "sender_id": 42,
+                "sender_email": "alice@example.com",
+                "sender_full_name": "Alice",
+                "content": "Hello",
+                "subject": "general-topic",
+                "timestamp": ts_unix,
+                "type": "stream"
+            }
+        ],
+        "found_newest": true,
+        "found_oldest": false
+    });
+    let (messages, _, _) = parse_get_messages_response(&json, None, None).unwrap();
+    assert_eq!(messages.len(), 1);
+    let expected = chrono::DateTime::from_timestamp(ts_unix, 0)
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .naive_local();
+    assert_eq!(
+        messages[0].timestamp, expected,
+        "zulip timestamps must be converted from UTC to local naive time"
+    );
+}
+
+#[test]
 fn test_parse_get_messages_response_empty() {
     let json = serde_json::json!({
         "result": "success",

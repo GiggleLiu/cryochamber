@@ -56,6 +56,29 @@ pub fn read_current_session(log_path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Read the last `n` sessions from `cryo.log` as a single string, preserving
+/// their `--- CRYO SESSION … ---` / `--- CRYO END ---` delimiters. If fewer
+/// than `n` sessions exist, returns everything from the first session onwards.
+/// Returns `None` for a missing or empty log, or `n == 0`.
+pub fn read_recent_sessions(log_path: &Path, n: usize) -> Result<Option<String>> {
+    if !log_path.exists() || n == 0 {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(log_path)?;
+    if contents.trim().is_empty() {
+        return Ok(None);
+    }
+    let indices: Vec<usize> = contents
+        .match_indices(SESSION_START)
+        .map(|(i, _)| i)
+        .collect();
+    if indices.is_empty() {
+        return Ok(None);
+    }
+    let start = indices[indices.len().saturating_sub(n)];
+    Ok(Some(contents[start..].to_string()))
+}
+
 pub fn session_count(log_path: &Path) -> Result<u32> {
     if !log_path.exists() {
         return Ok(0);
@@ -470,6 +493,57 @@ mod tests {
         std::fs::write(&path, content).unwrap();
         let result = read_latest_session(&path).unwrap();
         assert!(result.is_none(), "END before START should return None");
+    }
+
+    #[test]
+    fn test_read_recent_sessions_returns_last_n() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let mut content = String::new();
+        for i in 1..=7 {
+            content.push_str(&format!(
+                "--- CRYO SESSION {i} | 2026-03-01T{:02}:00:00Z ---\n\
+                 [xx:xx:xx] body s{i}\n\
+                 --- CRYO END ---\n",
+                9 + i
+            ));
+        }
+        std::fs::write(&path, &content).unwrap();
+
+        let recent = read_recent_sessions(&path, 5).unwrap().unwrap();
+        for i in 3..=7 {
+            assert!(
+                recent.contains(&format!("body s{i}")),
+                "session {i} should be included in last-5 window"
+            );
+        }
+        for i in 1..=2 {
+            assert!(
+                !recent.contains(&format!("body s{i}")),
+                "session {i} should be outside last-5 window"
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_recent_sessions_returns_all_when_fewer_than_n() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+                       [12:00:01] only session\n\
+                       --- CRYO END ---\n";
+        std::fs::write(&path, content).unwrap();
+        let recent = read_recent_sessions(&path, 5).unwrap().unwrap();
+        assert!(recent.contains("only session"));
+    }
+
+    #[test]
+    fn test_read_recent_sessions_empty_log_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cryo.log");
+        assert!(read_recent_sessions(&path, 5).unwrap().is_none());
+        std::fs::write(&path, "").unwrap();
+        assert!(read_recent_sessions(&path, 5).unwrap().is_none());
     }
 
     #[test]

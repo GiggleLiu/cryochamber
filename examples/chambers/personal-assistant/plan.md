@@ -21,9 +21,13 @@ Each session you either:
    continue normally.
 
 3. Check inbox for new messages using `cryo-agent receive`. For each message,
-   you **must** send a user-visible response with `cryo-agent reply` before
-   hibernating. Do not treat stdout, `NOTES.md`, or `cryo.log` as a reply to the
-   user.
+   send **exactly one** user-visible response with `cryo-agent reply` before
+   hibernating. Compose the full response once, then send it — do not follow up
+   with a corrected or friendlier second reply in the same session. Every
+   `cryo-agent reply` is delivered to the user; a second call to the same
+   inbox message looks like a duplicate message on their end. If you realise
+   the first reply was imperfect, accept it and move on. Do not treat stdout,
+   `NOTES.md`, or `cryo.log` as a reply to the user.
    - **New reminder** (e.g. "remind me to call Alice at 3pm", "ship the draft by Friday"):
      - Parse the content and deadline from the user's message. Convert the
        deadline into a **relative offset from now** (e.g. "at 3pm" → "+4 hours"

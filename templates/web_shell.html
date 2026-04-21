@@ -8,17 +8,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/web.css">
+<script src="/assets/marked.min.js" defer></script>
+<script src="/assets/purify.min.js" defer></script>
 </head>
 <body>
 
 <div class="topbar">
   <div class="brand">
     <img src="/assets/logo.svg" class="logo" alt="cryochamber">
-    <span class="hub-tag">HUB</span>
-    <span class="workspace">workspace · <strong id="workspace-path"></strong></span>
-  </div>
-  <div class="topbar-right">
-    <span class="kbd">⌘K  search</span>
   </div>
 </div>
 
@@ -67,6 +64,7 @@
     currentId: null,
     detailSeq: 0,
     lifecyclePending: {},
+    chamberHistoryOpen: false,
   };
 
   function urlChamberId() {
@@ -115,67 +113,110 @@
     return 'stopped';
   }
 
+  function buildChamberRow(c) {
+    const row = document.createElement('div');
+    row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
+    row.dataset.id = c.id;
+
+    const row1 = document.createElement('div');
+    row1.className = 'chamber-row1';
+    const dot = document.createElement('span');
+    dot.className = 'status-dot ' + statusClass(c);
+    const name = document.createElement('span');
+    name.className = 'chamber-name';
+    name.textContent = c.name;
+    row1.appendChild(dot);
+    row1.appendChild(name);
+    if (c.unread > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'unread';
+      badge.textContent = c.unread;
+      row1.appendChild(badge);
+    }
+    row.appendChild(row1);
+
+    if (c.last_message_preview) {
+      const prev = document.createElement('div');
+      prev.className = 'chamber-preview';
+      prev.textContent = c.last_message_preview;
+      row.appendChild(prev);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'chamber-meta';
+    const task = document.createElement('span');
+    task.className = 'task';
+    task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
+    const when = document.createElement('span');
+    when.className = 'when' + (c.wake_imminent ? ' soon' : '');
+    when.textContent = c.next_wake_display || '';
+    meta.appendChild(task);
+    meta.appendChild(when);
+    row.appendChild(meta);
+
+    row.addEventListener('click', () => selectChamber(c.id));
+    return row;
+  }
+
   function renderRail() {
     const list = document.getElementById('chamber-list');
     list.innerHTML = '';
     const filter = document.getElementById('rail-search').value.trim().toLowerCase();
-    const sorted = [...state.chambers].sort((a, b) => {
-      const rank = e => (e.running ? 0 : 1);
-      const ra = rank(a), rb = rank(b);
-      if (ra !== rb) return ra - rb;
-      return a.name.localeCompare(b.name);
-    }).filter(c => {
+    const matchesFilter = c => {
       if (!filter) return true;
       return [c.name, c.task, c.last_message_preview, c.path]
         .filter(Boolean)
         .some(v => String(v).toLowerCase().includes(filter));
-    });
-    for (const c of sorted) {
-      const row = document.createElement('div');
-      row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
-      row.dataset.id = c.id;
-
-      const row1 = document.createElement('div');
-      row1.className = 'chamber-row1';
-      const dot = document.createElement('span');
-      dot.className = 'status-dot ' + statusClass(c);
-      const name = document.createElement('span');
-      name.className = 'chamber-name';
-      name.textContent = c.name;
-      row1.appendChild(dot);
-      row1.appendChild(name);
-      if (c.unread > 0) {
-        const badge = document.createElement('span');
-        badge.className = 'unread';
-        badge.textContent = c.unread;
-        row1.appendChild(badge);
-      }
-      row.appendChild(row1);
-
-      if (c.last_message_preview) {
-        const prev = document.createElement('div');
-        prev.className = 'chamber-preview';
-        prev.textContent = c.last_message_preview;
-        row.appendChild(prev);
-      }
-
-      const meta = document.createElement('div');
-      meta.className = 'chamber-meta';
-      const task = document.createElement('span');
-      task.className = 'task';
-      task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
-      const when = document.createElement('span');
-      when.className = 'when' + (c.wake_imminent ? ' soon' : '');
-      when.textContent = c.next_wake_display || '';
-      meta.appendChild(task);
-      meta.appendChild(when);
-      row.appendChild(meta);
-
-      row.addEventListener('click', () => selectChamber(c.id));
-      list.appendChild(row);
+    };
+    // Split active vs completed: completed plans get folded into a
+    // collapsible `<details>` section, same pattern as the TODO panel's
+    // "History" fold. Keeps the rail focused on chambers that still need
+    // attention.
+    const active = [];
+    const completed = [];
+    for (const c of state.chambers) {
+      if (!matchesFilter(c)) continue;
+      // Group by completion alone. The daemon can still be winding down
+      // (running=true) right after `hibernate --complete`; `statusClass` and
+      // the header glyph already prioritise "completed" in that window, so
+      // the fold must too — otherwise the rail shows the chamber as active
+      // while every other signal says it's done.
+      if (c.completed) completed.push(c);
+      else active.push(c);
     }
+    const runningFirst = (a, b) => {
+      const rank = e => (e.running ? 0 : 1);
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.name.localeCompare(b.name);
+    };
+    active.sort(runningFirst);
+    completed.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const c of active) list.appendChild(buildChamberRow(c));
+
+    if (completed.length) {
+      const details = document.createElement('details');
+      details.className = 'chamber-history';
+      // Keep the fold open if (a) the user had it open last render, or (b)
+      // the currently-selected chamber lives inside it — otherwise clicking
+      // Complete on the active chamber would silently fold the selection
+      // away and the operator loses visual feedback of what's selected.
+      const selectedIsInside = completed.some(c => c.id === state.currentId);
+      if (state.chamberHistoryOpen || selectedIsInside) details.open = true;
+      details.addEventListener('toggle', () => {
+        state.chamberHistoryOpen = details.open;
+      });
+      const summary = document.createElement('summary');
+      summary.textContent = `Completed (${completed.length})`;
+      details.appendChild(summary);
+      for (const c of completed) details.appendChild(buildChamberRow(c));
+      list.appendChild(details);
+    }
+
+    const shown = active.length + completed.length;
     document.getElementById('rail-count').textContent =
-      filter ? `${sorted.length}/${state.chambers.length}` : state.chambers.length;
+      filter ? `${shown}/${state.chambers.length}` : state.chambers.length;
   }
 
   async function loadChambers() {
@@ -219,8 +260,8 @@
       lastLifecycleSig: null,
       msgBox: null,
       allMessages: [],
-      shownFrom: 0,
-      loadOlderBtn: null,
+      historyEl: null,
+      historyCount: 0,
     };
   }
 
@@ -317,14 +358,16 @@
 
   function updateLifecycleButtons(entry) {
     const pending = state.lifecyclePending[entry.id];
-    const sig = `${entry.running}|${!!entry.config_error}|${!!pending}`;
+    const sig = `${entry.running}|${!!entry.config_error}|${!!entry.completed}|${!!pending}`;
     if (sig === view.lastLifecycleSig) return;
     view.lastLifecycleSig = sig;
     const btns = view.lifecycleBtns;
     btns.innerHTML = '';
     if (entry.running) {
       btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
-    } else if (!entry.config_error) {
+    } else if (!entry.config_error && !entry.completed) {
+      // A completed plan has nothing to resume — hide Start. Reset stays
+      // available so the operator can archive the run and begin a new plan.
       btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary', pending));
     }
     if (!entry.running && !entry.config_error) {
@@ -428,79 +471,60 @@
     return el;
   }
 
-  function lastDayInBox(box) {
+  // Last day marker *outside* the history fold. Skips the <details> child so
+  // freshly-appended messages on the same day as the last visible message
+  // don't get an extra day header.
+  function lastVisibleDay(box) {
     for (let i = box.children.length - 1; i >= 0; i--) {
-      const d = box.children[i].dataset?.day;
+      const child = box.children[i];
+      if (child.tagName === 'DETAILS') continue;
+      const d = child.dataset?.day;
       if (d) return d;
     }
     return null;
   }
 
-  function appendMessages(box, messages) {
-    let currentDay = lastDayInBox(box);
+  function appendMessagesInto(target, messages, dayState) {
     for (const m of messages) {
       const d = dayKey(m.timestamp);
-      if (d !== currentDay) {
-        box.appendChild(buildDayMarker(d));
-        currentDay = d;
+      if (d !== dayState.current) {
+        target.appendChild(buildDayMarker(d));
+        dayState.current = d;
       }
-      box.appendChild(buildMessageRow(m));
-      view.lastMsgKey = messageKey(m);
+      target.appendChild(buildMessageRow(m));
     }
   }
 
-  // Prepend `messages` (oldest-first slice) to the top of the thread, after the
-  // load-older button. Preserves user scroll position.
-  function prependMessages(box, messages) {
-    if (!messages.length) return;
-    const prevHeight = box.scrollHeight;
-    const prevTop = box.scrollTop;
-    // Build into a fragment, then insert after the load-older button.
-    const frag = document.createDocumentFragment();
-    let currentDay = null;
-    for (const m of messages) {
-      const d = dayKey(m.timestamp);
-      if (d !== currentDay) {
-        frag.appendChild(buildDayMarker(d));
-        currentDay = d;
-      }
-      frag.appendChild(buildMessageRow(m));
+  // Render the entire thread: older messages go inside a collapsible
+  // `<details class="thread-history">` fold, latest PAGE_SIZE stay visible
+  // below. Matches the TODO / Completed Chambers fold pattern so the
+  // dashboard stays consistent.
+  function renderThreadContents() {
+    const box = view.msgBox;
+    box.innerHTML = '';
+    view.historyEl = null;
+    view.historyCount = 0;
+    const messages = view.allMessages;
+    const total = messages.length;
+    const historyCount = Math.max(0, total - PAGE_SIZE);
+    if (historyCount > 0) {
+      const details = document.createElement('details');
+      details.className = 'thread-history';
+      const summary = document.createElement('summary');
+      summary.textContent = `History (${historyCount} older)`;
+      details.appendChild(summary);
+      const body = document.createElement('div');
+      body.className = 'thread-history-body';
+      const dayState = { current: null };
+      appendMessagesInto(body, messages.slice(0, historyCount), dayState);
+      details.appendChild(body);
+      box.appendChild(details);
+      view.historyEl = details;
+      view.historyCount = historyCount;
     }
-    const anchor = view.loadOlderBtn ? view.loadOlderBtn.nextSibling : box.firstChild;
-    box.insertBefore(frag, anchor);
-    // The first day-marker of the previously-visible window is now redundant
-    // if it equals the last day-marker of the just-prepended slice. Drop it.
-    // (Cheap to skip — duplicates render as a thin separator line and look ok.)
-    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
-  }
-
-  function ensureLoadOlderButton(box, hiddenCount) {
-    if (hiddenCount <= 0) {
-      if (view.loadOlderBtn) {
-        view.loadOlderBtn.remove();
-        view.loadOlderBtn = null;
-      }
-      return;
-    }
-    if (!view.loadOlderBtn) {
-      const btn = document.createElement('button');
-      btn.className = 'load-older';
-      btn.addEventListener('click', loadOlder);
-      box.insertBefore(btn, box.firstChild);
-      view.loadOlderBtn = btn;
-    }
-    const shownOlder = Math.min(PAGE_SIZE, hiddenCount);
-    view.loadOlderBtn.textContent =
-      `▴ Load ${shownOlder} older (${hiddenCount} hidden)`;
-  }
-
-  function loadOlder() {
-    if (!view.allMessages || view.shownFrom <= 0) return;
-    const newFrom = Math.max(0, view.shownFrom - PAGE_SIZE);
-    const slice = view.allMessages.slice(newFrom, view.shownFrom);
-    view.shownFrom = newFrom;
-    prependMessages(view.msgBox, slice);
-    ensureLoadOlderButton(view.msgBox, view.shownFrom);
+    const dayState = { current: null };
+    appendMessagesInto(box, messages.slice(historyCount), dayState);
+    view.lastMsgKey = total > 0 ? messageKey(messages[total - 1]) : null;
   }
 
   function buildThread(pane, messages) {
@@ -509,10 +533,7 @@
     pane.appendChild(box);
     view.msgBox = box;
     view.allMessages = messages || [];
-    const total = view.allMessages.length;
-    view.shownFrom = Math.max(0, total - PAGE_SIZE);
-    ensureLoadOlderButton(box, view.shownFrom);
-    appendMessages(box, view.allMessages.slice(view.shownFrom));
+    renderThreadContents();
     // Scroll to bottom after layout settles (deep-link + font load timing).
     requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
   }
@@ -531,17 +552,21 @@
       const idx = messages.findIndex(m => messageKey(m) === view.lastMsgKey);
       if (idx < 0) {
         // Lost our marker — full rerender.
-        box.innerHTML = '';
-        view.loadOlderBtn = null;
-        view.shownFrom = Math.max(0, messages.length - PAGE_SIZE);
-        ensureLoadOlderButton(box, view.shownFrom);
-        appendMessages(box, messages.slice(view.shownFrom));
+        renderThreadContents();
         box.scrollTop = box.scrollHeight;
         return;
       }
       startAt = idx + 1;
     }
-    appendMessages(box, messages.slice(startAt));
+    if (startAt < messages.length) {
+      // New messages append outside the fold so the thread keeps growing
+      // downward. The fold boundary is frozen at build time — we don't move
+      // already-visible messages back into history just because the list
+      // grew past PAGE_SIZE.
+      const dayState = { current: lastVisibleDay(box) };
+      appendMessagesInto(box, messages.slice(startAt), dayState);
+      view.lastMsgKey = messageKey(messages[messages.length - 1]);
+    }
     if (wasAtBottom) box.scrollTop = box.scrollHeight;
   }
 
@@ -550,7 +575,7 @@
     wrap.className = 'compose';
     wrap.innerHTML = `
       <div class="compose-inner">
-        <textarea id="send-body" rows="1" placeholder="Send a message to the chamber…"></textarea>
+        <textarea id="send-body" rows="1" placeholder="Send a message to the chamber… (Enter for newline, ⌘↵ to send)"></textarea>
         <div class="controls">
           <div class="hint">⌘↵</div>
           <button class="send">Send</button>
@@ -559,6 +584,14 @@
     pane.appendChild(wrap);
     const ta   = wrap.querySelector('#send-body');
     const send = wrap.querySelector('.send');
+    // Auto-grow with content so multi-line drafts are visible up to the CSS
+    // `max-height` cap (after which the textarea scrolls). Without this, the
+    // `rows="1"` control hides all but the last line of a long message.
+    const autoGrow = () => {
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    };
+    ta.addEventListener('input', autoGrow);
     async function submit() {
       const body = ta.value.trim();
       if (!body) return;
@@ -569,10 +602,13 @@
           body: JSON.stringify({ body }),
         });
         ta.value = '';
+        autoGrow();
       } catch (e) { toast(e.message, 'error'); }
     }
     send.addEventListener('click', submit);
     ta.addEventListener('keydown', e => {
+      // Enter inserts a newline (default textarea behaviour). ⌘/Ctrl+Enter
+      // submits — this matches the keymap hint rendered on the button.
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submit(); }
     });
   }
@@ -782,14 +818,27 @@
     title.textContent = 'NOTES.md';
     box.appendChild(title);
     const wrap = document.createElement('div');
-    wrap.className = 'log-wrap notes-wrap';
-    const pre = document.createElement('pre');
-    pre.className = 'log notes';
-    pre.id = 'notes';
-    pre.textContent = status.notes_content || '';
-    wrap.appendChild(pre);
+    wrap.className = 'notes-wrap';
+    const body = document.createElement('article');
+    body.className = 'notes-rendered';
+    body.id = 'notes';
+    // NOTES.md content is agent-written — every render goes through DOMPurify
+    // so a crafted `<script>` or `onerror=` attribute can't execute. `marked`
+    // returns sanitizer-friendly HTML; DOMPurify is the backstop.
+    const raw = status.notes_content || '';
+    if (raw && window.marked && window.DOMPurify) {
+      const html = window.marked.parse(raw, { gfm: true, breaks: false });
+      body.innerHTML = window.DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true },
+      });
+    } else {
+      // Fallback until the vendored scripts finish loading: plain text so the
+      // content is still visible, just without markdown styling.
+      body.textContent = raw;
+    }
+    wrap.appendChild(body);
     box.appendChild(wrap);
-    view.notesEl = pre;
+    view.notesEl = body;
   }
 
   function appendLogLine(line) {
@@ -883,13 +932,6 @@
 
   const railSearch = document.getElementById('rail-search');
   railSearch.addEventListener('input', renderRail);
-  document.addEventListener('keydown', e => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-      e.preventDefault();
-      railSearch.focus();
-      railSearch.select();
-    }
-  });
   window.addEventListener('popstate', syncRouteSelection);
 
   document.getElementById('refresh').addEventListener('click', async () => {
