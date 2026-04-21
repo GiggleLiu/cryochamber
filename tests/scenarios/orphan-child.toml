@@ -1,0 +1,10 @@
+description = "Spawns a detached background process then hibernates; daemon must not hang."
+
+[[actions]]
+kind = "spawn_orphan"
+command = "sleep"
+args = ["10"]
+
+[[actions]]
+kind = "hibernate"
+complete = true

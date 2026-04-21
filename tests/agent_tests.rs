@@ -129,19 +129,19 @@ fn test_spawn_agent_with_empty_env_vars() {
 
 #[test]
 fn test_resolve_mock_agent() {
-    // "mock" should resolve to "sh" running "scenario.sh"
+    // "mock" should resolve to the `cryo-mock` scenario interpreter.
     let cmd = cryochamber::agent::build_command("mock", "test prompt").unwrap();
-    let program = format!("{:?}", cmd);
+    let program = format!("{cmd:?}");
     assert!(
-        program.contains("sh"),
-        "mock should resolve to sh: {program}"
+        program.contains("cryo-mock"),
+        "mock should resolve to cryo-mock: {program}"
     );
 }
 
 #[test]
 fn test_mock_agent_program() {
     let program = cryochamber::agent::agent_program("mock").unwrap();
-    assert_eq!(program, "sh");
+    assert_eq!(program, "cryo-mock");
 }
 
 #[test]

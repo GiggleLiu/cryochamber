@@ -11,11 +11,18 @@ fn cryo_bin() -> assert_cmd::Command {
     assert_cmd::Command::cargo_bin("cryo").unwrap()
 }
 
-/// Initialize a cryo project in a temp directory with a specific scenario script.
+/// Initialize a cryo project in a temp directory with a specific scenario file.
+///
+/// `scenario_name` is the basename without extension (e.g. `"crash"` or
+/// `"multi-session"`); the file at `tests/scenarios/<name>.toml` is copied into
+/// the project as `scenario.toml`, where `cryo-mock` picks it up.
 fn setup_scenario(dir: &std::path::Path, scenario_name: &str) {
+    let name = scenario_name
+        .trim_end_matches(".sh")
+        .trim_end_matches(".toml");
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let src = format!("{manifest}/tests/scenarios/{scenario_name}");
-    fs::copy(&src, dir.join("scenario.sh")).unwrap();
+    let src = format!("{manifest}/tests/scenarios/{name}.toml");
+    fs::copy(&src, dir.join("scenario.toml")).unwrap_or_else(|e| panic!("copying {src}: {e}"));
     fs::write(dir.join("plan.md"), "# Test Plan\nDo mock things.").unwrap();
 
     // Init cryo project

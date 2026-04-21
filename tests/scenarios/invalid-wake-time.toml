@@ -1,0 +1,10 @@
+description = "Adds a TODO with unparseable wake time; daemon refuses hibernate."
+
+[[actions]]
+kind = "todo_add"
+text = "bad time"
+at = "banana"
+
+[[actions]]
+kind = "hibernate"
+summary = "bad wake time"

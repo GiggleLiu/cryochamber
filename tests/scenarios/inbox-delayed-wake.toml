@@ -1,0 +1,15 @@
+description = "Session 1 hibernates with past wake, then sleeps so the test can drop an inbox file before the loop resumes."
+
+counter = ".mock-session-count"
+
+[[when]]
+session = "1"
+actions = [
+    { kind = "todo_add", text = "past wake", at = "-10m" },
+    { kind = "hibernate", summary = "Session 1 done" },
+    { kind = "sleep", seconds = 2 },
+]
+
+[[when]]
+session = "*"
+actions = [{ kind = "hibernate", complete = true, summary = "Plan completed after inbox wake" }]

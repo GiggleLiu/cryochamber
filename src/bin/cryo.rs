@@ -209,14 +209,23 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
 }
 
 /// Check that the agent command is supported and the binary exists on PATH.
+///
+/// Mirrors `spawn_agent`'s PATH augmentation: the directory containing the
+/// `cryo` binary is prepended so sibling helpers (`cryo-agent`, `cryo-mock`)
+/// are discoverable even when the user hasn't installed cryo globally.
 fn validate_agent_command(agent_cmd: &str) -> Result<()> {
     let program = cryochamber::agent::agent_program(agent_cmd)?;
-    let status = std::process::Command::new("which")
-        .arg(&program)
+    let mut cmd = std::process::Command::new("which");
+    cmd.arg(&program)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match status {
+        .stderr(std::process::Stdio::null());
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let path = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{}:{}", bin_dir.display(), path));
+        }
+    }
+    match cmd.status() {
         Ok(s) if s.success() => Ok(()),
         _ => anyhow::bail!(
             "Agent command '{}' not found. Verify it is installed and on your PATH.",

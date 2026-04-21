@@ -1,0 +1,16 @@
+description = "Exercises send, alert, and hibernate IPC commands in one session."
+
+[[actions]]
+kind = "send"
+message = "Status update for operator"
+
+[[actions]]
+kind = "alert"
+channel = "notify"
+target = "desktop"
+message = "Check on mock agent"
+
+[[actions]]
+kind = "hibernate"
+complete = true
+summary = "IPC test passed"

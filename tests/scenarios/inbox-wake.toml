@@ -1,0 +1,6 @@
+description = "Completes on first session; used by inbox-triggered wake tests."
+
+[[actions]]
+kind = "hibernate"
+complete = true
+summary = "Handled inbox wake"

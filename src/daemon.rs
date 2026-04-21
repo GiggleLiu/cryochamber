@@ -1759,3 +1759,7 @@ impl Daemon {
 #[cfg(test)]
 #[path = "unit_tests/daemon.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "unit_tests/daemon_properties.rs"]
+mod property_tests;

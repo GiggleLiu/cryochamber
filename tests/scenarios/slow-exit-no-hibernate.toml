@@ -1,0 +1,9 @@
+description = "Runs >5s then exits without hibernate (should NOT be flagged quick-exit)."
+
+[[actions]]
+kind = "sleep"
+seconds = 8
+
+[[actions]]
+kind = "exit"
+code = 0

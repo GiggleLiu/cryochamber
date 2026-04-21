@@ -1,0 +1,9 @@
+description = "Sleeps forever; tests session timeout enforcement and agent kill."
+
+[[actions]]
+kind = "echo"
+text = "Agent will sleep forever..."
+
+[[actions]]
+kind = "sleep"
+seconds = 99999

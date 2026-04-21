@@ -1,0 +1,11 @@
+description = "Alert, then crash without hibernate."
+
+[[actions]]
+kind = "alert"
+channel = "email"
+target = "ops@test.com"
+message = "Session stuck"
+
+[[actions]]
+kind = "exit"
+code = 1

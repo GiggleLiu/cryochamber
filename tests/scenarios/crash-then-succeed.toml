@@ -1,0 +1,11 @@
+description = "First invocation crashes; retry completes the plan."
+
+counter = ".mock-crash-count"
+
+[[when]]
+session = "1"
+actions = [{ kind = "exit", code = 1 }]
+
+[[when]]
+session = "*"
+actions = [{ kind = "hibernate", complete = true, summary = "Succeeded on retry" }]

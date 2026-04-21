@@ -28,6 +28,10 @@ path = "src/bin/cryo_zulip.rs"
 name = "cryohub"
 path = "src/bin/cryohub.rs"
 
+[[bin]]
+name = "cryo-mock"
+path = "src/bin/cryo_mock.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -52,5 +56,6 @@ urlencoding = "2"
 [dev-dependencies]
 assert_cmd = "2.1.2"
 predicates = "3.1.4"
+proptest = "1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,9 @@
+description = "Exits cleanly but without calling hibernate (quick-exit path)."
+
+[[actions]]
+kind = "echo"
+text = "Quick exit without hibernate"
+
+[[actions]]
+kind = "exit"
+code = 0
