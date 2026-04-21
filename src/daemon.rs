@@ -1533,8 +1533,15 @@ impl Daemon {
             let expected_instance_id = cryo_state.instance_id.as_deref();
             self.service_idle_socket_requests(server, expected_instance_id);
 
-            // Check fallback only when idle (not about to run a session)
-            self.check_fallback(cryo_state, &mut pending_fallback, &config.fallback_alert);
+            // Check fallback only when idle (not about to run a session).
+            // Log errors prominently and keep running — a failed fallback is
+            // visible to operators via the log; a crashed daemon would be
+            // strictly worse than a missed alert.
+            if let Err(e) =
+                self.check_fallback(cryo_state, &mut pending_fallback, &config.fallback_alert)
+            {
+                eprintln!("Daemon: check_fallback failed: {e:#}");
+            }
 
             // Check if periodic report is due
             if let Some(report_time) = next_report_time {
@@ -1824,25 +1831,43 @@ impl Daemon {
     }
 
     /// Execute a pending fallback if its deadline has passed.
+    ///
+    /// Returns `Ok(true)` if the fallback fired, `Ok(false)` if the deadline
+    /// had not yet passed (or no fallback was armed), and `Err` if persisting
+    /// the clear or executing the action failed. Errors are surfaced to the
+    /// caller rather than swallowed so a misconfigured outbox or an unwritable
+    /// state path does not silently consume a fallback.
     fn check_fallback(
         &self,
         cryo_state: &mut CryoState,
         pending: &mut Option<(NaiveDateTime, FallbackAction)>,
         alert_method: &str,
-    ) {
-        if let Some((deadline, _)) = pending.as_ref() {
-            if self.clock.local_now() > *deadline {
-                let (_, fb) = pending.take().unwrap();
-                self.sync_pending_fallback_state(cryo_state, pending.as_ref());
-                if let Err(e) = self.save_state(cryo_state) {
-                    eprintln!("Daemon: failed to clear pending fallback state: {e}");
-                }
-                eprintln!("Daemon: fallback deadline passed, executing fallback action");
-                if let Err(e) = fb.execute(&self.dir, alert_method) {
-                    eprintln!("Daemon: fallback execution failed: {e}");
-                }
-            }
+    ) -> Result<bool> {
+        let due =
+            matches!(pending.as_ref(), Some((deadline, _)) if self.clock.local_now() > *deadline);
+        if !due {
+            return Ok(false);
         }
+
+        // Borrow-checker note: we've already established the slot is `Some`.
+        // Use pattern matching instead of `take().unwrap()` so the branch is
+        // total by construction.
+        let fb = match pending.take() {
+            Some((_, fb)) => fb,
+            None => return Ok(false),
+        };
+
+        // `set_pending_fallback` with `None` keeps the CryoState field in
+        // sync and persists — so the same atomic mutation contract applies to
+        // check_fallback as to every other fallback-slot mutation in the
+        // daemon.
+        self.set_pending_fallback(cryo_state, pending, None)
+            .context("failed to persist cleared pending fallback")?;
+
+        eprintln!("Daemon: fallback deadline passed, executing fallback action");
+        fb.execute(&self.dir, alert_method)
+            .context("fallback execution failed")?;
+        Ok(true)
     }
 
     /// Handle a failure by retrying with exponential backoff (5s, 10s, ..., 1h cap).

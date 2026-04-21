@@ -853,14 +853,20 @@ fn test_check_fallback_uses_injected_clock() {
     };
     let mut pending = Some((now + chrono::Duration::minutes(1), action));
 
-    daemon.check_fallback(&mut cryo_state, &mut pending, "outbox");
+    let fired = daemon
+        .check_fallback(&mut cryo_state, &mut pending, "outbox")
+        .expect("no error before deadline");
+    assert!(!fired, "Fallback should not fire before the deadline");
     assert!(
         pending.is_some(),
         "Fallback should not fire before the deadline"
     );
 
     clock.advance(Duration::from_secs(61));
-    daemon.check_fallback(&mut cryo_state, &mut pending, "outbox");
+    let fired = daemon
+        .check_fallback(&mut cryo_state, &mut pending, "outbox")
+        .expect("deadline-passed check succeeds");
+    assert!(fired, "check_fallback should report that it fired");
 
     assert!(
         pending.is_none(),
@@ -869,6 +875,65 @@ fn test_check_fallback_uses_injected_clock() {
     assert!(cryo_state.pending_fallback.is_none());
     let outbox = crate::message::read_outbox(dir.path()).unwrap();
     assert_eq!(outbox.len(), 1, "Fallback should write one outbox message");
+}
+
+#[test]
+fn test_check_fallback_propagates_save_error() {
+    // If persisting the cleared fallback fails, check_fallback must surface
+    // the error instead of silently consuming the action. The fallback is
+    // still consumed from memory (the mutation is atomic — see
+    // set_pending_fallback's contract) but the caller must see the Err.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_state_store(
+        dir.path().to_path_buf(),
+        clock,
+        Arc::new(ProcessSessionLauncher),
+        Arc::new(FailingStateStore),
+    );
+
+    let mut cryo_state = test_cryo_state();
+    let action = FallbackAction {
+        action: "email".into(),
+        target: "ops".into(),
+        message: "stuck".into(),
+    };
+    // Deadline is already in the past so check_fallback fires immediately.
+    let mut pending = Some((now - chrono::Duration::minutes(1), action));
+
+    let err = daemon
+        .check_fallback(&mut cryo_state, &mut pending, "outbox")
+        .expect_err("save failure must surface");
+    let s = format!("{err:#}");
+    assert!(
+        s.contains("failed to persist cleared pending fallback"),
+        "error must name the save-clear step: {s}"
+    );
+}
+
+#[test]
+fn test_check_fallback_no_fallback_is_noop() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
+
+    let mut cryo_state = test_cryo_state();
+    let mut pending = None;
+
+    let fired = daemon
+        .check_fallback(&mut cryo_state, &mut pending, "outbox")
+        .expect("no-op must not error");
+    assert!(!fired);
 }
 
 #[test]
