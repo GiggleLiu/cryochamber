@@ -84,10 +84,21 @@ impl Drop for PidFile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncLoopCommand {
+    /// Pull succeeded (or failed transiently); proceed to push the outbox.
+    /// Pull and push are independent operations — a transient pull failure
+    /// should not block delivery of locally queued outbox messages.
     Send,
+    /// Pull detected a condition where send is also unsafe (e.g. the cycle
+    /// has no usable client because configuration could not load). Skip send
+    /// for this cycle and retry next tick.
     SkipSend,
+    /// The backend is in an unrecoverable state (auth failure, missing token,
+    /// mis-set-up channel, stream not found). Terminating the loop cleanly
+    /// so operators see the reason in the log instead of a silent restart
+    /// loop that keeps hitting the same wall.
+    Halt { reason: String },
 }
 
 pub trait SyncLoopBackend {
@@ -181,6 +192,10 @@ fn run_sync_loop_with_settle_delay<B: SyncLoopBackend + ?Sized>(
         match backend.receive()? {
             SyncLoopCommand::Send => backend.send()?,
             SyncLoopCommand::SkipSend => {}
+            SyncLoopCommand::Halt { reason } => {
+                eprintln!("{label}: halting — {reason}");
+                break;
+            }
         }
 
         if shutdown.load(Ordering::Relaxed) {

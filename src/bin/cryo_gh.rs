@@ -258,11 +258,29 @@ struct GhSyncLoopBackend {
 
 impl SyncLoopBackend for GhSyncLoopBackend {
     fn receive(&mut self) -> Result<SyncLoopCommand> {
-        // Reload sync state each cycle (pull updates the cursor)
-        let mut sync_state = load_gh_sync_state_with_self_login(&self.sync_path)?;
+        // Reload sync state each cycle (pull updates the cursor).
+        // Config-level errors (missing login, unreadable state file, missing
+        // repo) are unrecoverable without operator intervention; surface them
+        // as Halt so the loop exits cleanly with a visible reason instead of
+        // restart-looping against the same wall.
+        let mut sync_state = match load_gh_sync_state_with_self_login(&self.sync_path) {
+            Ok(state) => state,
+            Err(e) => {
+                return Ok(SyncLoopCommand::Halt {
+                    reason: format!("gh sync config error: {e:#}"),
+                });
+            }
+        };
 
         // Pull: Discussion -> inbox
-        let (owner, repo) = sync_state.owner_repo()?;
+        let (owner, repo) = match sync_state.owner_repo() {
+            Ok(pair) => pair,
+            Err(e) => {
+                return Ok(SyncLoopCommand::Halt {
+                    reason: format!("gh sync repo not configured: {e:#}"),
+                });
+            }
+        };
         match cryochamber::channel::github::pull_comments(
             owner,
             repo,

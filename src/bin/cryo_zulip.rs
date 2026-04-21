@@ -296,11 +296,16 @@ struct ZulipSyncLoopBackend {
 impl SyncLoopBackend for ZulipSyncLoopBackend {
     fn receive(&mut self) -> Result<SyncLoopCommand> {
         self.cycle_state = None;
+        // Config-level errors (missing zuliprc, stream not found, bad
+        // credentials) are unrecoverable without operator intervention;
+        // surface them as Halt so the loop exits cleanly with a visible
+        // reason instead of skipping sends forever.
         let (client, mut sync_state) = match load_client_from_project(&self.dir) {
             Ok(pair) => pair,
             Err(e) => {
-                eprintln!("Zulip sync: config error: {e}");
-                return Ok(SyncLoopCommand::SkipSend);
+                return Ok(SyncLoopCommand::Halt {
+                    reason: format!("zulip sync config error: {e:#}"),
+                });
             }
         };
 

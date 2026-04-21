@@ -228,6 +228,53 @@ fn sync_loop_receives_then_sends_each_cycle_after_outbox_event() {
     );
 }
 
+struct HaltingBackend {
+    log: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl SyncLoopBackend for HaltingBackend {
+    fn receive(&mut self) -> anyhow::Result<SyncLoopCommand> {
+        self.log.lock().unwrap().push("receive");
+        Ok(SyncLoopCommand::Halt {
+            reason: "mis-set-up for test".into(),
+        })
+    }
+
+    fn send(&mut self) -> anyhow::Result<()> {
+        self.log.lock().unwrap().push("send");
+        Ok(())
+    }
+}
+
+#[test]
+fn sync_loop_halts_on_halt_command_without_sending() {
+    // Halt is reserved for unrecoverable state (bad auth/config). The loop
+    // must exit cleanly AND must not call send on this cycle — sending with
+    // a known-bad client would just multiply the failure signal.
+    let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = HaltingBackend {
+        log: Arc::clone(&log),
+    };
+
+    run_sync_loop_with_settle_delay(
+        "test sync",
+        Arc::clone(&shutdown),
+        rx,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_millis(0),
+        &mut backend,
+    )
+    .unwrap();
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["receive"],
+        "Halt exits before send and does not start another cycle"
+    );
+}
+
 #[test]
 fn sync_loop_can_skip_send_for_a_receive_cycle() {
     let (tx, rx) = std::sync::mpsc::channel();
