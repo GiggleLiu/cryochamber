@@ -114,18 +114,68 @@ pub fn install(
         log = xml_escape(&log_file.display().to_string()),
     );
 
-    std::fs::write(&plist_path, plist)?;
+    // Every touch of `~/Library/LaunchAgents/` can fire a macOS 13+
+    // "Background items added" popup, so we only rewrite the plist when the
+    // content actually changed. A Start click on a chamber whose plist is
+    // already correct stays silent.
+    let plist_changed = match std::fs::read_to_string(&plist_path) {
+        Ok(existing) => existing != plist,
+        Err(_) => true,
+    };
+    let label_loaded = launchctl_tracks(&label);
 
-    let status = std::process::Command::new("launchctl")
-        .args(["load", "-w"])
-        .arg(&plist_path)
-        .status()
-        .context("Failed to run launchctl")?;
-    if !status.success() {
-        anyhow::bail!("launchctl load failed");
+    if plist_changed {
+        if label_loaded {
+            // Unload the stale version before overwriting — launchd keeps a
+            // handle on the old file otherwise.
+            let _ = std::process::Command::new("launchctl")
+                .args(["unload", "-w"])
+                .arg(&plist_path)
+                .status();
+        }
+        std::fs::write(&plist_path, plist)?;
+        let status = std::process::Command::new("launchctl")
+            .args(["load", "-w"])
+            .arg(&plist_path)
+            .status()
+            .context("Failed to run launchctl")?;
+        if !status.success() {
+            anyhow::bail!("launchctl load failed");
+        }
+    } else if !label_loaded {
+        // Plist is already up to date but launchd forgot about it (e.g. after
+        // a logout). A plain `load -w` is enough.
+        let status = std::process::Command::new("launchctl")
+            .args(["load", "-w"])
+            .arg(&plist_path)
+            .status()
+            .context("Failed to run launchctl")?;
+        if !status.success() {
+            anyhow::bail!("launchctl load failed");
+        }
+    } else {
+        // Plist unchanged and launchd knows the label — but the daemon may
+        // have exited on its own (hibernate --complete, plan finished). Use
+        // `kickstart -k` to restart it without rewriting the plist, so no
+        // "Background items added" popup fires.
+        let uid = unsafe { libc::getuid() };
+        let _ = std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
+            .status();
     }
 
     Ok(())
+}
+
+/// Returns true if launchd knows about the given label (loaded, regardless
+/// of whether the process is currently running).
+#[cfg(target_os = "macos")]
+fn launchctl_tracks(label: &str) -> bool {
+    std::process::Command::new("launchctl")
+        .args(["list", label])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Uninstall a system service. Returns true if a service was found and removed.

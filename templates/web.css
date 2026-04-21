@@ -189,7 +189,7 @@ body {
 /* ---------- Center: thread ---------- */
 .center {
   display:flex; flex-direction:column;
-  min-width: 0;
+  min-width: 0; min-height: 0;
   background:
     radial-gradient(1200px 400px at 70% -10%, rgba(244,198,120,0.04), transparent 60%),
     var(--bg);
@@ -282,6 +282,11 @@ body {
 /* Thread body */
 .thread {
   flex: 1;
+  /* min-height:0 lets `flex: 1` actually bound the thread height so
+     overflow-y can scroll. Without it, flex's default `min-height: auto`
+     keeps the thread as tall as its content and `scrollTop = scrollHeight`
+     is a no-op (the page scrolls instead of the thread). */
+  min-height: 0;
   overflow-y: auto;
   padding: 24px 28px 12px;
   display: flex; flex-direction: column; gap: 22px;
@@ -296,6 +301,21 @@ body {
   margin: 4px 0;
 }
 .day-marker::before, .day-marker::after {
+  content:""; flex:1; height:1px; background: var(--line-soft);
+}
+/* Session boundary — emitted when the session number changes between two
+   messages. Rendered as subtle gray to match the system-timestamp tone, not
+   as a loud accent; the session number itself is what draws the eye. */
+.session-marker {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  display:flex; align-items:center; gap: 14px;
+  margin: 10px 0 2px;
+}
+.session-marker::before, .session-marker::after {
   content:""; flex:1; height:1px; background: var(--line-soft);
 }
 .msg {
@@ -751,110 +771,28 @@ body {
 .log .ts { color: var(--ink-faint); }
 .log .k { color: var(--cool); }
 .log .v { color: var(--accent); }
-/* NOTES.md rendered as sanitized HTML by marked + DOMPurify. Shape it like
-   a reading surface, not a log: sans-serif body, generous line-height,
-   ink-on-panel contrast. */
+/* NOTES.md — rendered as faithful plaintext (no markdown parsing), but
+   styled for reading: sans-serif body, generous line-height, ink-on-panel
+   contrast. The `<pre>` keeps whitespace/newlines from the source file. */
 .notes-wrap {
   margin-top: 8px;
 }
-.notes-rendered {
+.notes {
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.6;
   color: var(--ink);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 18px 22px;
+  padding: 14px 18px;
   min-height: 180px;
+  max-height: 520px;
+  overflow-y: auto;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  margin: 0;
 }
-.notes-rendered > *:first-child { margin-top: 0; }
-.notes-rendered > *:last-child { margin-bottom: 0; }
-.notes-rendered h1,
-.notes-rendered h2,
-.notes-rendered h3,
-.notes-rendered h4,
-.notes-rendered h5,
-.notes-rendered h6 {
-  font-family: var(--serif);
-  font-weight: 600;
-  color: var(--ink);
-  letter-spacing: -0.01em;
-  margin: 22px 0 10px;
-  line-height: 1.25;
-}
-.notes-rendered h1 { font-size: 22px; margin-top: 0; }
-.notes-rendered h2 { font-size: 18px; }
-.notes-rendered h3 { font-size: 16px; }
-.notes-rendered h4, .notes-rendered h5, .notes-rendered h6 { font-size: 14px; }
-.notes-rendered p { margin: 0 0 12px; }
-.notes-rendered ul,
-.notes-rendered ol { margin: 0 0 12px; padding-left: 22px; }
-.notes-rendered li { margin: 4px 0; }
-.notes-rendered li > ul,
-.notes-rendered li > ol { margin: 4px 0; }
-.notes-rendered strong { color: var(--ink); font-weight: 600; }
-.notes-rendered em { font-family: var(--serif); font-style: italic; }
-.notes-rendered a {
-  color: var(--cool);
-  text-decoration: underline;
-  text-decoration-color: rgba(127,180,217,0.45);
-  text-underline-offset: 2px;
-}
-.notes-rendered a:hover { text-decoration-color: var(--cool); }
-.notes-rendered code {
-  font-family: var(--mono);
-  font-size: 0.9em;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 5px;
-  color: var(--accent);
-}
-.notes-rendered pre {
-  background: #0b0d12;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px 14px;
-  overflow-x: auto;
-  margin: 0 0 14px;
-}
-.notes-rendered pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--ink-dim);
-  font-size: 12px;
-  line-height: 1.55;
-}
-.notes-rendered blockquote {
-  margin: 10px 0 14px;
-  padding: 2px 14px;
-  border-left: 3px solid var(--line);
-  color: var(--ink-dim);
-}
-.notes-rendered hr {
-  border: none;
-  border-top: 1px solid var(--line-soft);
-  margin: 18px 0;
-}
-.notes-rendered table {
-  border-collapse: collapse;
-  margin: 10px 0 14px;
-  font-size: 13px;
-  width: 100%;
-}
-.notes-rendered th,
-.notes-rendered td {
-  border: 1px solid var(--line);
-  padding: 6px 10px;
-  text-align: left;
-  vertical-align: top;
-}
-.notes-rendered th { background: var(--panel-2); font-weight: 600; }
-.notes-rendered img { max-width: 100%; border-radius: 4px; }
-.notes-rendered input[type="checkbox"] { margin-right: 6px; }
 /* Utility */
 .divider {
   height: 1px; background: var(--line-soft); margin: 18px 0;

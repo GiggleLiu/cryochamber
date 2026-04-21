@@ -93,6 +93,30 @@ pub fn todos_json(dir: &Path) -> Value {
 
 /// Build the list of all messages (archive + inbox + outbox) for a chamber.
 pub fn messages_json(dir: &Path) -> Value {
+    // Read session starts so each message can be tagged with the session it
+    // arrived during. The hub groups messages visually by session — operators
+    // asked to see "which wake produced this message", which the session
+    // boundary answers.
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let sessions =
+        crate::log::parse_sessions_since(&dir.join("cryo.log"), epoch).unwrap_or_default();
+    let session_of = |msg_ts: chrono::NaiveDateTime| -> Option<u32> {
+        // Sessions are chronologically sorted. The message belongs to the
+        // latest session whose start timestamp does not exceed the message's
+        // timestamp.
+        let mut current: Option<u32> = None;
+        for s in &sessions {
+            if s.timestamp <= msg_ts {
+                current = Some(s.session_number);
+            } else {
+                break;
+            }
+        }
+        current
+    };
     let mut all: Vec<Value> = Vec::new();
     let to_json =
         |filename: &str, msg: &crate::message::Message, direction: &str, source: &str| -> Value {
@@ -103,6 +127,7 @@ pub fn messages_json(dir: &Path) -> Value {
                 "subject": msg.subject,
                 "body": msg.body,
                 "timestamp": msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                "session": session_of(msg.timestamp),
             })
         };
     if let Ok(archived) = crate::message::read_inbox_archive(dir) {
@@ -416,6 +441,71 @@ mod tests {
         let arr = arr.as_array().unwrap();
         assert_eq!(arr[0]["body"], "first");
         assert_eq!(arr[1]["body"], "second");
+    }
+
+    #[test]
+    fn messages_json_tags_each_message_with_the_session_that_owns_it() {
+        // Each message JSON needs a `session` field so the hub UI can emit a
+        // session divider when the number changes. Sessions are parsed out
+        // of `cryo.log` headers; a message's session is the latest header
+        // whose timestamp does not exceed the message's own timestamp.
+        let dir = tempfile::tempdir().unwrap();
+        crate::message::ensure_dirs(dir.path()).unwrap();
+        let log = dir.path().join("cryo.log");
+        std::fs::write(
+            &log,
+            "--- CRYO SESSION 1 | 2026-04-20T10:00:00Z ---\n\
+             hibernate: nap\n\
+             --- CRYO END ---\n\
+             --- CRYO SESSION 2 | 2026-04-20T12:00:00Z ---\n\
+             hibernate: nap\n\
+             --- CRYO END ---\n",
+        )
+        .unwrap();
+        // Before any session.
+        let pre = crate::message::Message {
+            from: "op".into(),
+            subject: "".into(),
+            body: "pre".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 4, 20)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            metadata: Default::default(),
+        };
+        // Inside session 1.
+        let s1 = crate::message::Message {
+            from: "op".into(),
+            subject: "".into(),
+            body: "s1".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 4, 20)
+                .unwrap()
+                .and_hms_opt(10, 30, 0)
+                .unwrap(),
+            metadata: Default::default(),
+        };
+        // Inside session 2.
+        let s2 = crate::message::Message {
+            from: "op".into(),
+            subject: "".into(),
+            body: "s2".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 4, 20)
+                .unwrap()
+                .and_hms_opt(13, 0, 0)
+                .unwrap(),
+            metadata: Default::default(),
+        };
+        crate::message::write_message(dir.path(), "inbox", &pre).unwrap();
+        crate::message::write_message(dir.path(), "inbox", &s1).unwrap();
+        crate::message::write_message(dir.path(), "inbox", &s2).unwrap();
+
+        let arr = messages_json(dir.path());
+        let arr = arr.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        let find = |body: &str| arr.iter().find(|m| m["body"] == body).unwrap();
+        assert!(find("pre")["session"].is_null(), "pre-session → null");
+        assert_eq!(find("s1")["session"], 1);
+        assert_eq!(find("s2")["session"], 2);
     }
 
     #[test]

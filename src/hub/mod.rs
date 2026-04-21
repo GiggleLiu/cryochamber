@@ -30,14 +30,6 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
         .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
         .route(
-            "/assets/marked.min.js",
-            get(crate::hub::routes::pages::get_marked_js),
-        )
-        .route(
-            "/assets/purify.min.js",
-            get(crate::hub::routes::pages::get_purify_js),
-        )
-        .route(
             "/api/chambers",
             get(crate::hub::routes::chambers::get_chambers),
         )

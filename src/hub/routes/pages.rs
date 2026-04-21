@@ -5,8 +5,6 @@ use axum::response::Html;
 const SHELL_HTML: &str = include_str!("../../../templates/web_shell.html");
 const WEB_CSS: &str = include_str!("../../../templates/web.css");
 const LOGO_SVG: &str = include_str!("../../../docs/logo/logo.svg");
-const MARKED_JS: &str = include_str!("../../../templates/vendor/marked.min.js");
-const PURIFY_JS: &str = include_str!("../../../templates/vendor/purify.min.js");
 
 pub async fn get_index() -> Html<&'static str> {
     Html(SHELL_HTML)
@@ -18,20 +16,6 @@ pub async fn get_css() -> ([(&'static str, &'static str); 1], &'static str) {
 
 pub async fn get_logo() -> ([(&'static str, &'static str); 1], &'static str) {
     ([("content-type", "image/svg+xml; charset=utf-8")], LOGO_SVG)
-}
-
-pub async fn get_marked_js() -> ([(&'static str, &'static str); 1], &'static str) {
-    (
-        [("content-type", "application/javascript; charset=utf-8")],
-        MARKED_JS,
-    )
-}
-
-pub async fn get_purify_js() -> ([(&'static str, &'static str); 1], &'static str) {
-    (
-        [("content-type", "application/javascript; charset=utf-8")],
-        PURIFY_JS,
-    )
 }
 
 #[cfg(test)]
@@ -209,31 +193,85 @@ mod tests {
     }
 
     #[test]
-    fn shell_renders_notes_as_sanitized_markdown() {
-        // NOTES.md used to render inside `<pre class="log notes">`, same
-        // styling as the raw log tail. We now parse it with `marked` and
-        // sanitize with DOMPurify before injecting as HTML, so prose reads
-        // like prose and agent-written `<script>` tags can't execute.
+    fn shell_emits_session_markers_between_messages_of_different_sessions() {
+        // Operators asked to see which wake/session produced each message.
+        // The server now tags every message with `session: N` and the thread
+        // emits a `.session-marker` divider whenever the number changes.
         assert!(
-            SHELL_HTML.contains("/assets/marked.min.js")
-                && SHELL_HTML.contains("/assets/purify.min.js"),
-            "shell should load vendored marked + DOMPurify scripts"
+            SHELL_HTML.contains("function buildSessionMarker"),
+            "shell should build a session marker element"
         );
         assert!(
-            SHELL_HTML.contains("window.marked.parse(raw"),
-            "renderNotes should parse via marked"
+            SHELL_HTML.contains("`Session ${session}`"),
+            "session marker should display the session number"
         );
         assert!(
-            SHELL_HTML.contains("window.DOMPurify.sanitize"),
-            "renderNotes must pass parsed HTML through DOMPurify"
+            SHELL_HTML.contains("if (sess !== state.session)"),
+            "appendMessagesInto should diff by session, not just day"
         );
         assert!(
-            SHELL_HTML.contains("notes-rendered"),
-            "notes body should use the styled `.notes-rendered` container"
+            WEB_CSS.contains(".session-marker"),
+            "session marker CSS must exist"
+        );
+    }
+
+    #[test]
+    fn shell_gives_thread_min_height_so_overflow_can_scroll() {
+        // Flex children default to `min-height: auto`, which forces the
+        // thread to grow past the viewport instead of scrolling internally —
+        // that's why clicks on the drawer or new messages failed to "jump to
+        // bottom". Bound the height explicitly.
+        let start = WEB_CSS.find(".thread {").expect(".thread rule missing");
+        let after = &WEB_CSS[start..];
+        let end = after.find('}').expect(".thread rule unterminated");
+        let rule = &after[..end];
+        assert!(
+            rule.contains("min-height: 0"),
+            "`.thread` must set min-height: 0 so overflow-y: auto actually scrolls: {rule}"
+        );
+    }
+
+    #[test]
+    fn shell_preserves_notes_scroll_across_sse_refreshes() {
+        // Every status SSE tick calls renderNotes. Blowing away the DOM each
+        // time resets the `<pre>`'s scrollTop to 0, so a reader mid-way down
+        // the notes keeps getting yanked back to the top. The update path
+        // must reuse the existing node and preserve scrollTop.
+        assert!(
+            SHELL_HTML.contains("if (view.notesEl && box.contains(view.notesEl))"),
+            "renderNotes should reuse the existing notes <pre> on update"
         );
         assert!(
-            WEB_CSS.contains(".notes-rendered") && WEB_CSS.contains(".notes-rendered h1"),
-            "notes markdown styling block must exist in CSS"
+            SHELL_HTML.contains("view.notesEl.scrollTop = prevScroll"),
+            "renderNotes must restore scrollTop after updating text"
+        );
+        assert!(
+            SHELL_HTML.contains("if (view.notesEl.textContent === nextContent) return"),
+            "renderNotes should skip when content is unchanged"
+        );
+    }
+
+    #[test]
+    fn shell_renders_notes_as_readable_prose() {
+        // The notes panel used to inherit `.log` styling (11px mono, dim
+        // ink, dark log background) which made prose read like a log tail.
+        // Option 1: keep the raw text but style the container as a reading
+        // surface — sans-serif body, ink-on-panel, generous line-height.
+        let start = WEB_CSS.find(".notes {").expect(".notes rule missing");
+        let after = &WEB_CSS[start..];
+        let end = after.find('}').expect(".notes rule unterminated");
+        let rule = &after[..end];
+        assert!(
+            rule.contains("font-family: var(--sans)"),
+            "notes should use the sans-serif body font, not mono: {rule}"
+        );
+        assert!(
+            rule.contains("background: var(--panel)"),
+            "notes should sit on the panel surface, not the dark log bg: {rule}"
+        );
+        assert!(
+            rule.contains("white-space: pre-wrap"),
+            "notes must preserve newlines from NOTES.md: {rule}"
         );
     }
 

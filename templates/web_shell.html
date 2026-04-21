@@ -8,8 +8,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/web.css">
-<script src="/assets/marked.min.js" defer></script>
-<script src="/assets/purify.min.js" defer></script>
 </head>
 <body>
 
@@ -434,6 +432,7 @@
     row.className = 'sys-notice';
     row.dataset.key = messageKey(m);
     row.dataset.day = dayKey(m.timestamp);
+    if (m.session != null) row.dataset.session = String(m.session);
     const ts = (m.timestamp || '').slice(11, 16);
     row.textContent = [m.from, ts, m.body || ''].filter(Boolean).join(' · ');
     return row;
@@ -446,6 +445,7 @@
     row.className = 'msg ' + (m.direction === 'outbox' ? 'agent' : 'human');
     row.dataset.key = messageKey(m);
     row.dataset.day = dayKey(m.timestamp);
+    if (m.session != null) row.dataset.session = String(m.session);
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
     const from = document.createElement('span');
@@ -471,25 +471,48 @@
     return el;
   }
 
-  // Last day marker *outside* the history fold. Skips the <details> child so
-  // freshly-appended messages on the same day as the last visible message
-  // don't get an extra day header.
-  function lastVisibleDay(box) {
+  function buildSessionMarker(session, day) {
+    const el = document.createElement('div');
+    el.className = 'session-marker';
+    el.dataset.day = day;
+    el.dataset.session = String(session);
+    el.textContent = `Session ${session}`;
+    return el;
+  }
+
+  // Last visible (session, day) outside the history fold. Skips the
+  // <details> child so freshly-appended messages don't re-emit a marker.
+  function lastVisibleState(box) {
     for (let i = box.children.length - 1; i >= 0; i--) {
       const child = box.children[i];
       if (child.tagName === 'DETAILS') continue;
-      const d = child.dataset?.day;
-      if (d) return d;
+      const day = child.dataset?.day;
+      if (!day) continue;
+      const sessRaw = child.dataset?.session;
+      return {
+        day,
+        session: sessRaw === undefined || sessRaw === '' ? null : Number(sessRaw),
+      };
     }
-    return null;
+    return { day: null, session: null };
   }
 
-  function appendMessagesInto(target, messages, dayState) {
+  // Group messages by session when session info is present; fall back to
+  // day-only grouping for messages with no `session`. A session change emits
+  // a `.session-marker`; within a session, a day change emits a subtle
+  // `.day-marker`.
+  function appendMessagesInto(target, messages, state) {
     for (const m of messages) {
       const d = dayKey(m.timestamp);
-      if (d !== dayState.current) {
+      const sess = m.session == null ? null : Number(m.session);
+      if (sess !== state.session) {
+        if (sess != null) target.appendChild(buildSessionMarker(sess, d));
+        else if (d !== state.day) target.appendChild(buildDayMarker(d));
+        state.session = sess;
+        state.day = d;
+      } else if (d !== state.day) {
         target.appendChild(buildDayMarker(d));
-        dayState.current = d;
+        state.day = d;
       }
       target.appendChild(buildMessageRow(m));
     }
@@ -515,15 +538,15 @@
       details.appendChild(summary);
       const body = document.createElement('div');
       body.className = 'thread-history-body';
-      const dayState = { current: null };
-      appendMessagesInto(body, messages.slice(0, historyCount), dayState);
+      const state = { session: null, day: null };
+      appendMessagesInto(body, messages.slice(0, historyCount), state);
       details.appendChild(body);
       box.appendChild(details);
       view.historyEl = details;
       view.historyCount = historyCount;
     }
-    const dayState = { current: null };
-    appendMessagesInto(box, messages.slice(historyCount), dayState);
+    const state = { session: null, day: null };
+    appendMessagesInto(box, messages.slice(historyCount), state);
     view.lastMsgKey = total > 0 ? messageKey(messages[total - 1]) : null;
   }
 
@@ -563,8 +586,8 @@
       // downward. The fold boundary is frozen at build time — we don't move
       // already-visible messages back into history just because the list
       // grew past PAGE_SIZE.
-      const dayState = { current: lastVisibleDay(box) };
-      appendMessagesInto(box, messages.slice(startAt), dayState);
+      const state = lastVisibleState(box);
+      appendMessagesInto(box, messages.slice(startAt), state);
       view.lastMsgKey = messageKey(messages[messages.length - 1]);
     }
     if (wasAtBottom) box.scrollTop = box.scrollHeight;
@@ -812,6 +835,18 @@
 
   function renderNotes(status) {
     const box = document.getElementById('panel-notes');
+    const nextContent = status.notes_content || '';
+    // Every SSE status tick re-renders the whole panel — rebuilding the DOM
+    // would reset scrollTop to 0 and yank the reader back to the top. Reuse
+    // the existing `<pre>` and preserve its scroll position when the content
+    // didn't meaningfully change.
+    if (view.notesEl && box.contains(view.notesEl)) {
+      if (view.notesEl.textContent === nextContent) return;
+      const prevScroll = view.notesEl.scrollTop;
+      view.notesEl.textContent = nextContent;
+      view.notesEl.scrollTop = prevScroll;
+      return;
+    }
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'section-title';
@@ -819,26 +854,13 @@
     box.appendChild(title);
     const wrap = document.createElement('div');
     wrap.className = 'notes-wrap';
-    const body = document.createElement('article');
-    body.className = 'notes-rendered';
-    body.id = 'notes';
-    // NOTES.md content is agent-written — every render goes through DOMPurify
-    // so a crafted `<script>` or `onerror=` attribute can't execute. `marked`
-    // returns sanitizer-friendly HTML; DOMPurify is the backstop.
-    const raw = status.notes_content || '';
-    if (raw && window.marked && window.DOMPurify) {
-      const html = window.marked.parse(raw, { gfm: true, breaks: false });
-      body.innerHTML = window.DOMPurify.sanitize(html, {
-        USE_PROFILES: { html: true },
-      });
-    } else {
-      // Fallback until the vendored scripts finish loading: plain text so the
-      // content is still visible, just without markdown styling.
-      body.textContent = raw;
-    }
-    wrap.appendChild(body);
+    const pre = document.createElement('pre');
+    pre.className = 'notes';
+    pre.id = 'notes';
+    pre.textContent = nextContent;
+    wrap.appendChild(pre);
     box.appendChild(wrap);
-    view.notesEl = body;
+    view.notesEl = pre;
   }
 
   function appendLogLine(line) {
