@@ -8,7 +8,7 @@ A [cryochamber](https://github.com/GiggleLiu/cryochamber) application.
 cryo start                                                    # start the daemon
 ```
 
-Depending on the way you interact with your agent, start the corresponding service wtih:
+Depending on the way you interact with your agent, start the corresponding service with:
 ```bash
 cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
 cryo-zulip sync

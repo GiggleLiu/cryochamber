@@ -1,10 +1,39 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cryochamber::config;
 use cryochamber::hub::{build_router_with_state, discovery, state::AppState};
 use tower::ServiceExt;
+
+/// Global lock serializing env-var mutation so parallel tests don't race on
+/// `CRYO_NO_SERVICE`. Matches the pattern in `src/unit_tests/sync_common.rs`.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// RAII guard: sets an env var on construction, removes it on drop — even on
+/// panic. Holds the `ENV_LOCK` for its lifetime so only one test mutates the
+/// process environment at a time.
+struct EnvVarGuard<'a> {
+    _lock: MutexGuard<'a, ()>,
+    key: &'static str,
+}
+
+impl<'a> EnvVarGuard<'a> {
+    fn set(key: &'static str, value: &str) -> Self {
+        let lock = match ENV_LOCK.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        std::env::set_var(key, value);
+        Self { _lock: lock, key }
+    }
+}
+
+impl Drop for EnvVarGuard<'_> {
+    fn drop(&mut self) {
+        std::env::remove_var(self.key);
+    }
+}
 
 /// Build a workspace dir with two chambers. Populate the AppState index
 /// *without* calling `registry::list()` so the test is isolated from whatever
@@ -136,7 +165,9 @@ async fn unknown_chamber_id_returns_404() {
 #[tokio::test]
 async fn start_chamber_via_api_creates_background_daemon() {
     // Force the background-process launch path so no service install happens.
-    std::env::set_var("CRYO_NO_SERVICE", "1");
+    // Guard the env mutation so it doesn't bleed into other tests when the
+    // harness runs them in parallel, and is restored even if this test panics.
+    let _env = EnvVarGuard::set("CRYO_NO_SERVICE", "1");
 
     let tmp = tempfile::tempdir().unwrap();
     let alpha = tmp.path().join("alpha");

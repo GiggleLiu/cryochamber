@@ -151,7 +151,19 @@ fn spawn_watcher(
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
             if let Ok(bytes) = std::fs::read(&log_path) {
-                if (bytes.len() as u64) > last_size {
+                let size = bytes.len() as u64;
+                // Detect truncation / rotation (e.g. `cryo clean` or archive
+                // step replaced the file with a smaller one). Without this
+                // branch the tailer would be stuck forever waiting for the
+                // old length to be re-reached.
+                if size < last_size {
+                    let _ = tx_log.send(SseEvent::LogLine {
+                        chamber_id: id_log.clone(),
+                        line: "--- log rotated ---".to_string(),
+                    });
+                    last_size = 0;
+                }
+                if size > last_size {
                     let new_bytes = &bytes[last_size as usize..];
                     for line in new_bytes.split(|b| *b == b'\n') {
                         if !line.is_empty() {
@@ -164,7 +176,7 @@ fn spawn_watcher(
                             }
                         }
                     }
-                    last_size = bytes.len() as u64;
+                    last_size = size;
                 }
             }
             if let Ok(content) = std::fs::read_to_string(&state_path) {
