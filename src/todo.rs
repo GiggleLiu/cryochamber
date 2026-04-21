@@ -59,8 +59,16 @@ impl TodoList {
         Ok(())
     }
 
-    /// Add item. Returns the new item's ID.
+    /// Add item. Returns the new item's ID, or the id of an existing open item
+    /// with identical text + at (dedup).
     pub fn add(&mut self, text: String, at: String) -> u32 {
+        if let Some(existing) = self
+            .items
+            .iter()
+            .find(|i| !i.done && i.text == text && i.at == at)
+        {
+            return existing.id;
+        }
         let id = self.items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
         let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         self.items.push(TodoItem {

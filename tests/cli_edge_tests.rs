@@ -234,30 +234,10 @@ fn test_send_creates_inbox_directory() {
     );
 }
 
-#[test]
-fn test_receive_empty_inbox() {
-    let dir = tempfile::tempdir().unwrap();
-
-    agent_bin()
-        .args(["receive"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-}
-
-#[test]
-fn test_receive_malformed_message() {
-    let dir = tempfile::tempdir().unwrap();
-    let inbox = dir.path().join("messages/inbox");
-    fs::create_dir_all(&inbox).unwrap();
-    fs::write(inbox.join("bad-message.md"), "not valid frontmatter {{{").unwrap();
-
-    agent_bin()
-        .args(["receive"])
-        .current_dir(dir.path())
-        .assert()
-        .success(); // should not crash on malformed messages
-}
+// Note: `cryo-agent receive` now routes through the daemon socket so that
+// archiving and the "receive" event log entry are atomic with the read. It is
+// therefore no longer a local-only command; edge-case tests for it live in
+// the daemon unit tests.
 
 // --- Time subcommand ---
 

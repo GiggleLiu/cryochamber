@@ -18,6 +18,7 @@ fn test_save_and_load_state() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -53,6 +54,7 @@ fn test_lock_mechanism() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -77,6 +79,7 @@ fn test_is_locked_dead_process() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
 }
@@ -96,6 +99,7 @@ fn test_is_locked_no_pid() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
 }
@@ -117,6 +121,59 @@ fn test_load_corrupted_state() {
     std::fs::write(&state_path, "not valid json {{{").unwrap();
     let result = load_state(&state_path);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_previous_session_crashed_default_false_and_skipped_when_false() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    std::fs::write(&state_path, r#"{"session_number": 1}"#).unwrap();
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    assert!(!loaded.previous_session_crashed, "default must be false");
+
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
+        previous_session_crashed: false,
+    };
+    save_state(&state_path, &state).unwrap();
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(
+        !json.contains("previous_session_crashed"),
+        "false should not be serialized"
+    );
+}
+
+#[test]
+fn test_previous_session_crashed_true_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    let state = CryoState {
+        session_number: 1,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_retries_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        pending_fallback: None,
+        previous_session_crashed: true,
+    };
+    save_state(&state_path, &state).unwrap();
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    assert!(loaded.previous_session_crashed);
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    assert!(json.contains("previous_session_crashed"));
 }
 
 #[test]
@@ -151,6 +208,7 @@ fn test_override_fields_roundtrip() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -176,6 +234,7 @@ fn test_none_overrides_not_serialized() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
@@ -202,6 +261,7 @@ fn test_last_report_time_roundtrip() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -231,6 +291,7 @@ fn test_provider_index_roundtrip() {
         provider_index: Some(2),
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();

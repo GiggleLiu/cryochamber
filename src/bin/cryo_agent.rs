@@ -3,7 +3,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use cryochamber::message;
 use cryochamber::socket::{self, Request};
 
 #[derive(Parser)]
@@ -126,31 +125,10 @@ fn main() -> Result<()> {
                 message,
             },
         ),
-        Commands::Receive => cmd_receive(&dir),
+        Commands::Receive => send(&dir, &Request::Receive),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),
     }
-}
-
-fn cmd_receive(dir: &Path) -> Result<()> {
-    let messages = message::read_inbox(dir)?;
-    if messages.is_empty() {
-        println!("No messages.");
-        return Ok(());
-    }
-    for (filename, msg) in &messages {
-        println!("--- {} ---", filename);
-        if !msg.from.is_empty() {
-            println!("From: {}", msg.from);
-        }
-        if !msg.subject.is_empty() {
-            println!("Subject: {}", msg.subject);
-        }
-        println!();
-        println!("{}", msg.body);
-        println!();
-    }
-    Ok(())
 }
 
 fn cmd_time(offset: Option<&str>) -> Result<()> {

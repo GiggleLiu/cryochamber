@@ -36,6 +36,7 @@ fn test_apply_overrides_all_fields() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     config.apply_overrides(&state);
     assert_eq!(config.agent, "claude");
@@ -59,6 +60,7 @@ fn test_apply_overrides_none_fields() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     config.apply_overrides(&state);
     assert_eq!(config.agent, original.agent);

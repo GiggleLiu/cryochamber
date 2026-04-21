@@ -45,6 +45,13 @@ pub struct CryoState {
     /// Dead-man switch fallback that should survive daemon restarts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_fallback: Option<PendingFallbackState>,
+
+    /// True iff the previous session exited without calling `cryo-agent hibernate`.
+    /// Used to inject a "previous session crashed" notice into the next prompt so
+    /// the agent can check `messages/inbox/archive/` and decide whether any
+    /// message still needs a response. Cleared once the notice has been delivered.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub previous_session_crashed: bool,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

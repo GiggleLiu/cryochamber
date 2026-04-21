@@ -42,6 +42,43 @@ fn test_backward_compat_missing_at_field() {
 }
 
 #[test]
+fn test_add_dedup_returns_existing_id_for_open_duplicate() {
+    let mut list = TodoList::new();
+    let first = list.add("[internal] heartbeat".into(), "2026-03-02T21:01".into());
+    let second = list.add("[internal] heartbeat".into(), "2026-03-02T21:01".into());
+    assert_eq!(first, second);
+    assert_eq!(list.items().len(), 1);
+}
+
+#[test]
+fn test_add_dedup_creates_new_when_existing_is_done() {
+    let mut list = TodoList::new();
+    let first = list.add("[internal] heartbeat".into(), "2026-03-02T21:01".into());
+    list.done(first).unwrap();
+    let second = list.add("[internal] heartbeat".into(), "2026-03-02T21:01".into());
+    assert_ne!(first, second);
+    assert_eq!(list.items().len(), 2);
+}
+
+#[test]
+fn test_add_dedup_creates_new_when_at_differs() {
+    let mut list = TodoList::new();
+    let first = list.add("[internal] heartbeat".into(), "2026-03-02T21:01".into());
+    let second = list.add("[internal] heartbeat".into(), "2026-03-02T22:00".into());
+    assert_ne!(first, second);
+    assert_eq!(list.items().len(), 2);
+}
+
+#[test]
+fn test_add_dedup_creates_new_when_text_differs() {
+    let mut list = TodoList::new();
+    let first = list.add("[internal] heartbeat".into(), "2026-03-02T21:01".into());
+    let second = list.add("call Alice".into(), "2026-03-02T21:01".into());
+    assert_ne!(first, second);
+    assert_eq!(list.items().len(), 2);
+}
+
+#[test]
 fn test_next_wake_time_skips_empty_at() {
     let mut list = TodoList::new();
     // Simulate a legacy item with empty `at`

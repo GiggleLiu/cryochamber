@@ -246,7 +246,6 @@ struct ActiveSessionContext<'a> {
     cryo_state: &'a CryoState,
     timeout_secs: u64,
     spawn_time: Instant,
-    inbox_filenames: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,7 +274,10 @@ trait SessionRuntime {
 }
 
 trait SessionEffects {
-    fn archive_inbox(&mut self, inbox_filenames: &[String]) -> Result<()>;
+    /// Read pending inbox messages and archive them atomically. Returns the
+    /// formatted body the agent will print plus the list of filenames that
+    /// were archived (for the event log).
+    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)>;
     fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()>;
     fn todo_add(&mut self, text: &str, at: &str) -> Result<u32>;
     fn todo_done(&mut self, id: u32) -> Result<()>;
@@ -334,8 +336,28 @@ impl<'a> FsSessionEffects<'a> {
 }
 
 impl SessionEffects for FsSessionEffects<'_> {
-    fn archive_inbox(&mut self, inbox_filenames: &[String]) -> Result<()> {
-        crate::message::archive_messages(self.dir, inbox_filenames)
+    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
+        let messages = crate::message::read_inbox(self.dir)?;
+        if messages.is_empty() {
+            return Ok(("No messages.\n".to_string(), Vec::new()));
+        }
+        let mut body = String::new();
+        for (filename, msg) in &messages {
+            body.push_str(&format!("--- {} ---\n", filename));
+            if !msg.from.is_empty() {
+                body.push_str(&format!("From: {}\n", msg.from));
+            }
+            if !msg.subject.is_empty() {
+                body.push_str(&format!("Subject: {}\n", msg.subject));
+            }
+            body.push('\n');
+            body.push_str(&msg.body);
+            body.push('\n');
+            body.push('\n');
+        }
+        let filenames: Vec<String> = messages.into_iter().map(|(name, _)| name).collect();
+        crate::message::archive_messages(self.dir, &filenames)?;
+        Ok((body, filenames))
     }
 
     fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()> {
@@ -926,7 +948,8 @@ impl Daemon {
             }
             crate::socket::Request::Hibernate { .. }
             | crate::socket::Request::Alert { .. }
-            | crate::socket::Request::Reply { .. } => {
+            | crate::socket::Request::Reply { .. }
+            | crate::socket::Request::Receive => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
                     message:
@@ -1115,6 +1138,7 @@ impl Daemon {
                         state::save_state(&self.state_path, &cryo_state)?;
                         match outcome {
                             SessionLoopOutcome::PlanComplete => {
+                                cryo_state.previous_session_crashed = false;
                                 retry.reset();
                                 pending_fallback = None;
                                 self.sync_pending_fallback_state(
@@ -1126,6 +1150,7 @@ impl Daemon {
                                 break;
                             }
                             SessionLoopOutcome::Hibernate { fallback } => {
+                                cryo_state.previous_session_crashed = false;
                                 retry.reset();
                                 next_wake = next_wake_from_todos(&self.dir);
                                 pending_fallback = next_wake
@@ -1146,6 +1171,8 @@ impl Daemon {
                                 }
                             }
                             SessionLoopOutcome::ValidationFailed { quick_exit } => {
+                                cryo_state.previous_session_crashed = true;
+                                let _ = state::save_state(&self.state_path, &cryo_state);
                                 next_wake = next_wake_from_todos(&self.dir);
 
                                 // Check if we should rotate provider
@@ -1202,6 +1229,8 @@ impl Daemon {
                     }
                     Err(e) => {
                         cryo_state.session_number -= 1;
+                        cryo_state.previous_session_crashed = true;
+                        let _ = state::save_state(&self.state_path, &cryo_state);
                         next_wake = next_wake_from_todos(&self.dir);
                         eprintln!("Daemon: session failed: {e}");
                         if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
@@ -1305,11 +1334,34 @@ impl Daemon {
             }
         };
 
+        // Build system notice: delayed wake and/or previous-session crash.
+        // Both are orthogonal system-level facts the agent should know about
+        // before it starts work. They are joined with a blank line.
+        let crash_notice = if cryo_state.previous_session_crashed {
+            Some(
+                "PREVIOUS SESSION CRASHED: The agent exited without calling \
+                 `cryo-agent hibernate`. A reply may have been partially sent. \
+                 Check `messages/inbox/archive/` for any message that arrived \
+                 during the crashed session; if it still needs a user-visible \
+                 response, send it now via `cryo-agent reply` or \
+                 `cryo-agent send` before doing the normal session work."
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+        let notice = match (delayed_wake, crash_notice.as_deref()) {
+            (Some(d), Some(c)) => Some(format!("{d}\n\n{c}")),
+            (Some(d), None) => Some(d.to_string()),
+            (None, Some(c)) => Some(c.to_string()),
+            (None, None) => None,
+        };
+
         // Build prompt with task context and TODO list
         let agent_config = crate::agent::AgentConfig {
             session_number: cryo_state.session_number,
             task: task.clone(),
-            delayed_wake: delayed_wake.map(|s| s.to_string()),
+            delayed_wake: notice,
             todo_list: todo_display,
         };
         let prompt = crate::agent::build_prompt(&agent_config);
@@ -1326,6 +1378,9 @@ impl Daemon {
         // Log delayed wake notice
         if let Some(notice) = delayed_wake {
             logger.log_event(&format!("delayed wake: {notice}"))?;
+        }
+        if cryo_state.previous_session_crashed {
+            logger.log_event("previous session crashed — agent advised to check inbox archive")?;
         }
 
         // Open agent log file for stdout/stderr redirection
@@ -1350,7 +1405,6 @@ impl Daemon {
             cryo_state,
             timeout_secs,
             spawn_time,
-            inbox_filenames: &inbox_filenames,
         };
         self.drive_active_session(&mut runtime, &mut effects, context, logger)
     }
@@ -1446,6 +1500,25 @@ impl Daemon {
                     let _ = runtime.respond(false, format!("Failed to load todo list: {e}"));
                 }
             },
+            crate::socket::Request::Receive => match effects.receive_inbox() {
+                Ok((body, filenames)) => {
+                    if filenames.is_empty() {
+                        logger.log_event("receive: 0 messages")?;
+                    } else {
+                        logger.log_event(&format!(
+                            "receive: {} message{} [{}]",
+                            filenames.len(),
+                            if filenames.len() == 1 { "" } else { "s" },
+                            filenames.join(", "),
+                        ))?;
+                    }
+                    let _ = runtime.respond(true, body);
+                }
+                Err(e) => {
+                    logger.log_event(&format!("receive failed: {e}"))?;
+                    let _ = runtime.respond(false, format!("Failed to receive: {e}"));
+                }
+            },
         }
         Ok(())
     }
@@ -1470,9 +1543,6 @@ impl Daemon {
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
                 runtime.terminate();
-                if !context.inbox_filenames.is_empty() {
-                    let _ = effects.archive_inbox(context.inbox_filenames);
-                }
                 let decision = resolve_interrupted_session(
                     SessionInterruption::Shutdown,
                     hibernate_outcome.take(),
@@ -1488,9 +1558,6 @@ impl Daemon {
                         context.timeout_secs
                     );
                     runtime.terminate();
-                    if !context.inbox_filenames.is_empty() {
-                        let _ = effects.archive_inbox(context.inbox_filenames);
-                    }
                     let decision = resolve_interrupted_session(
                         SessionInterruption::Timeout,
                         hibernate_outcome.take(),
@@ -1528,10 +1595,6 @@ impl Daemon {
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| "signal".into())
                     ))?;
-
-                    if !context.inbox_filenames.is_empty() {
-                        effects.archive_inbox(context.inbox_filenames)?;
-                    }
 
                     let decision = resolve_child_exit(hibernate_outcome.take(), elapsed);
                     if decision.quick_exit {

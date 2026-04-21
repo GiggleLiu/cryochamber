@@ -39,6 +39,7 @@ pub fn start_chamber(dir: &Path) -> Result<()> {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     state::save_state(&state::state_path(dir), &cryo_state)?;
 

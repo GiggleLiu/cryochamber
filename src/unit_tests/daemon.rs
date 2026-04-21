@@ -132,7 +132,12 @@ struct FakeSessionEffects {
     replies: Vec<(String, NaiveDateTime)>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
-    archived_batches: Vec<Vec<String>>,
+    /// Queued results for successive `receive_inbox()` calls. Each call pops the
+    /// front; tests that don't care leave this empty and get the default.
+    receive_responses: std::collections::VecDeque<(String, Vec<String>)>,
+    /// Number of `receive_inbox()` calls observed. Used by tests that want to
+    /// assert the daemon archived via the session effect.
+    receive_calls: u32,
 }
 
 impl FakeSessionEffects {
@@ -142,7 +147,8 @@ impl FakeSessionEffects {
             replies: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
-            archived_batches: Vec::new(),
+            receive_responses: std::collections::VecDeque::new(),
+            receive_calls: 0,
         }
     }
 
@@ -180,9 +186,12 @@ impl FakeSessionEffects {
 }
 
 impl SessionEffects for FakeSessionEffects {
-    fn archive_inbox(&mut self, inbox_filenames: &[String]) -> Result<()> {
-        self.archived_batches.push(inbox_filenames.to_vec());
-        Ok(())
+    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
+        self.receive_calls += 1;
+        Ok(self
+            .receive_responses
+            .pop_front()
+            .unwrap_or_else(|| ("No messages.\n".to_string(), Vec::new())))
     }
 
     fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()> {
@@ -340,6 +349,7 @@ fn test_cryo_state() -> CryoState {
         provider_index: None,
         instance_id: Some("test-instance".into()),
         pending_fallback: None,
+        previous_session_crashed: false,
     }
 }
 
@@ -352,13 +362,11 @@ fn test_session_context<'a>(
     cryo_state: &'a CryoState,
     timeout_secs: u64,
     spawn_time: Instant,
-    inbox_filenames: &'a [String],
 ) -> ActiveSessionContext<'a> {
     ActiveSessionContext {
         cryo_state,
         timeout_secs,
         spawn_time,
-        inbox_filenames,
     }
 }
 
@@ -841,6 +849,7 @@ fn test_check_fallback_uses_injected_clock() {
                 .to_string(),
             action: action.clone(),
         }),
+        previous_session_crashed: false,
     };
     let mut pending = Some((now + chrono::Duration::minutes(1), action));
 
@@ -1101,7 +1110,7 @@ fn test_drive_active_session_alert_then_hibernate_returns_fallback() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context(&cryo_state, 60, clock.monotonic_now(), &[]),
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1151,7 +1160,7 @@ fn test_drive_active_session_timeout_after_hibernate_uses_hibernate_outcome() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context(&cryo_state, 1, clock.monotonic_now(), &[]),
+            test_session_context(&cryo_state, 1, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1179,7 +1188,7 @@ fn test_drive_active_session_quick_exit_without_hibernate() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context(&cryo_state, 60, clock.monotonic_now(), &[]),
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1225,7 +1234,7 @@ fn test_drive_active_session_reply_failure_responds_and_continues() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context(&cryo_state, 60, clock.monotonic_now(), &[]),
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1292,7 +1301,7 @@ fn test_drive_active_session_todo_requests_use_effects() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context(&cryo_state, 60, clock.monotonic_now(), &[]),
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1316,8 +1325,9 @@ fn test_drive_active_session_todo_requests_use_effects() {
 }
 
 #[test]
-fn test_drive_active_session_timeout_archives_inbox_via_effects() {
+fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
     let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
@@ -1325,25 +1335,38 @@ fn test_drive_active_session_timeout_archives_inbox_via_effects() {
     let clock = Arc::new(TestClock::new(now));
     let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
     let cryo_state = test_cryo_state();
-    let mut runtime = FakeSessionRuntime::new(vec![], vec![]);
-    let mut effects = FakeSessionEffects::new();
-    let inbox = vec!["msg-1.md".to_string(), "msg-2.md".to_string()];
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Receive)),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.receive_responses.push_back((
+        "--- msg-1.md ---\nFrom: alice\n\nhi\n\n".to_string(),
+        vec!["msg-1.md".to_string()],
+    ));
 
     let outcome = daemon
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context(&cryo_state, 1, clock.monotonic_now(), &inbox),
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
 
-    assert_eq!(
-        outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: false }
-    );
-    assert!(runtime.terminated());
-    assert_eq!(effects.archived_batches, vec![inbox]);
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
+    assert_eq!(effects.receive_calls, 1);
+    let (ok, body) = &runtime.responses()[0];
+    assert!(*ok);
+    assert!(body.contains("msg-1.md"));
 }
 
 #[test]

@@ -44,6 +44,7 @@ fn wait_for_live_daemon_times_out_with_unlocked_state() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        previous_session_crashed: false,
     };
     crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
