@@ -134,7 +134,7 @@ Main documentation lives in the mdbook at `docs/src/` (published to [giggleliu.g
 
 ## Skills
 
-- `skills/make-plan/SKILL.md` — Claude Code skill that guides users through creating a new cryochamber application (plan.md + cryo.toml) via conversational Q&A. Install with `claude skill install --path skills/make-plan`, invoke with `/make-plan`.
+- `.claude/skills/make-plan/SKILL.md` — Claude Code skill that guides users through creating a new cryochamber application (plan.md + cryo.toml) via conversational Q&A. Install with `claude skill install --path .claude/skills/make-plan`, invoke with `/make-plan`. Additional repo-local skills (`fix-pr`, `review-implementation`) live alongside it.
 
 ## Commit Convention
 

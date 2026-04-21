@@ -274,15 +274,15 @@ fn test_mock_invalid_wake_time() {
         .success();
 
     // The agent adds a TODO with "banana" as the time, then hibernates.
-    // The hibernate succeeds, but "banana" is unparseable as NaiveDateTime,
-    // so next_wake_from_todos returns None and the daemon idles.
+    // "banana" is unparseable as NaiveDateTime, so no pending TODO has a valid
+    // wake — the daemon rejects the hibernate attempt and logs the refusal.
     assert!(
         wait_for_log_content(
             dir.path(),
-            "no pending TODOs, idling",
+            "hibernate refused: no pending TODO",
             Duration::from_secs(15)
         ),
-        "Daemon should idle since 'banana' is not a valid wake time"
+        "Daemon should refuse hibernate when no TODO has a valid wake time"
     );
 
     cancel_and_wait(dir.path());
