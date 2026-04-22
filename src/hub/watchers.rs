@@ -21,6 +21,75 @@ struct Handle {
     _stop: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageDirection {
+    Inbox,
+    Outbox,
+}
+
+impl MessageDirection {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Outbox => "outbox",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MessageEventPath {
+    path: PathBuf,
+    direction: MessageDirection,
+}
+
+fn is_message_event_kind(kind: &EventKind) -> bool {
+    matches!(kind, EventKind::Create(_))
+        || matches!(
+            kind,
+            EventKind::Modify(ModifyKind::Name(RenameMode::Any))
+                | EventKind::Modify(ModifyKind::Name(RenameMode::To))
+        )
+}
+
+fn classify_message_path(
+    path: &Path,
+    inbox_dir: &Path,
+    outbox_dir: &Path,
+) -> Option<MessageEventPath> {
+    if path.extension().is_none_or(|extension| extension != "md") {
+        return None;
+    }
+
+    let direction = if path.starts_with(inbox_dir) {
+        MessageDirection::Inbox
+    } else if path.starts_with(outbox_dir) {
+        MessageDirection::Outbox
+    } else {
+        return None;
+    };
+
+    Some(MessageEventPath {
+        path: path.to_path_buf(),
+        direction,
+    })
+}
+
+fn classify_message_event_paths(
+    event: &NotifyEvent,
+    inbox_dir: &Path,
+    outbox_dir: &Path,
+) -> Vec<MessageEventPath> {
+    if !is_message_event_kind(&event.kind) {
+        return Vec::new();
+    }
+
+    event
+        .paths
+        .iter()
+        .filter_map(|path| classify_message_path(path, inbox_dir, outbox_dir))
+        .collect()
+}
+
 #[derive(Default, Clone)]
 pub struct WatcherRegistry {
     inner: Arc<Mutex<HashMap<PathBuf, Handle>>>,
@@ -88,39 +157,18 @@ fn spawn_watcher(
     let id_for_cb = chamber_id.clone();
     let mut watcher = recommended_watcher(move |res: Result<NotifyEvent, _>| {
         if let Ok(event) = res {
-            // Accept both Create events and Rename events (atomic writes via
-            // rename show up as Modify(Name) on macOS FSEvents).
-            let is_create_or_rename = matches!(event.kind, EventKind::Create(_))
-                || matches!(
-                    event.kind,
-                    EventKind::Modify(ModifyKind::Name(RenameMode::Any))
-                        | EventKind::Modify(ModifyKind::Name(RenameMode::To))
-                );
-            if is_create_or_rename {
-                for path in &event.paths {
-                    if path.extension().is_some_and(|e| e == "md") {
-                        let direction = if path.starts_with(&inbox_for_cb) {
-                            "inbox"
-                        } else if path.starts_with(&outbox_for_cb) {
-                            "outbox"
-                        } else {
-                            continue;
-                        };
-                        if let Ok(content) = std::fs::read_to_string(path) {
-                            if let Ok(msg) = crate::message::parse_message(&content) {
-                                let _ = tx_msg.send(SseEvent::NewMessage {
-                                    chamber_id: id_for_cb.clone(),
-                                    direction: direction.to_string(),
-                                    from: msg.from,
-                                    subject: msg.subject,
-                                    body: msg.body,
-                                    timestamp: msg
-                                        .timestamp
-                                        .format("%Y-%m-%dT%H:%M:%S")
-                                        .to_string(),
-                                });
-                            }
-                        }
+            for message_path in classify_message_event_paths(&event, &inbox_for_cb, &outbox_for_cb)
+            {
+                if let Ok(content) = std::fs::read_to_string(&message_path.path) {
+                    if let Ok(msg) = crate::message::parse_message(&content) {
+                        let _ = tx_msg.send(SseEvent::NewMessage {
+                            chamber_id: id_for_cb.clone(),
+                            direction: message_path.direction.as_str().to_string(),
+                            from: msg.from,
+                            subject: msg.subject,
+                            body: msg.body,
+                            timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                        });
                     }
                 }
             }
