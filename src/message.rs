@@ -167,12 +167,21 @@ fn read_message_dir(message_dir: &Path, malformed_label: &str) -> Result<Vec<(St
 
 /// Move processed messages from inbox/ to inbox/archive/.
 pub fn archive_messages(dir: &Path, filenames: &[String]) -> Result<()> {
-    let inbox = dir.join("messages").join("inbox");
-    let archive = inbox.join("archive");
+    archive_box_messages(dir, "inbox", filenames)
+}
+
+/// Move processed messages from outbox/ to outbox/archive/.
+pub fn archive_outbox_messages(dir: &Path, filenames: &[String]) -> Result<()> {
+    archive_box_messages(dir, "outbox", filenames)
+}
+
+fn archive_box_messages(dir: &Path, box_name: &str, filenames: &[String]) -> Result<()> {
+    let source_dir = dir.join("messages").join(box_name);
+    let archive = source_dir.join("archive");
     std::fs::create_dir_all(&archive)?;
 
     for filename in filenames {
-        let src = inbox.join(filename);
+        let src = source_dir.join(filename);
         let dst = archive.join(filename);
         if src.exists() {
             std::fs::rename(&src, &dst).with_context(|| format!("Failed to archive {filename}"))?;

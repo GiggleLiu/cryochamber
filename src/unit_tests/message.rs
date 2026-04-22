@@ -103,6 +103,35 @@ fn read_message_dir_skips_malformed_messages() {
     assert_eq!(messages[0].1.subject, "Question");
 }
 
+#[test]
+fn archive_outbox_messages_moves_files_to_outbox_archive() {
+    let dir = tempfile::tempdir().unwrap();
+    let msg = test_message("agent", "Reply", "Done", "2026-03-01T12:00:00");
+    write_message(dir.path(), "outbox", &msg).unwrap();
+
+    let outbox = read_outbox(dir.path()).unwrap();
+    assert_eq!(outbox.len(), 1);
+    let filename = outbox[0].0.clone();
+
+    archive_outbox_messages(dir.path(), std::slice::from_ref(&filename)).unwrap();
+
+    assert!(read_outbox(dir.path()).unwrap().is_empty());
+    let archived = read_outbox_archive(dir.path()).unwrap();
+    assert_eq!(archived.len(), 1);
+    assert_eq!(archived[0].0, filename);
+    assert_eq!(archived[0].1.body, "Done");
+}
+
+#[test]
+fn archive_outbox_messages_ignores_missing_files_and_creates_archive_dir() {
+    let dir = tempfile::tempdir().unwrap();
+
+    archive_outbox_messages(dir.path(), &["missing.md".to_string()]).unwrap();
+
+    assert!(dir.path().join("messages/outbox/archive").is_dir());
+    assert!(read_outbox_archive(dir.path()).unwrap().is_empty());
+}
+
 fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {
     Message {
         from: from.to_string(),

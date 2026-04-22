@@ -401,20 +401,12 @@ fn push_outbox(dir: &Path, sync_state: &cryochamber::gh_sync::GhSyncState) -> Re
         return Ok(());
     }
 
-    let outbox = dir.join("messages").join("outbox");
-    let archive = outbox.join("archive");
-    std::fs::create_dir_all(&archive)?;
-
     for (filename, msg) in &messages {
         let body = format_outbox_post(msg);
         match cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &body) {
             Ok(()) => {
                 eprintln!("Sync: posted outbox/{filename} to Discussion");
-                let src = outbox.join(filename);
-                let dst = archive.join(filename);
-                if src.exists() {
-                    std::fs::rename(&src, &dst)?;
-                }
+                cryochamber::message::archive_outbox_messages(dir, std::slice::from_ref(filename))?;
             }
             Err(e) => {
                 eprintln!("Sync: failed to post outbox/{filename}: {e}");

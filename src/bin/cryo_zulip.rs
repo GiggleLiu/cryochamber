@@ -432,10 +432,6 @@ fn push_outbox(
         return Ok(());
     }
 
-    let outbox = dir.join("messages").join("outbox");
-    let archive = outbox.join("archive");
-    std::fs::create_dir_all(&archive)?;
-
     let topic = sync_state.topic_name();
 
     for (filename, msg) in &messages {
@@ -443,11 +439,7 @@ fn push_outbox(
         match client.send_message(sync_state.stream_id, topic, &body) {
             Ok(_) => {
                 eprintln!("Zulip sync: posted outbox/{filename}");
-                let src = outbox.join(filename);
-                let dst = archive.join(filename);
-                if src.exists() {
-                    std::fs::rename(&src, &dst)?;
-                }
+                cryochamber::message::archive_outbox_messages(dir, std::slice::from_ref(filename))?;
             }
             Err(e) => {
                 eprintln!("Zulip sync: failed to post outbox/{filename}: {e}");
