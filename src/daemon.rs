@@ -1493,49 +1493,28 @@ impl Daemon {
                                 }
                             }
                             SessionLoopOutcome::ValidationFailed { quick_exit } => {
-                                let _ = self.save_state(cryo_state);
-                                next_wake = next_wake_from_todos(&self.dir);
-
                                 if should_rotate_provider(
                                     &config.rotate_on,
                                     quick_exit,
                                     config.providers.len(),
                                 ) {
-                                    let old_name = config
-                                        .providers
-                                        .get(retry.provider_index)
-                                        .map(|p| p.name.as_str())
-                                        .unwrap_or("unknown");
-                                    let wrapped = retry.rotate_provider();
-                                    let new_name = config
-                                        .providers
-                                        .get(retry.provider_index)
-                                        .map(|p| p.name.as_str())
-                                        .unwrap_or("unknown");
-                                    eprintln!(
-                                        "Daemon: rotating provider: {} -> {} (reason: {})",
-                                        old_name,
-                                        new_name,
-                                        if quick_exit { "quick-exit" } else { "failure" },
-                                    );
-
-                                    // Persist immediately so `cryo status` reflects the change
-                                    cryo_state.provider_index = Some(retry.provider_index);
                                     let _ = self.save_state(cryo_state);
-
-                                    if wrapped {
-                                        // All providers tried — apply backoff before next cycle
-                                        eprintln!("Daemon: all providers tried, backing off before next cycle");
-                                        if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                                            break;
-                                        }
+                                    next_wake = next_wake_from_todos(&self.dir);
+                                    if self.rotate_and_maybe_backoff(
+                                        config, cryo_state, &mut retry, quick_exit,
+                                    ) {
+                                        break;
                                     }
                                     run_now = true;
                                     continue;
                                 }
 
-                                // No rotation — use standard retry with backoff
-                                if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
+                                if self.handle_failure_cycle(
+                                    cryo_state,
+                                    &mut retry,
+                                    &mut next_wake,
+                                    &config.fallback_alert,
+                                ) {
                                     break;
                                 }
                                 run_now = true;
@@ -1546,10 +1525,13 @@ impl Daemon {
                     Err(e) => {
                         cryo_state.session_number -= 1;
                         cryo_state.previous_session_crashed = true;
-                        let _ = self.save_state(cryo_state);
-                        next_wake = next_wake_from_todos(&self.dir);
                         eprintln!("Daemon: session failed: {e}");
-                        if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
+                        if self.handle_failure_cycle(
+                            cryo_state,
+                            &mut retry,
+                            &mut next_wake,
+                            &config.fallback_alert,
+                        ) {
                             break;
                         }
                         run_now = true;
@@ -1963,6 +1945,67 @@ impl Daemon {
             .execute(&self.dir, alert_method)
             .context("replayed fallback execution failed")?;
         Ok(true)
+    }
+
+    /// Post-failure bookkeeping shared between `ValidationFailed` (non-rotation
+    /// path) and launcher errors from `run_one_session`. Persists the current
+    /// cryo state, recomputes `next_wake` from the todo list, then delegates
+    /// to `handle_failure_retry`. Returns `true` if the caller should break
+    /// the event loop (shutdown observed), `false` to schedule another run.
+    ///
+    /// Having one helper keeps the two failure paths from drifting — any new
+    /// bookkeeping added to one is automatically shared with the other.
+    fn handle_failure_cycle(
+        &self,
+        cryo_state: &mut CryoState,
+        retry: &mut RetryState,
+        next_wake: &mut Option<NaiveDateTime>,
+        alert_method: &str,
+    ) -> bool {
+        let _ = self.save_state(cryo_state);
+        *next_wake = next_wake_from_todos(&self.dir);
+        self.handle_failure_retry(retry, alert_method)
+    }
+
+    /// Rotate to the next provider, log the change, persist `provider_index`,
+    /// and apply the wrap-around backoff (60s sleep) if all providers have
+    /// been tried. Returns `true` if the caller should break (shutdown during
+    /// backoff), `false` to schedule another run under the new provider.
+    fn rotate_and_maybe_backoff(
+        &self,
+        config: &CryoConfig,
+        cryo_state: &mut CryoState,
+        retry: &mut RetryState,
+        quick_exit: bool,
+    ) -> bool {
+        let old_name = config
+            .providers
+            .get(retry.provider_index)
+            .map(|p| p.name.as_str())
+            .unwrap_or("unknown");
+        let wrapped = retry.rotate_provider();
+        let new_name = config
+            .providers
+            .get(retry.provider_index)
+            .map(|p| p.name.as_str())
+            .unwrap_or("unknown");
+        eprintln!(
+            "Daemon: rotating provider: {} -> {} (reason: {})",
+            old_name,
+            new_name,
+            if quick_exit { "quick-exit" } else { "failure" },
+        );
+
+        cryo_state.provider_index = Some(retry.provider_index);
+        let _ = self.save_state(cryo_state);
+
+        if wrapped {
+            eprintln!("Daemon: all providers tried, backing off before next cycle");
+            if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Handle a failure by retrying with exponential backoff (5s, 10s, ..., 1h cap).
