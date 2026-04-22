@@ -3,6 +3,19 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 #[test]
+fn daemon_request_handling_lives_in_request_module() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let request_src = std::fs::read_to_string(root.join("src/daemon/request.rs"))
+        .expect("daemon request handling should live in src/daemon/request.rs");
+    let daemon_src = std::fs::read_to_string(root.join("src/daemon.rs")).unwrap();
+
+    assert!(request_src.contains("enum DaemonRequest"));
+    assert!(request_src.contains("fn handle_todo_request"));
+    assert!(!daemon_src.contains("enum DaemonRequest"));
+    assert!(!daemon_src.contains("fn handle_todo_request"));
+}
+
+#[test]
 fn watcher_startup_notice_prioritizes_warning() {
     assert_eq!(
         watcher_startup_notice(Some("permission denied"), true),
