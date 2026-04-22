@@ -147,11 +147,46 @@ pub fn parse_latest_session_task(log_path: &Path) -> Result<Option<String>> {
 }
 
 /// Outcome of a completed session.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionOutcome {
     Success,
     Failed,
     Interrupted,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SessionOutcomeRule {
+    markers: &'static [&'static str],
+    outcome: SessionOutcome,
+}
+
+impl SessionOutcomeRule {
+    fn matches(&self, block: &str) -> bool {
+        self.markers.iter().any(|marker| block.contains(marker))
+    }
+}
+
+const SESSION_OUTCOME_RULES: &[SessionOutcomeRule] = &[
+    SessionOutcomeRule {
+        markers: &["--- CRYO INTERRUPTED ---"],
+        outcome: SessionOutcome::Interrupted,
+    },
+    SessionOutcomeRule {
+        markers: &["quick exit detected", "agent exited without hibernate"],
+        outcome: SessionOutcome::Failed,
+    },
+    SessionOutcomeRule {
+        markers: &["hibernate:", "agent exited (code 0)"],
+        outcome: SessionOutcome::Success,
+    },
+];
+
+fn classify_session_outcome(block: &str) -> SessionOutcome {
+    SESSION_OUTCOME_RULES
+        .iter()
+        .find(|rule| rule.matches(block))
+        .map(|rule| rule.outcome)
+        .unwrap_or(SessionOutcome::Failed)
 }
 
 /// Summary of a single session extracted from cryo.log.
@@ -197,25 +232,10 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
             continue;
         }
 
-        // Determine outcome — check failure markers before exit code 0,
-        // since an agent can exit with code 0 without hibernating (still a failure).
-        let outcome = if block.contains("--- CRYO INTERRUPTED ---") {
-            SessionOutcome::Interrupted
-        } else if block.contains("quick exit detected")
-            || block.contains("agent exited without hibernate")
-        {
-            SessionOutcome::Failed
-        } else if block.contains("hibernate:") || block.contains("agent exited (code 0)") {
-            SessionOutcome::Success
-        } else {
-            // Non-zero exit code or unknown outcome — treat as failure
-            SessionOutcome::Failed
-        };
-
         summaries.push(SessionSummary {
             session_number,
             timestamp,
-            outcome,
+            outcome: classify_session_outcome(block),
         });
     }
 
