@@ -128,23 +128,11 @@ fn cmd_gh_pull() -> Result<()> {
     let sync_path = gh_sync_path(&dir);
     let mut sync_state = load_gh_sync_state_with_self_login(&sync_path)?;
 
-    let (owner, repo) = sync_state.owner_repo()?;
-
     println!(
         "Pulling comments from Discussion #{}...",
         sync_state.discussion_number
     );
-    let new_cursor = cryochamber::channel::github::pull_comments(
-        owner,
-        repo,
-        sync_state.discussion_number,
-        sync_state.last_read_cursor.as_deref(),
-        sync_state.self_login.as_deref(),
-        &dir,
-    )?;
-
-    if let Some(cursor) = new_cursor {
-        sync_state.last_read_cursor = Some(cursor);
+    if pull_discussion_comments_into_inbox(&dir, &mut sync_state)? {
         cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state)?;
     }
 
@@ -281,17 +269,12 @@ impl SyncLoopBackend for GhSyncLoopBackend {
                 });
             }
         };
-        match cryochamber::channel::github::pull_comments(
-            owner,
-            repo,
-            sync_state.discussion_number,
-            sync_state.last_read_cursor.as_deref(),
-            sync_state.self_login.as_deref(),
-            &self.dir,
-        ) {
-            Ok(new_cursor) => {
-                if let Some(cursor) = new_cursor {
-                    sync_state.last_read_cursor = Some(cursor);
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+
+        match pull_discussion_comments_into_inbox_from(&self.dir, &mut sync_state, &owner, &repo) {
+            Ok(cursor_changed) => {
+                if cursor_changed {
                     cryochamber::gh_sync::save_sync_state(&self.sync_path, &sync_state)?;
                 }
             }
@@ -331,6 +314,42 @@ impl SyncLoopBackend for GhSyncLoopBackend {
         }
 
         Ok(cryochamber::sync_common::SyncCycleStatus::Continue)
+    }
+}
+
+fn pull_discussion_comments_into_inbox(
+    dir: &Path,
+    sync_state: &mut cryochamber::gh_sync::GhSyncState,
+) -> Result<bool> {
+    let (owner, repo) = sync_state.owner_repo()?;
+    let owner = owner.to_string();
+    let repo = repo.to_string();
+    pull_discussion_comments_into_inbox_from(dir, sync_state, &owner, &repo)
+}
+
+fn pull_discussion_comments_into_inbox_from(
+    dir: &Path,
+    sync_state: &mut cryochamber::gh_sync::GhSyncState,
+    owner: &str,
+    repo: &str,
+) -> Result<bool> {
+    let result = cryochamber::channel::github::fetch_comments(
+        owner,
+        repo,
+        sync_state.discussion_number,
+        sync_state.last_read_cursor.as_deref(),
+        sync_state.self_login.as_deref(),
+    )?;
+
+    for msg in &result.messages {
+        cryochamber::message::write_message(dir, "inbox", msg)?;
+    }
+
+    if let Some(cursor) = result.cursor {
+        sync_state.last_read_cursor = Some(cursor);
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 
