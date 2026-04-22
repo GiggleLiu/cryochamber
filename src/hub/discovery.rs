@@ -113,54 +113,22 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
 /// Fill in runtime fields on each entry from its on-disk state.
 pub fn populate_runtime(idx: &mut ChamberIndex) {
     for entry in idx.values_mut() {
-        let dir = &entry.path;
-
-        // Session # and running flag from timer.json
-        if let Ok(Some(st)) = crate::state::load_state(&crate::state::state_path(dir)) {
-            entry.session = Some(st.session_number);
-            entry.running = crate::state::is_locked(&st);
-        }
-
-        // Next wake from todo.json
-        let todo_path = dir.join("todo.json");
-        entry.next_wake = crate::todo::TodoList::load(&todo_path)
-            .ok()
-            .and_then(|list| list.next_wake_time().map(String::from));
-        entry.next_wake_display = entry.next_wake.clone();
-        entry.wake_imminent = entry
-            .next_wake
-            .as_deref()
-            .and_then(|w| chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok())
-            .map(|wake| {
-                let diff = wake - chrono::Local::now().naive_local();
-                let diff_ms = diff.num_milliseconds();
-                (0..=3_600_000).contains(&diff_ms)
-            })
-            .unwrap_or(false);
-
-        // Unread = pending inbox messages (not archived)
-        entry.unread = crate::message::read_inbox(dir)
-            .map(|v| v.len())
-            .unwrap_or(0);
-
-        entry.task = crate::log::parse_latest_session_task(&crate::log::log_path(dir))
-            .ok()
-            .flatten();
-        entry.last_message_preview = last_message_preview(dir);
-
-        // Plan completion flag from the last session in cryo.log
-        let log_file = crate::log::log_path(dir);
-        entry.completed = crate::log::parse_latest_session_plan_complete(&log_file)
-            .ok()
-            .flatten()
-            .is_some();
-
-        // Sync summaries, compact badge form (full detail served by GET /sync)
-        entry.sync = crate::sync_control::summarize_all(dir)
+        let overview = crate::chamber_status::overview(&entry.path);
+        entry.running = overview.running;
+        entry.session = overview.session;
+        entry.next_wake = overview.next_wake;
+        entry.next_wake_display = overview.next_wake_display;
+        entry.wake_imminent = overview.wake_imminent;
+        entry.unread = overview.unread;
+        entry.task = overview.task;
+        entry.last_message_preview = overview.last_message_preview;
+        entry.completed = overview.completed;
+        entry.sync = overview
+            .sync
             .into_iter()
-            .map(|s| SyncBadge {
-                backend: s.backend.as_str().into(),
-                running: s.running,
+            .map(|badge| SyncBadge {
+                backend: badge.backend,
+                running: badge.running,
             })
             .collect();
     }
@@ -171,39 +139,6 @@ pub fn discover(workspace: &Path) -> ChamberIndex {
     let mut idx = scan_workspace(workspace);
     populate_runtime(&mut idx);
     idx
-}
-
-fn last_message_preview(dir: &Path) -> Option<String> {
-    let mut messages = Vec::new();
-    if let Ok(archived) = crate::message::read_inbox_archive(dir) {
-        messages.extend(archived);
-    }
-    if let Ok(inbox) = crate::message::read_inbox(dir) {
-        messages.extend(inbox);
-    }
-    if let Ok(outbox) = crate::message::read_outbox(dir) {
-        messages.extend(outbox);
-    }
-    if let Ok(archived) = crate::message::read_outbox_archive(dir) {
-        messages.extend(archived);
-    }
-    messages
-        .into_iter()
-        .max_by(|(file_a, msg_a), (file_b, msg_b)| {
-            msg_a
-                .timestamp
-                .cmp(&msg_b.timestamp)
-                .then_with(|| file_a.cmp(file_b))
-        })
-        .and_then(|(_, msg)| preview_body(&msg.body))
-}
-
-fn preview_body(body: &str) -> Option<String> {
-    let line = body.lines().find(|line| !line.trim().is_empty())?.trim();
-    if line.chars().count() <= 120 {
-        return Some(line.to_string());
-    }
-    Some(line.chars().take(117).collect::<String>() + "...")
 }
 
 #[cfg(test)]
