@@ -283,6 +283,26 @@ pub fn message_to_markdown(msg: &Message) -> String {
 /// Parse a markdown message with frontmatter.
 pub fn parse_message(content: &str) -> Result<Message> {
     let content = content.trim();
+    let sections = split_message_markdown(content)?;
+    let fields = parse_frontmatter_fields(sections.frontmatter, Local::now().naive_local());
+
+    Ok(Message {
+        from: fields.from,
+        subject: fields.subject,
+        body: sections.body.to_string(),
+        timestamp: fields.timestamp,
+        metadata: fields.metadata,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MessageMarkdownSections<'a> {
+    frontmatter: &'a str,
+    body: &'a str,
+}
+
+fn split_message_markdown(content: &str) -> Result<MessageMarkdownSections<'_>> {
+    let content = content.trim();
     if !content.starts_with("---") {
         anyhow::bail!("Message missing frontmatter delimiter");
     }
@@ -291,44 +311,78 @@ pub fn parse_message(content: &str) -> Result<Message> {
     let end = rest
         .find("\n---")
         .context("Message missing closing frontmatter delimiter")?;
-    let frontmatter = &rest[..end];
-    let body = rest[end + 4..].trim().to_string();
 
-    let mut from = String::new();
-    let mut subject = String::new();
-    let mut timestamp = Local::now().naive_local();
-    let mut metadata = BTreeMap::new();
+    Ok(MessageMarkdownSections {
+        frontmatter: &rest[..end],
+        body: rest[end + 4..].trim(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FrontmatterFields {
+    from: String,
+    subject: String,
+    timestamp: NaiveDateTime,
+    metadata: BTreeMap<String, String>,
+}
+
+fn parse_frontmatter_fields(
+    frontmatter: &str,
+    fallback_timestamp: NaiveDateTime,
+) -> FrontmatterFields {
+    let mut fields = FrontmatterFields {
+        from: String::new(),
+        subject: String::new(),
+        timestamp: fallback_timestamp,
+        metadata: BTreeMap::new(),
+    };
 
     for line in frontmatter.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once(':') {
-            let key = key.trim();
-            let value = value.trim();
-            match key {
-                "from" => from = value.to_string(),
-                "subject" => subject = value.to_string(),
-                "timestamp" => {
-                    if let Ok(ts) = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S") {
-                        timestamp = ts;
-                    }
-                }
-                _ => {
-                    metadata.insert(key.to_string(), value.to_string());
+        match parse_frontmatter_line(line) {
+            FrontmatterLine::From(value) => fields.from = value,
+            FrontmatterLine::Subject(value) => fields.subject = value,
+            FrontmatterLine::Timestamp(value) => {
+                if let Ok(ts) = NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S") {
+                    fields.timestamp = ts;
                 }
             }
+            FrontmatterLine::Metadata { key, value } => {
+                fields.metadata.insert(key, value);
+            }
+            FrontmatterLine::Skip => {}
         }
     }
 
-    Ok(Message {
-        from,
-        subject,
-        body,
-        timestamp,
-        metadata,
-    })
+    fields
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FrontmatterLine {
+    From(String),
+    Subject(String),
+    Timestamp(String),
+    Metadata { key: String, value: String },
+    Skip,
+}
+
+fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
+    let line = line.trim();
+    let Some((key, value)) = line.split_once(':') else {
+        return FrontmatterLine::Skip;
+    };
+
+    let key = key.trim();
+    let value = value.trim().to_string();
+    match key {
+        "" => FrontmatterLine::Skip,
+        "from" => FrontmatterLine::From(value),
+        "subject" => FrontmatterLine::Subject(value),
+        "timestamp" => FrontmatterLine::Timestamp(value),
+        _ => FrontmatterLine::Metadata {
+            key: key.to_string(),
+            value,
+        },
+    }
 }
 
 fn slugify(text: &str) -> String {
@@ -339,3 +393,7 @@ fn slugify(text: &str) -> String {
         .trim_matches('-')
         .to_string()
 }
+
+#[cfg(test)]
+#[path = "unit_tests/message.rs"]
+mod tests;
