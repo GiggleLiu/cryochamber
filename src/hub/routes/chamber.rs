@@ -250,7 +250,7 @@ pub async fn post_wake(
     let signaled = crate::process::signal_daemon_wake(&path);
     Ok(Json(json!({
         "ok": true,
-        "message": if signaled { "Wake signal sent" } else { "Message queued (no daemon running)" }
+        "message": wake_response_message(signaled)
     })))
 }
 
@@ -305,6 +305,13 @@ fn lifecycle_status_json(result: anyhow::Result<()>, success_message: &str) -> V
     match result {
         Ok(()) => json!({"ok": true, "message": success_message}),
         Err(e) => json!({"ok": false, "message": e.to_string()}),
+    }
+}
+
+fn wake_response_message(signaled: bool) -> &'static str {
+    match signaled {
+        true => "Wake signal sent",
+        false => "Message queued (no daemon running)",
     }
 }
 

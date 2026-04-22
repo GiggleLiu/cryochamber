@@ -264,6 +264,19 @@ fn lifecycle_status_json_reports_error_message() {
 }
 
 #[test]
+fn wake_response_message_reports_signal_delivery() {
+    assert_eq!(wake_response_message(true), "Wake signal sent");
+}
+
+#[test]
+fn wake_response_message_reports_queued_without_daemon() {
+    assert_eq!(
+        wake_response_message(false),
+        "Message queued (no daemon running)"
+    );
+}
+
+#[test]
 fn lifecycle_routes_dispatch_blocking_work_off_async_handlers() {
     let source = include_str!("../../../hub/routes/chamber.rs");
     let needle = ["spawn", "blocking"].join("_");
