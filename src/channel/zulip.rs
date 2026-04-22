@@ -17,6 +17,12 @@ pub struct ZulipClient {
     agent: ureq::Agent,
 }
 
+#[derive(Debug, Clone)]
+pub struct ZulipPullResult {
+    pub messages: Vec<Message>,
+    pub newest_seen_id: Option<u64>,
+}
+
 impl ZulipClient {
     /// Parse a zuliprc INI file and create a client.
     pub fn from_zuliprc(path: &Path) -> Result<Self> {
@@ -214,38 +220,35 @@ impl ZulipClient {
         Ok(msg_id)
     }
 
-    /// Pull all messages since last_message_id, writing each to inbox.
-    /// Returns the new last_message_id.
-    pub fn pull_messages(
+    /// Pull all messages since last_message_id.
+    /// This performs remote transport and response filtering only; callers own
+    /// local inbox persistence and sync-state cursor updates.
+    pub fn fetch_messages_since(
         &self,
         stream_id: u64,
         topic: Option<&str>,
         last_message_id: Option<u64>,
         skip_email: Option<&str>,
-        work_dir: &Path,
-    ) -> Result<Option<u64>> {
-        crate::message::ensure_dirs(work_dir)?;
+    ) -> Result<ZulipPullResult> {
         let mut anchor = match last_message_id {
             Some(id) => id.to_string(),
             None => "oldest".to_string(),
         };
-        let mut newest_id = last_message_id;
+        let mut newest_seen_id = None;
+        let mut pulled = Vec::new();
 
         loop {
             let (messages, found_newest, raw_max_id) =
                 self.get_messages(stream_id, topic, &anchor, 1000, skip_email)?;
-            newest_id = crate::zulip_sync::remember_seen_message_id(newest_id, raw_max_id);
 
-            for msg in &messages {
-                if let Some(id_str) = msg.metadata.get("zulip_message_id") {
-                    if let Ok(id) = id_str.parse::<u64>() {
-                        // Skip the anchor message itself when resuming
-                        if Some(id) == last_message_id {
-                            continue;
-                        }
-                    }
+            newest_seen_id = max_optional_id(newest_seen_id, raw_max_id);
+
+            for msg in messages {
+                if message_zulip_id(&msg) == last_message_id {
+                    // Skip the anchor message itself when resuming.
+                    continue;
                 }
-                crate::message::write_message(work_dir, "inbox", msg)?;
+                pulled.push(msg);
             }
 
             if found_newest {
@@ -262,7 +265,24 @@ impl ZulipClient {
             }
         }
 
-        Ok(newest_id)
+        Ok(ZulipPullResult {
+            messages: pulled,
+            newest_seen_id,
+        })
+    }
+}
+
+fn message_zulip_id(msg: &Message) -> Option<u64> {
+    msg.metadata
+        .get("zulip_message_id")
+        .and_then(|id| id.parse::<u64>().ok())
+}
+
+fn max_optional_id(current: Option<u64>, next: Option<u64>) -> Option<u64> {
+    match (current, next) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(id), None) | (None, Some(id)) => Some(id),
+        (None, None) => None,
     }
 }
 

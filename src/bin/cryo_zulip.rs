@@ -181,19 +181,8 @@ fn cmd_pull() -> Result<()> {
     let (client, mut sync_state) = load_client_from_project(&dir)?;
 
     println!("Pulling messages from stream '{}'...", sync_state.stream);
-    let new_last_id = client.pull_messages(
-        sync_state.stream_id,
-        Some(sync_state.topic_name()),
-        sync_state.last_message_id,
-        Some(&sync_state.self_email),
-        &dir,
-    )?;
-
-    if let Some(id) = new_last_id {
-        if sync_state.last_message_id != Some(id) {
-            sync_state.last_message_id = Some(id);
-            cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
-        }
+    if pull_zulip_messages_into_inbox(&dir, &client, &mut sync_state)? {
+        cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
     }
 
     let inbox = cryochamber::message::read_inbox(&dir)?;
@@ -316,22 +305,13 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
         };
 
         // Pull: Zulip -> inbox
-        match client.pull_messages(
-            sync_state.stream_id,
-            Some(sync_state.topic_name()),
-            sync_state.last_message_id,
-            Some(&sync_state.self_email),
-            &self.dir,
-        ) {
-            Ok(new_last_id) => {
-                if let Some(id) = new_last_id {
-                    if sync_state.last_message_id != Some(id) {
-                        sync_state.last_message_id = Some(id);
-                        if let Err(e) =
-                            cryochamber::zulip_sync::save_sync_state(&self.sync_path, &sync_state)
-                        {
-                            eprintln!("Zulip sync: failed to save state: {e}");
-                        }
+        match pull_zulip_messages_into_inbox(&self.dir, &client, &mut sync_state) {
+            Ok(cursor_changed) => {
+                if cursor_changed {
+                    if let Err(e) =
+                        cryochamber::zulip_sync::save_sync_state(&self.sync_path, &sync_state)
+                    {
+                        eprintln!("Zulip sync: failed to save state: {e}");
                     }
                 }
             }
@@ -372,6 +352,35 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
 
         Ok(cryochamber::sync_common::SyncCycleStatus::Continue)
     }
+}
+
+fn pull_zulip_messages_into_inbox(
+    dir: &Path,
+    client: &ZulipClient,
+    sync_state: &mut cryochamber::zulip_sync::ZulipSyncState,
+) -> Result<bool> {
+    let result = client.fetch_messages_since(
+        sync_state.stream_id,
+        Some(sync_state.topic_name()),
+        sync_state.last_message_id,
+        Some(&sync_state.self_email),
+    )?;
+
+    for msg in &result.messages {
+        cryochamber::message::write_message(dir, "inbox", msg)?;
+    }
+
+    let new_last_id = cryochamber::zulip_sync::remember_seen_message_id(
+        sync_state.last_message_id,
+        result.newest_seen_id,
+    );
+    if let Some(id) = new_last_id {
+        if sync_state.last_message_id != Some(id) {
+            sync_state.last_message_id = Some(id);
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
