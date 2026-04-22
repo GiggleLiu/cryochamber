@@ -190,6 +190,36 @@ fn daemon_responding(dir: &Path) -> bool {
     lifecycle::daemon_responding(dir)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DaemonTerminationAction {
+    Terminate(u32),
+    Skip,
+}
+
+fn daemon_termination_action(
+    state_locked: bool,
+    daemon_responding: bool,
+    pid: Option<u32>,
+) -> DaemonTerminationAction {
+    match (state_locked, daemon_responding, pid) {
+        (true, true, Some(pid)) => DaemonTerminationAction::Terminate(pid),
+        _ => DaemonTerminationAction::Skip,
+    }
+}
+
+fn terminate_daemon_if_reachable(dir: &Path, cryo_state: &CryoState) -> Result<()> {
+    let state_locked = state::is_locked(cryo_state);
+    let responding = state_locked && daemon_responding(dir);
+    match daemon_termination_action(state_locked, responding, cryo_state.pid) {
+        DaemonTerminationAction::Terminate(pid) => {
+            cryochamber::process::terminate_pid(pid)?;
+            println!("Killed daemon (PID {pid}).");
+        }
+        DaemonTerminationAction::Skip => {}
+    }
+    Ok(())
+}
+
 fn cmd_start(
     agent_override: Option<String>,
     max_retries_override: Option<u32>,
@@ -391,13 +421,7 @@ fn cmd_cancel() -> Result<()> {
             }
         }
         Some(cryo_state) => {
-            // Kill daemon process if still alive
-            if state::is_locked(&cryo_state) && daemon_responding(&dir) {
-                if let Some(pid) = cryo_state.pid {
-                    cryochamber::process::terminate_pid(pid)?;
-                    println!("Killed daemon (PID {pid}).");
-                }
-            }
+            terminate_daemon_if_reachable(&dir, &cryo_state)?;
             // Always clean up state file
             std::fs::remove_file(sp)?;
             println!("Removed timer.json.");
@@ -445,12 +469,7 @@ fn cmd_clean(force: bool) -> Result<()> {
     // Kill daemon process if still running
     let sp = state::state_path(&dir);
     if let Some(cryo_state) = state::load_state(&sp)? {
-        if state::is_locked(&cryo_state) && daemon_responding(&dir) {
-            if let Some(pid) = cryo_state.pid {
-                cryochamber::process::terminate_pid(pid)?;
-                println!("Killed daemon (PID {pid}).");
-            }
-        }
+        terminate_daemon_if_reachable(&dir, &cryo_state)?;
     }
 
     // Remove runtime files. `cryohub.log` is workspace-scoped and therefore
