@@ -1349,6 +1349,122 @@ fn test_should_rotate_provider() {
 }
 
 #[test]
+fn test_decide_next_step_maps_plan_complete_to_shutdown() {
+    let config = CryoConfig::default();
+    let retry = RetryState::new(config.max_retries, config.providers.len());
+    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let outcome = SessionLoopOutcome::PlanComplete;
+
+    let step = decide_next_step(
+        SessionRunResult::Outcome(&outcome),
+        &config,
+        &retry,
+        Some(next_wake),
+    );
+
+    assert_eq!(step, NextStep::PlanComplete);
+}
+
+#[test]
+fn test_decide_next_step_arms_hibernate_fallback_from_refreshed_wake() {
+    let config = CryoConfig::default();
+    let retry = RetryState::new(config.max_retries, config.providers.len());
+    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let fallback = FallbackAction {
+        action: "email".into(),
+        target: "ops".into(),
+        message: "stuck".into(),
+    };
+    let outcome = SessionLoopOutcome::Hibernate {
+        fallback: Some(fallback.clone()),
+    };
+
+    let step = decide_next_step(
+        SessionRunResult::Outcome(&outcome),
+        &config,
+        &retry,
+        Some(next_wake),
+    );
+
+    assert_eq!(
+        step,
+        NextStep::Hibernate {
+            next_wake: Some(next_wake),
+            scheduled_fallback: Some((next_wake + chrono::Duration::hours(1), fallback)),
+        }
+    );
+}
+
+#[test]
+fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
+    let config = CryoConfig {
+        rotate_on: crate::config::RotateOn::AnyFailure,
+        providers: provider_config(3),
+        ..CryoConfig::default()
+    };
+    let mut retry = RetryState::new(config.max_retries, config.providers.len());
+    retry.provider_index = 1;
+    retry.attempt = 3;
+    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
+
+    let step = decide_next_step(
+        SessionRunResult::Outcome(&outcome),
+        &config,
+        &retry,
+        Some(next_wake),
+    );
+
+    assert_eq!(
+        step,
+        NextStep::RotateProvider {
+            next_wake: Some(next_wake),
+            next_provider_index: 2,
+            wrapped: false,
+            reason: ProviderRotationReason::Failure,
+        }
+    );
+    assert_eq!(retry.provider_index, 1, "decision must be pure");
+    assert_eq!(retry.attempt, 3, "decision must not reset attempts");
+}
+
+#[test]
+fn test_decide_next_step_retries_failures_with_alert_threshold() {
+    let config = CryoConfig {
+        max_retries: 5,
+        ..CryoConfig::default()
+    };
+    let mut retry = RetryState::new(config.max_retries, config.providers.len());
+    retry.attempt = 4;
+    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+
+    let step = decide_next_step(SessionRunResult::Error, &config, &retry, Some(next_wake));
+
+    assert_eq!(
+        step,
+        NextStep::Retry {
+            next_wake: Some(next_wake),
+            plan: RetryPlan {
+                backoff: Duration::from_secs(80),
+                send_alert: true,
+            },
+        }
+    );
+}
+
+#[test]
 fn test_session_loop_outcome_is_crash() {
     // `previous_session_crashed` is derived from this; the mapping is the
     // single source of truth and must cover every outcome variant.

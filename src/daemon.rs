@@ -286,10 +286,80 @@ struct ChildExitDecision {
     quick_exit: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionRunResult<'a> {
+    Outcome(&'a SessionLoopOutcome),
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RetryPlan {
+    backoff: Duration,
+    send_alert: bool,
+}
+
+impl RetryPlan {
+    fn for_state(retry: &RetryState) -> Self {
+        Self {
+            backoff: retry.next_backoff(),
+            send_alert: retry.attempt.saturating_add(1) == retry.max_retries,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderRotationReason {
+    QuickExit,
+    Failure,
+}
+
+impl ProviderRotationReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::QuickExit => "quick-exit",
+            Self::Failure => "failure",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NextStep {
+    PlanComplete,
+    Hibernate {
+        next_wake: Option<NaiveDateTime>,
+        scheduled_fallback: Option<(NaiveDateTime, FallbackAction)>,
+    },
+    RotateProvider {
+        next_wake: Option<NaiveDateTime>,
+        next_provider_index: usize,
+        wrapped: bool,
+        reason: ProviderRotationReason,
+    },
+    Retry {
+        next_wake: Option<NaiveDateTime>,
+        plan: RetryPlan,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopControl {
+    Break,
+    Continue,
+    Idle,
+}
+
 struct ActiveSessionContext<'a> {
     cryo_state: &'a CryoState,
     timeout_secs: u64,
     spawn_time: Instant,
+}
+
+struct EventLoopMutations<'a> {
+    cryo_state: &'a mut CryoState,
+    retry: &'a mut RetryState,
+    pending_fallback: &'a mut Option<(NaiveDateTime, FallbackAction)>,
+    next_wake: &'a mut Option<NaiveDateTime>,
+    run_now: &'a mut bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -675,6 +745,47 @@ fn resolve_child_exit(
         outcome: SessionLoopOutcome::ValidationFailed { quick_exit },
         finish_reason: "agent exited without hibernate",
         quick_exit,
+    }
+}
+
+fn decide_next_step(
+    session_result: SessionRunResult<'_>,
+    config: &CryoConfig,
+    retry: &RetryState,
+    next_wake: Option<NaiveDateTime>,
+) -> NextStep {
+    match session_result {
+        SessionRunResult::Outcome(SessionLoopOutcome::PlanComplete) => NextStep::PlanComplete,
+        SessionRunResult::Outcome(SessionLoopOutcome::Hibernate { fallback }) => {
+            NextStep::Hibernate {
+                next_wake,
+                scheduled_fallback: scheduled_fallback_for(next_wake, fallback.clone()),
+            }
+        }
+        SessionRunResult::Outcome(SessionLoopOutcome::ValidationFailed { quick_exit }) => {
+            if should_rotate_provider(&config.rotate_on, *quick_exit, config.providers.len()) {
+                let provider_count = config.providers.len();
+                let next_provider_index = (retry.provider_index + 1) % provider_count;
+                return NextStep::RotateProvider {
+                    next_wake,
+                    next_provider_index,
+                    wrapped: next_provider_index == 0,
+                    reason: if *quick_exit {
+                        ProviderRotationReason::QuickExit
+                    } else {
+                        ProviderRotationReason::Failure
+                    },
+                };
+            }
+            NextStep::Retry {
+                next_wake,
+                plan: RetryPlan::for_state(retry),
+            }
+        }
+        SessionRunResult::Error => NextStep::Retry {
+            next_wake,
+            plan: RetryPlan::for_state(retry),
+        },
     }
 }
 
@@ -1248,6 +1359,113 @@ impl Daemon {
         }
     }
 
+    fn apply_next_step(
+        &self,
+        step: NextStep,
+        config: &CryoConfig,
+        state: EventLoopMutations<'_>,
+    ) -> Result<LoopControl> {
+        match step {
+            NextStep::PlanComplete => {
+                state.retry.reset();
+                // Save-failure policy: log and still break. On restart, stale
+                // on-disk fallback is harmless because the session log / plan
+                // state shows the plan is done; the daemon won't sleep again.
+                if let Err(e) =
+                    self.set_pending_fallback(state.cryo_state, state.pending_fallback, None)
+                {
+                    eprintln!("Daemon: failed to persist cleared fallback on PlanComplete: {e}");
+                }
+                eprintln!("Daemon: plan complete. Shutting down.");
+                Ok(LoopControl::Break)
+            }
+            NextStep::Hibernate {
+                next_wake: refreshed_next_wake,
+                scheduled_fallback,
+            } => {
+                state.retry.reset();
+                *state.next_wake = refreshed_next_wake;
+                // Save-failure policy: escalate to failure retry. If we can't
+                // persist the armed fallback, do not sleep — a crash before the
+                // next save would lose the fallback entirely.
+                if let Err(e) = self.set_pending_fallback(
+                    state.cryo_state,
+                    state.pending_fallback,
+                    scheduled_fallback,
+                ) {
+                    eprintln!(
+                        "Daemon: failed to persist armed fallback after Hibernate: {e}. \
+                         Escalating to failure-retry so the daemon does not sleep \
+                         with an unpersisted fallback."
+                    );
+                    let plan = RetryPlan::for_state(state.retry);
+                    if self.apply_failure_retry_plan(state.retry, plan, &config.fallback_alert) {
+                        return Ok(LoopControl::Break);
+                    }
+                    *state.run_now = true;
+                    return Ok(LoopControl::Continue);
+                }
+                if let Some(w) = *state.next_wake {
+                    eprintln!("Daemon: next wake at {}", w.format("%Y-%m-%d %H:%M"));
+                } else {
+                    eprintln!("Daemon: no pending TODOs, idling");
+                }
+                Ok(LoopControl::Idle)
+            }
+            NextStep::RotateProvider {
+                next_wake: refreshed_next_wake,
+                next_provider_index,
+                wrapped,
+                reason,
+            } => {
+                *state.next_wake = refreshed_next_wake;
+                let old_name = config
+                    .providers
+                    .get(state.retry.provider_index)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                state.retry.provider_index = next_provider_index;
+                state.retry.attempt = 0;
+                let new_name = config
+                    .providers
+                    .get(state.retry.provider_index)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                eprintln!(
+                    "Daemon: rotating provider: {} -> {} (reason: {})",
+                    old_name,
+                    new_name,
+                    reason.as_str(),
+                );
+
+                // Persist immediately so `cryo status` reflects the change.
+                state.cryo_state.provider_index = Some(state.retry.provider_index);
+                let _ = self.save_state(state.cryo_state);
+
+                if wrapped {
+                    // All providers tried — apply backoff before next cycle.
+                    eprintln!("Daemon: all providers tried, backing off before next cycle");
+                    if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                        return Ok(LoopControl::Break);
+                    }
+                }
+                *state.run_now = true;
+                Ok(LoopControl::Continue)
+            }
+            NextStep::Retry {
+                next_wake: refreshed_next_wake,
+                plan,
+            } => {
+                *state.next_wake = refreshed_next_wake;
+                if self.apply_failure_retry_plan(state.retry, plan, &config.fallback_alert) {
+                    return Ok(LoopControl::Break);
+                }
+                *state.run_now = true;
+                Ok(LoopControl::Continue)
+            }
+        }
+    }
+
     /// Run the daemon event loop. Blocks until SIGTERM or plan completion.
     pub fn run(&self) -> Result<()> {
         let mut cryo_state =
@@ -1426,7 +1644,7 @@ impl Daemon {
                     active_provider.map(|p| p.env.clone()).unwrap_or_default();
                 let provider_name = active_provider.map(|p| p.name.as_str());
 
-                match self.run_one_session(
+                let session_result = match self.run_one_session(
                     config,
                     cryo_state,
                     server,
@@ -1439,104 +1657,41 @@ impl Daemon {
                         cryo_state.previous_session_crashed = outcome.is_crash();
                         // Persist session number only after successful completion
                         self.save_state(cryo_state)?;
-                        match outcome {
-                            SessionLoopOutcome::PlanComplete => {
-                                retry.reset();
-                                // Save-failure policy: log and still break.
-                                // On restart, stale on-disk fallback is harmless
-                                // because the session log / plan state shows the
-                                // plan is done; the daemon won't sleep again.
-                                if let Err(e) = self.set_pending_fallback(
-                                    cryo_state,
-                                    &mut pending_fallback,
-                                    None,
-                                ) {
-                                    eprintln!(
-                                        "Daemon: failed to persist cleared fallback on PlanComplete: {e}"
-                                    );
-                                }
-                                eprintln!("Daemon: plan complete. Shutting down.");
-                                break;
-                            }
-                            SessionLoopOutcome::Hibernate { fallback } => {
-                                retry.reset();
-                                next_wake = next_wake_from_todos(&self.dir);
-                                let new_pending = scheduled_fallback_for(next_wake, fallback);
-                                // Save-failure policy: escalate to failure retry.
-                                // If we can't persist the armed fallback, do not
-                                // sleep — a crash before the next save would
-                                // lose the fallback entirely.
-                                if let Err(e) = self.set_pending_fallback(
-                                    cryo_state,
-                                    &mut pending_fallback,
-                                    new_pending,
-                                ) {
-                                    eprintln!(
-                                        "Daemon: failed to persist armed fallback after Hibernate: {e}. \
-                                         Escalating to failure-retry so the daemon does not sleep \
-                                         with an unpersisted fallback."
-                                    );
-                                    if self.handle_failure_retry(&mut retry, &config.fallback_alert)
-                                    {
-                                        break;
-                                    }
-                                    run_now = true;
-                                    continue;
-                                }
-                                if let Some(w) = next_wake {
-                                    eprintln!(
-                                        "Daemon: next wake at {}",
-                                        w.format("%Y-%m-%d %H:%M")
-                                    );
-                                } else {
-                                    eprintln!("Daemon: no pending TODOs, idling");
-                                }
-                            }
-                            SessionLoopOutcome::ValidationFailed { quick_exit } => {
-                                if should_rotate_provider(
-                                    &config.rotate_on,
-                                    quick_exit,
-                                    config.providers.len(),
-                                ) {
-                                    let _ = self.save_state(cryo_state);
-                                    next_wake = next_wake_from_todos(&self.dir);
-                                    if self.rotate_and_maybe_backoff(
-                                        config, cryo_state, &mut retry, quick_exit,
-                                    ) {
-                                        break;
-                                    }
-                                    run_now = true;
-                                    continue;
-                                }
-
-                                if self.handle_failure_cycle(
-                                    cryo_state,
-                                    &mut retry,
-                                    &mut next_wake,
-                                    &config.fallback_alert,
-                                ) {
-                                    break;
-                                }
-                                run_now = true;
-                                continue;
-                            }
-                        }
+                        Ok(outcome)
                     }
                     Err(e) => {
                         cryo_state.session_number -= 1;
                         cryo_state.previous_session_crashed = true;
+                        let _ = self.save_state(cryo_state);
                         eprintln!("Daemon: session failed: {e}");
-                        if self.handle_failure_cycle(
-                            cryo_state,
-                            &mut retry,
-                            &mut next_wake,
-                            &config.fallback_alert,
-                        ) {
-                            break;
-                        }
-                        run_now = true;
-                        continue;
+                        Err(())
                     }
+                };
+
+                let refreshed_next_wake = match session_result.as_ref() {
+                    Ok(SessionLoopOutcome::PlanComplete) => next_wake,
+                    _ => next_wake_from_todos(&self.dir),
+                };
+                let session_result_ref = match &session_result {
+                    Ok(outcome) => SessionRunResult::Outcome(outcome),
+                    Err(()) => SessionRunResult::Error,
+                };
+                let step =
+                    decide_next_step(session_result_ref, config, &retry, refreshed_next_wake);
+                match self.apply_next_step(
+                    step,
+                    config,
+                    EventLoopMutations {
+                        cryo_state,
+                        retry: &mut retry,
+                        pending_fallback: &mut pending_fallback,
+                        next_wake: &mut next_wake,
+                        run_now: &mut run_now,
+                    },
+                )? {
+                    LoopControl::Break => break,
+                    LoopControl::Continue => continue,
+                    LoopControl::Idle => {}
                 }
             }
 
@@ -1947,83 +2102,30 @@ impl Daemon {
         Ok(true)
     }
 
-    /// Post-failure bookkeeping shared between `ValidationFailed` (non-rotation
-    /// path) and launcher errors from `run_one_session`. Persists the current
-    /// cryo state, recomputes `next_wake` from the todo list, then delegates
-    /// to `handle_failure_retry`. Returns `true` if the caller should break
-    /// the event loop (shutdown observed), `false` to schedule another run.
-    ///
-    /// Having one helper keeps the two failure paths from drifting — any new
-    /// bookkeeping added to one is automatically shared with the other.
-    fn handle_failure_cycle(
-        &self,
-        cryo_state: &mut CryoState,
-        retry: &mut RetryState,
-        next_wake: &mut Option<NaiveDateTime>,
-        alert_method: &str,
-    ) -> bool {
-        let _ = self.save_state(cryo_state);
-        *next_wake = next_wake_from_todos(&self.dir);
-        self.handle_failure_retry(retry, alert_method)
-    }
-
-    /// Rotate to the next provider, log the change, persist `provider_index`,
-    /// and apply the wrap-around backoff (60s sleep) if all providers have
-    /// been tried. Returns `true` if the caller should break (shutdown during
-    /// backoff), `false` to schedule another run under the new provider.
-    fn rotate_and_maybe_backoff(
-        &self,
-        config: &CryoConfig,
-        cryo_state: &mut CryoState,
-        retry: &mut RetryState,
-        quick_exit: bool,
-    ) -> bool {
-        let old_name = config
-            .providers
-            .get(retry.provider_index)
-            .map(|p| p.name.as_str())
-            .unwrap_or("unknown");
-        let wrapped = retry.rotate_provider();
-        let new_name = config
-            .providers
-            .get(retry.provider_index)
-            .map(|p| p.name.as_str())
-            .unwrap_or("unknown");
-        eprintln!(
-            "Daemon: rotating provider: {} -> {} (reason: {})",
-            old_name,
-            new_name,
-            if quick_exit { "quick-exit" } else { "failure" },
-        );
-
-        cryo_state.provider_index = Some(retry.provider_index);
-        let _ = self.save_state(cryo_state);
-
-        if wrapped {
-            eprintln!("Daemon: all providers tried, backing off before next cycle");
-            if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Handle a failure by retrying with exponential backoff (5s, 10s, ..., 1h cap).
+    /// Apply a precomputed retry plan with exponential backoff (5s, 10s, ..., 1h cap).
     /// Sends an alert once when max_retries is reached, then keeps retrying at 1h.
     /// Returns true if the daemon should shut down.
-    fn handle_failure_retry(&self, retry: &mut RetryState, alert_method: &str) -> bool {
-        let backoff = retry.next_backoff();
+    fn apply_failure_retry_plan(
+        &self,
+        retry: &mut RetryState,
+        plan: RetryPlan,
+        alert_method: &str,
+    ) -> bool {
         retry.record_failure();
-        // Send alert once when we first hit max_retries
-        if retry.attempt == retry.max_retries {
+        // Send alert once when we first hit max_retries.
+        if plan.send_alert {
             eprintln!(
                 "Daemon: {} retries failed, sending alert. Will keep retrying.",
                 retry.max_retries
             );
             self.send_retry_alert(alert_method);
         }
-        eprintln!("Daemon: retry {} in {}s", retry.attempt, backoff.as_secs());
-        self.sleep_or_shutdown(backoff)
+        eprintln!(
+            "Daemon: retry {} in {}s",
+            retry.attempt,
+            plan.backoff.as_secs()
+        );
+        self.sleep_or_shutdown(plan.backoff)
     }
 
     /// Send a system alert when retries are exhausted.
