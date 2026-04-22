@@ -26,8 +26,6 @@ use crate::state::{self, CryoState, InFlightFallback, PendingFallbackState};
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 const FALLBACK_TIME_FMT: &str = "%Y-%m-%dT%H:%M:%S";
 
-use crate::process::send_signal;
-
 trait Clock: Send + Sync {
     fn local_now(&self) -> NaiveDateTime;
     fn monotonic_now(&self) -> Instant;
@@ -222,7 +220,11 @@ impl SessionLoopOutcome {
     }
 }
 
+mod effects;
 mod request;
+mod session;
+
+use effects::{ReplyAuthor, SessionEffects};
 
 #[cfg(test)]
 use request::TodoRequest;
@@ -230,6 +232,9 @@ use request::{
     handle_todo_request, resolve_hibernate_request, DaemonRequest, FileTodoEffects,
     TodoRequestOutcome,
 };
+#[cfg(test)]
+use session::ChildExitStatus;
+use session::{ProcessSessionLauncher, SessionLauncher, SessionRuntime};
 
 /// Pure: given the next scheduled wake and (optionally) a session-registered
 /// fallback action, produce the `(deadline, action)` to arm. We arm the
@@ -372,67 +377,6 @@ struct DaemonBootstrapState {
     cleared_invalid_pending_fallback: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ChildExitStatus {
-    code: Option<i32>,
-}
-
-trait SessionRuntime {
-    fn accept_request(
-        &mut self,
-        expected_instance_id: Option<&str>,
-    ) -> Result<Option<crate::socket::Request>>;
-    fn respond(&mut self, ok: bool, message: String) -> Result<()>;
-    fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>>;
-    fn terminate(&mut self);
-}
-
-trait SessionEffects {
-    /// List unread inbox filenames without parsing message bodies.
-    fn list_inbox_filenames(&self) -> Result<Vec<String>>;
-    /// Read pending inbox messages and archive them atomically. Returns the
-    /// formatted body the agent will print plus the list of filenames that
-    /// were archived (for the event log).
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)>;
-    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()>;
-    fn write_reply(
-        &mut self,
-        author: ReplyAuthor,
-        text: &str,
-        timestamp: NaiveDateTime,
-    ) -> Result<()>;
-    fn todo_add(&mut self, text: &str, at: &str) -> Result<u32>;
-    fn todo_done(&mut self, id: u32) -> Result<()>;
-    fn todo_remove(&mut self, id: u32) -> Result<()>;
-    fn todo_list(&mut self) -> Result<String>;
-    /// Returns true iff at least one pending TODO has an `at` time parseable
-    /// by `WAKE_TIME_FMT`. Used to reject hibernate attempts that would leave
-    /// the chamber without a scheduled next wake.
-    fn has_pending_todo_with_valid_wake(&self) -> bool;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReplyAuthor {
-    Agent,
-    Daemon,
-}
-
-impl ReplyAuthor {
-    fn from(self) -> &'static str {
-        match self {
-            Self::Agent => "agent",
-            Self::Daemon => "cryo-daemon",
-        }
-    }
-
-    fn subject(self) -> &'static str {
-        match self {
-            Self::Agent => "Reply",
-            Self::Daemon => "Daemon Reply",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct HumanReplyTracker {
     known_filenames: Vec<String>,
@@ -531,104 +475,6 @@ trait StartupPlatform {
     ) -> Result<Self::Watcher>;
 }
 
-struct FsSessionEffects<'a> {
-    dir: &'a Path,
-}
-
-impl<'a> FsSessionEffects<'a> {
-    fn new(dir: &'a Path) -> Self {
-        Self { dir }
-    }
-
-    fn todo_path(&self) -> PathBuf {
-        self.dir.join("todo.json")
-    }
-}
-
-impl SessionEffects for FsSessionEffects<'_> {
-    fn list_inbox_filenames(&self) -> Result<Vec<String>> {
-        crate::message::list_inbox(self.dir)
-    }
-
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
-        let messages = crate::message::read_inbox(self.dir)?;
-        if messages.is_empty() {
-            return Ok(("No messages.\n".to_string(), Vec::new()));
-        }
-        let mut body = String::new();
-        for (filename, msg) in &messages {
-            body.push_str(&format!("--- {} ---\n", filename));
-            if !msg.from.is_empty() {
-                body.push_str(&format!("From: {}\n", msg.from));
-            }
-            if !msg.subject.is_empty() {
-                body.push_str(&format!("Subject: {}\n", msg.subject));
-            }
-            body.push('\n');
-            body.push_str(&msg.body);
-            body.push('\n');
-            body.push('\n');
-        }
-        let filenames: Vec<String> = messages.into_iter().map(|(name, _)| name).collect();
-        crate::message::archive_messages(self.dir, &filenames)?;
-        Ok((body, filenames))
-    }
-
-    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()> {
-        crate::message::archive_messages(self.dir, filenames)
-    }
-
-    fn write_reply(
-        &mut self,
-        author: ReplyAuthor,
-        text: &str,
-        timestamp: NaiveDateTime,
-    ) -> Result<()> {
-        let msg = crate::message::Message {
-            from: author.from().to_string(),
-            subject: author.subject().to_string(),
-            body: text.to_string(),
-            timestamp,
-            metadata: std::collections::BTreeMap::new(),
-        };
-        crate::message::write_message(self.dir, "outbox", &msg)?;
-        Ok(())
-    }
-
-    fn todo_add(&mut self, text: &str, at: &str) -> Result<u32> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        let id = list.add(text.to_string(), at.to_string());
-        list.save(&todo_path)?;
-        Ok(id)
-    }
-
-    fn todo_done(&mut self, id: u32) -> Result<()> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        list.done(id)?;
-        list.save(&todo_path)?;
-        Ok(())
-    }
-
-    fn todo_remove(&mut self, id: u32) -> Result<()> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        list.remove(id)?;
-        list.save(&todo_path)?;
-        Ok(())
-    }
-
-    fn todo_list(&mut self) -> Result<String> {
-        let list = crate::todo::TodoList::load(&self.todo_path())?;
-        Ok(list.display())
-    }
-
-    fn has_pending_todo_with_valid_wake(&self) -> bool {
-        next_wake_from_todos(self.dir).is_some()
-    }
-}
-
 struct SystemStartupPlatform;
 
 impl StartupPlatform for SystemStartupPlatform {
@@ -666,94 +512,6 @@ impl StartupPlatform for SystemStartupPlatform {
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<Self::Watcher> {
         InboxWatcher::start(inbox_path, tx)
-    }
-}
-
-struct ProcessSessionRuntime<'a> {
-    server: &'a crate::socket::SocketServer,
-    child: &'a mut std::process::Child,
-    clock: Arc<dyn Clock>,
-    pending_responder: Option<crate::socket::Responder>,
-}
-
-impl<'a> ProcessSessionRuntime<'a> {
-    fn new(
-        server: &'a crate::socket::SocketServer,
-        child: &'a mut std::process::Child,
-        clock: Arc<dyn Clock>,
-    ) -> Self {
-        Self {
-            server,
-            child,
-            clock,
-            pending_responder: None,
-        }
-    }
-}
-
-/// Materializes a single agent session.
-///
-/// Production code spawns a real child via [`ProcessSessionLauncher`]; tests
-/// can swap in a scripted implementation that bypasses process creation and
-/// drives the session purely through the injected `Clock` and event source.
-/// This is what makes multi-session behavior (wake → run → hibernate → sleep
-/// → wake) testable in-process without wall-clock delays.
-trait SessionLauncher: Send + Sync {
-    #[allow(clippy::too_many_arguments)]
-    fn run_session(
-        &self,
-        daemon: &Daemon,
-        config: &CryoConfig,
-        cryo_state: &CryoState,
-        server: &crate::socket::SocketServer,
-        delayed_wake: Option<&str>,
-        provider_env: &std::collections::HashMap<String, String>,
-        provider_name: Option<&str>,
-    ) -> Result<SessionLoopOutcome>;
-}
-
-impl SessionRuntime for ProcessSessionRuntime<'_> {
-    fn accept_request(
-        &mut self,
-        expected_instance_id: Option<&str>,
-    ) -> Result<Option<crate::socket::Request>> {
-        match self.server.accept_one(expected_instance_id) {
-            Ok(Some((request, responder))) => {
-                self.pending_responder = Some(responder);
-                Ok(Some(request))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => {
-                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                        return Ok(None);
-                    }
-                }
-                Err(e)
-            }
-        }
-    }
-
-    fn respond(&mut self, ok: bool, message: String) -> Result<()> {
-        let responder = self
-            .pending_responder
-            .take()
-            .context("Missing pending session responder")?;
-        responder.respond(&crate::socket::Response { ok, message })?;
-        Ok(())
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>> {
-        self.child.try_wait().map(|status| {
-            status.map(|status| ChildExitStatus {
-                code: status.code(),
-            })
-        })
-    }
-
-    fn terminate(&mut self) {
-        let pid = self.child.id();
-        terminate_child(self.child, pid, self.clock.as_ref());
     }
 }
 
@@ -840,111 +598,6 @@ fn decide_next_step(
             plan: RetryPlan::for_state(retry),
         },
     }
-}
-
-/// Production `SessionLauncher`: spawns a real agent subprocess, wraps it in
-/// `ProcessSessionRuntime`, and delegates to `Daemon::drive_active_session`.
-struct ProcessSessionLauncher;
-
-impl SessionLauncher for ProcessSessionLauncher {
-    #[allow(clippy::too_many_arguments)]
-    fn run_session(
-        &self,
-        daemon: &Daemon,
-        config: &CryoConfig,
-        cryo_state: &CryoState,
-        server: &crate::socket::SocketServer,
-        delayed_wake: Option<&str>,
-        provider_env: &std::collections::HashMap<String, String>,
-        provider_name: Option<&str>,
-    ) -> Result<SessionLoopOutcome> {
-        let agent_cmd = config.agent.clone();
-
-        let task = daemon
-            .get_task()
-            .unwrap_or_else(|| "Continue the plan".to_string());
-
-        let timeout_secs = config.max_session_duration;
-
-        eprintln!(
-            "Daemon: Session #{}: Running agent...",
-            cryo_state.session_number
-        );
-
-        let inbox_filenames: Vec<String> = crate::message::list_inbox(&daemon.dir)?;
-
-        let todo_path = daemon.dir.join("todo.json");
-        let todo_display = match crate::todo::TodoList::load(&todo_path) {
-            Ok(list) => list.display(),
-            Err(err) => {
-                eprintln!(
-                    "Daemon: Error loading TODO list from {}: {}",
-                    todo_path.display(),
-                    err
-                );
-                format!("Error loading TODO list ({err}). Please check todo.json.")
-            }
-        };
-
-        let notice = session_prompt_notice(delayed_wake, cryo_state.previous_session_crashed);
-
-        let agent_config = crate::agent::AgentConfig {
-            session_number: cryo_state.session_number,
-            task: task.clone(),
-            delayed_wake: notice,
-            todo_list: todo_display,
-        };
-        let prompt = crate::agent::build_prompt(&agent_config);
-
-        let mut logger = crate::log::EventLogger::begin(
-            &daemon.log_path,
-            cryo_state.session_number,
-            &task,
-            &agent_cmd,
-            &inbox_filenames,
-        )?;
-
-        if let Some(notice) = delayed_wake {
-            logger.log_event(&format!("delayed wake: {notice}"))?;
-        }
-        if cryo_state.previous_session_crashed {
-            logger.log_event("previous session crashed — agent advised to check inbox archive")?;
-        }
-
-        let agent_log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(crate::log::agent_log_path(&daemon.dir))?;
-
-        let mut child =
-            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
-        let child_pid = child.id();
-        let spawn_time = daemon.clock.monotonic_now();
-        logger.log_event(&format!("agent started (pid {child_pid})"))?;
-        if let Some(name) = provider_name {
-            logger.log_event(&format!("provider: {name}"))?;
-        }
-
-        let mut runtime = ProcessSessionRuntime::new(server, &mut child, Arc::clone(&daemon.clock));
-        let mut effects = FsSessionEffects::new(&daemon.dir);
-        let context = ActiveSessionContext {
-            cryo_state,
-            inbox_filenames,
-            timeout_secs,
-            spawn_time,
-        };
-        daemon.drive_active_session(&mut runtime, &mut effects, context, logger)
-    }
-}
-
-/// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
-fn terminate_child(child: &mut std::process::Child, pid: u32, clock: &dyn Clock) {
-    send_signal(pid, libc::SIGTERM);
-    clock.sleep(Duration::from_secs(2));
-    if child.try_wait().ok().flatten().is_none() {
-        send_signal(pid, libc::SIGKILL);
-    }
-    let _ = child.wait(); // reap to prevent zombie
 }
 
 /// Compute how long to sleep given optional wake and report deadlines.

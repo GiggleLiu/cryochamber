@@ -16,6 +16,29 @@ fn daemon_request_handling_lives_in_request_module() {
 }
 
 #[test]
+fn daemon_session_runtime_and_effects_live_in_submodules() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let effects_src = std::fs::read_to_string(root.join("src/daemon/effects.rs"))
+        .expect("session effects should live in src/daemon/effects.rs");
+    let session_src = std::fs::read_to_string(root.join("src/daemon/session.rs"))
+        .expect("session runtime should live in src/daemon/session.rs");
+    let daemon_src = std::fs::read_to_string(root.join("src/daemon.rs")).unwrap();
+
+    assert!(effects_src.contains("trait SessionEffects"));
+    assert!(effects_src.contains("struct FsSessionEffects"));
+    assert!(session_src.contains("trait SessionRuntime"));
+    assert!(session_src.contains("struct ProcessSessionRuntime"));
+    assert!(session_src.contains("trait SessionLauncher"));
+    assert!(session_src.contains("struct ProcessSessionLauncher"));
+    assert!(!daemon_src.contains("trait SessionEffects"));
+    assert!(!daemon_src.contains("struct FsSessionEffects"));
+    assert!(!daemon_src.contains("trait SessionRuntime"));
+    assert!(!daemon_src.contains("struct ProcessSessionRuntime"));
+    assert!(!daemon_src.contains("trait SessionLauncher"));
+    assert!(!daemon_src.contains("struct ProcessSessionLauncher"));
+}
+
+#[test]
 fn watcher_startup_notice_prioritizes_warning() {
     assert_eq!(
         watcher_startup_notice(Some("permission denied"), true),
