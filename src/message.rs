@@ -72,175 +72,78 @@ fn unique_suffix() -> String {
 /// Returns (filename, Message) pairs.
 pub fn read_inbox(dir: &Path) -> Result<Vec<(String, Message)>> {
     let inbox = dir.join("messages").join("inbox");
-    if !inbox.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&inbox)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    let mut messages = Vec::new();
-    for entry in entries {
-        let content = std::fs::read_to_string(entry.path())
-            .with_context(|| format!("Failed to read {}", entry.path().display()))?;
-        match parse_message(&content) {
-            Ok(msg) => {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                messages.push((filename, msg));
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: skipping malformed message {}: {e}",
-                    entry.path().display()
-                );
-            }
-        }
-    }
-
-    Ok(messages)
+    read_message_dir(&inbox, "message")
 }
 
 /// List inbox filenames without parsing message bodies.
 pub fn list_inbox(dir: &Path) -> Result<Vec<String>> {
     let inbox = dir.join("messages").join("inbox");
-    if !inbox.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&inbox)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    Ok(entries
+    Ok(list_message_files(&inbox)?
         .into_iter()
-        .map(|e| e.file_name().to_string_lossy().to_string())
+        .map(|file| file.filename)
         .collect())
 }
 
 /// Read all messages from outbox/, sorted by filename (timestamp order).
 pub fn read_outbox(dir: &Path) -> Result<Vec<(String, Message)>> {
     let outbox = dir.join("messages").join("outbox");
-    if !outbox.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&outbox)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    let mut messages = Vec::new();
-    for entry in entries {
-        let content = std::fs::read_to_string(entry.path())
-            .with_context(|| format!("Failed to read {}", entry.path().display()))?;
-        match parse_message(&content) {
-            Ok(msg) => {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                messages.push((filename, msg));
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: skipping malformed message {}: {e}",
-                    entry.path().display()
-                );
-            }
-        }
-    }
-
-    Ok(messages)
+    read_message_dir(&outbox, "message")
 }
 
 /// Read all archived inbox messages from inbox/archive/, sorted by filename.
 pub fn read_inbox_archive(dir: &Path) -> Result<Vec<(String, Message)>> {
     let archive = dir.join("messages").join("inbox").join("archive");
-    if !archive.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&archive)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    let mut messages = Vec::new();
-    for entry in entries {
-        let content = std::fs::read_to_string(entry.path())
-            .with_context(|| format!("Failed to read {}", entry.path().display()))?;
-        match parse_message(&content) {
-            Ok(msg) => {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                messages.push((filename, msg));
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: skipping malformed archived message {}: {e}",
-                    entry.path().display()
-                );
-            }
-        }
-    }
-
-    Ok(messages)
+    read_message_dir(&archive, "archived message")
 }
 
 /// Read all archived outbox messages from outbox/archive/, sorted by filename.
 pub fn read_outbox_archive(dir: &Path) -> Result<Vec<(String, Message)>> {
     let archive = dir.join("messages").join("outbox").join("archive");
-    if !archive.exists() {
+    read_message_dir(&archive, "archived message")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MessageFile {
+    filename: String,
+    path: PathBuf,
+}
+
+fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
+    if !message_dir.exists() {
         return Ok(Vec::new());
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(&archive)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path().extension().is_some_and(|ext| ext == "md")
-                && e.file_type().is_ok_and(|ft| ft.is_file())
+    let mut files: Vec<_> = std::fs::read_dir(message_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.path().extension().is_some_and(|ext| ext == "md")
+                && entry.file_type().is_ok_and(|file_type| file_type.is_file())
+        })
+        .map(|entry| MessageFile {
+            filename: entry.file_name().to_string_lossy().to_string(),
+            path: entry.path(),
         })
         .collect();
 
-    entries.sort_by_key(|e| e.file_name());
+    files.sort_by(|left, right| left.filename.cmp(&right.filename));
+    Ok(files)
+}
 
+fn read_message_dir(message_dir: &Path, malformed_label: &str) -> Result<Vec<(String, Message)>> {
     let mut messages = Vec::new();
-    for entry in entries {
-        let content = std::fs::read_to_string(entry.path())
-            .with_context(|| format!("Failed to read {}", entry.path().display()))?;
+    for file in list_message_files(message_dir)? {
+        let content = std::fs::read_to_string(&file.path)
+            .with_context(|| format!("Failed to read {}", file.path.display()))?;
         match parse_message(&content) {
-            Ok(msg) => {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                messages.push((filename, msg));
-            }
+            Ok(message) => messages.push((file.filename, message)),
             Err(e) => {
                 eprintln!(
-                    "Warning: skipping malformed archived message {}: {e}",
-                    entry.path().display()
+                    "Warning: skipping malformed {malformed_label} {}: {e}",
+                    file.path.display()
                 );
             }
         }
     }
-
     Ok(messages)
 }
 
