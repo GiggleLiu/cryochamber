@@ -349,6 +349,7 @@ fn test_cryo_state() -> CryoState {
         provider_index: None,
         instance_id: Some("test-instance".into()),
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     }
 }
@@ -849,6 +850,7 @@ fn test_check_fallback_uses_injected_clock() {
                 .to_string(),
             action: action.clone(),
         }),
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     let mut pending = Some((now + chrono::Duration::minutes(1), action));
@@ -934,6 +936,101 @@ fn test_check_fallback_no_fallback_is_noop() {
         .check_fallback(&mut cryo_state, &mut pending, "outbox")
         .expect("no-op must not error");
     assert!(!fired);
+}
+
+#[test]
+fn test_check_fallback_clears_in_flight_marker_after_success() {
+    // The in-flight marker is written before execute and cleared after. If
+    // execute succeeded, the marker must be gone — otherwise the next startup
+    // would re-fire the alert unnecessarily.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
+
+    let action = FallbackAction {
+        action: "email".into(),
+        target: "ops@example.com".into(),
+        message: "stuck".into(),
+    };
+    let mut cryo_state = test_cryo_state();
+    let mut pending = Some((now - chrono::Duration::minutes(1), action));
+
+    let fired = daemon
+        .check_fallback(&mut cryo_state, &mut pending, "outbox")
+        .expect("fire should succeed");
+    assert!(fired);
+    assert!(
+        cryo_state.in_flight_fallback.is_none(),
+        "in-flight marker must be cleared after successful execute"
+    );
+}
+
+#[test]
+fn test_replay_in_flight_fallback_sends_replay_with_label() {
+    // Simulated crash recovery: state carries an in-flight record from a
+    // previous run that died mid-fire. Replay must write an outbox message
+    // marked "(replay after crash)" and clear the marker so the next start
+    // doesn't replay again.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.in_flight_fallback = Some(crate::state::InFlightFallback {
+        deadline: "2026-03-01T11:58:00".into(),
+        action: FallbackAction {
+            action: "email".into(),
+            target: "ops@example.com".into(),
+            message: "agent stuck".into(),
+        },
+        started_at: "2026-03-01T11:59:00".into(),
+    });
+
+    let replayed = daemon
+        .replay_in_flight_fallback(&mut cryo_state, "outbox")
+        .expect("replay must succeed");
+    assert!(replayed, "replay must report that it fired");
+    assert!(
+        cryo_state.in_flight_fallback.is_none(),
+        "marker must be cleared after replay"
+    );
+
+    let outbox = crate::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert!(
+        outbox[0].1.body.starts_with("(replay after crash)"),
+        "replayed message body must carry the crash-replay label: {:?}",
+        outbox[0].1.body
+    );
+}
+
+#[test]
+fn test_replay_in_flight_fallback_noop_when_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let clock = Arc::new(TestClock::new(
+        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap(),
+    ));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
+
+    let mut cryo_state = test_cryo_state();
+    let replayed = daemon
+        .replay_in_flight_fallback(&mut cryo_state, "outbox")
+        .expect("no-op must not error");
+    assert!(!replayed);
 }
 
 #[test]

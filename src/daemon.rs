@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::CryoConfig;
 use crate::fallback::FallbackAction;
-use crate::state::{self, CryoState, PendingFallbackState};
+use crate::state::{self, CryoState, InFlightFallback, PendingFallbackState};
 
 /// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
@@ -1363,6 +1363,13 @@ impl Daemon {
         let mut inbox_wake = false;
         let mut pending_fallback = bootstrap.pending_fallback;
 
+        // Replay any fallback that was in-flight when the previous daemon
+        // crashed. Runs exactly once before the main loop so the operator
+        // hears about a dead-man alert even if the previous run died mid-fire.
+        if let Err(e) = self.replay_in_flight_fallback(cryo_state, &config.fallback_alert) {
+            eprintln!("Daemon: in-flight fallback replay failed: {e:#}");
+        }
+
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
                 eprintln!("Daemon: received shutdown signal");
@@ -1885,9 +1892,76 @@ impl Daemon {
         self.set_pending_fallback(cryo_state, pending, None)
             .context("failed to persist cleared pending fallback")?;
 
+        // Record that we're about to fire *before* calling execute. If we
+        // crash between this save and `clear_in_flight_fallback` below, the
+        // next daemon startup sees the record and replays the alert with a
+        // "(replay after crash)" prefix — losing a dead-man alert is strictly
+        // worse than delivering it twice with a label.
+        let deadline_str = self.clock.local_now().format(FALLBACK_TIME_FMT).to_string();
+        let started_at = Local::now()
+            .naive_local()
+            .format(FALLBACK_TIME_FMT)
+            .to_string();
+        cryo_state.in_flight_fallback = Some(InFlightFallback {
+            deadline: deadline_str,
+            action: fb.clone(),
+            started_at,
+        });
+        self.save_state(cryo_state)
+            .context("failed to persist in-flight fallback marker")?;
+
         eprintln!("Daemon: fallback deadline passed, executing fallback action");
-        fb.execute(&self.dir, alert_method)
-            .context("fallback execution failed")?;
+        let execute_result = fb.execute(&self.dir, alert_method);
+
+        // Clear the in-flight record regardless of whether execute succeeded
+        // or failed — the marker is about crash-safety across `execute`, not
+        // about retrying a failed send. If execute returned Err, the caller
+        // logs it; we don't keep firing on every tick.
+        cryo_state.in_flight_fallback = None;
+        if let Err(save_err) = self.save_state(cryo_state) {
+            eprintln!(
+                "Daemon: failed to clear in-flight fallback marker after execute: {save_err}"
+            );
+        }
+
+        execute_result.context("fallback execution failed")?;
+        Ok(true)
+    }
+
+    /// Replay a fallback alert that was in-flight when the daemon crashed.
+    /// Called once at startup. On success, clears the marker so subsequent
+    /// restarts don't keep replaying.
+    ///
+    /// Policy: delivery beats silence. We prepend "(replay after crash)" to
+    /// the message so operators can tell this alert survived a restart, but
+    /// we don't try to dedup against the original send — the original may
+    /// have never left the daemon.
+    fn replay_in_flight_fallback(
+        &self,
+        cryo_state: &mut CryoState,
+        alert_method: &str,
+    ) -> Result<bool> {
+        let Some(record) = cryo_state.in_flight_fallback.take() else {
+            return Ok(false);
+        };
+        eprintln!(
+            "Daemon: replaying in-flight fallback from previous run (started at {})",
+            record.started_at
+        );
+        // Persist the cleared marker first. If replay itself crashes, we
+        // don't want to replay again on next start — that risks an infinite
+        // replay loop on a fallback that deterministically crashes execute.
+        self.save_state(cryo_state)
+            .context("failed to persist cleared in-flight fallback marker before replay")?;
+
+        let replay = FallbackAction {
+            action: record.action.action.clone(),
+            target: record.action.target.clone(),
+            message: format!("(replay after crash) {}", record.action.message),
+        };
+        replay
+            .execute(&self.dir, alert_method)
+            .context("replayed fallback execution failed")?;
         Ok(true)
     }
 

@@ -59,6 +59,7 @@ fn test_state_roundtrip() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();

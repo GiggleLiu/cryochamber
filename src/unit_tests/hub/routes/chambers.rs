@@ -54,6 +54,7 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
             provider_index: None,
             instance_id: None,
             pending_fallback: None,
+            in_flight_fallback: None,
             previous_session_crashed: false,
         },
     )

@@ -18,6 +18,7 @@ fn test_save_and_load_state() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
 
@@ -54,6 +55,7 @@ fn test_lock_mechanism() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -79,6 +81,7 @@ fn test_is_locked_dead_process() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -99,6 +102,7 @@ fn test_is_locked_no_pid() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -142,6 +146,7 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -167,6 +172,7 @@ fn test_previous_session_crashed_true_roundtrip() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: true,
     };
     save_state(&state_path, &state).unwrap();
@@ -208,6 +214,7 @@ fn test_override_fields_roundtrip() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -234,6 +241,7 @@ fn test_none_overrides_not_serialized() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -261,6 +269,7 @@ fn test_last_report_time_roundtrip() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -291,6 +300,7 @@ fn test_provider_index_roundtrip() {
         provider_index: Some(2),
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();

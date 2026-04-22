@@ -51,6 +51,7 @@ fn test_is_locked_stale_pid() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state), "Dead PID should not be locked");
@@ -70,6 +71,7 @@ fn test_is_locked_no_pid() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state), "No PID should not be locked");
@@ -89,6 +91,7 @@ fn test_is_locked_own_pid() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(is_locked(&state), "Own PID should be locked");

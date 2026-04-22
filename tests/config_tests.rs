@@ -70,6 +70,7 @@ fn test_apply_overrides_all() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
 
@@ -102,6 +103,7 @@ fn test_apply_overrides_none_keeps_config() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
 
@@ -136,6 +138,7 @@ fn test_apply_overrides_partial() {
         provider_index: None,
         instance_id: None,
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
 

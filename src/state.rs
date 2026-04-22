@@ -12,6 +12,22 @@ pub struct PendingFallbackState {
     pub action: FallbackAction,
 }
 
+/// Record of a fallback that the daemon committed to firing but may not have
+/// finished executing before a crash. Written *before* `FallbackAction::execute`
+/// and cleared *after* it returns. On daemon startup, a leftover record means
+/// we crashed mid-fire and the alert must be replayed so the operator still
+/// sees it (policy: prefer duplicate delivery with a "(replay after crash)"
+/// label over silently dropping the alert).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InFlightFallback {
+    /// Deadline the pending fallback was armed for (formatted with
+    /// `WAKE_TIME_FMT`). Diagnostic only — not used for scheduling.
+    pub deadline: String,
+    pub action: FallbackAction,
+    /// Wall-clock time the daemon started firing, ISO 8601 local.
+    pub started_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoState {
     pub session_number: u32,
@@ -45,6 +61,13 @@ pub struct CryoState {
     /// Dead-man switch fallback that should survive daemon restarts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_fallback: Option<PendingFallbackState>,
+
+    /// Fallback the daemon started firing but may not have completed (written
+    /// before `execute`, cleared after). A leftover record on startup means
+    /// we crashed mid-fire; the daemon will replay the alert with a
+    /// "(replay after crash)" prefix so operators still see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_flight_fallback: Option<InFlightFallback>,
 
     /// True iff the previous session exited without calling `cryo-agent hibernate`.
     /// Used to inject a "previous session crashed" notice into the next prompt so

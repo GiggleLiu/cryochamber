@@ -95,6 +95,7 @@ fn test_socket_server_roundtrip() {
         provider_index: None,
         instance_id: Some("instance-123".to_string()),
         pending_fallback: None,
+        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&dir.path().join("timer.json"), &state).unwrap();
