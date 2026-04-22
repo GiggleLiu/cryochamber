@@ -349,9 +349,10 @@ pub fn parse_get_messages_response(
     Ok((messages, found_newest, raw_max_id))
 }
 
+const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 /// Simple base64 encoding (no external dependency needed).
 fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = Vec::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
 
@@ -359,28 +360,40 @@ fn base64_encode(data: &[u8]) -> String {
         let b0 = data[i] as usize;
         let b1 = data[i + 1] as usize;
         let b2 = data[i + 2] as usize;
-        result.push(CHARS[b0 >> 2]);
-        result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
-        result.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)]);
-        result.push(CHARS[b2 & 0x3f]);
+        result.push(BASE64_CHARS[b0 >> 2]);
+        result.push(BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
+        result.push(BASE64_CHARS[((b1 & 0xf) << 2) | (b2 >> 6)]);
+        result.push(BASE64_CHARS[b2 & 0x3f]);
         i += 3;
     }
 
-    let remaining = data.len() - i;
-    if remaining == 1 {
-        let b0 = data[i] as usize;
-        result.push(CHARS[b0 >> 2]);
-        result.push(CHARS[(b0 & 3) << 4]);
-        result.push(b'=');
-        result.push(b'=');
-    } else if remaining == 2 {
-        let b0 = data[i] as usize;
-        let b1 = data[i + 1] as usize;
-        result.push(CHARS[b0 >> 2]);
-        result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
-        result.push(CHARS[(b1 & 0xf) << 2]);
-        result.push(b'=');
-    }
+    append_base64_tail(&mut result, &data[i..]);
 
     String::from_utf8(result).unwrap()
 }
+
+fn append_base64_tail(result: &mut Vec<u8>, tail: &[u8]) {
+    match tail {
+        [] => {}
+        [b0] => {
+            let b0 = *b0 as usize;
+            result.push(BASE64_CHARS[b0 >> 2]);
+            result.push(BASE64_CHARS[(b0 & 3) << 4]);
+            result.push(b'=');
+            result.push(b'=');
+        }
+        [b0, b1] => {
+            let b0 = *b0 as usize;
+            let b1 = *b1 as usize;
+            result.push(BASE64_CHARS[b0 >> 2]);
+            result.push(BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
+            result.push(BASE64_CHARS[(b1 & 0xf) << 2]);
+            result.push(b'=');
+        }
+        _ => unreachable!("base64 tail must contain at most two bytes"),
+    }
+}
+
+#[cfg(test)]
+#[path = "../unit_tests/channel/zulip.rs"]
+mod tests;
