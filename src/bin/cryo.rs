@@ -534,6 +534,21 @@ fn signal_daemon_wake(dir: &std::path::Path) -> bool {
     cryochamber::process::signal_daemon_wake(dir)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeNotificationAction {
+    QueueUntilStart,
+    InboxWatcher,
+    SendSignal,
+}
+
+fn wake_notification_action(daemon_running: bool, watch_inbox: bool) -> WakeNotificationAction {
+    match (daemon_running, watch_inbox) {
+        (false, _) => WakeNotificationAction::QueueUntilStart,
+        (true, true) => WakeNotificationAction::InboxWatcher,
+        (true, false) => WakeNotificationAction::SendSignal,
+    }
+}
+
 /// After writing an inbox message, notify the daemon and print status.
 /// When watch_inbox is true, the inotify watcher handles wake — no signal needed.
 /// When watch_inbox is false, send SIGUSR1.
@@ -542,14 +557,20 @@ fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
         .map(|c| c.watch_inbox)
         .unwrap_or(true);
 
-    if !is_daemon_running(dir) {
-        eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
-    } else if watch_inbox {
-        println!("Daemon will pick it up shortly.");
-    } else if signal_daemon_wake(dir) {
-        println!("Wake signal sent. Daemon waking now.");
-    } else {
-        eprintln!("Warning: failed to signal daemon. Message queued for the next session.");
+    match wake_notification_action(is_daemon_running(dir), watch_inbox) {
+        WakeNotificationAction::QueueUntilStart => {
+            eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
+        }
+        WakeNotificationAction::InboxWatcher => {
+            println!("Daemon will pick it up shortly.");
+        }
+        WakeNotificationAction::SendSignal => {
+            if signal_daemon_wake(dir) {
+                println!("Wake signal sent. Daemon waking now.");
+            } else {
+                eprintln!("Warning: failed to signal daemon. Message queued for the next session.");
+            }
+        }
     }
     Ok(())
 }
@@ -689,3 +710,7 @@ fn cmd_watch(show_all: bool, viewpoint: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "unit_tests/cryo.rs"]
+mod tests;
