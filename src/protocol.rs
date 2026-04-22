@@ -22,22 +22,55 @@ pub const README_TEMPLATE: &str = include_str!("../templates/README.md");
 /// Source: templates/notes.md
 pub const NOTES_TEMPLATE: &str = include_str!("../templates/notes.md");
 
-/// Determine the protocol filename based on the agent command.
-/// Returns `"CLAUDE.md"` if the executable name contains "claude", otherwise `"AGENTS.md"`.
-/// Only inspects the first token (executable), so flags like `--model claude-3.7` are ignored.
-pub fn protocol_filename(agent_cmd: &str) -> &'static str {
-    let executable = agent_cmd
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolFile {
+    Claude,
+    Agents,
+}
+
+impl ProtocolFile {
+    pub fn filename(self) -> &'static str {
+        match self {
+            Self::Claude => "CLAUDE.md",
+            Self::Agents => "AGENTS.md",
+        }
+    }
+
+    fn matches_executable(self, executable: &str) -> bool {
+        match self {
+            Self::Claude => executable.contains("claude"),
+            Self::Agents => true,
+        }
+    }
+}
+
+const PROTOCOL_FILE_PRIORITY: &[ProtocolFile] = &[ProtocolFile::Claude, ProtocolFile::Agents];
+
+fn agent_executable_name(agent_cmd: &str) -> String {
+    agent_cmd
         .split_whitespace()
         .next()
         .unwrap_or("")
         .rsplit('/')
         .next()
-        .unwrap_or("");
-    if executable.to_lowercase().contains("claude") {
-        "CLAUDE.md"
-    } else {
-        "AGENTS.md"
-    }
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+pub fn protocol_file_for_agent(agent_cmd: &str) -> ProtocolFile {
+    let executable = agent_executable_name(agent_cmd);
+    PROTOCOL_FILE_PRIORITY
+        .iter()
+        .copied()
+        .find(|file| file.matches_executable(&executable))
+        .unwrap_or(ProtocolFile::Agents)
+}
+
+/// Determine the protocol filename based on the agent command.
+/// Returns `"CLAUDE.md"` if the executable name contains "claude", otherwise `"AGENTS.md"`.
+/// Only inspects the first token (executable), so flags like `--model claude-3.7` are ignored.
+pub fn protocol_filename(agent_cmd: &str) -> &'static str {
+    protocol_file_for_agent(agent_cmd).filename()
 }
 
 /// Write the protocol file to the given directory.
@@ -54,13 +87,10 @@ pub fn write_protocol_file(dir: &Path, filename: &str) -> Result<bool> {
 /// Check if a protocol file (CLAUDE.md or AGENTS.md) exists in the directory.
 /// Returns the filename if found.
 pub fn find_protocol_file(dir: &Path) -> Option<&'static str> {
-    if dir.join("CLAUDE.md").exists() {
-        Some("CLAUDE.md")
-    } else if dir.join("AGENTS.md").exists() {
-        Some("AGENTS.md")
-    } else {
-        None
-    }
+    PROTOCOL_FILE_PRIORITY
+        .iter()
+        .map(|file| file.filename())
+        .find(|filename| dir.join(filename).exists())
 }
 
 /// Write a template plan.md if none exists. Returns true if written.

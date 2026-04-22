@@ -71,6 +71,18 @@ fn test_protocol_filename_ignores_claude_in_args() {
 }
 
 #[test]
+fn test_protocol_file_for_agent_exposes_selection_policy() {
+    assert_eq!(
+        protocol::protocol_file_for_agent("/usr/bin/claude -p test"),
+        protocol::ProtocolFile::Claude
+    );
+    assert_eq!(
+        protocol::protocol_file_for_agent("opencode --model claude-3.7"),
+        protocol::ProtocolFile::Agents
+    );
+}
+
+#[test]
 fn test_write_protocol_file() {
     let dir = tempfile::tempdir().unwrap();
     let wrote = protocol::write_protocol_file(dir.path(), "CLAUDE.md").unwrap();
