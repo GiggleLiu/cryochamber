@@ -1,5 +1,5 @@
-//! Per-chamber sync backend handlers. Delegates to `sync_common` for
-//! summaries.
+//! Per-chamber sync backend handlers. Delegates to `sync_control` for
+//! backend orchestration.
 
 use std::sync::Arc;
 
@@ -11,14 +11,15 @@ use axum::{
 use serde_json::Value;
 
 use crate::hub::state::{AppState, SseEvent};
-use crate::sync_common::{self, SyncBackend};
+use crate::sync_common::SyncBackend;
+use crate::sync_control;
 
 pub async fn get_sync(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let summaries = sync_common::summarize_all(&path);
+    let summaries = sync_control::summarize_all(&path);
     Ok(Json(
         serde_json::to_value(summaries).unwrap_or(Value::Array(vec![])),
     ))
@@ -44,9 +45,9 @@ pub async fn post_sync_action(
         // because GET /sync reports running=false while the daemon is still
         // booting.
         "start" => {
-            let r = sync_common::start(backend, &path_for_task);
+            let r = sync_control::start(backend, &path_for_task);
             if r.is_ok() {
-                let _ = sync_common::wait_for_state(
+                let _ = sync_control::wait_for_state(
                     backend,
                     &path_for_task,
                     true,
@@ -56,9 +57,9 @@ pub async fn post_sync_action(
             r
         }
         "stop" => {
-            let r = sync_common::stop(backend, &path_for_task);
+            let r = sync_control::stop(backend, &path_for_task);
             if r.is_ok() {
-                let _ = sync_common::wait_for_state(
+                let _ = sync_control::wait_for_state(
                     backend,
                     &path_for_task,
                     false,
@@ -67,8 +68,8 @@ pub async fn post_sync_action(
             }
             r
         }
-        "pull" => sync_common::pull(backend, &path_for_task),
-        "push" => sync_common::push(backend, &path_for_task),
+        "pull" => sync_control::pull(backend, &path_for_task),
+        "push" => sync_control::push(backend, &path_for_task),
         _ => unreachable!("verb validated above"),
     })
     .await

@@ -1,6 +1,4 @@
-//! Shared sync backend abstraction: summary types and lifecycle wrappers.
-//! Two backends (gh, zulip) with near-identical verbs -- free functions are
-//! enough; no trait needed.
+//! Shared sync backend abstractions: summary types and sync-loop helpers.
 
 use crate::message::Message;
 use anyhow::{Context, Result};
@@ -44,20 +42,6 @@ pub struct SyncSummary {
     pub target: String,
     pub last_pushed_session: Option<u32>,
     pub log_tail_path: PathBuf,
-}
-
-pub fn summarize(backend: SyncBackend, dir: &Path) -> Option<SyncSummary> {
-    match backend {
-        SyncBackend::Gh => crate::gh_sync::summarize(dir),
-        SyncBackend::Zulip => crate::zulip_sync::summarize(dir),
-    }
-}
-
-pub fn summarize_all(dir: &Path) -> Vec<SyncSummary> {
-    [SyncBackend::Gh, SyncBackend::Zulip]
-        .into_iter()
-        .filter_map(|b| summarize(b, dir))
-        .collect()
 }
 
 /// RAII guard for sync daemon pid files. Writes the current PID on
@@ -287,107 +271,6 @@ fn run_sync_loop_with_settle_delay<B: SyncLoopBackend + ?Sized>(
 
     eprintln!("{label}: stopped");
     Ok(())
-}
-
-fn resolve_cli(backend: SyncBackend) -> Result<std::path::PathBuf> {
-    let (env_var, bin_name) = match backend {
-        SyncBackend::Gh => ("CRYO_GH_CLI", "cryo-gh"),
-        SyncBackend::Zulip => ("CRYO_ZULIP_CLI", "cryo-zulip"),
-    };
-    if let Ok(p) = std::env::var(env_var) {
-        return Ok(std::path::PathBuf::from(p));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let sibling = parent.join(bin_name);
-            if sibling.exists() {
-                return Ok(sibling);
-            }
-        }
-    }
-    if let Ok(output) = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {bin_name}"))
-        .output()
-    {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(std::path::PathBuf::from(path));
-            }
-        }
-    }
-    anyhow::bail!("{bin_name} binary not found (tried ${env_var}, sibling of current exe, $PATH)");
-}
-
-fn run_subcommand(backend: SyncBackend, dir: &Path, sub: &str) -> Result<()> {
-    let cli = resolve_cli(backend)?;
-    let output = std::process::Command::new(&cli)
-        .current_dir(dir)
-        .arg(sub)
-        .output()
-        .with_context(|| format!("Failed to spawn {}", cli.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let truncated: String = stderr.chars().take(500).collect();
-        anyhow::bail!(
-            "{} {sub} exited with {}: {}",
-            cli.display(),
-            output.status,
-            truncated.trim()
-        );
-    }
-    Ok(())
-}
-
-pub fn start(backend: SyncBackend, dir: &Path) -> Result<()> {
-    run_subcommand(backend, dir, "sync")
-}
-pub fn stop(backend: SyncBackend, dir: &Path) -> Result<()> {
-    run_subcommand(backend, dir, "unsync")
-}
-pub fn pull(backend: SyncBackend, dir: &Path) -> Result<()> {
-    run_subcommand(backend, dir, "pull")
-}
-pub fn push(backend: SyncBackend, dir: &Path) -> Result<()> {
-    run_subcommand(backend, dir, "push")
-}
-
-/// Ground-truth running check — reads the per-backend pid file and verifies
-/// the process is alive. The hub uses this to decide what to show in the
-/// sync toggle.
-pub fn is_running(backend: SyncBackend, dir: &Path) -> bool {
-    match backend {
-        SyncBackend::Gh => crate::gh_sync::is_sync_running(dir),
-        SyncBackend::Zulip => crate::zulip_sync::is_sync_running(dir),
-    }
-}
-
-/// Poll `is_running` until it matches `expected` or the deadline elapses.
-/// Used after start/stop so the HTTP response (and the SSE status event that
-/// follows) reflects the settled pid-file state. Without this wait, the hub
-/// toggle would flip back to "off" right after a start click — `launchctl
-/// load -w` / `launchctl unload -w` return before the daemon has written or
-/// cleared its pid file, and nothing re-fetches sync state after that race
-/// window closes.
-///
-/// Returns `true` if `expected` was observed before the deadline.
-pub fn wait_for_state(
-    backend: SyncBackend,
-    dir: &Path,
-    expected: bool,
-    timeout: std::time::Duration,
-) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if is_running(backend, dir) == expected {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ pub mod session;
 pub mod socket;
 pub mod state;
 pub mod sync_common;
+pub mod sync_control;
 pub mod todo;
 pub mod zulip_sync;
 

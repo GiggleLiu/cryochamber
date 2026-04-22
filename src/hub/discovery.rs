@@ -156,7 +156,7 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
             .is_some();
 
         // Sync summaries, compact badge form (full detail served by GET /sync)
-        entry.sync = crate::sync_common::summarize_all(dir)
+        entry.sync = crate::sync_control::summarize_all(dir)
             .into_iter()
             .map(|s| SyncBadge {
                 backend: s.backend.as_str().into(),
