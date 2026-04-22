@@ -128,14 +128,20 @@ fn cmd_init(
 
     println!("Saved zulip-sync.json");
     println!("Copied zuliprc to .cryo/zuliprc");
-    if history {
-        println!("Existing messages will be imported on first pull.");
-    } else if let Some(id) = last_message_id {
-        println!("Only messages newer than Zulip message {id} will be imported.");
-    } else {
-        println!("No existing messages found; future messages will be imported.");
-    }
+    println!("{}", init_import_message(history, last_message_id));
     Ok(())
+}
+
+fn init_import_message(history: bool, last_message_id: Option<u64>) -> String {
+    match (history, last_message_id) {
+        (true, _) => "Existing messages will be imported on first pull.".to_string(),
+        (false, Some(id)) => {
+            format!("Only messages newer than Zulip message {id} will be imported.")
+        }
+        (false, None) => {
+            "No existing messages found; future messages will be imported.".to_string()
+        }
+    }
 }
 
 fn copy_zuliprc_to_project(config_path: &Path, dir: &Path) -> Result<()> {

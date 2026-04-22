@@ -2,6 +2,30 @@ use super::*;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
+#[test]
+fn watcher_startup_notice_prioritizes_warning() {
+    assert_eq!(
+        watcher_startup_notice(Some("permission denied"), true),
+        WatcherStartupNotice::Warning("permission denied")
+    );
+}
+
+#[test]
+fn watcher_startup_notice_reports_started_watcher() {
+    assert_eq!(
+        watcher_startup_notice(None, true),
+        WatcherStartupNotice::Started
+    );
+}
+
+#[test]
+fn watcher_startup_notice_is_silent_without_warning_or_watcher() {
+    assert_eq!(
+        watcher_startup_notice(None, false),
+        WatcherStartupNotice::Silent
+    );
+}
+
 struct TestClockState {
     now: NaiveDateTime,
     elapsed: Duration,

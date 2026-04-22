@@ -96,6 +96,30 @@ fn init_history_flag_imports_existing_messages() {
 }
 
 #[test]
+fn init_import_message_reports_history_mode() {
+    assert_eq!(
+        init_import_message(true, Some(42)),
+        "Existing messages will be imported on first pull."
+    );
+}
+
+#[test]
+fn init_import_message_reports_newer_than_last_seen_message() {
+    assert_eq!(
+        init_import_message(false, Some(42)),
+        "Only messages newer than Zulip message 42 will be imported."
+    );
+}
+
+#[test]
+fn init_import_message_reports_future_only_when_no_existing_messages() {
+    assert_eq!(
+        init_import_message(false, None),
+        "No existing messages found; future messages will be imported."
+    );
+}
+
+#[test]
 fn copy_zuliprc_to_project_keeps_existing_file_when_source_is_destination() {
     let dir = tempfile::tempdir().unwrap();
     let cryo_dir = dir.path().join(".cryo");

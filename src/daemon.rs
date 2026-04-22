@@ -629,6 +629,24 @@ struct StartupDiagnostics {
     watcher_warning: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatcherStartupNotice<'a> {
+    Warning(&'a str),
+    Started,
+    Silent,
+}
+
+fn watcher_startup_notice(
+    watcher_warning: Option<&str>,
+    watcher_started: bool,
+) -> WatcherStartupNotice<'_> {
+    match (watcher_warning, watcher_started) {
+        (Some(warning), _) => WatcherStartupNotice::Warning(warning),
+        (None, true) => WatcherStartupNotice::Started,
+        (None, false) => WatcherStartupNotice::Silent,
+    }
+}
+
 #[derive(Debug)]
 struct StartupResources<S, W> {
     sock_path: PathBuf,
@@ -1637,10 +1655,17 @@ impl Daemon {
         }
 
         let watcher_started = startup.watcher.is_some();
-        if let Some(warning) = startup.diagnostics.watcher_warning {
-            eprintln!("Daemon: failed to start inbox watcher: {warning}");
-        } else if watcher_started {
-            eprintln!("Daemon: watching messages/inbox/ for new messages");
+        match watcher_startup_notice(
+            startup.diagnostics.watcher_warning.as_deref(),
+            watcher_started,
+        ) {
+            WatcherStartupNotice::Warning(warning) => {
+                eprintln!("Daemon: failed to start inbox watcher: {warning}");
+            }
+            WatcherStartupNotice::Started => {
+                eprintln!("Daemon: watching messages/inbox/ for new messages");
+            }
+            WatcherStartupNotice::Silent => {}
         }
         let _watcher = startup.watcher;
 
