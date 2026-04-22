@@ -101,11 +101,8 @@ pub fn list() -> Result<Vec<DaemonEntry>> {
 
 fn is_pid_alive(pid: u32) -> bool {
     let ret = unsafe { libc::kill(pid as i32, 0) };
-    if ret == 0 {
-        return true;
-    }
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-    errno == libc::EPERM
+    crate::process::pid_probe_indicates_alive(ret, errno)
 }
 
 #[cfg(test)]

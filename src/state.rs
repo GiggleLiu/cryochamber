@@ -122,14 +122,10 @@ pub fn is_locked(state: &CryoState) -> bool {
     if let Some(pid) = state.pid {
         let ret = unsafe { libc::kill(pid as i32, 0) };
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        kill_probe_indicates_locked(ret, errno)
+        crate::process::pid_probe_indicates_alive(ret, errno)
     } else {
         false
     }
-}
-
-fn kill_probe_indicates_locked(ret: i32, errno: i32) -> bool {
-    ret == 0 || errno == libc::EPERM
 }
 
 #[cfg(test)]

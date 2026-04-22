@@ -14,6 +14,10 @@ pub fn send_signal(pid: u32, signal: i32) -> bool {
     }
 }
 
+pub(crate) fn pid_probe_indicates_alive(ret: i32, errno: i32) -> bool {
+    ret == 0 || errno == libc::EPERM
+}
+
 /// Send SIGUSR1 to the daemon to force an immediate wake.
 /// Returns true if the signal was delivered successfully.
 pub fn signal_daemon_wake(dir: &Path) -> bool {
@@ -37,11 +41,9 @@ pub fn terminate_pid(pid: u32) -> Result<()> {
     for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let ret = unsafe { libc::kill(pid as i32, 0) };
-        if ret != 0 {
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if errno != libc::EPERM {
-                return Ok(()); // process is gone
-            }
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if !pid_probe_indicates_alive(ret, errno) {
+            return Ok(()); // process is gone
         }
     }
 
@@ -74,3 +76,7 @@ pub fn spawn_daemon(dir: &Path, exe: &Path) -> Result<()> {
         .context("Failed to spawn daemon process")?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "unit_tests/process.rs"]
+mod tests;
