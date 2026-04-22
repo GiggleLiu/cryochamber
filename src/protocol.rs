@@ -77,11 +77,7 @@ pub fn protocol_filename(agent_cmd: &str) -> &'static str {
 /// Skips writing if the file already exists (no-clobber). Returns true if written.
 pub fn write_protocol_file(dir: &Path, filename: &str) -> Result<bool> {
     let path = dir.join(filename);
-    if path.exists() {
-        return Ok(false);
-    }
-    std::fs::write(path, PROTOCOL_CONTENT)?;
-    Ok(true)
+    write_file_if_missing(&path, PROTOCOL_CONTENT)
 }
 
 /// Check if a protocol file (CLAUDE.md or AGENTS.md) exists in the directory.
@@ -96,47 +92,43 @@ pub fn find_protocol_file(dir: &Path) -> Option<&'static str> {
 /// Write a template plan.md if none exists. Returns true if written.
 pub fn write_template_plan(dir: &Path) -> Result<bool> {
     let path = dir.join("plan.md");
-    if path.exists() {
-        return Ok(false);
-    }
-    std::fs::write(path, TEMPLATE_PLAN)?;
-    Ok(true)
+    write_file_if_missing(&path, TEMPLATE_PLAN)
 }
 
 /// Write cryo.toml config file if none exists. Returns true if written.
 /// Substitutes `{{agent}}` with the given agent command.
 pub fn write_config_file(dir: &Path, agent_cmd: &str) -> Result<bool> {
     let path = dir.join("cryo.toml");
-    if path.exists() {
-        return Ok(false);
-    }
     let content = CONFIG_TEMPLATE.replace("{{agent}}", agent_cmd);
-    std::fs::write(path, content)?;
-    Ok(true)
+    write_file_if_missing(&path, &content)
 }
 
 /// Write README.md if none exists. Returns true if written.
 /// Substitutes `{{project_name}}` with the directory name.
 pub fn write_readme(dir: &Path) -> Result<bool> {
     let path = dir.join("README.md");
-    if path.exists() {
-        return Ok(false);
-    }
     let project_name = dir
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("cryochamber-project");
     let content = README_TEMPLATE.replace("{{project_name}}", project_name);
-    std::fs::write(path, content)?;
-    Ok(true)
+    write_file_if_missing(&path, &content)
 }
 
 /// Write NOTES.md if none exists. Returns true if written.
 pub fn write_notes_file(dir: &Path) -> Result<bool> {
     let path = dir.join("NOTES.md");
+    write_file_if_missing(&path, NOTES_TEMPLATE)
+}
+
+fn write_file_if_missing(path: &Path, content: &str) -> Result<bool> {
     if path.exists() {
         return Ok(false);
     }
-    std::fs::write(path, NOTES_TEMPLATE)?;
+    std::fs::write(path, content)?;
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "unit_tests/protocol.rs"]
+mod tests;
