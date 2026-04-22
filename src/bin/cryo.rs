@@ -550,7 +550,7 @@ fn is_daemon_running(dir: &std::path::Path) -> bool {
 /// Send SIGUSR1 to the daemon to force an immediate wake.
 /// Returns true if the signal was delivered successfully.
 fn signal_daemon_wake(dir: &std::path::Path) -> bool {
-    cryochamber::process::signal_daemon_wake(dir)
+    cryochamber::daemon_client::signal_daemon_wake(dir)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

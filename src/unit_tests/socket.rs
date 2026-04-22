@@ -1,5 +1,4 @@
 use super::*;
-use crate::state::{save_state, CryoState};
 
 #[test]
 fn test_serialize_hibernate_request() {
@@ -62,6 +61,41 @@ fn test_send_request_no_server() {
 use std::sync::mpsc;
 
 #[test]
+fn test_send_request_with_instance_id_uses_explicit_instance_not_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = socket_path(dir.path());
+    std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+    std::fs::write(
+        dir.path().join("timer.json"),
+        r#"{"session_number":1,"pid":null,"instance_id":"state-instance"}"#,
+    )
+    .unwrap();
+
+    let server = SocketServer::bind(&sock).unwrap();
+    let handle = std::thread::spawn(move || {
+        let accepted = server.accept_one(Some("explicit-instance")).unwrap();
+        match accepted {
+            Some((Request::Ping, responder)) => {
+                responder
+                    .respond(&Response {
+                        ok: true,
+                        message: "pong".into(),
+                    })
+                    .unwrap();
+            }
+            Some((_, _)) => panic!("expected ping request"),
+            None => panic!("expected request"),
+        }
+    });
+
+    let resp = send_request_with_instance_id(dir.path(), &Request::Ping, Some("explicit-instance"))
+        .unwrap();
+    assert!(resp.ok);
+    assert_eq!(resp.message, "pong");
+    handle.join().unwrap();
+}
+
+#[test]
 fn test_socket_server_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let sock = socket_path(dir.path());
@@ -83,22 +117,6 @@ fn test_socket_server_roundtrip() {
         }
     });
 
-    // Client sends a request
-    let state = CryoState {
-        session_number: 1,
-        pid: None,
-        retry_count: 0,
-        agent_override: None,
-        max_retries_override: None,
-        max_session_duration_override: None,
-        last_report_time: None,
-        provider_index: None,
-        instance_id: Some("instance-123".to_string()),
-        pending_fallback: None,
-        in_flight_fallback: None,
-        previous_session_crashed: false,
-    };
-    save_state(&dir.path().join("timer.json"), &state).unwrap();
     let resp = send_request(
         dir.path(),
         &Request::Reply {

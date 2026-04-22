@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::config;
-use crate::socket::{self, Request};
+use crate::daemon_client;
 use crate::state::{self, CryoState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,7 +121,7 @@ pub fn launch_daemon(dir: &Path, exe: &Path) -> Result<DaemonLaunchMode> {
 }
 
 pub fn daemon_responding(dir: &Path) -> bool {
-    matches!(socket::send_request(dir, &Request::Ping), Ok(resp) if resp.ok)
+    daemon_client::daemon_responding(dir)
 }
 
 pub fn wait_for_live_daemon(dir: &Path) -> Result<()> {

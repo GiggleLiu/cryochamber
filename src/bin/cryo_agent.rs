@@ -3,7 +3,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use cryochamber::socket::{self, Request};
+use cryochamber::socket::Request;
 
 #[derive(Parser)]
 #[command(name = "cryo-agent", about = "Cryochamber agent IPC commands")]
@@ -86,7 +86,7 @@ enum TodoAction {
 
 /// Send a request to the daemon and print the response. Bail on failure.
 fn send(dir: &Path, req: &Request) -> Result<()> {
-    let resp = socket::send_request(dir, req)?;
+    let resp = cryochamber::daemon_client::send_request(dir, req)?;
     if resp.ok {
         println!("{}", resp.message);
         Ok(())

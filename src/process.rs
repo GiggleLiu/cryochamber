@@ -18,20 +18,6 @@ pub(crate) fn pid_probe_indicates_alive(ret: i32, errno: i32) -> bool {
     ret == 0 || errno == libc::EPERM
 }
 
-/// Send SIGUSR1 to the daemon to force an immediate wake.
-/// Returns true if the signal was delivered successfully.
-pub fn signal_daemon_wake(dir: &Path) -> bool {
-    if let Ok(Some(st)) = crate::state::load_state(&crate::state::state_path(dir)) {
-        if let Some(pid) = st.pid {
-            let reachable = matches!(crate::socket::send_request(dir, &crate::socket::Request::Ping), Ok(resp) if resp.ok);
-            if crate::state::is_locked(&st) && reachable {
-                return send_signal(pid, libc::SIGUSR1);
-            }
-        }
-    }
-    false
-}
-
 /// Send SIGTERM to a process, wait for it to exit, escalate to SIGKILL if needed.
 pub fn terminate_pid(pid: u32) -> Result<()> {
     println!("Sending SIGTERM to process {pid}...");

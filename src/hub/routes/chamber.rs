@@ -247,7 +247,7 @@ pub async fn post_wake(
             json!({"ok": false, "message": format!("Failed: {e}")}),
         ));
     }
-    let signaled = crate::process::signal_daemon_wake(&path);
+    let signaled = crate::daemon_client::signal_daemon_wake(&path);
     Ok(Json(json!({
         "ok": true,
         "message": wake_response_message(signaled)

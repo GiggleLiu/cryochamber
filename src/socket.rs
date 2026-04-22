@@ -62,17 +62,22 @@ pub fn socket_path(dir: &Path) -> PathBuf {
 
 /// Send a request to the daemon and return the response.
 pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
+    send_request_with_instance_id(dir, request, None)
+}
+
+/// Send a request to the daemon with an explicit daemon instance ID.
+pub fn send_request_with_instance_id(
+    dir: &Path,
+    request: &Request,
+    instance_id: Option<&str>,
+) -> anyhow::Result<Response> {
     let path = socket_path(dir);
     let mut stream = UnixStream::connect(&path).map_err(|e| {
         anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display())
     })?;
 
-    let instance_id = crate::state::load_state(&crate::state::state_path(dir))
-        .ok()
-        .flatten()
-        .and_then(|state| state.instance_id);
     let envelope = SocketEnvelope {
-        instance_id,
+        instance_id: instance_id.map(str::to_string),
         request: request.clone(),
     };
 

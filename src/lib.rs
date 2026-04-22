@@ -2,6 +2,7 @@ pub mod agent;
 pub mod channel;
 pub mod config;
 pub mod daemon;
+pub mod daemon_client;
 pub mod fallback;
 pub mod gh_sync;
 pub mod hub;
