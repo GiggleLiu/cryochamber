@@ -51,6 +51,18 @@ fn is_message_event_kind(kind: &EventKind) -> bool {
         )
 }
 
+fn message_direction_for_path(
+    path: &Path,
+    inbox_dir: &Path,
+    outbox_dir: &Path,
+) -> Option<MessageDirection> {
+    match (path.starts_with(inbox_dir), path.starts_with(outbox_dir)) {
+        (true, _) => Some(MessageDirection::Inbox),
+        (false, true) => Some(MessageDirection::Outbox),
+        (false, false) => None,
+    }
+}
+
 fn classify_message_path(
     path: &Path,
     inbox_dir: &Path,
@@ -60,13 +72,7 @@ fn classify_message_path(
         return None;
     }
 
-    let direction = if path.starts_with(inbox_dir) {
-        MessageDirection::Inbox
-    } else if path.starts_with(outbox_dir) {
-        MessageDirection::Outbox
-    } else {
-        return None;
-    };
+    let direction = message_direction_for_path(path, inbox_dir, outbox_dir)?;
 
     Some(MessageEventPath {
         path: path.to_path_buf(),

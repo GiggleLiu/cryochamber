@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn message_direction_for_path_classifies_inbox_and_outbox_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = dir.path().join("messages").join("inbox");
+    let outbox = dir.path().join("messages").join("outbox");
+
+    assert_eq!(
+        message_direction_for_path(&inbox.join("incoming.md"), &inbox, &outbox),
+        Some(MessageDirection::Inbox)
+    );
+    assert_eq!(
+        message_direction_for_path(&outbox.join("reply.md"), &inbox, &outbox),
+        Some(MessageDirection::Outbox)
+    );
+    assert_eq!(
+        message_direction_for_path(&dir.path().join("elsewhere.md"), &inbox, &outbox),
+        None
+    );
+}
+
+#[test]
 fn classify_message_event_paths_filters_kind_extension_and_direction() {
     let dir = tempfile::tempdir().unwrap();
     let inbox = dir.path().join("messages").join("inbox");
