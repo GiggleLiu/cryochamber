@@ -1071,25 +1071,7 @@ impl SessionLauncher for ProcessSessionLauncher {
             }
         };
 
-        let crash_notice = if cryo_state.previous_session_crashed {
-            Some(
-                "PREVIOUS SESSION CRASHED: The agent exited without calling \
-                 `cryo-agent hibernate`. A reply may have been partially sent. \
-                 Check `messages/inbox/archive/` for any message that arrived \
-                 during the crashed session; if it still needs a user-visible \
-                 response, send it now via `cryo-agent reply` or \
-                 `cryo-agent send` before doing the normal session work."
-                    .to_string(),
-            )
-        } else {
-            None
-        };
-        let notice = match (delayed_wake, crash_notice.as_deref()) {
-            (Some(d), Some(c)) => Some(format!("{d}\n\n{c}")),
-            (Some(d), None) => Some(d.to_string()),
-            (None, Some(c)) => Some(c.to_string()),
-            (None, None) => None,
-        };
+        let notice = session_prompt_notice(delayed_wake, cryo_state.previous_session_crashed);
 
         let agent_config = crate::agent::AgentConfig {
             session_number: cryo_state.session_number,
@@ -1168,6 +1150,26 @@ fn compute_sleep_timeout(
     }
 }
 
+const PREVIOUS_SESSION_CRASH_NOTICE: &str =
+    "PREVIOUS SESSION CRASHED: The agent exited without calling \
+     `cryo-agent hibernate`. A reply may have been partially sent. \
+     Check `messages/inbox/archive/` for any message that arrived \
+     during the crashed session; if it still needs a user-visible \
+     response, send it now via `cryo-agent reply` or \
+     `cryo-agent send` before doing the normal session work.";
+
+fn session_prompt_notice(
+    delayed_wake: Option<&str>,
+    previous_session_crashed: bool,
+) -> Option<String> {
+    match (delayed_wake, previous_session_crashed) {
+        (Some(delayed), true) => Some(format!("{delayed}\n\n{PREVIOUS_SESSION_CRASH_NOTICE}")),
+        (Some(delayed), false) => Some(delayed.to_string()),
+        (None, true) => Some(PREVIOUS_SESSION_CRASH_NOTICE.to_string()),
+        (None, false) => None,
+    }
+}
+
 /// Compute the next wake time from the TODO list.
 /// Iterates all pending TODOs, parses each `at` field, and returns the earliest
 /// valid timestamp. Invalid or unparseable entries are skipped with a warning.
@@ -1203,6 +1205,25 @@ fn detect_delayed_wake(scheduled: NaiveDateTime, now: NaiveDateTime) -> Option<S
         Some(delay_str)
     } else {
         None
+    }
+}
+
+fn delayed_wake_notice(
+    is_inbox_wake: bool,
+    next_wake: Option<NaiveDateTime>,
+    now: NaiveDateTime,
+) -> Option<String> {
+    match (is_inbox_wake, next_wake) {
+        (true, _) | (_, None) => None,
+        (false, Some(wake)) => detect_delayed_wake(wake, now).map(|delay_str| {
+            format!(
+                "DELAYED WAKE: This session was scheduled for {} but is running {} late \
+                 (the host machine was likely suspended or powered off). \
+                 Check whether time-sensitive tasks need adjustment.",
+                wake.format(WAKE_TIME_FMT),
+                delay_str,
+            )
+        }),
     }
 }
 
@@ -1751,22 +1772,8 @@ impl Daemon {
                 // (e.g. computer was sleeping), notify the agent instead of failing.
                 // Skip this check for inbox-triggered wakes — the agent should handle
                 // the user's message without a spurious delay warning.
-                let delayed_wake = if is_inbox_wake {
-                    None
-                } else {
-                    next_wake.and_then(|wake| {
-                        let now = self.clock.local_now();
-                        detect_delayed_wake(wake, now).map(|delay_str| {
-                            format!(
-                                "DELAYED WAKE: This session was scheduled for {} but is running {} late \
-                                 (the host machine was likely suspended or powered off). \
-                                 Check whether time-sensitive tasks need adjustment.",
-                                wake.format(WAKE_TIME_FMT),
-                                delay_str,
-                            )
-                        })
-                    })
-                };
+                let delayed_wake =
+                    delayed_wake_notice(is_inbox_wake, next_wake, self.clock.local_now());
                 if delayed_wake.is_some() && pending_fallback.is_some() {
                     // Delayed wake means we already slept past the deadline;
                     // the armed fallback is stale. Save-failure policy: log and

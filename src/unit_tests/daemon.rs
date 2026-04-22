@@ -732,6 +732,70 @@ fn test_delayed_wake_over_threshold() {
 }
 
 #[test]
+fn delayed_wake_notice_is_silent_for_inbox_wakes() {
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let scheduled = now - chrono::Duration::minutes(6);
+
+    assert_eq!(delayed_wake_notice(true, Some(scheduled), now), None);
+}
+
+#[test]
+fn delayed_wake_notice_is_silent_without_scheduled_wake() {
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+
+    assert_eq!(delayed_wake_notice(false, None, now), None);
+}
+
+#[test]
+fn delayed_wake_notice_reports_late_scheduled_wake() {
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let scheduled = now - chrono::Duration::minutes(6);
+
+    let notice = delayed_wake_notice(false, Some(scheduled), now).unwrap();
+
+    assert!(notice.contains("DELAYED WAKE"));
+    assert!(notice.contains("2026-03-01T11:54"));
+    assert!(notice.contains("6m late"));
+}
+
+#[test]
+fn session_prompt_notice_is_empty_without_delayed_wake_or_crash() {
+    assert_eq!(session_prompt_notice(None, false), None);
+}
+
+#[test]
+fn session_prompt_notice_uses_delayed_wake_notice_when_present() {
+    assert_eq!(
+        session_prompt_notice(Some("DELAYED WAKE: 6m late"), false),
+        Some("DELAYED WAKE: 6m late".to_string())
+    );
+}
+
+#[test]
+fn session_prompt_notice_reports_previous_session_crash() {
+    let notice = session_prompt_notice(None, true).unwrap();
+
+    assert!(notice.starts_with("PREVIOUS SESSION CRASHED"));
+    assert!(notice.contains("cryo-agent hibernate"));
+}
+
+#[test]
+fn session_prompt_notice_combines_delayed_wake_before_crash_notice() {
+    let notice = session_prompt_notice(Some("DELAYED WAKE: 6m late"), true).unwrap();
+
+    assert!(notice.starts_with("DELAYED WAKE: 6m late\n\nPREVIOUS SESSION CRASHED"));
+}
+
+#[test]
 fn test_next_wake_from_todos_picks_earliest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");
