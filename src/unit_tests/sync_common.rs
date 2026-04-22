@@ -298,6 +298,30 @@ fn sync_loop_can_skip_send_for_a_receive_cycle() {
 }
 
 #[test]
+fn outbox_post_style_uses_body_only_for_agent() {
+    assert_eq!(
+        outbox_post_style(&message("agent", "Reply", "hello human")),
+        OutboxPostStyle::BodyOnly
+    );
+}
+
+#[test]
+fn outbox_post_style_uses_system_quote_for_cryochamber() {
+    assert_eq!(
+        outbox_post_style(&message("cryochamber", "Report", "summary")),
+        OutboxPostStyle::SystemQuote
+    );
+}
+
+#[test]
+fn outbox_post_style_uses_attribution_for_other_senders() {
+    assert_eq!(
+        outbox_post_style(&message("teammate", "Question", "Are you free?")),
+        OutboxPostStyle::Attributed
+    );
+}
+
+#[test]
 fn format_outbox_post_uses_body_only_for_agent_reply() {
     let out = format_outbox_post(&message("agent", "Reply", "hello human"));
     assert_eq!(out, "hello human");

@@ -161,22 +161,41 @@ pub trait SyncLoopBackend {
 /// and fallback alerts read as generated status. Other senders keep explicit
 /// attribution in the body.
 pub fn format_outbox_post(msg: &Message) -> String {
-    if msg.from == "agent" {
-        msg.body.clone()
-    } else if msg.from == "cryochamber" {
-        let mut out = format!("> **{}**\n>\n", msg.subject);
-        for line in msg.body.lines() {
-            out.push_str("> ");
-            out.push_str(line);
-            out.push('\n');
+    match outbox_post_style(msg) {
+        OutboxPostStyle::BodyOnly => msg.body.clone(),
+        OutboxPostStyle::SystemQuote => format_system_quote(msg),
+        OutboxPostStyle::Attributed => {
+            format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
         }
-        if out.ends_with('\n') {
-            out.pop();
-        }
-        out
-    } else {
-        format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutboxPostStyle {
+    BodyOnly,
+    SystemQuote,
+    Attributed,
+}
+
+fn outbox_post_style(msg: &Message) -> OutboxPostStyle {
+    match msg.from.as_str() {
+        "agent" => OutboxPostStyle::BodyOnly,
+        "cryochamber" => OutboxPostStyle::SystemQuote,
+        _ => OutboxPostStyle::Attributed,
+    }
+}
+
+fn format_system_quote(msg: &Message) -> String {
+    let mut out = format!("> **{}**\n>\n", msg.subject);
+    for line in msg.body.lines() {
+        out.push_str("> ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 pub fn watch_outbox(dir: &Path, tx: Sender<()>) -> Result<notify::RecommendedWatcher> {
