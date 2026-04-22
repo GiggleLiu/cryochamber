@@ -1166,6 +1166,54 @@ fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
     );
 }
 
+#[test]
+fn test_daemon_request_classification_groups_todo_variants() {
+    let request = DaemonRequest::from(crate::socket::Request::TodoAdd {
+        text: "Check inbox".into(),
+        at: "2026-03-01T13:00".into(),
+    });
+
+    assert_eq!(
+        request,
+        DaemonRequest::Todo(TodoRequest::Add {
+            text: "Check inbox".into(),
+            at: "2026-03-01T13:00".into(),
+        })
+    );
+    assert_eq!(
+        DaemonRequest::from(crate::socket::Request::TodoDone { id: 7 }),
+        DaemonRequest::Todo(TodoRequest::Done { id: 7 })
+    );
+    assert_eq!(
+        DaemonRequest::from(crate::socket::Request::Receive),
+        DaemonRequest::Receive
+    );
+}
+
+#[test]
+fn test_handle_todo_request_returns_response_and_log_event() {
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = handle_todo_request(
+        TodoRequest::Add {
+            text: "Check inbox".into(),
+            at: "2026-03-01T13:00".into(),
+        },
+        &mut effects,
+    );
+
+    assert_eq!(
+        outcome,
+        TodoRequestOutcome {
+            ok: true,
+            message: "Added todo #1".into(),
+            log_event: Some("todo add: #1 \"Check inbox\" at 2026-03-01T13:00".into()),
+        }
+    );
+    assert_eq!(effects.todos.len(), 1);
+    assert_eq!(effects.todos[0].text, "Check inbox");
+}
+
 /// A `StateStore` that always returns an error — used to drive the
 /// save-failure policy paths in unit tests without depending on
 /// filesystem permissions.

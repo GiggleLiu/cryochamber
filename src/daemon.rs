@@ -387,6 +387,68 @@ trait SessionRuntime {
     fn terminate(&mut self);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TodoRequest {
+    Add { text: String, at: String },
+    Done { id: u32 },
+    Remove { id: u32 },
+    List,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DaemonRequest {
+    Ping,
+    Hibernate {
+        complete: bool,
+        exit_code: u8,
+        summary: Option<String>,
+    },
+    Alert {
+        action: String,
+        target: String,
+        message: String,
+    },
+    Reply {
+        text: String,
+    },
+    Todo(TodoRequest),
+    Receive,
+}
+
+impl From<crate::socket::Request> for DaemonRequest {
+    fn from(request: crate::socket::Request) -> Self {
+        match request {
+            crate::socket::Request::Ping => Self::Ping,
+            crate::socket::Request::Hibernate {
+                complete,
+                exit_code,
+                summary,
+            } => Self::Hibernate {
+                complete,
+                exit_code,
+                summary,
+            },
+            crate::socket::Request::Alert {
+                action,
+                target,
+                message,
+            } => Self::Alert {
+                action,
+                target,
+                message,
+            },
+            crate::socket::Request::Reply { text } => Self::Reply { text },
+            crate::socket::Request::TodoAdd { text, at } => {
+                Self::Todo(TodoRequest::Add { text, at })
+            }
+            crate::socket::Request::TodoDone { id } => Self::Todo(TodoRequest::Done { id }),
+            crate::socket::Request::TodoRemove { id } => Self::Todo(TodoRequest::Remove { id }),
+            crate::socket::Request::TodoList => Self::Todo(TodoRequest::List),
+            crate::socket::Request::Receive => Self::Receive,
+        }
+    }
+}
+
 trait SessionEffects {
     /// Read pending inbox messages and archive them atomically. Returns the
     /// formatted body the agent will print plus the list of filenames that
@@ -401,6 +463,164 @@ trait SessionEffects {
     /// by `WAKE_TIME_FMT`. Used to reject hibernate attempts that would leave
     /// the chamber without a scheduled next wake.
     fn has_pending_todo_with_valid_wake(&self) -> bool;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TodoRequestOutcome {
+    ok: bool,
+    message: String,
+    log_event: Option<String>,
+}
+
+impl TodoRequestOutcome {
+    fn into_response(self) -> crate::socket::Response {
+        crate::socket::Response {
+            ok: self.ok,
+            message: self.message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TodoOperationError {
+    response_message: String,
+}
+
+impl TodoOperationError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            response_message: message.into(),
+        }
+    }
+}
+
+trait TodoEffects {
+    fn add_todo(&mut self, text: &str, at: &str) -> std::result::Result<u32, TodoOperationError>;
+    fn done_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError>;
+    fn remove_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError>;
+    fn list_todos(&mut self) -> std::result::Result<String, TodoOperationError>;
+}
+
+impl<T: SessionEffects> TodoEffects for T {
+    fn add_todo(&mut self, text: &str, at: &str) -> std::result::Result<u32, TodoOperationError> {
+        SessionEffects::todo_add(self, text, at)
+            .map_err(|e| TodoOperationError::new(format!("Failed to add todo: {e}")))
+    }
+
+    fn done_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError> {
+        SessionEffects::todo_done(self, id).map_err(|e| TodoOperationError::new(format!("{e}")))
+    }
+
+    fn remove_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError> {
+        SessionEffects::todo_remove(self, id).map_err(|e| TodoOperationError::new(format!("{e}")))
+    }
+
+    fn list_todos(&mut self) -> std::result::Result<String, TodoOperationError> {
+        SessionEffects::todo_list(self)
+            .map_err(|e| TodoOperationError::new(format!("Failed to load todo list: {e}")))
+    }
+}
+
+struct FileTodoEffects {
+    todo_path: PathBuf,
+}
+
+impl FileTodoEffects {
+    fn new(dir: &Path) -> Self {
+        Self {
+            todo_path: dir.join("todo.json"),
+        }
+    }
+
+    fn load(&self) -> std::result::Result<crate::todo::TodoList, TodoOperationError> {
+        crate::todo::TodoList::load(&self.todo_path)
+            .map_err(|e| TodoOperationError::new(format!("Failed to load todo list: {e}")))
+    }
+
+    fn save(&self, list: &crate::todo::TodoList) -> std::result::Result<(), TodoOperationError> {
+        list.save(&self.todo_path)
+            .map_err(|e| TodoOperationError::new(format!("Failed to save todo: {e}")))
+    }
+}
+
+impl TodoEffects for FileTodoEffects {
+    fn add_todo(&mut self, text: &str, at: &str) -> std::result::Result<u32, TodoOperationError> {
+        let mut list = self.load()?;
+        let id = list.add(text.to_string(), at.to_string());
+        self.save(&list)?;
+        Ok(id)
+    }
+
+    fn done_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError> {
+        let mut list = self.load()?;
+        list.done(id)
+            .map_err(|e| TodoOperationError::new(format!("{e}")))?;
+        self.save(&list)
+    }
+
+    fn remove_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError> {
+        let mut list = self.load()?;
+        list.remove(id)
+            .map_err(|e| TodoOperationError::new(format!("{e}")))?;
+        self.save(&list)
+    }
+
+    fn list_todos(&mut self) -> std::result::Result<String, TodoOperationError> {
+        Ok(self.load()?.display())
+    }
+}
+
+fn handle_todo_request(request: TodoRequest, effects: &mut impl TodoEffects) -> TodoRequestOutcome {
+    match request {
+        TodoRequest::Add { text, at } => match effects.add_todo(&text, &at) {
+            Ok(id) => TodoRequestOutcome {
+                ok: true,
+                message: format!("Added todo #{id}"),
+                log_event: Some(format!("todo add: #{id} \"{text}\" at {at}")),
+            },
+            Err(e) => TodoRequestOutcome {
+                ok: false,
+                message: e.response_message,
+                log_event: None,
+            },
+        },
+        TodoRequest::Done { id } => match effects.done_todo(id) {
+            Ok(()) => TodoRequestOutcome {
+                ok: true,
+                message: format!("Marked todo #{id} as done"),
+                log_event: Some(format!("todo done: #{id}")),
+            },
+            Err(e) => TodoRequestOutcome {
+                ok: false,
+                message: e.response_message,
+                log_event: None,
+            },
+        },
+        TodoRequest::Remove { id } => match effects.remove_todo(id) {
+            Ok(()) => TodoRequestOutcome {
+                ok: true,
+                message: format!("Removed todo #{id}"),
+                log_event: Some(format!("todo remove: #{id}")),
+            },
+            Err(e) => TodoRequestOutcome {
+                ok: false,
+                message: e.response_message,
+                log_event: None,
+            },
+        },
+        TodoRequest::List => match effects.list_todos() {
+            Ok(display) => TodoRequestOutcome {
+                ok: true,
+                message: display,
+                log_event: None,
+            },
+            Err(e) => TodoRequestOutcome {
+                ok: false,
+                message: e.response_message,
+                log_event: None,
+            },
+        },
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1209,119 +1429,22 @@ impl Daemon {
         request: crate::socket::Request,
         responder: crate::socket::Responder,
     ) -> Result<()> {
-        match request {
-            crate::socket::Request::Ping => {
+        match DaemonRequest::from(request) {
+            DaemonRequest::Ping => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: true,
                     message: "pong".into(),
                 });
             }
-            crate::socket::Request::TodoAdd { text, at } => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(mut list) => {
-                        let id = list.add(text, at);
-                        let response = match list.save(&todo_path) {
-                            Ok(()) => crate::socket::Response {
-                                ok: true,
-                                message: format!("Added todo #{id}"),
-                            },
-                            Err(e) => crate::socket::Response {
-                                ok: false,
-                                message: format!("Failed to save todo: {e}"),
-                            },
-                        };
-                        let _ = responder.respond(&response);
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
+            DaemonRequest::Todo(todo_request) => {
+                let mut effects = FileTodoEffects::new(&self.dir);
+                let response = handle_todo_request(todo_request, &mut effects).into_response();
+                let _ = responder.respond(&response);
             }
-            crate::socket::Request::TodoDone { id } => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(mut list) => {
-                        let response = match list.done(id) {
-                            Ok(()) => match list.save(&todo_path) {
-                                Ok(()) => crate::socket::Response {
-                                    ok: true,
-                                    message: format!("Marked todo #{id} as done"),
-                                },
-                                Err(e) => crate::socket::Response {
-                                    ok: false,
-                                    message: format!("Failed to save todo: {e}"),
-                                },
-                            },
-                            Err(e) => crate::socket::Response {
-                                ok: false,
-                                message: format!("{e}"),
-                            },
-                        };
-                        let _ = responder.respond(&response);
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
-            }
-            crate::socket::Request::TodoRemove { id } => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(mut list) => {
-                        let response = match list.remove(id) {
-                            Ok(()) => match list.save(&todo_path) {
-                                Ok(()) => crate::socket::Response {
-                                    ok: true,
-                                    message: format!("Removed todo #{id}"),
-                                },
-                                Err(e) => crate::socket::Response {
-                                    ok: false,
-                                    message: format!("Failed to save todo: {e}"),
-                                },
-                            },
-                            Err(e) => crate::socket::Response {
-                                ok: false,
-                                message: format!("{e}"),
-                            },
-                        };
-                        let _ = responder.respond(&response);
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
-            }
-            crate::socket::Request::TodoList => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(list) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: true,
-                            message: list.display(),
-                        });
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
-            }
-            crate::socket::Request::Hibernate { .. }
-            | crate::socket::Request::Alert { .. }
-            | crate::socket::Request::Reply { .. }
-            | crate::socket::Request::Receive => {
+            DaemonRequest::Hibernate { .. }
+            | DaemonRequest::Alert { .. }
+            | DaemonRequest::Reply { .. }
+            | DaemonRequest::Receive => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
                     message:
@@ -1784,11 +1907,11 @@ impl Daemon {
         pending_fallback: &mut Option<FallbackAction>,
         hibernate_outcome: &mut Option<SessionLoopOutcome>,
     ) -> Result<()> {
-        match request {
-            crate::socket::Request::Ping => {
+        match DaemonRequest::from(request) {
+            DaemonRequest::Ping => {
                 let _ = runtime.respond(true, "pong".into());
             }
-            crate::socket::Request::Hibernate {
+            DaemonRequest::Hibernate {
                 complete,
                 exit_code,
                 summary,
@@ -1807,7 +1930,7 @@ impl Daemon {
                 }
                 let _ = runtime.respond(decision.response_ok, decision.response_message.into());
             }
-            crate::socket::Request::Alert {
+            DaemonRequest::Alert {
                 action,
                 target,
                 message,
@@ -1820,7 +1943,7 @@ impl Daemon {
                 });
                 let _ = runtime.respond(true, "Alert registered".into());
             }
-            crate::socket::Request::Reply { text } => {
+            DaemonRequest::Reply { text } => {
                 match effects.write_reply(&text, self.clock.local_now()) {
                     Ok(()) => {
                         logger.log_event(&format!("reply: \"{text}\""))?;
@@ -1832,42 +1955,18 @@ impl Daemon {
                     }
                 }
             }
-            crate::socket::Request::TodoAdd { text, at } => match effects.todo_add(&text, &at) {
-                Ok(id) => {
-                    logger.log_event(&format!("todo add: #{id} \"{text}\" at {at}"))?;
-                    let _ = runtime.respond(true, format!("Added todo #{id}"));
+            DaemonRequest::Todo(todo_request) => {
+                let TodoRequestOutcome {
+                    ok,
+                    message,
+                    log_event,
+                } = handle_todo_request(todo_request, effects);
+                if let Some(event) = log_event {
+                    logger.log_event(&event)?;
                 }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("Failed to add todo: {e}"));
-                }
-            },
-            crate::socket::Request::TodoDone { id } => match effects.todo_done(id) {
-                Ok(()) => {
-                    logger.log_event(&format!("todo done: #{id}"))?;
-                    let _ = runtime.respond(true, format!("Marked todo #{id} as done"));
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("{e}"));
-                }
-            },
-            crate::socket::Request::TodoRemove { id } => match effects.todo_remove(id) {
-                Ok(()) => {
-                    logger.log_event(&format!("todo remove: #{id}"))?;
-                    let _ = runtime.respond(true, format!("Removed todo #{id}"));
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("{e}"));
-                }
-            },
-            crate::socket::Request::TodoList => match effects.todo_list() {
-                Ok(display) => {
-                    let _ = runtime.respond(true, display);
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("Failed to load todo list: {e}"));
-                }
-            },
-            crate::socket::Request::Receive => match effects.receive_inbox() {
+                let _ = runtime.respond(ok, message);
+            }
+            DaemonRequest::Receive => match effects.receive_inbox() {
                 Ok((body, filenames)) => {
                     if filenames.is_empty() {
                         logger.log_event("receive: 0 messages")?;
