@@ -39,9 +39,12 @@ impl FallbackAction {
     ///
     /// Legacy `"notify"` is accepted and treated as `"outbox"` for back-compat.
     pub fn execute(&self, work_dir: &Path, alert_method: &str) -> Result<()> {
-        if alert_method == "none" {
-            eprintln!("Fallback: alert suppressed (fallback_alert = \"none\")");
-            return Ok(());
+        match fallback_alert_mode(alert_method) {
+            FallbackAlertMode::Suppress => {
+                eprintln!("Fallback: alert suppressed (fallback_alert = \"none\")");
+                return Ok(());
+            }
+            FallbackAlertMode::Outbox => {}
         }
 
         message::ensure_dirs(work_dir)?;
@@ -66,3 +69,20 @@ impl FallbackAction {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackAlertMode {
+    Suppress,
+    Outbox,
+}
+
+fn fallback_alert_mode(alert_method: &str) -> FallbackAlertMode {
+    match alert_method {
+        "none" => FallbackAlertMode::Suppress,
+        _ => FallbackAlertMode::Outbox,
+    }
+}
+
+#[cfg(test)]
+#[path = "unit_tests/fallback.rs"]
+mod tests;
