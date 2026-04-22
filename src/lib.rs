@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod fallback;
 pub mod gh_sync;
 pub mod hub;
+pub mod lifecycle;
 pub mod log;
 pub mod message;
 pub mod process;

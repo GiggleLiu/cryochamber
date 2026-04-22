@@ -10,41 +10,15 @@ use crate::state::{self, CryoState};
 
 /// Start a daemon for the chamber at `dir`. Mirrors `cmd_start` in the CLI.
 pub fn start_chamber(dir: &Path) -> Result<()> {
-    if !crate::config::config_path(dir).exists() {
-        anyhow::bail!("Not a chamber: no cryo.toml in {}", dir.display());
-    }
-    if !dir.join("plan.md").exists() {
-        anyhow::bail!("Missing plan.md in {}", dir.display());
-    }
-
-    if let Some(existing) = state::load_state(&state::state_path(dir))? {
-        if state::is_locked(&existing) {
-            anyhow::bail!("A daemon is already running in {}", dir.display());
-        }
-    }
-
-    let cfg = crate::config::load_config(&crate::config::config_path(dir))?.unwrap_or_default();
-    validate_agent_command(&cfg.agent)?;
+    let exe = resolve_cryo_exe()?;
+    let prepared = crate::lifecycle::prepare_start(dir, crate::lifecycle::StartOptions::default())?;
+    crate::lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;
 
     crate::message::ensure_dirs(dir)?;
 
-    let cryo_state = CryoState {
-        session_number: 0,
-        pid: None,
-        retry_count: 0,
-        agent_override: None,
-        max_retries_override: None,
-        max_session_duration_override: None,
-        last_report_time: None,
-        provider_index: None,
-        instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
-        previous_session_crashed: false,
-    };
-    state::save_state(&state::state_path(dir), &cryo_state)?;
+    state::save_state(&state::state_path(dir), &prepared.state)?;
 
-    launch_daemon(dir)?;
+    launch_daemon_with_exe(dir, &exe)?;
     wait_for_live_daemon(dir)?;
     Ok(())
 }
@@ -138,12 +112,11 @@ pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
 
 fn launch_daemon(dir: &Path) -> Result<()> {
     let exe = resolve_cryo_exe()?;
-    if std::env::var("CRYO_NO_SERVICE").is_ok() {
-        crate::process::spawn_daemon(dir, &exe)?;
-    } else {
-        let log_path = crate::log::log_path(dir);
-        crate::service::install("daemon", dir, &exe, &["daemon"], &log_path, false)?;
-    }
+    launch_daemon_with_exe(dir, &exe)
+}
+
+fn launch_daemon_with_exe(dir: &Path, exe: &Path) -> Result<()> {
+    crate::lifecycle::launch_daemon(dir, exe)?;
     Ok(())
 }
 
@@ -152,29 +125,12 @@ fn launch_daemon(dir: &Path) -> Result<()> {
 /// `app.refresh()` that follows reads a live, not stale, state. Bails after
 /// 10 seconds.
 fn wait_for_live_daemon(dir: &Path) -> Result<()> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    wait_for_live_daemon_until(dir, deadline)
+    crate::lifecycle::wait_for_live_daemon(dir)
 }
 
+#[cfg(test)]
 fn wait_for_live_daemon_until(dir: &Path, deadline: std::time::Instant) -> Result<()> {
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Some(st) = state::load_state(&state::state_path(dir))? {
-            if state::is_locked(&st) && daemon_responding(dir) {
-                return Ok(());
-            }
-        }
-        if std::time::Instant::now() > deadline {
-            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
-        }
-    }
-}
-
-fn daemon_responding(dir: &Path) -> bool {
-    matches!(
-        crate::socket::send_request(dir, &crate::socket::Request::Ping),
-        Ok(resp) if resp.ok
-    )
+    crate::lifecycle::wait_for_live_daemon_until(dir, deadline)
 }
 
 /// Resolve the path to the `cryo` binary. The hub is `cryohub`, so
@@ -227,19 +183,6 @@ fn which_cryo() -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn validate_agent_command(agent_cmd: &str) -> Result<()> {
-    let program = crate::agent::agent_program(agent_cmd)?;
-    let status = std::process::Command::new("which")
-        .arg(&program)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        _ => anyhow::bail!("Agent command '{}' not found on PATH", program),
-    }
 }
 
 #[cfg(test)]
