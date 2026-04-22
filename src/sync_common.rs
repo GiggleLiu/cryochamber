@@ -101,9 +101,57 @@ pub enum SyncLoopCommand {
     Halt { reason: String },
 }
 
+/// Outcome of a single send phase. `Continue` is the healthy path (whether
+/// push succeeded or hit a transient error). `Halt` signals that push hit an
+/// unrecoverable condition (e.g. auth failure) and the loop should exit so
+/// operators see a single clear message rather than a silent retry storm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncCycleStatus {
+    Continue,
+    Halt { reason: String },
+}
+
+/// Classification of a sync backend error. Used to decide whether a failure
+/// is worth halting the loop over (`AuthOrConfig` — misconfiguration that
+/// won't self-heal) or whether the loop should keep going (`Transient` —
+/// network blip, rate limit, 5xx).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncErrorKind {
+    AuthOrConfig,
+    Transient,
+}
+
+/// Heuristic classification of anyhow errors from gh/zulip pull/push calls.
+/// We don't own the channel layer's error types (subprocess stderr for gh,
+/// stringified API errors for zulip), so we match on well-known substrings
+/// in the full error chain. Anything unrecognized is `Transient` by default —
+/// we'd rather keep running on an unclassified hiccup than halt on one.
+pub fn classify_sync_error(err: &anyhow::Error) -> SyncErrorKind {
+    let text: String = err.chain().map(|c| format!("{c}\n")).collect();
+    let lower = text.to_ascii_lowercase();
+    const AUTH_MARKERS: &[&str] = &[
+        "http 401",
+        "http 403",
+        "401 unauthorized",
+        "403 forbidden",
+        "requires authentication",
+        "bad credentials",
+        "invalid api key",
+        "authentication failed",
+        "not authenticated",
+        "permission denied",
+        "must authenticate",
+        "resource not accessible",
+    ];
+    if AUTH_MARKERS.iter().any(|m| lower.contains(m)) {
+        return SyncErrorKind::AuthOrConfig;
+    }
+    SyncErrorKind::Transient
+}
+
 pub trait SyncLoopBackend {
     fn receive(&mut self) -> Result<SyncLoopCommand>;
-    fn send(&mut self) -> Result<()>;
+    fn send(&mut self) -> Result<SyncCycleStatus>;
 }
 
 /// Format an outbox message before posting it to an external sync backend.
@@ -190,7 +238,13 @@ fn run_sync_loop_with_settle_delay<B: SyncLoopBackend + ?Sized>(
         }
 
         match backend.receive()? {
-            SyncLoopCommand::Send => backend.send()?,
+            SyncLoopCommand::Send => match backend.send()? {
+                SyncCycleStatus::Continue => {}
+                SyncCycleStatus::Halt { reason } => {
+                    eprintln!("{label}: halting — {reason}");
+                    break;
+                }
+            },
             SyncLoopCommand::SkipSend => {}
             SyncLoopCommand::Halt { reason } => {
                 eprintln!("{label}: halting — {reason}");

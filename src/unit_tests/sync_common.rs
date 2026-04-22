@@ -193,9 +193,9 @@ impl SyncLoopBackend for RecordingLoopBackend {
         }
     }
 
-    fn send(&mut self) -> anyhow::Result<()> {
+    fn send(&mut self) -> anyhow::Result<SyncCycleStatus> {
         self.log.lock().unwrap().push("send");
-        Ok(())
+        Ok(SyncCycleStatus::Continue)
     }
 }
 
@@ -240,9 +240,9 @@ impl SyncLoopBackend for HaltingBackend {
         })
     }
 
-    fn send(&mut self) -> anyhow::Result<()> {
+    fn send(&mut self) -> anyhow::Result<SyncCycleStatus> {
         self.log.lock().unwrap().push("send");
-        Ok(())
+        Ok(SyncCycleStatus::Continue)
     }
 }
 
@@ -333,4 +333,95 @@ fn format_outbox_post_quotes_each_system_message_line() {
 fn format_outbox_post_keeps_attribution_for_other_senders() {
     let out = format_outbox_post(&message("teammate", "Question", "Are you free?"));
     assert_eq!(out, "**teammate** (Question)\n\nAre you free?");
+}
+
+#[test]
+fn classify_sync_error_detects_auth_or_config() {
+    let cases = [
+        "HTTP 401: Requires authentication",
+        "HTTP 403: Resource not accessible by integration",
+        "Bad credentials",
+        "Authentication failed: token expired",
+        "Invalid API key",
+        "permission denied on discussion",
+    ];
+    for msg in cases {
+        let err = anyhow::anyhow!(msg.to_string());
+        assert_eq!(
+            classify_sync_error(&err),
+            SyncErrorKind::AuthOrConfig,
+            "expected AuthOrConfig for {msg:?}"
+        );
+    }
+}
+
+#[test]
+fn classify_sync_error_treats_unknown_as_transient() {
+    let cases = [
+        "connection reset by peer",
+        "HTTP 500: internal server error",
+        "HTTP 502: bad gateway",
+        "timeout waiting for response",
+        "HTTP 429: rate limited",
+        "gh: unknown non-auth error occurred",
+    ];
+    for msg in cases {
+        let err = anyhow::anyhow!(msg.to_string());
+        assert_eq!(
+            classify_sync_error(&err),
+            SyncErrorKind::Transient,
+            "expected Transient for {msg:?}"
+        );
+    }
+}
+
+#[test]
+fn classify_sync_error_walks_error_chain() {
+    // The real anyhow chains we care about stack a context() wrapper over the
+    // underlying stderr text. The classifier must look past the outer layer.
+    let inner = anyhow::anyhow!("gh api graphql failed: HTTP 401: Bad credentials");
+    let wrapped = inner.context("pull_comments");
+    assert_eq!(classify_sync_error(&wrapped), SyncErrorKind::AuthOrConfig);
+}
+
+struct HaltingSendBackend {
+    log: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl SyncLoopBackend for HaltingSendBackend {
+    fn receive(&mut self) -> anyhow::Result<SyncLoopCommand> {
+        self.log.lock().unwrap().push("receive");
+        Ok(SyncLoopCommand::Send)
+    }
+    fn send(&mut self) -> anyhow::Result<SyncCycleStatus> {
+        self.log.lock().unwrap().push("send");
+        Ok(SyncCycleStatus::Halt {
+            reason: "push auth failed".into(),
+        })
+    }
+}
+
+#[test]
+fn sync_loop_halts_when_send_reports_halt() {
+    // Push-side auth/config failure must stop the loop cleanly, not silently
+    // retry. After the halting send we should see exactly one receive+send
+    // and no further cycles.
+    let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = HaltingSendBackend {
+        log: Arc::clone(&log),
+    };
+
+    run_sync_loop_with_settle_delay(
+        "test sync",
+        Arc::clone(&shutdown),
+        rx,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_millis(0),
+        &mut backend,
+    )
+    .unwrap();
+
+    assert_eq!(*log.lock().unwrap(), vec!["receive", "send"]);
 }

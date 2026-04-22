@@ -295,24 +295,42 @@ impl SyncLoopBackend for GhSyncLoopBackend {
                     cryochamber::gh_sync::save_sync_state(&self.sync_path, &sync_state)?;
                 }
             }
-            Err(e) => eprintln!("Sync: pull error: {e}"),
+            Err(e) => match cryochamber::sync_common::classify_sync_error(&e) {
+                cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
+                    return Ok(SyncLoopCommand::Halt {
+                        reason: format!("gh sync pull auth/config error: {e:#}"),
+                    });
+                }
+                cryochamber::sync_common::SyncErrorKind::Transient => {
+                    eprintln!("Sync: pull error (transient): {e}");
+                }
+            },
         }
 
         self.sync_state = Some(sync_state);
         Ok(SyncLoopCommand::Send)
     }
 
-    fn send(&mut self) -> Result<()> {
+    fn send(&mut self) -> Result<cryochamber::sync_common::SyncCycleStatus> {
         let Some(sync_state) = self.sync_state.as_ref() else {
-            return Ok(());
+            return Ok(cryochamber::sync_common::SyncCycleStatus::Continue);
         };
 
         // Push: outbox -> Discussion
         if let Err(e) = push_outbox(&self.dir, sync_state) {
-            eprintln!("Sync: push error: {e}");
+            match cryochamber::sync_common::classify_sync_error(&e) {
+                cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
+                    return Ok(cryochamber::sync_common::SyncCycleStatus::Halt {
+                        reason: format!("gh sync push auth/config error: {e:#}"),
+                    });
+                }
+                cryochamber::sync_common::SyncErrorKind::Transient => {
+                    eprintln!("Sync: push error (transient): {e}");
+                }
+            }
         }
 
-        Ok(())
+        Ok(cryochamber::sync_common::SyncCycleStatus::Continue)
     }
 }
 

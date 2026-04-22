@@ -329,24 +329,42 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
                     }
                 }
             }
-            Err(e) => eprintln!("Zulip sync: pull error: {e}"),
+            Err(e) => match cryochamber::sync_common::classify_sync_error(&e) {
+                cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
+                    return Ok(SyncLoopCommand::Halt {
+                        reason: format!("zulip sync pull auth/config error: {e:#}"),
+                    });
+                }
+                cryochamber::sync_common::SyncErrorKind::Transient => {
+                    eprintln!("Zulip sync: pull error (transient): {e}");
+                }
+            },
         }
 
         self.cycle_state = Some((client, sync_state));
         Ok(SyncLoopCommand::Send)
     }
 
-    fn send(&mut self) -> Result<()> {
+    fn send(&mut self) -> Result<cryochamber::sync_common::SyncCycleStatus> {
         let Some((client, sync_state)) = self.cycle_state.take() else {
-            return Ok(());
+            return Ok(cryochamber::sync_common::SyncCycleStatus::Continue);
         };
 
         // Push: outbox -> Zulip
         if let Err(e) = push_outbox(&self.dir, &client, &sync_state) {
-            eprintln!("Zulip sync: push error: {e}");
+            match cryochamber::sync_common::classify_sync_error(&e) {
+                cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
+                    return Ok(cryochamber::sync_common::SyncCycleStatus::Halt {
+                        reason: format!("zulip sync push auth/config error: {e:#}"),
+                    });
+                }
+                cryochamber::sync_common::SyncErrorKind::Transient => {
+                    eprintln!("Zulip sync: push error (transient): {e}");
+                }
+            }
         }
 
-        Ok(())
+        Ok(cryochamber::sync_common::SyncCycleStatus::Continue)
     }
 }
 
