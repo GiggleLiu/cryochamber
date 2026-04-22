@@ -100,7 +100,7 @@ impl TodoList {
         self.items
             .iter()
             .map(|item| {
-                let check = if item.done { "x" } else { " " };
+                let check = todo_checkmark(item.done);
                 format!("{}. [{}] {} (at: {})", item.id, check, item.text, item.at)
             })
             .collect::<Vec<_>>()
@@ -126,6 +126,13 @@ impl TodoList {
             .with_context(|| format!("Todo item {id} not found"))?;
         self.items.remove(pos);
         Ok(())
+    }
+}
+
+fn todo_checkmark(done: bool) -> &'static str {
+    match done {
+        true => "x",
+        false => " ",
     }
 }
 

@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn todo_checkmark_marks_completed_items() {
+    assert_eq!(todo_checkmark(true), "x");
+}
+
+#[test]
+fn todo_checkmark_marks_open_items_as_blank() {
+    assert_eq!(todo_checkmark(false), " ");
+}
+
+#[test]
 fn test_next_wake_time_picks_earliest_pending() {
     let mut list = TodoList::new();
     list.add("later task".into(), "2026-03-02T16:00".into());
