@@ -309,10 +309,17 @@ fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
 fn slugify(text: &str) -> String {
     text.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .map(slug_char)
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+fn slug_char(c: char) -> char {
+    match c.is_alphanumeric() {
+        true => c,
+        false => '-',
+    }
 }
 
 #[cfg(test)]

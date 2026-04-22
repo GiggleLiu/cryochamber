@@ -48,6 +48,18 @@ fn message_filename_base_uses_hash_when_subject_has_no_slug_content() {
 }
 
 #[test]
+fn slug_char_keeps_alphanumeric_characters() {
+    assert_eq!(slug_char('a'), 'a');
+    assert_eq!(slug_char('7'), '7');
+}
+
+#[test]
+fn slug_char_replaces_separator_characters() {
+    assert_eq!(slug_char(' '), '-');
+    assert_eq!(slug_char('!'), '-');
+}
+
+#[test]
 fn list_message_files_filters_markdown_files_and_sorts_by_filename() {
     let dir = tempfile::tempdir().unwrap();
     let messages_dir = dir.path().join("messages");
