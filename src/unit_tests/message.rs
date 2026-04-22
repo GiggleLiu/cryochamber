@@ -28,6 +28,26 @@ fn parse_frontmatter_fields_keeps_metadata_and_invalid_timestamp_fallback() {
 }
 
 #[test]
+fn message_filename_base_uses_slug_when_subject_has_alphanumeric_text() {
+    let msg = test_message("human", "Hello, World!", "Body", "2026-03-01T12:00:00");
+
+    assert_eq!(
+        message_filename_base(&msg),
+        MessageFilenameBase::Slug("hello--world".to_string())
+    );
+}
+
+#[test]
+fn message_filename_base_uses_hash_when_subject_has_no_slug_content() {
+    let msg = test_message("human", "!!!", "Body", "2026-03-01T12:00:00");
+
+    assert_eq!(
+        message_filename_base(&msg),
+        MessageFilenameBase::Hash(message_hash(&msg))
+    );
+}
+
+#[test]
 fn list_message_files_filters_markdown_files_and_sorts_by_filename() {
     let dir = tempfile::tempdir().unwrap();
     let messages_dir = dir.path().join("messages");
@@ -69,4 +89,14 @@ fn read_message_dir_skips_malformed_messages() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].0, "a.md");
     assert_eq!(messages[0].1.subject, "Question");
+}
+
+fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {
+    Message {
+        from: from.to_string(),
+        subject: subject.to_string(),
+        body: body.to_string(),
+        timestamp: NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S").unwrap(),
+        metadata: BTreeMap::new(),
+    }
 }

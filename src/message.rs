@@ -30,14 +30,9 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
     let box_dir = dir.join("messages").join(box_name);
     std::fs::create_dir_all(&box_dir)?;
 
-    let slug = slugify(&msg.subject);
     let ts = msg.timestamp.format("%Y-%m-%dT%H-%M-%S");
-    let base = if slug.is_empty() {
-        message_hash(msg)
-    } else {
-        slug
-    };
-    let filename = format!("{ts}_{base}_{}.md", unique_suffix());
+    let base = message_filename_base(msg);
+    let filename = format!("{ts}_{}_{}.md", base.as_str(), unique_suffix());
     let path = box_dir.join(&filename);
 
     // Atomic write: write to tmp, then rename
@@ -47,6 +42,29 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
     std::fs::rename(&tmp_path, &path)?;
 
     Ok(path)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MessageFilenameBase {
+    Slug(String),
+    Hash(String),
+}
+
+impl MessageFilenameBase {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Slug(value) | Self::Hash(value) => value,
+        }
+    }
+}
+
+fn message_filename_base(msg: &Message) -> MessageFilenameBase {
+    let slug = slugify(&msg.subject);
+    if slug.is_empty() {
+        MessageFilenameBase::Hash(message_hash(msg))
+    } else {
+        MessageFilenameBase::Slug(slug)
+    }
 }
 
 fn message_hash(msg: &Message) -> String {
