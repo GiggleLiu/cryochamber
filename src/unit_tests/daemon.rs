@@ -39,6 +39,37 @@ fn daemon_session_runtime_and_effects_live_in_submodules() {
 }
 
 #[test]
+fn daemon_scheduling_and_bootstrap_live_in_schedule_module() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let schedule_src = std::fs::read_to_string(root.join("src/daemon/schedule.rs"))
+        .expect("daemon scheduling should live in src/daemon/schedule.rs");
+    let daemon_src = std::fs::read_to_string(root.join("src/daemon.rs")).unwrap();
+
+    for item in [
+        "struct RetryState",
+        "struct RetryPlan",
+        "fn scheduled_fallback_for",
+        "fn should_rotate_provider",
+        "fn compute_sleep_timeout",
+        "fn next_wake_from_todos",
+        "fn detect_delayed_wake",
+        "fn delayed_wake_notice",
+        "fn pending_fallback_to_state",
+        "fn pending_fallback_from_state",
+        "struct DaemonBootstrapState",
+    ] {
+        assert!(
+            schedule_src.contains(item),
+            "schedule.rs should contain {item}"
+        );
+        assert!(
+            !daemon_src.contains(item),
+            "daemon.rs should not contain {item}"
+        );
+    }
+}
+
+#[test]
 fn watcher_startup_notice_prioritizes_warning() {
     assert_eq!(
         watcher_startup_notice(Some("permission denied"), true),

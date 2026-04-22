@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 use std::path::{Path, PathBuf};
 
-use super::next_wake_from_todos;
+use super::schedule::next_wake_from_todos;
 
 pub(super) trait SessionEffects {
     /// List unread inbox filenames without parsing message bodies.
