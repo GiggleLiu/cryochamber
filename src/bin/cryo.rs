@@ -349,28 +349,10 @@ fn cmd_status() -> Result<()> {
 
 fn cmd_restart() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let cryo_state = lifecycle::require_live_daemon(&dir)?;
-
-    // Uninstall old service (systemd/launchd stop may already kill the process)
-    let _ = cryochamber::service::uninstall("daemon", &dir);
-
-    // Kill existing daemon process only if still alive after service removal
-    if state::is_locked(&cryo_state) {
-        if let Some(pid) = cryo_state.pid {
-            cryochamber::process::terminate_pid(pid)?;
-        }
-    }
-
-    // Clear PID, keep session_number and overrides
-    let updated = CryoState {
-        pid: None,
-        ..cryo_state
-    };
-    state::save_state(&state::state_path(&dir), &updated)?;
+    lifecycle::require_live_daemon(&dir)?;
 
     let exe = std::env::current_exe().context("Failed to resolve cryo executable path")?;
-    let launch_mode = lifecycle::launch_daemon(&dir, &exe)?;
-    lifecycle::wait_for_live_daemon(&dir)?;
+    let launch_mode = lifecycle::restart_chamber(&dir, &exe)?;
 
     match launch_mode {
         DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),

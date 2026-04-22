@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::daemon_client;
@@ -118,6 +118,94 @@ pub fn launch_daemon(dir: &Path, exe: &Path) -> Result<DaemonLaunchMode> {
         crate::service::install("daemon", dir, exe, &["daemon"], &log_path, false)?;
         Ok(DaemonLaunchMode::Service)
     }
+}
+
+/// Stop the daemon for `dir`, leaving timer.json in place with runtime
+/// overrides and session metadata preserved. This is intentionally different
+/// from `cryo cancel`, which removes timer.json.
+pub fn stop_chamber(dir: &Path) -> Result<()> {
+    let _ = crate::service::uninstall("daemon", dir);
+    if let Some(st) = state::load_state(&state::state_path(dir))? {
+        if state::is_locked(&st) {
+            if let Some(pid) = st.pid {
+                crate::process::terminate_pid(pid)?;
+            }
+        }
+        let updated = CryoState { pid: None, ..st };
+        state::save_state(&state::state_path(dir), &updated)?;
+    }
+    Ok(())
+}
+
+/// Restart the daemon for `dir` using the provided cryo executable. Preserves
+/// session number and CLI overrides by clearing only the PID lock before
+/// relaunching.
+pub fn restart_chamber(dir: &Path, exe: &Path) -> Result<DaemonLaunchMode> {
+    stop_chamber(dir)?;
+    let launch_mode = launch_daemon(dir, exe)?;
+    wait_for_live_daemon(dir)?;
+    Ok(launch_mode)
+}
+
+fn new_archive_dir(dir: &Path) -> Result<PathBuf> {
+    let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let archive = dir.join("history").join(&ts);
+    std::fs::create_dir_all(&archive)
+        .with_context(|| format!("Failed to create {}", archive.display()))?;
+    Ok(archive)
+}
+
+fn move_into_archive(dir: &Path, archive: &Path, name: &str) -> Result<()> {
+    let src = dir.join(name);
+    if !src.exists() {
+        return Ok(());
+    }
+    let dst = archive.join(name);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    std::fs::rename(&src, &dst)
+        .with_context(|| format!("Failed to move {} to {}", src.display(), dst.display()))?;
+    Ok(())
+}
+
+/// Move `cryo.log` and `cryo-agent.log` into `history/<timestamp>/` within the
+/// chamber dir, returning the archive directory. Missing files are skipped.
+pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
+    let archive = new_archive_dir(dir)?;
+    for name in ["cryo.log", "cryo-agent.log"] {
+        move_into_archive(dir, &archive, name)?;
+    }
+    Ok(archive)
+}
+
+/// Move resettable runtime state into `history/<timestamp>/`, returning the
+/// archive directory. Sync configuration files such as `gh-sync.json`,
+/// `zulip-sync.json`, and `.cryo/zuliprc` stay in place.
+pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
+    let archive = new_archive_dir(dir)?;
+    for name in [
+        "cryo.log",
+        "cryo-agent.log",
+        "todo.json",
+        "NOTES.md",
+        "messages",
+        "timer.json",
+    ] {
+        move_into_archive(dir, &archive, name)?;
+    }
+    Ok(archive)
+}
+
+/// Reset the chamber: stop the daemon if needed, archive runtime state, and
+/// recreate the message directories so any external sync daemon can keep
+/// delivering into the live chamber directory.
+pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
+    stop_chamber(dir)?;
+    let archive = archive_runtime(dir)?;
+    crate::message::ensure_dirs(dir)?;
+    Ok(archive)
 }
 
 pub fn daemon_responding(dir: &Path) -> bool {
