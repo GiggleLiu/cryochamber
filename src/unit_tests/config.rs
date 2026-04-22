@@ -22,6 +22,24 @@ fn test_load_partial_toml() {
 }
 
 #[test]
+fn apply_optional_override_replaces_value_when_present() {
+    let mut value = "opencode".to_string();
+
+    apply_optional_override(&mut value, &Some("claude".to_string()));
+
+    assert_eq!(value, "claude");
+}
+
+#[test]
+fn apply_optional_override_keeps_value_when_absent() {
+    let mut value = 5;
+
+    apply_optional_override(&mut value, &None);
+
+    assert_eq!(value, 5);
+}
+
+#[test]
 fn test_apply_overrides_all_fields() {
     let mut config = CryoConfig::default();
     let state = crate::state::CryoState {

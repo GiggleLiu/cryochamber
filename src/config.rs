@@ -123,15 +123,18 @@ impl CryoConfig {
     /// Merge CLI overrides from timer.json into this config.
     /// Only overrides fields that were explicitly set (Some).
     pub fn apply_overrides(&mut self, state: &CryoState) {
-        if let Some(ref agent) = state.agent_override {
-            self.agent = agent.clone();
-        }
-        if let Some(max_retries) = state.max_retries_override {
-            self.max_retries = max_retries;
-        }
-        if let Some(max_session_duration) = state.max_session_duration_override {
-            self.max_session_duration = max_session_duration;
-        }
+        apply_optional_override(&mut self.agent, &state.agent_override);
+        apply_optional_override(&mut self.max_retries, &state.max_retries_override);
+        apply_optional_override(
+            &mut self.max_session_duration,
+            &state.max_session_duration_override,
+        );
+    }
+}
+
+fn apply_optional_override<T: Clone>(target: &mut T, override_value: &Option<T>) {
+    if let Some(value) = override_value {
+        *target = value.clone();
     }
 }
 
