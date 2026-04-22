@@ -260,10 +260,7 @@ pub async fn post_start(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::start_chamber).await;
-    match result {
-        Ok(()) => Ok(Json(json!({"ok": true, "message": "Started"}))),
-        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
-    }
+    Ok(Json(lifecycle_status_json(result, "Started")))
 }
 
 pub async fn post_stop(
@@ -272,10 +269,7 @@ pub async fn post_stop(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::stop_chamber).await;
-    match result {
-        Ok(()) => Ok(Json(json!({"ok": true, "message": "Stopped"}))),
-        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
-    }
+    Ok(Json(lifecycle_status_json(result, "Stopped")))
 }
 
 pub async fn post_restart(
@@ -284,10 +278,7 @@ pub async fn post_restart(
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::restart_chamber).await;
-    match result {
-        Ok(()) => Ok(Json(json!({"ok": true, "message": "Restarted"}))),
-        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
-    }
+    Ok(Json(lifecycle_status_json(result, "Restarted")))
 }
 
 pub async fn post_reset(
@@ -307,6 +298,13 @@ pub async fn post_reset(
             "archive": archive.display().to_string(),
         }))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
+    }
+}
+
+fn lifecycle_status_json(result: anyhow::Result<()>, success_message: &str) -> Value {
+    match result {
+        Ok(()) => json!({"ok": true, "message": success_message}),
+        Err(e) => json!({"ok": false, "message": e.to_string()}),
     }
 }
 

@@ -238,6 +238,32 @@ fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
 }
 
 #[test]
+fn lifecycle_status_json_reports_success_message() {
+    let value = lifecycle_status_json(Ok(()), "Started");
+
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "ok": true,
+            "message": "Started",
+        })
+    );
+}
+
+#[test]
+fn lifecycle_status_json_reports_error_message() {
+    let value = lifecycle_status_json(Err(anyhow::anyhow!("start failed")), "Started");
+
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "ok": false,
+            "message": "start failed",
+        })
+    );
+}
+
+#[test]
 fn lifecycle_routes_dispatch_blocking_work_off_async_handlers() {
     let source = include_str!("../../../hub/routes/chamber.rs");
     let needle = ["spawn", "blocking"].join("_");
