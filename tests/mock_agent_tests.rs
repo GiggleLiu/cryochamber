@@ -1001,6 +1001,40 @@ fn test_inbox_wake_coalesces_multiple_events() {
 }
 
 #[test]
+fn test_daemon_replies_to_unanswered_queued_inbox_message() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "inbox-wake.sh");
+    write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(outbox.len(), 1, "daemon should write one fallback reply");
+    assert_eq!(outbox[0].1.from, "cryo-daemon");
+    assert!(
+        outbox[0].1.body.contains("the agent did not send a reply"),
+        "fallback reply should explain why it was sent: {:?}",
+        outbox[0].1.body
+    );
+    assert!(
+        cryochamber::message::read_inbox(dir.path())
+            .unwrap()
+            .is_empty(),
+        "answered queued message should be archived"
+    );
+}
+
+#[test]
 fn test_inbox_wake_no_delayed_wake_notice() {
     // Regression test: when an inbox message triggers a wake while next_wake
     // holds a past scheduled time, the daemon should NOT inject a "delayed wake"

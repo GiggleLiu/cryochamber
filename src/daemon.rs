@@ -350,8 +350,16 @@ enum LoopControl {
 
 struct ActiveSessionContext<'a> {
     cryo_state: &'a CryoState,
+    inbox_filenames: Vec<String>,
     timeout_secs: u64,
     spawn_time: Instant,
+}
+
+struct ActiveRequestState<'a> {
+    logger: &'a mut crate::log::EventLogger,
+    pending_fallback: &'a mut Option<FallbackAction>,
+    hibernate_outcome: &'a mut Option<SessionLoopOutcome>,
+    reply_tracker: &'a mut HumanReplyTracker,
 }
 
 struct EventLoopMutations<'a> {
@@ -450,11 +458,19 @@ impl From<crate::socket::Request> for DaemonRequest {
 }
 
 trait SessionEffects {
+    /// List unread inbox filenames without parsing message bodies.
+    fn list_inbox_filenames(&self) -> Result<Vec<String>>;
     /// Read pending inbox messages and archive them atomically. Returns the
     /// formatted body the agent will print plus the list of filenames that
     /// were archived (for the event log).
     fn receive_inbox(&mut self) -> Result<(String, Vec<String>)>;
-    fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()>;
+    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()>;
+    fn write_reply(
+        &mut self,
+        author: ReplyAuthor,
+        text: &str,
+        timestamp: NaiveDateTime,
+    ) -> Result<()>;
     fn todo_add(&mut self, text: &str, at: &str) -> Result<u32>;
     fn todo_done(&mut self, id: u32) -> Result<()>;
     fn todo_remove(&mut self, id: u32) -> Result<()>;
@@ -463,6 +479,76 @@ trait SessionEffects {
     /// by `WAKE_TIME_FMT`. Used to reject hibernate attempts that would leave
     /// the chamber without a scheduled next wake.
     fn has_pending_todo_with_valid_wake(&self) -> bool;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplyAuthor {
+    Agent,
+    Daemon,
+}
+
+impl ReplyAuthor {
+    fn from(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Daemon => "cryo-daemon",
+        }
+    }
+
+    fn subject(self) -> &'static str {
+        match self {
+            Self::Agent => "Reply",
+            Self::Daemon => "Daemon Reply",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct HumanReplyTracker {
+    known_filenames: Vec<String>,
+    unreplied_filenames: Vec<String>,
+}
+
+impl HumanReplyTracker {
+    fn new(initial_filenames: &[String]) -> Self {
+        let mut tracker = Self::default();
+        tracker.record_inbox_messages(initial_filenames);
+        tracker
+    }
+
+    fn record_inbox_messages(&mut self, filenames: &[String]) {
+        for filename in filenames {
+            if self.known_filenames.iter().any(|known| known == filename) {
+                continue;
+            }
+            self.known_filenames.push(filename.clone());
+            self.unreplied_filenames.push(filename.clone());
+        }
+    }
+
+    fn record_agent_reply(&mut self) {
+        self.unreplied_filenames.clear();
+    }
+
+    fn known_filenames(&self) -> &[String] {
+        &self.known_filenames
+    }
+
+    fn unreplied_filenames(&self) -> &[String] {
+        &self.unreplied_filenames
+    }
+}
+
+fn daemon_unanswered_reply_text(message_count: usize) -> String {
+    let (noun, verb) = if message_count == 1 {
+        ("message", "is")
+    } else {
+        ("messages", "are")
+    };
+    format!(
+        "I received {message_count} {noun}, but the agent did not send a reply before the session ended. \
+         The daemon is replying so your {noun} {verb} not left unanswered."
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -688,6 +774,10 @@ impl<'a> FsSessionEffects<'a> {
 }
 
 impl SessionEffects for FsSessionEffects<'_> {
+    fn list_inbox_filenames(&self) -> Result<Vec<String>> {
+        crate::message::list_inbox(self.dir)
+    }
+
     fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
         let messages = crate::message::read_inbox(self.dir)?;
         if messages.is_empty() {
@@ -712,10 +802,19 @@ impl SessionEffects for FsSessionEffects<'_> {
         Ok((body, filenames))
     }
 
-    fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()> {
+    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()> {
+        crate::message::archive_messages(self.dir, filenames)
+    }
+
+    fn write_reply(
+        &mut self,
+        author: ReplyAuthor,
+        text: &str,
+        timestamp: NaiveDateTime,
+    ) -> Result<()> {
         let msg = crate::message::Message {
-            from: "agent".to_string(),
-            subject: "Reply".to_string(),
+            from: author.from().to_string(),
+            subject: author.subject().to_string(),
             body: text.to_string(),
             timestamp,
             metadata: std::collections::BTreeMap::new(),
@@ -1114,6 +1213,7 @@ impl SessionLauncher for ProcessSessionLauncher {
         let mut effects = FsSessionEffects::new(&daemon.dir);
         let context = ActiveSessionContext {
             cryo_state,
+            inbox_filenames,
             timeout_secs,
             spawn_time,
         };
@@ -1935,9 +2035,7 @@ impl Daemon {
         request: crate::socket::Request,
         runtime: &mut impl SessionRuntime,
         effects: &mut impl SessionEffects,
-        logger: &mut crate::log::EventLogger,
-        pending_fallback: &mut Option<FallbackAction>,
-        hibernate_outcome: &mut Option<SessionLoopOutcome>,
+        state: ActiveRequestState<'_>,
     ) -> Result<()> {
         match DaemonRequest::from(request) {
             DaemonRequest::Ping => {
@@ -1953,12 +2051,12 @@ impl Daemon {
                     exit_code,
                     summary.as_deref(),
                     effects.has_pending_todo_with_valid_wake(),
-                    pending_fallback.take(),
+                    state.pending_fallback.take(),
                 );
-                logger.log_event(&decision.log_event)?;
-                *pending_fallback = decision.remaining_session_fallback;
+                state.logger.log_event(&decision.log_event)?;
+                *state.pending_fallback = decision.remaining_session_fallback;
                 if let Some(outcome) = decision.outcome {
-                    *hibernate_outcome = Some(outcome);
+                    *state.hibernate_outcome = Some(outcome);
                 }
                 let _ = runtime.respond(decision.response_ok, decision.response_message.into());
             }
@@ -1967,8 +2065,10 @@ impl Daemon {
                 target,
                 message,
             } => {
-                logger.log_event(&format!("alert: {action} -> {target}"))?;
-                *pending_fallback = Some(FallbackAction {
+                state
+                    .logger
+                    .log_event(&format!("alert: {action} -> {target}"))?;
+                *state.pending_fallback = Some(FallbackAction {
                     action,
                     target,
                     message,
@@ -1976,13 +2076,14 @@ impl Daemon {
                 let _ = runtime.respond(true, "Alert registered".into());
             }
             DaemonRequest::Reply { text } => {
-                match effects.write_reply(&text, self.clock.local_now()) {
+                match effects.write_reply(ReplyAuthor::Agent, &text, self.clock.local_now()) {
                     Ok(()) => {
-                        logger.log_event(&format!("reply: \"{text}\""))?;
+                        state.reply_tracker.record_agent_reply();
+                        state.logger.log_event(&format!("reply: \"{text}\""))?;
                         let _ = runtime.respond(true, "Reply sent".into());
                     }
                     Err(e) => {
-                        logger.log_event(&format!("reply failed: {e}"))?;
+                        state.logger.log_event(&format!("reply failed: {e}"))?;
                         let _ = runtime.respond(false, format!("Failed to write reply: {e}"));
                     }
                 }
@@ -1994,16 +2095,17 @@ impl Daemon {
                     log_event,
                 } = handle_todo_request(todo_request, effects);
                 if let Some(event) = log_event {
-                    logger.log_event(&event)?;
+                    state.logger.log_event(&event)?;
                 }
                 let _ = runtime.respond(ok, message);
             }
             DaemonRequest::Receive => match effects.receive_inbox() {
                 Ok((body, filenames)) => {
+                    state.reply_tracker.record_inbox_messages(&filenames);
                     if filenames.is_empty() {
-                        logger.log_event("receive: 0 messages")?;
+                        state.logger.log_event("receive: 0 messages")?;
                     } else {
-                        logger.log_event(&format!(
+                        state.logger.log_event(&format!(
                             "receive: {} message{} [{}]",
                             filenames.len(),
                             if filenames.len() == 1 { "" } else { "s" },
@@ -2013,11 +2115,43 @@ impl Daemon {
                     let _ = runtime.respond(true, body);
                 }
                 Err(e) => {
-                    logger.log_event(&format!("receive failed: {e}"))?;
+                    state.logger.log_event(&format!("receive failed: {e}"))?;
                     let _ = runtime.respond(false, format!("Failed to receive: {e}"));
                 }
             },
         }
+        Ok(())
+    }
+
+    fn finalize_human_replies(
+        &self,
+        effects: &mut impl SessionEffects,
+        logger: &mut crate::log::EventLogger,
+        reply_tracker: &mut HumanReplyTracker,
+    ) -> Result<()> {
+        let unread = effects.list_inbox_filenames()?;
+        reply_tracker.record_inbox_messages(&unread);
+
+        let unreplied = reply_tracker.unreplied_filenames();
+        if !unreplied.is_empty() {
+            let text = daemon_unanswered_reply_text(unreplied.len());
+            effects
+                .write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now())
+                .context("failed to write daemon reply for unanswered inbox messages")?;
+            logger.log_event(&format!(
+                "daemon reply: {} unanswered inbox message{} [{}]",
+                unreplied.len(),
+                if unreplied.len() == 1 { "" } else { "s" },
+                unreplied.join(", "),
+            ))?;
+        }
+
+        if !reply_tracker.known_filenames().is_empty() {
+            effects
+                .archive_inbox_messages(reply_tracker.known_filenames())
+                .context("failed to archive answered inbox messages")?;
+        }
+
         Ok(())
     }
 
@@ -2036,6 +2170,7 @@ impl Daemon {
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
         let mut pending_fallback: Option<FallbackAction> = None;
+        let mut reply_tracker = HumanReplyTracker::new(&context.inbox_filenames);
         let expected_instance_id = context.cryo_state.instance_id.as_deref();
 
         loop {
@@ -2045,6 +2180,7 @@ impl Daemon {
                     SessionInterruption::Shutdown,
                     hibernate_outcome.take(),
                 );
+                self.finalize_human_replies(effects, &mut logger, &mut reply_tracker)?;
                 logger.finish(decision.finish_reason)?;
                 return Ok(decision.outcome);
             }
@@ -2060,6 +2196,7 @@ impl Daemon {
                         SessionInterruption::Timeout,
                         hibernate_outcome.take(),
                     );
+                    self.finalize_human_replies(effects, &mut logger, &mut reply_tracker)?;
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
@@ -2070,9 +2207,12 @@ impl Daemon {
                     request,
                     runtime,
                     effects,
-                    &mut logger,
-                    &mut pending_fallback,
-                    &mut hibernate_outcome,
+                    ActiveRequestState {
+                        logger: &mut logger,
+                        pending_fallback: &mut pending_fallback,
+                        hibernate_outcome: &mut hibernate_outcome,
+                        reply_tracker: &mut reply_tracker,
+                    },
                 )?,
                 Ok(None) => {}
                 Err(e) => {
@@ -2107,11 +2247,13 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
+                    self.finalize_human_replies(effects, &mut logger, &mut reply_tracker)?;
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
                 Ok(None) => {}
                 Err(e) => {
+                    self.finalize_human_replies(effects, &mut logger, &mut reply_tracker)?;
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
                 }

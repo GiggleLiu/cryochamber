@@ -153,7 +153,9 @@ impl SessionRuntime for FakeSessionRuntime {
 
 struct FakeSessionEffects {
     reply_failure: Option<String>,
-    replies: Vec<(String, NaiveDateTime)>,
+    replies: Vec<(ReplyAuthor, String, NaiveDateTime)>,
+    inbox_filenames: Vec<String>,
+    archived_filenames: Vec<String>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
     /// Queued results for successive `receive_inbox()` calls. Each call pops the
@@ -169,6 +171,8 @@ impl FakeSessionEffects {
         Self {
             reply_failure: None,
             replies: Vec::new(),
+            inbox_filenames: Vec::new(),
+            archived_filenames: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
             receive_responses: std::collections::VecDeque::new(),
@@ -210,19 +214,37 @@ impl FakeSessionEffects {
 }
 
 impl SessionEffects for FakeSessionEffects {
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
-        self.receive_calls += 1;
-        Ok(self
-            .receive_responses
-            .pop_front()
-            .unwrap_or_else(|| ("No messages.\n".to_string(), Vec::new())))
+    fn list_inbox_filenames(&self) -> Result<Vec<String>> {
+        Ok(self.inbox_filenames.clone())
     }
 
-    fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()> {
+    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
+        self.receive_calls += 1;
+        let response = self
+            .receive_responses
+            .pop_front()
+            .unwrap_or_else(|| ("No messages.\n".to_string(), Vec::new()));
+        self.archive_inbox_messages(&response.1)?;
+        Ok(response)
+    }
+
+    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()> {
+        self.archived_filenames.extend(filenames.iter().cloned());
+        self.inbox_filenames
+            .retain(|filename| !filenames.iter().any(|archived| archived == filename));
+        Ok(())
+    }
+
+    fn write_reply(
+        &mut self,
+        author: ReplyAuthor,
+        text: &str,
+        timestamp: NaiveDateTime,
+    ) -> Result<()> {
         if let Some(message) = &self.reply_failure {
             anyhow::bail!("{message}");
         }
-        self.replies.push((text.to_string(), timestamp));
+        self.replies.push((author, text.to_string(), timestamp));
         Ok(())
     }
 
@@ -388,8 +410,18 @@ fn test_session_context<'a>(
     timeout_secs: u64,
     spawn_time: Instant,
 ) -> ActiveSessionContext<'a> {
+    test_session_context_with_inbox(cryo_state, Vec::new(), timeout_secs, spawn_time)
+}
+
+fn test_session_context_with_inbox<'a>(
+    cryo_state: &'a CryoState,
+    inbox_filenames: Vec<String>,
+    timeout_secs: u64,
+    spawn_time: Instant,
+) -> ActiveSessionContext<'a> {
     ActiveSessionContext {
         cryo_state,
+        inbox_filenames,
         timeout_secs,
         spawn_time,
     }
@@ -1866,6 +1898,108 @@ fn test_drive_active_session_reply_failure_responds_and_continues() {
         ]
     );
     assert!(effects.replies.is_empty());
+}
+
+#[test]
+fn test_drive_active_session_daemon_replies_when_received_messages_unanswered() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Receive)),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.receive_responses.push_back((
+        "--- human-1.md ---\nFrom: human\n\nCan you check this?\n\n".into(),
+        vec!["human-1.md".into()],
+    ));
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("the agent did not send a reply"),
+        "daemon fallback reply should explain why it was sent: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
+fn test_drive_active_session_agent_reply_satisfies_queued_inbox_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Reply {
+                text: "Got it".into(),
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.inbox_filenames = vec!["human-1.md".into()];
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_inbox(
+                &cryo_state,
+                vec!["human-1.md".into()],
+                60,
+                clock.monotonic_now(),
+            ),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Agent);
+    assert_eq!(effects.archived_filenames, vec!["human-1.md"]);
 }
 
 #[test]
