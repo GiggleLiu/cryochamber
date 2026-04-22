@@ -31,6 +31,21 @@ fn test_load_minimal_json() {
 }
 
 #[test]
+fn kill_probe_indicates_locked_for_live_process() {
+    assert!(kill_probe_indicates_locked(0, 0));
+}
+
+#[test]
+fn kill_probe_indicates_locked_when_permission_denied() {
+    assert!(kill_probe_indicates_locked(-1, libc::EPERM));
+}
+
+#[test]
+fn kill_probe_indicates_unlocked_for_missing_process() {
+    assert!(!kill_probe_indicates_locked(-1, libc::ESRCH));
+}
+
+#[test]
 fn test_is_locked_stale_pid() {
     // Spawn a child, wait for it to exit, use its PID
     let mut child = std::process::Command::new("true").spawn().unwrap();
