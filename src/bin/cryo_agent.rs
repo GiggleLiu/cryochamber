@@ -86,7 +86,7 @@ enum TodoAction {
 
 /// Send a request to the daemon and print the response. Bail on failure.
 fn send(dir: &Path, req: &Request) -> Result<()> {
-    let resp = cryochamber::daemon_client::send_request(dir, req)?;
+    let resp = cryochamber::daemon_client::send_checked_request(dir, req)?;
     if resp.ok {
         println!("{}", resp.message);
         Ok(())

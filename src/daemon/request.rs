@@ -15,6 +15,9 @@ pub(super) enum TodoRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DaemonRequest {
     Ping,
+    Hello {
+        protocol_version: u32,
+    },
     Hibernate {
         complete: bool,
         exit_code: u8,
@@ -36,6 +39,7 @@ impl From<crate::socket::Request> for DaemonRequest {
     fn from(request: crate::socket::Request) -> Self {
         match request {
             crate::socket::Request::Ping => Self::Ping,
+            crate::socket::Request::Hello { protocol_version } => Self::Hello { protocol_version },
             crate::socket::Request::Hibernate {
                 complete,
                 exit_code,

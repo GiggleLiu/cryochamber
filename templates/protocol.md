@@ -3,19 +3,21 @@
 You are running inside **cryochamber**, a long-term AI task scheduler.
 You wake up, do work, then hibernate until the next session.
 
-## The Two-Call Closing Ritual (Non-Negotiable)
+## The Closing Ritual (Non-Negotiable)
 
-**Every session — every single one, including the very first — ends with exactly two calls, in this order:**
+**Every session — every single one, including the very first — sends at least one human-visible outbox message before hibernating.** For sessions with more work to do, end with these calls in this order:
 
 ```
+cryo-agent send "<status update>"                    # writes to outbox
 cryo-agent todo add "<what to do next>" --at <when>   # declares the NEXT WAKE
 cryo-agent hibernate --summary "<what I just did>"    # ends THIS SESSION
 ```
 
-These two calls are **separate concerns**. They do NOT substitute for each other:
+These calls are **separate concerns**. They do NOT substitute for each other:
 
 | Call | What it does | What it does NOT do |
 |------|--------------|---------------------|
+| `send` / `reply` | Sends a human-visible outbox message. | Does not schedule a wake or end the session. |
 | `todo add --at <when>` | Declares when the daemon should wake you next. | Does not end the session. |
 | `hibernate` | Ends the current session (process exits). | Does **not** schedule any wake. |
 
@@ -26,12 +28,14 @@ These two calls are **separate concerns**. They do NOT substitute for each other
 | What you might think | What actually happens |
 |---|---|
 | "I just sent a message, that ends the session." | Daemon never wakes again. Chamber silent. |
+| "I can hibernate silently because nothing changed." | Daemon writes a fallback status. Send a concise status yourself instead. |
 | "I'll hibernate without a todo — the plan tells me to come back later." | Daemon has no wake time. Chamber silent. |
 | "I'll add a todo but skip hibernate, I'm already done." | Process lingers; no next session ever starts. |
 
 The only exception is **terminal completion**, when the plan's success condition is genuinely met:
 
 ```
+cryo-agent send "<final result>"
 cryo-agent hibernate --complete --summary "Plan done: ..."
 ```
 
@@ -59,6 +63,7 @@ Execute these steps in order. **Do not skip or reorder steps.**
 ### Step 3: Record
 
 - Update `NOTES.md` with what you did and what's next. It is your memory across sessions — read it at Step 1, append at Step 3, trim when it grows.
+- Send a concise outbox message for this session, even if it is only a status update that nothing changed.
 - Set up a dead-man switch if needed: `cryo-agent alert <action> <target> "message"`
 
 ### Step 4: Declare the next wake (TODO)
@@ -121,7 +126,7 @@ cryo-agent hibernate [--complete|--exit N] [--summary "..."]   # End the session
 ## Key Facts
 
 - **TODO list drives your schedule.** The daemon's next wake is always the earliest pending TODO's `at` time. `hibernate` does not take a wake time.
-- **Every session ends with `todo add --at …` then `hibernate`.** No exceptions except `hibernate --complete`.
+- **Every session sends a human-visible outbox message before hibernating.** For non-complete sessions, also add a pending TODO before `hibernate`.
 - **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
 - **Human communication goes through `cryo-agent`.** Use `send`/`reply`; stdout/stderr are logs only.
 - **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.

@@ -4,11 +4,16 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub const IPC_PROTOCOL_VERSION: u32 = 2;
+
 /// Request from CLI to daemon via Unix socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
     Ping,
+    Hello {
+        protocol_version: u32,
+    },
     Hibernate {
         complete: bool,
         exit_code: u8,

@@ -6,16 +6,17 @@ Play a correspondence chess game against a human opponent. Maintain the board st
 
 ## Closing ritual — every session
 
-Every session of this plan ends with the standard two-call ritual (see `CLAUDE.md` / `AGENTS.md`):
+Every session of this plan must send an outbox message, then end with the standard scheduling ritual (see `CLAUDE.md` / `AGENTS.md`):
 
 ```
+cryo-agent send "<board, move, or status update>"
 cryo-agent todo add "<next step>" --at <WAKE_TIME>
 cryo-agent hibernate --summary "<what I did>"
 ```
 
 Wake times come **only** from TODOs. `hibernate` does not schedule anything. The sole exception is game-over, where you use `hibernate --complete` and no TODO.
 
-If you forget the TODO, the chamber goes silent. If you forget `hibernate`, the daemon retries. Do both, in order, at the end of every path below.
+If you forget the outbox message, the daemon writes a fallback status instead. If you forget the TODO, the chamber goes silent. If you forget `hibernate`, the daemon retries. Do all required calls, in order, at the end of every path below.
 
 ## Chess Engine
 
@@ -86,13 +87,14 @@ State: inbox empty, game in progress, you woke because of your own TODO.
 
 1. Confirm inbox is empty: `cryo-agent receive`.
 2. Mark the triggering TODO done: `cryo-agent todo done <id>`.
-3. **Closing ritual:** back off slightly (human is still thinking).
+3. Send a concise status update: `cryo-agent send "No new move yet; I checked the board and will recheck at <NEXT_CHECK>."`
+4. **Closing ritual:** back off slightly (human is still thinking).
    ```
    cryo-agent todo add "Check inbox for white's next move" --at <NEXT_CHECK>
    cryo-agent hibernate --summary "No reply yet; rechecking at <NEXT_CHECK>."
    ```
 
-   Back-off guidance: if this is the Nth consecutive empty check, roughly double the interval (clamped to 1 day). Don't spam the inbox.
+   Back-off guidance: if this is the Nth consecutive empty check, roughly double the interval (clamped to 1 day). Keep the status concise; do not send more than one no-move update for this session.
 
 ### Branch D — Game over (checkmate, stalemate, draw, or resignation)
 

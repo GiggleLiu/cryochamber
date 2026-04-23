@@ -105,14 +105,16 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the 
 - Check messages/inbox/ for new messages
 - The only supported way to communicate with the human is `cryo-agent send` / `cryo-agent reply`
 - Stdout/stderr go to `cryo-agent.log`; they are not a user conversation channel
+- Every session must send at least one human-visible outbox message before hibernating
 
 ## Reminders
 
-- **Every session ends with two calls, in order:**
-  1. `cryo-agent todo add "<next step>" --at <TIME>` — declares your next wake
-  2. `cryo-agent hibernate --summary "<what I did>"` — ends the session
+- **Every non-complete session ends with these calls, in order:**
+  1. `cryo-agent send "<status update>"` or `cryo-agent reply "<response>"` — writes an outbox message
+  2. `cryo-agent todo add "<next step>" --at <TIME>` — declares your next wake
+  3. `cryo-agent hibernate --summary "<what I did>"` — ends the session
   Wake times come ONLY from TODOs. `hibernate` does not schedule anything.
-  Skip step 1 only when using `hibernate --complete` (plan finished for good).
+  For `hibernate --complete`, still send an outbox message first; skip only the TODO.
 - Use `cryo-agent todo done <id>` to mark tasks complete
 - Use `cryo-agent hibernate --exit 1` only for genuine retryable failure
 - Read `NOTES.md` at start of session; append to it as you work

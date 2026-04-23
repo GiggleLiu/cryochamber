@@ -661,7 +661,9 @@ fn test_fallback_suppressed_when_none() {
 
     cancel_and_wait(dir.path());
 
-    // Outbox should be empty — fallback_alert=none suppresses write_message
+    // fallback_alert=none suppresses retry/fallback alerts. Daemon-generated
+    // session status messages may still be present to satisfy the "every run
+    // has an outbox message" invariant.
     let outbox = dir.path().join("messages/outbox");
     if outbox.exists() {
         let files: Vec<_> = fs::read_dir(&outbox)
@@ -669,10 +671,14 @@ fn test_fallback_suppressed_when_none() {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
             .collect();
+        let has_retry_alert = files.iter().any(|f| {
+            fs::read_to_string(f.path())
+                .unwrap_or_default()
+                .contains("retry_exhausted")
+        });
         assert!(
-            files.is_empty(),
-            "Outbox should be empty with fallback_alert=none, but found {} files",
-            files.len()
+            !has_retry_alert,
+            "Outbox should not contain retry_exhausted alert with fallback_alert=none"
         );
     }
 }

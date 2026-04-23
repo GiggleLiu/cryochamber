@@ -23,6 +23,16 @@ fn test_serialize_response_ok() {
 }
 
 #[test]
+fn test_serialize_hello_request() {
+    let req = Request::Hello {
+        protocol_version: IPC_PROTOCOL_VERSION,
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    assert!(json.contains("\"cmd\":\"hello\""));
+    assert!(json.contains("\"protocol_version\":"));
+}
+
+#[test]
 fn test_serialize_alert_request() {
     let req = Request::Alert {
         action: "email".to_string(),

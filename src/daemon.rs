@@ -246,6 +246,7 @@ struct EventLoopMutations<'a> {
 struct HumanReplyTracker {
     known_filenames: Vec<String>,
     unreplied_filenames: Vec<String>,
+    agent_outbound_sent: bool,
 }
 
 impl HumanReplyTracker {
@@ -266,7 +267,12 @@ impl HumanReplyTracker {
     }
 
     fn record_agent_reply(&mut self) {
+        self.agent_outbound_sent = true;
         self.unreplied_filenames.clear();
+    }
+
+    fn has_agent_outbound_message(&self) -> bool {
+        self.agent_outbound_sent
     }
 
     fn known_filenames(&self) -> &[String] {
@@ -288,6 +294,29 @@ fn daemon_unanswered_reply_text(message_count: usize) -> String {
         "I received {message_count} {noun}, but the agent did not send a reply before the session ended. \
          The daemon is replying so your {noun} {verb} not left unanswered."
     )
+}
+
+fn daemon_missing_outbound_text() -> &'static str {
+    "The agent completed this session without sending an outbox message. \
+     The daemon is sending this status so every agent run has a visible message."
+}
+
+fn ipc_protocol_response(protocol_version: u32) -> crate::socket::Response {
+    let daemon_version = crate::socket::IPC_PROTOCOL_VERSION;
+    if protocol_version == daemon_version {
+        return crate::socket::Response {
+            ok: true,
+            message: format!("IPC protocol {daemon_version}"),
+        };
+    }
+
+    crate::socket::Response {
+        ok: false,
+        message: format!(
+            "IPC protocol mismatch: daemon uses {daemon_version}, client uses {protocol_version}. \
+             Run `cryo restart` after installing matching `cryo` and `cryo-agent` binaries."
+        ),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -671,6 +700,9 @@ impl Daemon {
                     ok: true,
                     message: "pong".into(),
                 });
+            }
+            DaemonRequest::Hello { protocol_version } => {
+                let _ = responder.respond(&ipc_protocol_response(protocol_version));
             }
             DaemonRequest::Todo(todo_request) => {
                 let mut effects = FileTodoEffects::new(&self.dir);
@@ -1138,6 +1170,10 @@ impl Daemon {
             DaemonRequest::Ping => {
                 let _ = runtime.respond(true, "pong".into());
             }
+            DaemonRequest::Hello { protocol_version } => {
+                let response = ipc_protocol_response(protocol_version);
+                let _ = runtime.respond(response.ok, response.message);
+            }
             DaemonRequest::Hibernate {
                 complete,
                 exit_code,
@@ -1230,6 +1266,7 @@ impl Daemon {
         reply_tracker.record_inbox_messages(&unread);
 
         let unreplied = reply_tracker.unreplied_filenames();
+        let mut daemon_wrote_reply = false;
         if !unreplied.is_empty() {
             let text = daemon_unanswered_reply_text(unreplied.len());
             effects
@@ -1241,6 +1278,18 @@ impl Daemon {
                 if unreplied.len() == 1 { "" } else { "s" },
                 unreplied.join(", "),
             ))?;
+            daemon_wrote_reply = true;
+        }
+
+        if !reply_tracker.has_agent_outbound_message() && !daemon_wrote_reply {
+            effects
+                .write_reply(
+                    ReplyAuthor::Daemon,
+                    daemon_missing_outbound_text(),
+                    self.clock.local_now(),
+                )
+                .context("failed to write daemon status for session without outbound message")?;
+            logger.log_event("daemon reply: no outbound message sent by agent")?;
         }
 
         if !reply_tracker.known_filenames().is_empty() {

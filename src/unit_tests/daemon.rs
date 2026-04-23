@@ -1916,7 +1916,53 @@ fn test_drive_active_session_quick_exit_without_hibernate() {
 }
 
 #[test]
-fn test_drive_active_session_reply_failure_responds_and_continues() {
+fn test_drive_active_session_writes_daemon_status_without_outbound_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: Some("checked schedule".into()),
+        }))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
+    assert!(
+        matches!(runtime.responses().as_slice(), [(true, message)] if message == "Hibernating."),
+        "hibernate should still be accepted: {:?}",
+        runtime.responses()
+    );
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("without sending an outbox message"),
+        "daemon status should explain why it was sent: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
+fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fails() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
@@ -1944,26 +1990,30 @@ fn test_drive_active_session_reply_failure_responds_and_continues() {
     );
     let mut effects = FakeSessionEffects::with_reply_failure("injected reply failure");
 
-    let outcome = daemon
+    let err = daemon
         .drive_active_session(
             &mut runtime,
             &mut effects,
             test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
-        .unwrap();
+        .unwrap_err()
+        .to_string();
 
-    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
-    assert_eq!(
-        runtime.responses(),
-        vec![
-            (
-                false,
-                "Failed to write reply: injected reply failure".into()
-            ),
-            (true, "Hibernating.".into()),
-        ]
+    assert!(
+        err.contains("failed to write daemon status"),
+        "unexpected error: {err}"
     );
+    let responses = runtime.responses();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(
+        responses[0],
+        (
+            false,
+            "Failed to write reply: injected reply failure".into()
+        )
+    );
+    assert_eq!(responses[1], (true, "Hibernating.".into()));
     assert!(effects.replies.is_empty());
 }
 

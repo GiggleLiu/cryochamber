@@ -34,6 +34,7 @@ cryohub status                              # show this dir's service + any othe
 
 These commands are used by the AI agent to communicate with the daemon. They send JSON messages over a Unix domain socket.
 Human-visible communication should go through `cryo-agent send` / `cryo-agent reply`; stdout/stderr are only written to `cryo-agent.log`.
+If a session ends without an agent outbox message, the daemon writes a fallback status message so the run is still visible.
 
 ```bash
 cryo-agent hibernate --summary "..."   # End session (more work to do)
