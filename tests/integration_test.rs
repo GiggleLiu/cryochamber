@@ -69,7 +69,7 @@ fn test_state_roundtrip() {
 }
 
 #[test]
-fn test_file_channel_roundtrip() {
+fn test_message_store_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     cryochamber::message::ensure_dirs(dir.path()).unwrap();
 
@@ -87,7 +87,7 @@ fn test_file_channel_roundtrip() {
     cryochamber::message::write_message(dir.path(), "inbox", &msg).unwrap();
 
     use cryochamber::channel::MessageChannel;
-    let channel = cryochamber::channel::file::FileChannel::new(dir.path().to_path_buf());
+    let channel = cryochamber::channel::store::MessageStore::new(dir.path().to_path_buf());
     let messages = channel.read_inbox().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].from, "human");

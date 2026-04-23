@@ -1,3 +1,5 @@
+use crate::channel::store::MessageStore;
+use crate::message::Message;
 use serde::Serialize;
 use std::path::Path;
 
@@ -92,12 +94,13 @@ pub fn status(dir: &Path) -> ChamberStatus {
 }
 
 pub fn messages(dir: &Path) -> Vec<ChamberMessage> {
+    let store = MessageStore::new(dir.to_path_buf());
     let sessions = message_sessions(dir);
     let mut all = Vec::new();
-    collect_messages(dir, &sessions, "inbox/archive", "inbox", &mut all);
-    collect_messages(dir, &sessions, "inbox", "inbox", &mut all);
-    collect_messages(dir, &sessions, "outbox", "outbox", &mut all);
-    collect_messages(dir, &sessions, "outbox/archive", "outbox", &mut all);
+    collect_messages(&store, &sessions, "inbox/archive", "inbox", &mut all);
+    collect_messages(&store, &sessions, "inbox", "inbox", &mut all);
+    collect_messages(&store, &sessions, "outbox", "outbox", &mut all);
+    collect_messages(&store, &sessions, "outbox/archive", "outbox", &mut all);
     all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
     all
 }
@@ -109,6 +112,7 @@ pub fn todos(dir: &Path) -> Vec<crate::todo::TodoItem> {
 }
 
 pub fn overview(dir: &Path) -> ChamberOverview {
+    let store = MessageStore::new(dir.to_path_buf());
     let state = crate::state::load_state(&crate::state::state_path(dir))
         .ok()
         .flatten();
@@ -121,7 +125,8 @@ pub fn overview(dir: &Path) -> ChamberOverview {
         next_wake_display: next_wake.clone(),
         wake_imminent: wake_imminent(next_wake.as_deref()),
         next_wake,
-        unread: crate::message::read_inbox(dir)
+        unread: store
+            .read_inbox_named()
             .map(|messages| messages.len())
             .unwrap_or(0),
         task: crate::log::parse_latest_session_task(&log_file)
@@ -184,17 +189,17 @@ fn session_for_message(
 }
 
 fn collect_messages(
-    dir: &Path,
+    store: &MessageStore,
     sessions: &[crate::log::SessionSummary],
     source: &str,
     direction: &str,
     out: &mut Vec<ChamberMessage>,
 ) {
     let messages = match source {
-        "inbox/archive" => crate::message::read_inbox_archive(dir),
-        "inbox" => crate::message::read_inbox(dir),
-        "outbox" => crate::message::read_outbox(dir),
-        "outbox/archive" => crate::message::read_outbox_archive(dir),
+        "inbox/archive" => store.read_inbox_archive_named(),
+        "inbox" => store.read_inbox_named(),
+        "outbox" => store.read_outbox_named(),
+        "outbox/archive" => store.read_outbox_archive_named(),
         _ => return,
     };
     if let Ok(messages) = messages {
@@ -206,7 +211,7 @@ fn collect_messages(
 
 fn message_model(
     filename: &str,
-    msg: &crate::message::Message,
+    msg: &Message,
     direction: &str,
     source: &str,
     sessions: &[crate::log::SessionSummary],
@@ -223,17 +228,18 @@ fn message_model(
 }
 
 fn last_message_preview(dir: &Path) -> Option<String> {
+    let store = MessageStore::new(dir.to_path_buf());
     let mut messages = Vec::new();
-    if let Ok(archived) = crate::message::read_inbox_archive(dir) {
+    if let Ok(archived) = store.read_inbox_archive_named() {
         messages.extend(archived);
     }
-    if let Ok(inbox) = crate::message::read_inbox(dir) {
+    if let Ok(inbox) = store.read_inbox_named() {
         messages.extend(inbox);
     }
-    if let Ok(outbox) = crate::message::read_outbox(dir) {
+    if let Ok(outbox) = store.read_outbox_named() {
         messages.extend(outbox);
     }
-    if let Ok(archived) = crate::message::read_outbox_archive(dir) {
+    if let Ok(archived) = store.read_outbox_archive_named() {
         messages.extend(archived);
     }
     messages

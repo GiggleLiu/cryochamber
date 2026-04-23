@@ -1,5 +1,5 @@
-pub mod file;
 pub mod github;
+pub mod store;
 pub mod zulip;
 
 use anyhow::Result;

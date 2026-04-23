@@ -42,6 +42,15 @@ fn test_serialize_reply_request() {
 }
 
 #[test]
+fn test_serialize_receive_request() {
+    let req = Request::Receive;
+    let json = serde_json::to_string(&req).unwrap();
+    assert!(json.contains("\"cmd\":\"receive\""));
+    let parsed: Request = serde_json::from_str(&json).unwrap();
+    assert!(matches!(parsed, Request::Receive));
+}
+
+#[test]
 fn test_socket_path() {
     let dir = std::path::Path::new("/tmp/test-cryo");
     let path = socket_path(dir);

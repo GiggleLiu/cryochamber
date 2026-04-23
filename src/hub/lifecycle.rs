@@ -5,13 +5,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::channel::store::MessageStore;
+
 /// Start a daemon for the chamber at `dir`. Mirrors `cmd_start` in the CLI.
 pub fn start_chamber(dir: &Path) -> Result<()> {
     let exe = resolve_cryo_exe()?;
     let prepared = crate::lifecycle::prepare_start(dir, crate::lifecycle::StartOptions::default())?;
     crate::lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;
 
-    crate::message::ensure_dirs(dir)?;
+    MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
 
     crate::state::save_state(&crate::state::state_path(dir), &prepared.state)?;
 

@@ -3,8 +3,9 @@ use chrono::{Local, NaiveDateTime, NaiveTime, Utc};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::channel::store::MessageStore;
 use crate::log::{self, SessionOutcome};
-use crate::message::{self, Message};
+use crate::message::Message;
 
 /// Aggregated report for a time period.
 #[derive(Debug, Clone)]
@@ -53,7 +54,6 @@ pub fn write_report_to_outbox(
         period_label, summary.total_sessions, summary.failed_sessions,
     );
 
-    message::ensure_dirs(work_dir)?;
     let msg = Message {
         from: "cryochamber".to_string(),
         subject: format!("Cryochamber Report: {}", project_name),
@@ -71,7 +71,7 @@ pub fn write_report_to_outbox(
             ("period_hours".to_string(), summary.period_hours.to_string()),
         ]),
     };
-    message::write_message(work_dir, "outbox", &msg)
+    MessageStore::new(work_dir.to_path_buf()).send_out(&msg)
 }
 
 /// Compute the next report time based on config and last report.

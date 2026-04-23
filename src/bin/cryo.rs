@@ -3,9 +3,10 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
+use cryochamber::channel::store::MessageStore;
 use cryochamber::config;
 use cryochamber::lifecycle::{self, DaemonLaunchMode, StartOptions};
-use cryochamber::message;
+use cryochamber::message::Message;
 use cryochamber::protocol;
 use cryochamber::state::{self, CryoState};
 
@@ -151,7 +152,7 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         println!("  NOTES.md (exists, kept)");
     }
 
-    message::ensure_dirs(&dir)?;
+    MessageStore::new(dir.clone()).ensure_dirs()?;
 
     println!("\nCryochamber initialized. Next steps:");
     println!("  1. Edit plan.md with your task plan");
@@ -212,7 +213,7 @@ fn cmd_start(
     lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;
 
     // Ensure message dirs exist (needed for inbox watching)
-    message::ensure_dirs(&dir)?;
+    MessageStore::new(dir.clone()).ensure_dirs()?;
 
     state::save_state(&state::state_path(&dir), &prepared.state)?;
 
@@ -481,8 +482,8 @@ fn cmd_log() -> Result<()> {
     Ok(())
 }
 
-fn build_inbox_message(from: &str, subject: &str, body: &str) -> message::Message {
-    message::Message {
+fn build_inbox_message(from: &str, subject: &str, body: &str) -> Message {
+    Message {
         from: from.to_string(),
         subject: subject.to_string(),
         body: body.to_string(),
@@ -549,11 +550,11 @@ fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
 fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     lifecycle::require_valid_project(&dir)?;
-    message::ensure_dirs(&dir)?;
+    let store = MessageStore::new(dir.clone());
 
     let body = wake_message.unwrap_or("Manual wake requested by operator.");
     let msg = build_inbox_message("operator", "Wake", body);
-    message::write_message(&dir, "inbox", &msg)?;
+    store.send_in(&msg)?;
 
     notify_daemon_wake(&dir)
 }
@@ -561,7 +562,7 @@ fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
 fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     lifecycle::require_valid_project(&dir)?;
-    message::ensure_dirs(&dir)?;
+    let store = MessageStore::new(dir.clone());
 
     let subject = subject.unwrap_or_else(|| {
         // Truncate at a char boundary to avoid panic on non-ASCII input
@@ -572,7 +573,7 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
         &body[..end]
     });
     let msg = build_inbox_message(from, subject, body);
-    let path = message::write_message(&dir, "inbox", &msg)?;
+    let path = store.send_in(&msg)?;
     println!(
         "Message sent to {}",
         path.strip_prefix(&dir).unwrap_or(&path).display()
@@ -587,7 +588,7 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
 
 fn cmd_receive() -> Result<()> {
     let dir = cryochamber::work_dir()?;
-    let messages = message::read_outbox(&dir)?;
+    let messages = MessageStore::new(dir).read_outbox_named()?;
 
     if messages.is_empty() {
         println!("No messages in outbox.");

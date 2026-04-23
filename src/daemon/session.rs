@@ -145,7 +145,8 @@ impl SessionLauncher for ProcessSessionLauncher {
         // detects whether any are waiting so it can tell the agent to run
         // `cryo-agent receive`, but the content itself stays hidden until
         // the agent explicitly asks for it.
-        let inbox_filenames: Vec<String> = crate::message::list_inbox(&daemon.dir)?;
+        let inbox_filenames: Vec<String> =
+            crate::channel::store::MessageStore::new(daemon.dir.clone()).list_inbox_filenames()?;
         let inbox_waiting = !inbox_filenames.is_empty();
 
         let todo_path = daemon.dir.join("todo.json");

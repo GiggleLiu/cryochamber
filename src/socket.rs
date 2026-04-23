@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 2;
+pub const IPC_PROTOCOL_VERSION: u32 = 3;
 
 /// Request from CLI to daemon via Unix socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +22,7 @@ pub enum Request {
     Reply {
         text: String,
     },
+    Receive,
     TodoAdd {
         text: String,
         at: String,

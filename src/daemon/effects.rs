@@ -5,6 +5,7 @@ use std::path::Path;
 pub(super) trait SessionEffects {
     /// List unread inbox filenames without parsing message bodies.
     fn list_inbox_filenames(&self) -> Result<Vec<String>>;
+    fn read_and_archive_inbox(&mut self) -> Result<Vec<(String, crate::message::Message)>>;
     fn write_reply(
         &mut self,
         author: ReplyAuthor,
@@ -52,6 +53,10 @@ impl<'a> FsSessionEffects<'a> {
         Self { dir }
     }
 
+    fn message_store(&self) -> crate::channel::store::MessageStore {
+        crate::channel::store::MessageStore::new(self.dir.to_path_buf())
+    }
+
     fn todo_file(&self) -> crate::todo::TodoFile {
         crate::todo::TodoFile::new(self.dir.join("todo.json"))
     }
@@ -59,7 +64,11 @@ impl<'a> FsSessionEffects<'a> {
 
 impl SessionEffects for FsSessionEffects<'_> {
     fn list_inbox_filenames(&self) -> Result<Vec<String>> {
-        crate::message::list_inbox(self.dir)
+        self.message_store().list_inbox_filenames()
+    }
+
+    fn read_and_archive_inbox(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
+        self.message_store().read_and_archive_inbox()
     }
 
     fn write_reply(
@@ -75,7 +84,7 @@ impl SessionEffects for FsSessionEffects<'_> {
             timestamp,
             metadata: std::collections::BTreeMap::new(),
         };
-        crate::message::write_message(self.dir, "outbox", &msg)?;
+        self.message_store().send_out(&msg)?;
         Ok(())
     }
 

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use cryochamber::channel::store::MessageStore;
 use cryochamber::sync_common::{format_outbox_post, SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
@@ -136,7 +137,7 @@ fn cmd_gh_pull() -> Result<()> {
         cryochamber::gh_sync::save_sync_state(&sync_path, &sync_state)?;
     }
 
-    let inbox = cryochamber::message::read_inbox(&dir)?;
+    let inbox = MessageStore::new(dir).read_inbox_named()?;
     println!("Inbox: {} message(s)", inbox.len());
 
     Ok(())
@@ -202,7 +203,7 @@ fn cmd_gh_sync(interval_override: Option<u64>) -> Result<()> {
     let sync_state = load_gh_sync_state_with_self_login(&sync_path)?;
 
     // Ensure message dirs exist
-    cryochamber::message::ensure_dirs(&dir)?;
+    MessageStore::new(dir.clone()).ensure_dirs()?;
 
     let exe = std::env::current_exe().context("Failed to resolve cryo-gh executable path")?;
     let interval_str = interval.to_string();
@@ -333,6 +334,7 @@ fn pull_discussion_comments_into_inbox_from(
     owner: &str,
     repo: &str,
 ) -> Result<bool> {
+    let store = MessageStore::new(dir.to_path_buf());
     let result = cryochamber::channel::github::fetch_comments(
         owner,
         repo,
@@ -342,7 +344,7 @@ fn pull_discussion_comments_into_inbox_from(
     )?;
 
     for msg in &result.messages {
-        cryochamber::message::write_message(dir, "inbox", msg)?;
+        store.send_in(msg)?;
     }
 
     if let Some(cursor) = result.cursor {
@@ -396,7 +398,8 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
 
 /// Read outbox messages and post each as a Discussion comment, then archive them.
 fn push_outbox(dir: &Path, sync_state: &cryochamber::gh_sync::GhSyncState) -> Result<()> {
-    let messages = cryochamber::message::read_outbox(dir)?;
+    let store = MessageStore::new(dir.to_path_buf());
+    let messages = store.read_outbox_named()?;
     if messages.is_empty() {
         return Ok(());
     }
@@ -406,7 +409,7 @@ fn push_outbox(dir: &Path, sync_state: &cryochamber::gh_sync::GhSyncState) -> Re
         match cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &body) {
             Ok(()) => {
                 eprintln!("Sync: posted outbox/{filename} to Discussion");
-                cryochamber::message::archive_outbox_messages(dir, std::slice::from_ref(filename))?;
+                store.archive_outbox(std::slice::from_ref(filename))?;
             }
             Err(e) => {
                 eprintln!("Sync: failed to post outbox/{filename}: {e}");

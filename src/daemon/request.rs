@@ -24,6 +24,7 @@ pub(super) enum DaemonRequest {
     Reply {
         text: String,
     },
+    Receive,
     Todo(TodoRequest),
 }
 
@@ -42,6 +43,7 @@ impl From<crate::socket::Request> for DaemonRequest {
                 summary,
             },
             crate::socket::Request::Reply { text } => Self::Reply { text },
+            crate::socket::Request::Receive => Self::Receive,
             crate::socket::Request::TodoAdd { text, at } => {
                 Self::Todo(TodoRequest::Add { text, at })
             }
@@ -127,6 +129,23 @@ impl TodoRequestOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ReceiveRequestOutcome {
+    pub(super) ok: bool,
+    pub(super) message: String,
+    pub(super) log_event: Option<String>,
+    pub(super) consumed_filenames: Vec<String>,
+}
+
+impl ReceiveRequestOutcome {
+    pub(super) fn into_response(self) -> crate::socket::Response {
+        crate::socket::Response {
+            ok: self.ok,
+            message: self.message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TodoOperationError {
     response_message: String,
 }
@@ -144,6 +163,12 @@ pub(super) trait TodoEffects {
     fn done_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError>;
     fn remove_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError>;
     fn list_todos(&mut self) -> std::result::Result<String, TodoOperationError>;
+}
+
+pub(super) trait MessageEffects {
+    fn read_and_archive_inbox(
+        &mut self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
 }
 
 impl<T: SessionEffects> TodoEffects for T {
@@ -166,6 +191,15 @@ impl<T: SessionEffects> TodoEffects for T {
     }
 }
 
+impl<T: SessionEffects> MessageEffects for T {
+    fn read_and_archive_inbox(
+        &mut self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        SessionEffects::read_and_archive_inbox(self)
+            .map_err(|e| TodoOperationError::new(format!("Failed to read inbox: {e}")))
+    }
+}
+
 pub(super) struct FileTodoEffects {
     todo_file: crate::todo::TodoFile,
 }
@@ -174,6 +208,18 @@ impl FileTodoEffects {
     pub(super) fn new(dir: &Path) -> Self {
         Self {
             todo_file: crate::todo::TodoFile::new(dir.join("todo.json")),
+        }
+    }
+}
+
+pub(super) struct FileMessageEffects {
+    store: crate::channel::store::MessageStore,
+}
+
+impl FileMessageEffects {
+    pub(super) fn new(dir: &Path) -> Self {
+        Self {
+            store: crate::channel::store::MessageStore::new(dir.to_path_buf()),
         }
     }
 }
@@ -201,6 +247,16 @@ impl TodoEffects for FileTodoEffects {
         self.todo_file
             .display()
             .map_err(|e| TodoOperationError::new(format!("Failed to load todo list: {e}")))
+    }
+}
+
+impl MessageEffects for FileMessageEffects {
+    fn read_and_archive_inbox(
+        &mut self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        self.store
+            .read_and_archive_inbox()
+            .map_err(|e| TodoOperationError::new(format!("Failed to read inbox: {e}")))
     }
 }
 
@@ -256,6 +312,48 @@ pub(super) fn handle_todo_request(
                 message: e.response_message,
                 log_event: None,
             },
+        },
+    }
+}
+
+pub(super) fn handle_receive_request(effects: &mut impl MessageEffects) -> ReceiveRequestOutcome {
+    match effects.read_and_archive_inbox() {
+        Ok(messages) => {
+            let consumed_filenames = messages
+                .iter()
+                .map(|(filename, _)| filename.clone())
+                .collect::<Vec<_>>();
+            let log_event = if consumed_filenames.is_empty() {
+                Some("receive: inbox empty".into())
+            } else {
+                Some(format!(
+                    "receive: {} inbox message{} [{}]",
+                    consumed_filenames.len(),
+                    if consumed_filenames.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
+                    consumed_filenames.join(", "),
+                ))
+            };
+            let message = if messages.is_empty() {
+                "No messages in inbox.".to_string()
+            } else {
+                crate::message::format_inbox(&messages)
+            };
+            ReceiveRequestOutcome {
+                ok: true,
+                message,
+                log_event,
+                consumed_filenames,
+            }
+        }
+        Err(e) => ReceiveRequestOutcome {
+            ok: false,
+            message: e.response_message,
+            log_event: None,
+            consumed_filenames: Vec::new(),
         },
     }
 }

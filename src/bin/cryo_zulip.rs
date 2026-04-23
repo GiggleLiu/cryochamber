@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use cryochamber::channel::store::MessageStore;
 use cryochamber::channel::zulip::ZulipClient;
 use cryochamber::sync_common::{format_outbox_post, SyncLoopBackend, SyncLoopCommand};
 
@@ -185,7 +186,7 @@ fn cmd_pull() -> Result<()> {
         cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
     }
 
-    let inbox = cryochamber::message::read_inbox(&dir)?;
+    let inbox = MessageStore::new(dir).read_inbox_named()?;
     println!("Inbox: {} message(s)", inbox.len());
     Ok(())
 }
@@ -248,7 +249,7 @@ fn cmd_sync(interval_override: Option<u64>) -> Result<()> {
     let sync_state = cryochamber::zulip_sync::load_sync_state(&sync_path)?
         .context("zulip-sync.json not found. Run 'cryo-zulip init' first.")?;
 
-    cryochamber::message::ensure_dirs(&dir)?;
+    MessageStore::new(dir.clone()).ensure_dirs()?;
 
     let exe = std::env::current_exe().context("Failed to resolve cryo-zulip executable path")?;
     let interval_str = interval.to_string();
@@ -359,6 +360,7 @@ fn pull_zulip_messages_into_inbox(
     client: &ZulipClient,
     sync_state: &mut cryochamber::zulip_sync::ZulipSyncState,
 ) -> Result<bool> {
+    let store = MessageStore::new(dir.to_path_buf());
     let result = client.fetch_messages_since(
         sync_state.stream_id,
         Some(sync_state.topic_name()),
@@ -367,7 +369,7 @@ fn pull_zulip_messages_into_inbox(
     )?;
 
     for msg in &result.messages {
-        cryochamber::message::write_message(dir, "inbox", msg)?;
+        store.send_in(msg)?;
     }
 
     let new_last_id = cryochamber::zulip_sync::remember_seen_message_id(
@@ -427,7 +429,8 @@ fn push_outbox(
     client: &ZulipClient,
     sync_state: &cryochamber::zulip_sync::ZulipSyncState,
 ) -> Result<()> {
-    let messages = cryochamber::message::read_outbox(dir)?;
+    let store = MessageStore::new(dir.to_path_buf());
+    let messages = store.read_outbox_named()?;
     if messages.is_empty() {
         return Ok(());
     }
@@ -439,7 +442,7 @@ fn push_outbox(
         match client.send_message(sync_state.stream_id, topic, &body) {
             Ok(_) => {
                 eprintln!("Zulip sync: posted outbox/{filename}");
-                cryochamber::message::archive_outbox_messages(dir, std::slice::from_ref(filename))?;
+                store.archive_outbox(std::slice::from_ref(filename))?;
             }
             Err(e) => {
                 eprintln!("Zulip sync: failed to post outbox/{filename}: {e}");

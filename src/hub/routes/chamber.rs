@@ -12,6 +12,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::channel::store::MessageStore;
 use crate::hub::state::{AppState, SseEvent};
 
 /// Build the JSON status payload for a single chamber.
@@ -90,6 +91,7 @@ pub async fn post_send(
     Json(req): Json<SendRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let store = MessageStore::new(path.clone());
     let msg = crate::message::Message {
         from: req.from.unwrap_or_else(|| "human".into()),
         subject: req.subject.unwrap_or_default(),
@@ -97,7 +99,7 @@ pub async fn post_send(
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
     };
-    match crate::message::write_message(&path, "inbox", &msg) {
+    match store.send_in(&msg) {
         Ok(_) => {
             let _ = app.tx.send(SseEvent::NewMessage {
                 chamber_id: entry.id,
@@ -126,6 +128,7 @@ pub async fn post_wake(
     Json(req): Json<WakeRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let store = MessageStore::new(path.clone());
     let body = req
         .message
         .unwrap_or_else(|| "Wake requested from web UI.".into());
@@ -136,7 +139,7 @@ pub async fn post_wake(
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
     };
-    if let Err(e) = crate::message::write_message(&path, "inbox", &msg) {
+    if let Err(e) = store.send_in(&msg) {
         return Ok(Json(
             json!({"ok": false, "message": format!("Failed: {e}")}),
         ));

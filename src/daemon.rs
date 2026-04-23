@@ -182,8 +182,8 @@ use schedule::{
 #[cfg(test)]
 use request::TodoRequest;
 use request::{
-    handle_todo_request, resolve_hibernate_request, DaemonRequest, FileTodoEffects,
-    TodoRequestOutcome,
+    handle_receive_request, handle_todo_request, resolve_hibernate_request, DaemonRequest,
+    FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;
@@ -649,6 +649,11 @@ impl Daemon {
                 let response = handle_todo_request(todo_request, &mut effects).into_response();
                 let _ = responder.respond(&response);
             }
+            DaemonRequest::Receive => {
+                let mut effects = FileMessageEffects::new(&self.dir);
+                let response = handle_receive_request(&mut effects).into_response();
+                let _ = responder.respond(&response);
+            }
             DaemonRequest::Hibernate { .. } | DaemonRequest::Reply { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
@@ -1078,6 +1083,21 @@ impl Daemon {
                         let _ = runtime.respond(false, format!("Failed to write reply: {e}"));
                     }
                 }
+            }
+            DaemonRequest::Receive => {
+                let ReceiveRequestOutcome {
+                    ok,
+                    message,
+                    log_event,
+                    consumed_filenames,
+                } = handle_receive_request(effects);
+                state
+                    .reply_tracker
+                    .record_inbox_messages(&consumed_filenames);
+                if let Some(event) = log_event {
+                    state.logger.log_event(&event)?;
+                }
+                let _ = runtime.respond(ok, message);
             }
             DaemonRequest::Todo(todo_request) => {
                 let TodoRequestOutcome {

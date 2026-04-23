@@ -16,6 +16,32 @@ fn daemon_request_handling_lives_in_request_module() {
 }
 
 #[test]
+fn daemon_receive_request_is_wired_through_socket_request_and_effects() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let socket_src = std::fs::read_to_string(root.join("src/socket.rs"))
+        .expect("socket requests should live in src/socket.rs");
+    let request_src = std::fs::read_to_string(root.join("src/daemon/request.rs"))
+        .expect("daemon request handling should live in src/daemon/request.rs");
+    let effects_src = std::fs::read_to_string(root.join("src/daemon/effects.rs"))
+        .expect("session effects should live in src/daemon/effects.rs");
+
+    assert!(socket_src.contains("Receive"));
+    assert!(request_src.contains("enum DaemonRequest"));
+    assert!(request_src.contains("Receive,"));
+    assert!(effects_src.contains("read_and_archive_inbox"));
+}
+
+#[test]
+fn cryo_agent_receive_routes_through_daemon_ipc() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let agent_src = std::fs::read_to_string(root.join("src/bin/cryo_agent.rs"))
+        .expect("cryo-agent CLI should live in src/bin/cryo_agent.rs");
+
+    assert!(agent_src.contains("Request::Receive"));
+    assert!(!agent_src.contains("read_and_archive_inbox"));
+}
+
+#[test]
 fn daemon_session_runtime_and_effects_live_in_submodules() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let effects_src = std::fs::read_to_string(root.join("src/daemon/effects.rs"))
@@ -211,7 +237,7 @@ impl SessionRuntime for FakeSessionRuntime {
 struct FakeSessionEffects {
     reply_failure: Option<String>,
     replies: Vec<(ReplyAuthor, String, NaiveDateTime)>,
-    inbox_filenames: Vec<String>,
+    inbox_messages: Vec<(String, crate::message::Message)>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
 }
@@ -221,7 +247,7 @@ impl FakeSessionEffects {
         Self {
             reply_failure: None,
             replies: Vec::new(),
-            inbox_filenames: Vec::new(),
+            inbox_messages: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
         }
@@ -258,11 +284,35 @@ impl FakeSessionEffects {
         effects.next_todo_id = 2;
         effects
     }
+
+    fn push_inbox_message(&mut self, filename: &str, body: &str) {
+        self.inbox_messages.push((
+            filename.to_string(),
+            crate::message::Message {
+                from: "human".to_string(),
+                subject: "Question".to_string(),
+                body: body.to_string(),
+                timestamp: chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap(),
+                metadata: Default::default(),
+            },
+        ));
+    }
 }
 
 impl SessionEffects for FakeSessionEffects {
     fn list_inbox_filenames(&self) -> Result<Vec<String>> {
-        Ok(self.inbox_filenames.clone())
+        Ok(self
+            .inbox_messages
+            .iter()
+            .map(|(filename, _)| filename.clone())
+            .collect())
+    }
+
+    fn read_and_archive_inbox(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(std::mem::take(&mut self.inbox_messages))
     }
 
     fn write_reply(
@@ -964,6 +1014,10 @@ fn test_daemon_request_classification_groups_todo_variants() {
         DaemonRequest::from(crate::socket::Request::TodoDone { id: 7 }),
         DaemonRequest::Todo(TodoRequest::Done { id: 7 })
     );
+    assert_eq!(
+        DaemonRequest::from(crate::socket::Request::Receive),
+        DaemonRequest::Receive
+    );
 }
 
 #[test]
@@ -988,6 +1042,24 @@ fn test_handle_todo_request_returns_response_and_log_event() {
     );
     assert_eq!(effects.todos.len(), 1);
     assert_eq!(effects.todos[0].text, "Check inbox");
+}
+
+#[test]
+fn test_handle_receive_request_returns_formatted_messages_and_consumed_filenames() {
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("msg-1.md", "Archive me");
+
+    let outcome = handle_receive_request(&mut effects);
+
+    assert!(outcome.ok);
+    assert_eq!(outcome.consumed_filenames, vec!["msg-1.md".to_string()]);
+    assert_eq!(
+        outcome.log_event,
+        Some("receive: 1 inbox message [msg-1.md]".to_string())
+    );
+    assert!(outcome.message.contains("--- msg-1.md ---"));
+    assert!(outcome.message.contains("Archive me"));
+    assert!(effects.inbox_messages.is_empty());
 }
 
 #[test]
@@ -1409,7 +1481,7 @@ fn test_drive_active_session_daemon_replies_when_received_messages_unanswered() 
         ],
     );
     let mut effects = FakeSessionEffects::new();
-    effects.inbox_filenames = vec!["human-1.md".into()];
+    effects.push_inbox_message("human-1.md", "Need a reply");
 
     let outcome = daemon
         .drive_active_session(
@@ -1460,7 +1532,7 @@ fn test_drive_active_session_agent_reply_satisfies_queued_inbox_message() {
         ],
     );
     let mut effects = FakeSessionEffects::new();
-    effects.inbox_filenames = vec!["human-1.md".into()];
+    effects.push_inbox_message("human-1.md", "Need a reply");
 
     let outcome = daemon
         .drive_active_session(
@@ -1565,15 +1637,22 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
     let cryo_state = test_cryo_state();
 
     let mut runtime = FakeSessionRuntime::new(
-        vec![Ok(Some(crate::socket::Request::Hibernate {
-            complete: false,
-            exit_code: 0,
-            summary: Some("done".into()),
-        }))],
-        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+        vec![
+            Ok(Some(crate::socket::Request::Receive)),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
     );
     let mut effects = FakeSessionEffects::new_with_pending_todo();
-    effects.inbox_filenames = vec!["msg-1.md".to_string()];
+    effects.push_inbox_message("msg-1.md", "Archive me");
 
     let outcome = daemon
         .drive_active_session(
@@ -1585,7 +1664,21 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
         .unwrap();
 
     assert_eq!(outcome, SessionLoopOutcome::Hibernate);
-    assert_eq!(runtime.responses(), vec![(true, "Hibernating.".into())]);
+    assert_eq!(runtime.responses().len(), 2);
+    assert!(runtime.responses()[0].0);
+    assert!(runtime.responses()[0].1.contains("--- msg-1.md ---"));
+    assert!(runtime.responses()[0].1.contains("Archive me"));
+    assert_eq!(runtime.responses()[1], (true, "Hibernating.".into()));
+    assert!(effects.inbox_messages.is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("the agent did not send a reply"),
+        "daemon fallback reply should still be written after receive/archive: {:?}",
+        effects.replies
+    );
 }
 
 #[test]

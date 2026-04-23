@@ -9,7 +9,7 @@
 | Binary | Purpose |
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon`. |
-| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `reply`, `receive`, `time`, `todo`. Most commands send requests to the daemon via socket; `receive` and `time` are local. |
+| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `reply`, `receive`, `time`, `todo`. Most commands send requests to the daemon via socket; only `time` is local. |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Discussion-based messaging via an OS service. |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Zulip stream messaging via an OS service. |
 | `cryohub` | Workspace-wide web dashboard — `start`, `stop`, `status`, `daemon`. Installs a launchd/systemd service that serves the hub UI over HTTP. |
@@ -57,9 +57,9 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
-| `message` | File-based inbox/outbox I/O. `cryo-agent receive` archives inbox messages; the daemon only checks whether inbox files exist. | `struct Message`, `fn ensure_dirs`, `fn write_message`, `fn read_inbox`, `fn list_inbox`, `fn archive_messages`. |
+| `message` | Low-level markdown message parsing/rendering and file primitives used by the mailbox store. | `struct Message`, `fn write_message`, `fn read_inbox`, `fn list_inbox`, `fn archive_messages`, `fn format_inbox`, `fn parse_message`. |
 | `channel` | Channel abstraction over messaging backends. | `trait MessageChannel` (read inbox, post reply). |
-| `channel::file` | Local `messages/inbox/` + `messages/outbox/` backend. | `struct FileChannel::new`. |
+| `channel::store` | Local mailbox API over `messages/inbox/` + `messages/outbox/`, used by daemon, CLI, sync, hub, and status paths. | `struct MessageStore::new`, `fn send_in`, `fn send_out`, `fn read_inbox_named`, `fn read_outbox_named`, `fn read_and_archive_inbox`, `fn archive_outbox`. |
 | `channel::github` | GitHub Discussions backend via `gh` CLI / GraphQL. | `fn whoami`, `fn gh_graphql`, `fn build_fetch_comments_query`, `fn build_post_comment_mutation`. |
 | `channel::zulip` | Zulip REST API client. | `struct ZulipCredentials`, `struct ZulipClient`, `struct ZulipPullResult`, `fn from_zuliprc`. |
 | `gh_sync` | GitHub Discussion sync state (`gh-sync.json`). | `struct GhSyncState`, `fn save_sync_state`, `fn load_sync_state`, `fn is_sync_running`, `fn summarize`. |
@@ -79,14 +79,14 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 ## Key Design Decisions
 
 - **Daemon mode.** `cryo start` installs an OS service (launchd on macOS, systemd on Linux) that survives reboots. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout. `CRYO_NO_SERVICE=1` falls back to direct background spawn.
-- **Socket-based IPC.** The agent talks to the daemon via `cryo-agent` subcommands (`hibernate`, `send`, `reply`, `todo …`) which send JSON over a Unix domain socket. `receive` and `time` are local (no daemon needed). TODO mutation is routed through the daemon so scheduling changes serialize with the session lifecycle.
+- **Socket-based IPC.** The agent talks to the daemon via `cryo-agent` subcommands (`hibernate`, `send`, `reply`, `receive`, `todo …`) which send JSON over a Unix domain socket. Only `time` is purely local. TODO and inbox-archiving mutation is routed through the daemon so scheduling and mailbox state serialize with the session lifecycle.
 - **Fire-and-forget agent.** The daemon spawns the agent and redirects stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake.** `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox`. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
 - **Config / state split.** `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Daemon-authored stand-in replies.** When a session ends without any agent-authored outbox message, the daemon writes a `from: cryochamber` message so operators always see at least one update per session. All chamber-level messages (stand-in replies, periodic reports) share the single `cryochamber` sender.
 - **Agent notes via `NOTES.md`.** The agent's persistent memory across sessions is a plain markdown file the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes tab.
 - **Crash handling via TODO re-injection.** If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it consumed for that wake with a ` (attempt k)` suffix and an exponential delay (`2^k` minutes, capped at 1 day). There is no in-daemon backoff-retry loop — rescheduling is expressed entirely through the TODO list so it survives daemon restarts and is visible to both the agent and operators. `EventLogger` is still finalized on every outcome.
-- **Daemon does not preview inbox, agent receives it.** Wake-time prompts do not include inbox contents. The daemon only notices that inbox files exist and surfaces that fact in the session prompt. Only `cryo-agent receive` moves them into `messages/inbox/archive/`. A crashed session therefore leaves its inbox intact, and the next wake sees exactly the same messages — no special "check archive" recovery step is needed.
+- **Daemon does not preview inbox, agent receives it.** Wake-time prompts do not include inbox contents. The daemon only notices that inbox files exist and surfaces that fact in the session prompt. `cryo-agent receive` goes back through daemon IPC, and the daemon archives those messages into `messages/inbox/archive/`. A crashed session therefore leaves its inbox intact, and the next wake sees exactly the same messages — no special "check archive" recovery step is needed.
 - **`cryohub` is cwd-scoped.** The web dashboard binary always operates on the current directory — no `--dir` flag. The cwd must not itself be a chamber. Discovery scans `<cwd>/*` for chamber subdirectories. The service label is `com.cryo.hub.<hash>`; `cryohub status` additionally lists every other `com.cryo.hub.*` service installed on the machine.
 - **Default agent.** The CLI defaults to `opencode` (headless mode, not the TUI).
 
@@ -102,12 +102,12 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 ### Message lifecycle
 
-- Incoming messages are plain markdown files in `messages/inbox/`. They may be written by `cryo send`, `cryo wake`, `cryo-gh pull/sync`, or `cryo-zulip pull/sync`.
+- Incoming messages are plain markdown files in `messages/inbox/`. Local writers such as `cryo send`, `cryo wake`, `cryo-gh pull/sync`, `cryo-zulip pull/sync`, the hub, and report/status flows all go through `channel::store::MessageStore`.
 - The daemon watches `messages/inbox/` for new files and wakes on create events, but it does not parse message bodies or archive inbox files on the agent's behalf.
-- Session prompts only tell the agent that inbox mail is waiting. The agent must run `cryo-agent receive` to print the inbox contents and move those files into `messages/inbox/archive/`.
+- Session prompts only tell the agent that inbox mail is waiting. The agent must run `cryo-agent receive` to print the inbox contents; the daemon then archives those files into `messages/inbox/archive/`.
 - Agent-authored replies flow through the daemon: `cryo-agent send` / `cryo-agent reply` sends a socket request, and the daemon writes the corresponding markdown file into `messages/outbox/`.
 - When a session ends, the daemon re-checks unread inbox filenames. If messages arrived and the agent never sent a reply, the daemon writes a stand-in `from: cryochamber` outbox reply; if the session produced no outbox message at all, it writes a chamber-status message instead.
-- Operators can inspect the outbox locally with `cryo receive`. GitHub and Zulip sync daemons separately watch `messages/outbox/`, post new files to their remote channels, and archive each outbox message after a successful push.
+- Operators can inspect the outbox locally with `cryo receive`. GitHub and Zulip sync daemons separately watch `messages/outbox/`, post new files to their remote channels, and archive each outbox message after a successful push, all through `MessageStore`.
 
 ## Files Created at Runtime
 

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+use crate::channel::store::MessageStore;
 use crate::config;
 use crate::daemon_client;
 use crate::state::{self, CryoState};
@@ -200,7 +201,7 @@ pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
 pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
     stop_chamber(dir)?;
     let archive = archive_runtime(dir)?;
-    crate::message::ensure_dirs(dir)?;
+    MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
     Ok(archive)
 }
 
