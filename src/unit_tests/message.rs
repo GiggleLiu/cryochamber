@@ -132,6 +132,31 @@ fn archive_outbox_messages_ignores_missing_files_and_creates_archive_dir() {
     assert!(read_outbox_archive(dir.path()).unwrap().is_empty());
 }
 
+#[test]
+fn format_inbox_empty_returns_no_messages() {
+    assert_eq!(format_inbox(&[]), "No messages.\n");
+}
+
+#[test]
+fn format_inbox_single_message_includes_metadata_and_body() {
+    let msg = test_message("alice", "hi", "Hello world", "2026-04-23T14:20:00");
+    let out = format_inbox(&[("alice-2026-04-23T14-20-00.md".to_string(), msg)]);
+    assert!(out.contains("--- alice-2026-04-23T14-20-00.md ---"));
+    assert!(out.contains("From: alice"));
+    assert!(out.contains("Subject: hi"));
+    assert!(out.contains("Hello world"));
+}
+
+#[test]
+fn format_inbox_multiple_messages_concatenates_in_order() {
+    let a = test_message("a", "s1", "body1", "2026-04-23T14:20:00");
+    let b = test_message("b", "s2", "body2", "2026-04-23T14:21:00");
+    let out = format_inbox(&[("a.md".to_string(), a), ("b.md".to_string(), b)]);
+    let pos_a = out.find("body1").unwrap();
+    let pos_b = out.find("body2").unwrap();
+    assert!(pos_a < pos_b, "messages should appear in input order");
+}
+
 fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {
     Message {
         from: from.to_string(),

@@ -35,6 +35,10 @@ fn test_build_prompt_with_context() {
         task: "Continue work".to_string(),
         delayed_wake: None,
         todo_list: "1. [ ] Review PR (at: 2026-03-02T14:00)".to_string(),
+        inbox: cryochamber::agent::PromptSection {
+            content: String::new(),
+            complete: true,
+        },
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));

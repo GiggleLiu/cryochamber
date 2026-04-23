@@ -165,6 +165,31 @@ fn read_message_dir(message_dir: &Path, malformed_label: &str) -> Result<Vec<(St
     Ok(messages)
 }
 
+/// Render a list of inbox messages as the block the agent sees — same
+/// format `cryo-agent receive` prints, so the daemon's wake-time prompt
+/// inlining and the IPC path share this formatter. Empty input returns
+/// "No messages.\n". Pure; does not archive.
+pub fn format_inbox(messages: &[(String, Message)]) -> String {
+    if messages.is_empty() {
+        return "No messages.\n".to_string();
+    }
+    let mut body = String::new();
+    for (filename, msg) in messages {
+        body.push_str(&format!("--- {filename} ---\n"));
+        if !msg.from.is_empty() {
+            body.push_str(&format!("From: {}\n", msg.from));
+        }
+        if !msg.subject.is_empty() {
+            body.push_str(&format!("Subject: {}\n", msg.subject));
+        }
+        body.push('\n');
+        body.push_str(&msg.body);
+        body.push('\n');
+        body.push('\n');
+    }
+    body
+}
+
 /// Move processed messages from inbox/ to inbox/archive/.
 pub fn archive_messages(dir: &Path, filenames: &[String]) -> Result<()> {
     archive_box_messages(dir, "inbox", filenames)

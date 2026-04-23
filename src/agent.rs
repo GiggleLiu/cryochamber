@@ -72,6 +72,51 @@ pub struct AgentConfig {
     pub task: String,
     pub delayed_wake: Option<String>,
     pub todo_list: String,
+    /// Pre-rendered inbox. Empty `content` renders the inbox section with a
+    /// "No new messages." placeholder. `complete = false` means the inbox
+    /// overflowed the prompt cap and was intentionally omitted by the daemon
+    /// (messages are still in `messages/inbox/` for `cryo-agent receive`).
+    pub inbox: PromptSection,
+}
+
+/// A rendered prompt section plus whether the content is the complete view
+/// (i.e. nothing was dropped for fitting under `PROMPT_SECTION_CAP_BYTES`).
+/// Drives the section header hint: complete → "no need to call `<cmd>`
+/// again"; partial → "use `<cmd>` to get full text".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptSection {
+    pub content: String,
+    pub complete: bool,
+}
+
+/// Total byte cap applied to any pre-rendered prompt section that could
+/// overflow (TODO list, inbox). Over-cap content is dropped entirely; the
+/// section hint points the agent at the refetch command.
+pub const PROMPT_SECTION_CAP_BYTES: usize = 2048;
+
+/// Return the content as-is when it fits in `cap_bytes` (`complete = true`);
+/// otherwise return an empty section (`complete = false`) so `build_prompt`
+/// omits the body and flips the section hint to "use `<cmd>` to get full text".
+pub fn fit_section(content: &str, cap_bytes: usize) -> PromptSection {
+    if content.len() <= cap_bytes {
+        PromptSection {
+            content: content.to_string(),
+            complete: true,
+        }
+    } else {
+        PromptSection {
+            content: String::new(),
+            complete: false,
+        }
+    }
+}
+
+fn section_hint(complete: bool, refetch_cmd: &str) -> String {
+    if complete {
+        format!("no need to call `{refetch_cmd}` again")
+    } else {
+        format!("use `{refetch_cmd}` to get full text")
+    }
 }
 
 pub fn build_prompt(config: &AgentConfig) -> String {
@@ -82,48 +127,43 @@ pub fn build_prompt(config: &AgentConfig) -> String {
         None => String::new(),
     };
 
+    let todo = fit_section(&config.todo_list, PROMPT_SECTION_CAP_BYTES);
+    let todo_hint = section_hint(todo.complete, "cryo-agent todo list");
+
+    let inbox_hint = section_hint(config.inbox.complete, "cryo-agent receive");
+    let inbox_body = if config.inbox.content.trim().is_empty() {
+        "No new messages.".to_string()
+    } else {
+        config.inbox.content.clone()
+    };
+
     format!(
         r#"# Cryochamber Session
 
-Current time: {current_time}
 Session number: {session_number}
 {delayed}
-## Instructions
+Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md before starting.
 
-Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md for the full plan.
+## Current Time (no need to call `cryo-agent time` again)
 
-## Your Task
+{current_time}
+
+## Task
 
 {task}
 
-## TODO List
+## TODO List ({todo_hint})
 
-{todo_list}
+{todo_content}
 
-## Context
+## Inbox ({inbox_hint})
 
-- Check messages/inbox/ for new messages
-- The only supported way to communicate with the human is `cryo-agent send` / `cryo-agent reply`
-- Stdout/stderr go to `cryo-agent.log`; they are not a user conversation channel
-- Every session must send at least one human-visible outbox message before hibernating
-
-## Reminders
-
-- **Every non-complete session ends with these calls, in order:**
-  1. `cryo-agent send "<status update>"` or `cryo-agent reply "<response>"` — writes an outbox message
-  2. `cryo-agent todo add "<next step>" --at <TIME>` — declares your next wake
-  3. `cryo-agent hibernate --summary "<what I did>"` — ends the session
-  Wake times come ONLY from TODOs. `hibernate` does not schedule anything.
-  For `hibernate --complete`, still send an outbox message first; skip only the TODO.
-- Use `cryo-agent todo done <id>` to mark tasks complete
-- Use `cryo-agent hibernate --exit 1` only for genuine retryable failure
-- Read `NOTES.md` at start of session; append to it as you work
-- Read plan.md before starting work
+{inbox_body}
 "#,
         session_number = config.session_number,
         delayed = delayed_section,
         task = config.task,
-        todo_list = config.todo_list,
+        todo_content = todo.content,
     )
 }
 

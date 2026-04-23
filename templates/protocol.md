@@ -47,10 +47,24 @@ Execute these steps in order. **Do not skip or reorder steps.**
 
 ### Step 1: Orient
 
+Your prompt already carries the session-dynamic context — **do not re-fetch what's already there**:
+
+- `## Current Time` — the daemon's wall-clock at wake.
+- `## Task` — the session directive.
+- `## TODO List` — pending TODOs.
+- `## Inbox` — new inbox messages (up to 10, each up to ~2 KB).
+- `## System Notice` — only present after a delayed wake.
+
+Each pre-rendered section's header ends with a hint:
+
+- `(no need to call <cmd> again)` — the content is complete; don't re-run the command this session.
+- `(use <cmd> to get full text)` — the content was truncated or capped; run the named command to read the rest.
+
+Then:
+
 - Read `plan.md` for your objectives and task list.
 - Read `NOTES.md` for context from previous sessions.
-- Run `cryo-agent todo list` for pending tasks.
-- Check your prompt for inbox messages and previous session log.
+- Act on whatever the prompt's `## Task`, `## TODO List`, and `## Inbox` sections surface, following the hint to decide whether to refetch.
 
 ### Step 2: Work
 
@@ -127,7 +141,7 @@ cryo-agent hibernate [--complete|--exit N] [--summary "..."]   # End the session
 
 - **TODO list drives your schedule.** The daemon's next wake is always the earliest pending TODO's `at` time. `hibernate` does not take a wake time.
 - **Every session sends a human-visible outbox message before hibernating.** For non-complete sessions, also add a pending TODO before `hibernate`.
-- **Inbox messages wake you early.** Humans can send messages. You'll see them in your prompt.
+- **Inbox messages wake you early.** Humans can send messages. They appear inline in the `## Inbox` section of your prompt — follow the section hint to decide whether to call `cryo-agent receive` for the rest.
 - **Human communication goes through `cryo-agent`.** Use `send`/`reply`; stdout/stderr are logs only.
 - **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.
 - **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.

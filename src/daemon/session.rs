@@ -141,7 +141,38 @@ impl SessionLauncher for ProcessSessionLauncher {
             cryo_state.session_number
         );
 
+        // Read inbox, format it, size-check against the prompt section cap.
+        // If it fits: inline in prompt AND archive now (same semantics as
+        // `cryo-agent receive`). If it overflows: don't inline, don't archive
+        // — the agent must run `cryo-agent receive` to see and archive them.
+        // `list_inbox` is kept for archive tracking of files `read_inbox`
+        // skipped (malformed frontmatter).
         let inbox_filenames: Vec<String> = crate::message::list_inbox(&daemon.dir)?;
+        let inbox_messages = crate::message::read_inbox(&daemon.dir).unwrap_or_default();
+        let inbox_section = if inbox_messages.is_empty() {
+            crate::agent::PromptSection {
+                content: String::new(),
+                complete: true,
+            }
+        } else {
+            let body = crate::message::format_inbox(&inbox_messages);
+            if body.len() <= crate::agent::PROMPT_SECTION_CAP_BYTES {
+                let archived: Vec<String> = inbox_messages
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                crate::message::archive_messages(&daemon.dir, &archived)?;
+                crate::agent::PromptSection {
+                    content: body,
+                    complete: true,
+                }
+            } else {
+                crate::agent::PromptSection {
+                    content: String::new(),
+                    complete: false,
+                }
+            }
+        };
 
         let todo_path = daemon.dir.join("todo.json");
         let todo_display = match crate::todo::TodoList::load(&todo_path) {
@@ -163,6 +194,7 @@ impl SessionLauncher for ProcessSessionLauncher {
             task: task.clone(),
             delayed_wake: notice,
             todo_list: todo_display,
+            inbox: inbox_section,
         };
         let prompt = crate::agent::build_prompt(&agent_config);
 

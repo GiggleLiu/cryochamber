@@ -71,25 +71,11 @@ impl SessionEffects for FsSessionEffects<'_> {
 
     fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
         let messages = crate::message::read_inbox(self.dir)?;
-        if messages.is_empty() {
-            return Ok(("No messages.\n".to_string(), Vec::new()));
-        }
-        let mut body = String::new();
-        for (filename, msg) in &messages {
-            body.push_str(&format!("--- {} ---\n", filename));
-            if !msg.from.is_empty() {
-                body.push_str(&format!("From: {}\n", msg.from));
-            }
-            if !msg.subject.is_empty() {
-                body.push_str(&format!("Subject: {}\n", msg.subject));
-            }
-            body.push('\n');
-            body.push_str(&msg.body);
-            body.push('\n');
-            body.push('\n');
-        }
+        let body = crate::message::format_inbox(&messages);
         let filenames: Vec<String> = messages.into_iter().map(|(name, _)| name).collect();
-        crate::message::archive_messages(self.dir, &filenames)?;
+        if !filenames.is_empty() {
+            crate::message::archive_messages(self.dir, &filenames)?;
+        }
         Ok((body, filenames))
     }
 
