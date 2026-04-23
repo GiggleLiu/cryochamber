@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{SessionEffects, SessionLoopOutcome};
 
@@ -167,51 +167,40 @@ impl<T: SessionEffects> TodoEffects for T {
 }
 
 pub(super) struct FileTodoEffects {
-    todo_path: PathBuf,
+    todo_file: crate::todo::TodoFile,
 }
 
 impl FileTodoEffects {
     pub(super) fn new(dir: &Path) -> Self {
         Self {
-            todo_path: dir.join("todo.json"),
+            todo_file: crate::todo::TodoFile::new(dir.join("todo.json")),
         }
-    }
-
-    fn load(&self) -> std::result::Result<crate::todo::TodoList, TodoOperationError> {
-        crate::todo::TodoList::load(&self.todo_path)
-            .map_err(|e| TodoOperationError::new(format!("Failed to load todo list: {e}")))
-    }
-
-    fn save(&self, list: &crate::todo::TodoList) -> std::result::Result<(), TodoOperationError> {
-        list.save(&self.todo_path)
-            .map_err(|e| TodoOperationError::new(format!("Failed to save todo: {e}")))
     }
 }
 
 impl TodoEffects for FileTodoEffects {
     fn add_todo(&mut self, text: &str, at: &str) -> std::result::Result<u32, TodoOperationError> {
-        let mut list = self.load()?;
-        let id = list.add(text.to_string(), at.to_string());
-        self.save(&list)?;
-        Ok(id)
+        self.todo_file
+            .add(text.to_string(), at.to_string())
+            .map_err(|e| TodoOperationError::new(format!("Failed to add todo: {e}")))
     }
 
     fn done_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError> {
-        let mut list = self.load()?;
-        list.done(id)
-            .map_err(|e| TodoOperationError::new(format!("{e}")))?;
-        self.save(&list)
+        self.todo_file
+            .done(id)
+            .map_err(|e| TodoOperationError::new(format!("{e}")))
     }
 
     fn remove_todo(&mut self, id: u32) -> std::result::Result<(), TodoOperationError> {
-        let mut list = self.load()?;
-        list.remove(id)
-            .map_err(|e| TodoOperationError::new(format!("{e}")))?;
-        self.save(&list)
+        self.todo_file
+            .remove(id)
+            .map_err(|e| TodoOperationError::new(format!("{e}")))
     }
 
     fn list_todos(&mut self) -> std::result::Result<String, TodoOperationError> {
-        Ok(self.load()?.display())
+        self.todo_file
+            .display()
+            .map_err(|e| TodoOperationError::new(format!("Failed to load todo list: {e}")))
     }
 }
 

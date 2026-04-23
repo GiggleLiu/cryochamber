@@ -763,10 +763,13 @@ fn session_prompt_notice_combines_delayed_wake_before_crash_notice() {
 fn test_next_wake_from_todos_picks_earliest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");
-    let mut list = crate::todo::TodoList::new();
-    list.add("later".into(), "2026-03-02T16:00".into());
-    list.add("earlier".into(), "2026-03-02T14:00".into());
-    list.save(&path).unwrap();
+    let todos = crate::todo::TodoFile::new(&path);
+    todos
+        .add("later".into(), "2026-03-02T16:00".into())
+        .unwrap();
+    todos
+        .add("earlier".into(), "2026-03-02T14:00".into())
+        .unwrap();
     let wake = next_wake_from_todos(dir.path());
     assert_eq!(
         wake.unwrap(),
@@ -788,10 +791,9 @@ fn test_next_wake_from_todos_none_when_empty() {
 fn test_next_wake_from_todos_skips_done() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");
-    let mut list = crate::todo::TodoList::new();
-    let id = list.add("done".into(), "2026-03-02T10:00".into());
-    list.done(id).unwrap();
-    list.save(&path).unwrap();
+    let todos = crate::todo::TodoFile::new(&path);
+    let id = todos.add("done".into(), "2026-03-02T10:00".into()).unwrap();
+    todos.done(id).unwrap();
     let wake = next_wake_from_todos(dir.path());
     assert!(wake.is_none());
 }
@@ -800,12 +802,15 @@ fn test_next_wake_from_todos_skips_done() {
 fn test_next_wake_from_todos_skips_invalid_and_picks_valid() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");
-    let mut list = crate::todo::TodoList::new();
+    let todos = crate::todo::TodoFile::new(&path);
     // Invalid at value that sorts before valid ones
-    list.add("bad format".into(), "2026-03-02 10:00".into());
+    todos
+        .add("bad format".into(), "2026-03-02 10:00".into())
+        .unwrap();
     // Valid at value
-    list.add("valid task".into(), "2026-03-02T14:00".into());
-    list.save(&path).unwrap();
+    todos
+        .add("valid task".into(), "2026-03-02T14:00".into())
+        .unwrap();
     let wake = next_wake_from_todos(dir.path());
     assert_eq!(
         wake.unwrap(),
@@ -839,10 +844,9 @@ fn test_next_wake_from_todos_skips_empty_at() {
 fn test_next_wake_from_todos_all_invalid_returns_none() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");
-    let mut list = crate::todo::TodoList::new();
-    list.add("bad1".into(), "not-a-date".into());
-    list.add("bad2".into(), "also-bad".into());
-    list.save(&path).unwrap();
+    let todos = crate::todo::TodoFile::new(&path);
+    todos.add("bad1".into(), "not-a-date".into()).unwrap();
+    todos.add("bad2".into(), "also-bad".into()).unwrap();
     let wake = next_wake_from_todos(dir.path());
     assert!(wake.is_none(), "All invalid entries should yield None");
 }
@@ -1561,13 +1565,11 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
     let cryo_state = test_cryo_state();
 
     let mut runtime = FakeSessionRuntime::new(
-        vec![
-            Ok(Some(crate::socket::Request::Hibernate {
-                complete: false,
-                exit_code: 0,
-                summary: Some("done".into()),
-            })),
-        ],
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: Some("done".into()),
+        }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
     let mut effects = FakeSessionEffects::new_with_pending_todo();
@@ -1602,9 +1604,9 @@ fn test_build_bootstrap_state_runs_immediately_for_first_session_and_overdue_wak
     assert!(first.run_now);
 
     let todo_path = dir.path().join("todo.json");
-    let mut todos = crate::todo::TodoList::new();
-    todos.add("Overdue task".into(), "2026-03-01T11:30".into());
-    todos.save(&todo_path).unwrap();
+    crate::todo::TodoFile::new(&todo_path)
+        .add("Overdue task".into(), "2026-03-01T11:30".into())
+        .unwrap();
 
     let mut resumed = test_cryo_state();
     resumed.session_number = 3;
@@ -1781,8 +1783,13 @@ fn test_prepare_runtime_startup_propagates_socket_bind_failure() {
 /// recorded with the session number and active provider name so tests can
 /// assert on rotation sequences.
 struct ScriptedSessionLauncher {
-    outcomes: Mutex<VecDeque<SessionLoopOutcome>>,
+    steps: Mutex<VecDeque<ScriptedStep>>,
     invocations: Mutex<Vec<ScriptedInvocation>>,
+}
+
+struct ScriptedStep {
+    outcome: SessionLoopOutcome,
+    on_run: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1791,10 +1798,31 @@ struct ScriptedInvocation {
     provider: Option<String>,
 }
 
+impl ScriptedStep {
+    fn outcome(outcome: SessionLoopOutcome) -> Self {
+        Self {
+            outcome,
+            on_run: None,
+        }
+    }
+
+    fn with_hook(outcome: SessionLoopOutcome, on_run: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            outcome,
+            on_run: Some(Arc::new(on_run)),
+        }
+    }
+}
+
 impl ScriptedSessionLauncher {
     fn new(outcomes: Vec<SessionLoopOutcome>) -> Self {
+        let steps = outcomes.into_iter().map(ScriptedStep::outcome).collect();
+        Self::with_steps(steps)
+    }
+
+    fn with_steps(steps: Vec<ScriptedStep>) -> Self {
         Self {
-            outcomes: Mutex::new(outcomes.into()),
+            steps: Mutex::new(steps.into()),
             invocations: Mutex::new(Vec::new()),
         }
     }
@@ -1833,13 +1861,16 @@ impl SessionLauncher for ScriptedSessionLauncher {
             session: cryo_state.session_number,
             provider: provider_name.map(str::to_string),
         });
-        let outcome = self
-            .outcomes
+        let step = self
+            .steps
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or(SessionLoopOutcome::PlanComplete);
-        Ok(outcome)
+            .unwrap_or_else(|| ScriptedStep::outcome(SessionLoopOutcome::PlanComplete));
+        if let Some(hook) = step.on_run {
+            hook();
+        }
+        Ok(step.outcome)
     }
 }
 
@@ -1857,9 +1888,9 @@ fn provider_config(n: usize) -> Vec<crate::config::ProviderConfig> {
 /// `wait_for_idle_event` returns `WakeFromSchedule` immediately on every
 /// idle iteration.
 fn seed_past_todo(dir: &Path) {
-    let mut todos = crate::todo::TodoList::new();
-    todos.add("keep going".into(), "2026-01-01T00:00".into());
-    todos.save(&dir.join("todo.json")).unwrap();
+    crate::todo::TodoFile::new(dir.join("todo.json"))
+        .add("keep going".into(), "2026-01-01T00:00".into())
+        .unwrap();
 }
 
 #[test]
@@ -1873,10 +1904,17 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
         .unwrap();
     let clock = Arc::new(TestClock::new(now));
 
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::Hibernate,
-        SessionLoopOutcome::Hibernate,
-        SessionLoopOutcome::PlanComplete,
+    let dir_path = dir.path().to_path_buf();
+    let launcher = Arc::new(ScriptedSessionLauncher::with_steps(vec![
+        ScriptedStep::with_hook(SessionLoopOutcome::Hibernate, {
+            let dir_path = dir_path.clone();
+            move || seed_past_todo(&dir_path)
+        }),
+        ScriptedStep::with_hook(SessionLoopOutcome::Hibernate, {
+            let dir_path = dir_path.clone();
+            move || seed_past_todo(&dir_path)
+        }),
+        ScriptedStep::outcome(SessionLoopOutcome::PlanComplete),
     ]));
 
     let daemon = Daemon::new_with_clock_and_launcher(
@@ -1950,9 +1988,12 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
         .unwrap();
     let clock = Arc::new(TestClock::new(now));
 
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::Hibernate,
-        SessionLoopOutcome::PlanComplete,
+    let dir_path = dir.path().to_path_buf();
+    let launcher = Arc::new(ScriptedSessionLauncher::with_steps(vec![
+        ScriptedStep::with_hook(SessionLoopOutcome::Hibernate, move || {
+            seed_past_todo(&dir_path)
+        }),
+        ScriptedStep::outcome(SessionLoopOutcome::PlanComplete),
     ]));
 
     let daemon = Daemon::new_with_clock_and_launcher(
@@ -2012,9 +2053,22 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
         .unwrap();
     let clock = Arc::new(TestClock::new(now));
 
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: false },
-        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+    let dir_path = dir.path().to_path_buf();
+    let launcher = Arc::new(ScriptedSessionLauncher::with_steps(vec![
+        ScriptedStep::with_hook(
+            SessionLoopOutcome::ValidationFailed { quick_exit: false },
+            {
+                let dir_path = dir_path.clone();
+                move || seed_past_todo(&dir_path)
+            },
+        ),
+        ScriptedStep::with_hook(
+            SessionLoopOutcome::ValidationFailed { quick_exit: false },
+            {
+                let dir_path = dir_path.clone();
+                move || seed_past_todo(&dir_path)
+            },
+        ),
     ]));
 
     let daemon = Daemon::new_with_clock_and_launcher(

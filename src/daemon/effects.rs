@@ -1,8 +1,6 @@
 use anyhow::Result;
 use chrono::NaiveDateTime;
-use std::path::{Path, PathBuf};
-
-use super::schedule::next_wake_from_todos;
+use std::path::Path;
 
 pub(super) trait SessionEffects {
     /// List unread inbox filenames without parsing message bodies.
@@ -54,8 +52,8 @@ impl<'a> FsSessionEffects<'a> {
         Self { dir }
     }
 
-    fn todo_path(&self) -> PathBuf {
-        self.dir.join("todo.json")
+    fn todo_file(&self) -> crate::todo::TodoFile {
+        crate::todo::TodoFile::new(self.dir.join("todo.json"))
     }
 }
 
@@ -82,35 +80,22 @@ impl SessionEffects for FsSessionEffects<'_> {
     }
 
     fn todo_add(&mut self, text: &str, at: &str) -> Result<u32> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        let id = list.add(text.to_string(), at.to_string());
-        list.save(&todo_path)?;
-        Ok(id)
+        self.todo_file().add(text.to_string(), at.to_string())
     }
 
     fn todo_done(&mut self, id: u32) -> Result<()> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        list.done(id)?;
-        list.save(&todo_path)?;
-        Ok(())
+        self.todo_file().done(id)
     }
 
     fn todo_remove(&mut self, id: u32) -> Result<()> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        list.remove(id)?;
-        list.save(&todo_path)?;
-        Ok(())
+        self.todo_file().remove(id)
     }
 
     fn todo_list(&mut self) -> Result<String> {
-        let list = crate::todo::TodoList::load(&self.todo_path())?;
-        Ok(list.display())
+        self.todo_file().display()
     }
 
     fn has_pending_todo_with_valid_wake(&self) -> bool {
-        next_wake_from_todos(self.dir).is_some()
+        self.todo_file().next_valid_wake().ok().flatten().is_some()
     }
 }

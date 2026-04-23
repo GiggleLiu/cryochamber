@@ -4,7 +4,10 @@ counter = ".mock-crash-count"
 
 [[when]]
 session = "1"
-actions = [{ kind = "exit", code = 1 }]
+actions = [
+  { kind = "todo_add", text = "Retry crashed session", at = "now" },
+  { kind = "exit", code = 1 },
+]
 
 [[when]]
 session = "*"

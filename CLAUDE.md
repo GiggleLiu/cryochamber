@@ -77,7 +77,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `report` | Periodic session summary reports. Parses log, counts sessions/failures, writes summary to `messages/outbox/` for sync delivery. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
-| `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoList` structs, load/save, add/done/remove. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |
+| `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoFile` structs plus retry rescheduling logic for crashed sessions. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |
 | `zulip_sync` | Zulip sync state persistence (`zulip-sync.json`). |
 | `hub` | Workspace-wide web dashboard: Axum router (`serve`, `build_router_with_state`), chamber discovery, SSE events, start/stop/restart handlers. Served by the `cryohub` binary. |
 

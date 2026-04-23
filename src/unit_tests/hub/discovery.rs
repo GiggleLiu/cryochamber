@@ -133,9 +133,9 @@ fn populate_runtime_exposes_rail_display_fields() {
     )
     .unwrap();
 
-    let mut todos = crate::todo::TodoList::new();
-    todos.add("next step".into(), "2099-05-01T10:00".into());
-    todos.save(&alpha.join("todo.json")).unwrap();
+    crate::todo::TodoFile::new(alpha.join("todo.json"))
+        .add("next step".into(), "2099-05-01T10:00".into())
+        .unwrap();
 
     crate::message::ensure_dirs(&alpha).unwrap();
     let msg = crate::message::Message {

@@ -64,11 +64,14 @@ fn todos_json_is_empty_array_when_missing() {
 #[test]
 fn todos_json_returns_items_in_file_order() {
     let dir = tempfile::tempdir().unwrap();
-    let mut list = crate::todo::TodoList::new();
-    list.add("first".into(), "2026-05-01T10:00".into());
-    let id2 = list.add("second".into(), "2026-04-01T10:00".into());
-    list.done(id2).unwrap();
-    list.save(&dir.path().join("todo.json")).unwrap();
+    let todos = crate::todo::TodoFile::new(dir.path().join("todo.json"));
+    todos
+        .add("first".into(), "2026-05-01T10:00".into())
+        .unwrap();
+    let id2 = todos
+        .add("second".into(), "2026-04-01T10:00".into())
+        .unwrap();
+    todos.done(id2).unwrap();
 
     let v = todos_json(dir.path());
     let arr = v.as_array().unwrap();

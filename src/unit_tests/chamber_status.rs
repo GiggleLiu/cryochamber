@@ -56,12 +56,17 @@ fn status_uses_state_agent_override_over_config_agent() {
 #[test]
 fn status_next_wake_uses_earliest_open_todo() {
     let dir = tempfile::tempdir().unwrap();
-    let mut todos = crate::todo::TodoList::new();
-    todos.add("later".to_string(), "2026-05-02T10:00".to_string());
-    todos.add("earlier".to_string(), "2026-05-01T09:00".to_string());
-    let done_id = todos.add("done".to_string(), "2026-04-01T09:00".to_string());
+    let todos = crate::todo::TodoFile::new(dir.path().join("todo.json"));
+    todos
+        .add("later".to_string(), "2026-05-02T10:00".to_string())
+        .unwrap();
+    todos
+        .add("earlier".to_string(), "2026-05-01T09:00".to_string())
+        .unwrap();
+    let done_id = todos
+        .add("done".to_string(), "2026-04-01T09:00".to_string())
+        .unwrap();
     todos.done(done_id).unwrap();
-    todos.save(&dir.path().join("todo.json")).unwrap();
 
     let status = status(dir.path());
 

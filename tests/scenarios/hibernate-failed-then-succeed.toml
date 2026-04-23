@@ -4,7 +4,10 @@ counter = ".mock-hibernate-fail-count"
 
 [[when]]
 session = "1"
-actions = [{ kind = "hibernate", exit = 1, summary = "Retryable failure on attempt 1" }]
+actions = [
+  { kind = "todo_add", text = "Retry failed hibernate", at = "now" },
+  { kind = "hibernate", exit = 1, summary = "Retryable failure on attempt 1" },
+]
 
 [[when]]
 session = "*"

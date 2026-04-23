@@ -776,10 +776,10 @@ fn test_daemon_replies_to_unanswered_queued_inbox_message() {
         outbox[0].1.body
     );
     assert!(
-        cryochamber::message::read_inbox(dir.path())
+        !cryochamber::message::read_inbox(dir.path())
             .unwrap()
             .is_empty(),
-        "answered queued message should be archived"
+        "queued inbox message should remain until the agent explicitly receives it"
     );
 }
 

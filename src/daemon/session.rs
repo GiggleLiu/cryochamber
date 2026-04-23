@@ -149,8 +149,8 @@ impl SessionLauncher for ProcessSessionLauncher {
         let inbox_waiting = !inbox_filenames.is_empty();
 
         let todo_path = daemon.dir.join("todo.json");
-        let todo_display = match crate::todo::TodoList::load(&todo_path) {
-            Ok(list) => list.display(),
+        let todo_display = match crate::todo::TodoFile::new(&todo_path).display() {
+            Ok(display) => display,
             Err(err) => {
                 eprintln!(
                     "Daemon: Error loading TODO list from {}: {}",

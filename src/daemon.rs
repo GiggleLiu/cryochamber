@@ -1255,22 +1255,14 @@ impl Daemon {
     /// crashes. Load/save failures are swallowed and reported to stderr —
     /// TODO bookkeeping must never abort the session loop.
     fn consume_past_due_todos(&self) -> Vec<(String, String)> {
-        let path = self.dir.join("todo.json");
-        let mut list = match crate::todo::TodoList::load(&path) {
-            Ok(list) => list,
-            Err(e) => {
-                eprintln!("Daemon: failed to load TODO list for consumption: {e}");
-                return Vec::new();
-            }
-        };
         let now = self.clock.local_now();
-        let consumed = list.consume_past_due(&now);
-        if !consumed.is_empty() {
-            if let Err(e) = list.save(&path) {
-                eprintln!("Daemon: failed to save consumed TODO list: {e}");
-            }
-        }
-        consumed
+        crate::todo::TodoFile::new(self.dir.join("todo.json"))
+            .consume_past_due(&now)
+            .map_err(|e| {
+                eprintln!("Daemon: failed to consume TODO list: {e}");
+                e
+            })
+            .unwrap_or_default()
     }
 
     /// Re-inject previously-consumed TODOs after a crashed session. Each
@@ -1280,20 +1272,16 @@ impl Daemon {
         if consumed.is_empty() {
             return;
         }
-        let path = self.dir.join("todo.json");
-        let mut list = match crate::todo::TodoList::load(&path) {
-            Ok(list) => list,
+        let now = self.clock.local_now();
+        let ids = match crate::todo::TodoFile::new(self.dir.join("todo.json"))
+            .reschedule_consumed(consumed, now)
+        {
+            Ok(ids) => ids,
             Err(e) => {
-                eprintln!("Daemon: failed to load TODO list for reschedule: {e}");
+                eprintln!("Daemon: failed to reschedule TODO list: {e}");
                 return;
             }
         };
-        let now = self.clock.local_now();
-        let ids = crate::todo::reschedule_consumed(&mut list, consumed, now);
-        if let Err(e) = list.save(&path) {
-            eprintln!("Daemon: failed to save rescheduled TODO list: {e}");
-            return;
-        }
         eprintln!(
             "Daemon: rescheduled {} consumed TODO(s) after crash (new ids: {:?})",
             ids.len(),

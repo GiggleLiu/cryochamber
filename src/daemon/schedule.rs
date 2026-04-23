@@ -162,22 +162,10 @@ pub(super) fn compute_sleep_timeout(
 /// Iterates all pending TODOs, parses each `at` field, and returns the earliest
 /// valid timestamp. Invalid or unparseable entries are skipped with a warning.
 pub(super) fn next_wake_from_todos(dir: &Path) -> Option<NaiveDateTime> {
-    let path = dir.join("todo.json");
-    let list = crate::todo::TodoList::load(&path).ok()?;
-    list.items()
-        .iter()
-        .filter(|i| !i.done && !i.at.is_empty())
-        .filter_map(|i| {
-            let parsed = NaiveDateTime::parse_from_str(&i.at, WAKE_TIME_FMT);
-            if parsed.is_err() {
-                eprintln!(
-                    "Daemon: Skipping TODO #{} with invalid at value: {:?}",
-                    i.id, i.at
-                );
-            }
-            parsed.ok()
-        })
-        .min()
+    crate::todo::TodoFile::new(dir.join("todo.json"))
+        .next_valid_wake()
+        .ok()
+        .flatten()
 }
 
 /// Check if the scheduled wake time is significantly in the past (machine suspend).

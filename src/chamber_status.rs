@@ -103,8 +103,8 @@ pub fn messages(dir: &Path) -> Vec<ChamberMessage> {
 }
 
 pub fn todos(dir: &Path) -> Vec<crate::todo::TodoItem> {
-    crate::todo::TodoList::load(&dir.join("todo.json"))
-        .map(|list| list.items().to_vec())
+    crate::todo::TodoFile::new(dir.join("todo.json"))
+        .items()
         .unwrap_or_default()
 }
 
@@ -143,9 +143,10 @@ pub fn overview(dir: &Path) -> ChamberOverview {
 }
 
 fn next_wake(dir: &Path) -> Option<String> {
-    crate::todo::TodoList::load(&dir.join("todo.json"))
+    crate::todo::TodoFile::new(dir.join("todo.json"))
+        .next_wake_time()
         .ok()
-        .and_then(|list| list.next_wake_time().map(String::from))
+        .flatten()
 }
 
 fn wake_imminent(next_wake: Option<&str>) -> bool {
