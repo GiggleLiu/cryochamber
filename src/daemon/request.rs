@@ -25,7 +25,6 @@ pub(super) enum DaemonRequest {
         text: String,
     },
     Todo(TodoRequest),
-    Receive,
 }
 
 impl From<crate::socket::Request> for DaemonRequest {
@@ -49,7 +48,6 @@ impl From<crate::socket::Request> for DaemonRequest {
             crate::socket::Request::TodoDone { id } => Self::Todo(TodoRequest::Done { id }),
             crate::socket::Request::TodoRemove { id } => Self::Todo(TodoRequest::Remove { id }),
             crate::socket::Request::TodoList => Self::Todo(TodoRequest::List),
-            crate::socket::Request::Receive => Self::Receive,
         }
     }
 }

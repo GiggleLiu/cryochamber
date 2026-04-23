@@ -9,10 +9,12 @@ use super::SessionLoopOutcome;
 /// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 pub(super) const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 
-/// Tracks retry state with exponential backoff.
+/// Tracks which provider the daemon is currently using and lets callers
+/// advance through the configured provider pool. Agent failures no longer
+/// drive auto-retries, so there is no attempt counter or backoff — the
+/// scheduler just waits for the next TODO or inbox wake.
 #[derive(Debug)]
 pub struct RetryState {
-    pub attempt: u32,
     pub provider_index: usize,
     provider_count: usize,
 }
@@ -20,37 +22,22 @@ pub struct RetryState {
 impl RetryState {
     pub fn new(provider_count: usize) -> Self {
         Self {
-            attempt: 0,
             provider_index: 0,
             provider_count,
         }
     }
 
-    /// Calculate backoff duration for current attempt.
-    /// Doubles each time: 5s, 10s, 20s, ..., capped at 3600s (1 hour).
-    /// Always returns a duration (retries indefinitely with backoff).
-    pub fn next_backoff(&self) -> Duration {
-        let secs = 5u64.checked_shl(self.attempt).unwrap_or(3600).min(3600);
-        Duration::from_secs(secs)
-    }
-
-    pub fn record_failure(&mut self) {
-        self.attempt += 1;
-    }
-
     pub fn reset(&mut self) {
-        self.attempt = 0;
         self.provider_index = 0;
     }
 
     /// Advance to the next provider. Returns true if we wrapped back to index 0
-    /// (all providers have been tried in this cycle). Resets retry attempt counter.
+    /// (all providers have been tried in this cycle).
     pub fn rotate_provider(&mut self) -> bool {
         if self.provider_count <= 1 {
             return true; // can't rotate with 0 or 1 provider
         }
         self.provider_index = (self.provider_index + 1) % self.provider_count;
-        self.attempt = 0;
         self.provider_index == 0 // wrapped
     }
 }
@@ -79,19 +66,6 @@ pub(super) enum SessionRunResult<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct RetryPlan {
-    pub(super) backoff: Duration,
-}
-
-impl RetryPlan {
-    pub(super) fn for_state(retry: &RetryState) -> Self {
-        Self {
-            backoff: retry.next_backoff(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProviderRotationReason {
     QuickExit,
     Failure,
@@ -117,10 +91,6 @@ pub(super) enum NextStep {
         next_provider_index: usize,
         wrapped: bool,
         reason: ProviderRotationReason,
-    },
-    Retry {
-        next_wake: Option<NaiveDateTime>,
-        plan: RetryPlan,
     },
 }
 
@@ -158,15 +128,14 @@ pub(super) fn decide_next_step(
                     },
                 };
             }
-            NextStep::Retry {
-                next_wake,
-                plan: RetryPlan::for_state(retry),
-            }
+            // Agent failed to hibernate cleanly (or returned --exit N) and
+            // rotation is disabled for this failure mode: don't retry.
+            // Wait for the next TODO / inbox event just like a normal hibernate.
+            NextStep::Hibernate { next_wake }
         }
-        SessionRunResult::Error => NextStep::Retry {
-            next_wake,
-            plan: RetryPlan::for_state(retry),
-        },
+        // Internal error spawning or driving the session. Persist and
+        // wait for the next scheduled wake instead of hammering a retry.
+        SessionRunResult::Error => NextStep::Hibernate { next_wake },
     }
 }
 

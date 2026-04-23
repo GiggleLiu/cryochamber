@@ -142,7 +142,9 @@ cryo-agent hibernate [--complete|--exit N] [--summary "..."]   # End the session
 - **Inbox messages wake you early.** Humans can send messages. They appear inline in the `## Inbox` section of your prompt — follow the section hint to decide whether to call `cryo-agent receive` for the rest.
 - **Human communication goes through `cryo-agent`.** Use `send`/`reply`; stdout/stderr are logs only.
 - **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.
-- **No hibernate = crash.** If you exit without calling `cryo-agent hibernate`, the daemon retries with backoff.
+- **TODOs that triggered this wake are already consumed.** The daemon marks every past-due pending TODO as done before spawning you so you don't react to the same item twice. They will not appear in `## TODO List`; add a new TODO for any follow-up work.
+- **No hibernate = crash, and the consumed TODO comes back later.** If you exit without calling `cryo-agent hibernate`, the daemon re-injects each consumed TODO with a `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). There is no immediate auto-retry; the chamber simply waits for the rescheduled TODO (or an inbox message).
+- **Inbox messages are previewed, not consumed, by the daemon.** `## Inbox` shows messages currently in `messages/inbox/` as a preview. Messages are archived only when *you* call `cryo-agent receive`. If you don't run `receive`, the same messages will appear again on your next wake — including after a crash, so no message is ever lost in a crash archive.
 - **No TODO = chamber goes silent.** Without a pending TODO, the daemon has nothing to wake for.
 - **Delayed wakes happen.** If the machine was suspended, you'll see a system notice. Adjust accordingly.
 - **Hibernate is terminal.** Nothing you do after hibernate will take effect. Put all work before it.

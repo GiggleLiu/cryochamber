@@ -1,6 +1,15 @@
 use anyhow::{Context, Result};
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+/// Minute-precision format shared with the daemon scheduler. Kept private so
+/// `TodoList` owns all time-string parsing in one place.
+const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
+
+/// Maximum per-attempt reschedule delay. Beyond this, exponential backoff is
+/// clamped to one day so a persistently failing TODO still polls once a day.
+const RETRY_DELAY_CAP_MINUTES: i64 = 24 * 60;
 
 /// A single todo item with an ID, text, scheduled time, and completion status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +136,83 @@ impl TodoList {
         self.items.remove(pos);
         Ok(())
     }
+
+    /// Mark every pending TODO whose `at` time is <= `now` as done and
+    /// return `(text, at)` for each. Items with invalid / empty `at` are
+    /// skipped. Call this at session wake so the agent does not re-react
+    /// to the same TODO on the next session and the scheduler does not
+    /// re-fire the wake immediately. The returned entries let the caller
+    /// re-inject them with an attempt bump if the session crashes.
+    pub fn consume_past_due(&mut self, now: &NaiveDateTime) -> Vec<(String, String)> {
+        let mut consumed = Vec::new();
+        for item in self.items.iter_mut() {
+            if item.done || item.at.is_empty() {
+                continue;
+            }
+            if let Ok(at) = NaiveDateTime::parse_from_str(&item.at, WAKE_TIME_FMT) {
+                if at <= *now {
+                    consumed.push((item.text.clone(), item.at.clone()));
+                    item.done = true;
+                }
+            }
+        }
+        consumed
+    }
+}
+
+/// Strip a trailing ` (attempt N)` suffix. Returns (base text, attempt
+/// number). Text without the suffix is treated as attempt 0.
+pub fn parse_attempt(text: &str) -> (String, u32) {
+    if let Some(open) = text.rfind(" (attempt ") {
+        let rest = &text[open + " (attempt ".len()..];
+        if let Some(inner) = rest.strip_suffix(')') {
+            if let Ok(n) = inner.parse::<u32>() {
+                return (text[..open].to_string(), n);
+            }
+        }
+    }
+    (text.to_string(), 0)
+}
+
+/// Render attempt-bumped text. `parse_attempt(text).1 + 1` is the new
+/// attempt number; `"base" -> "base (attempt 1)"`,
+/// `"base (attempt 1)" -> "base (attempt 2)"`.
+pub fn bump_attempt(text: &str) -> (String, u32) {
+    let (base, prev) = parse_attempt(text);
+    let next = prev.saturating_add(1);
+    (format!("{base} (attempt {next})"), next)
+}
+
+/// Reschedule delay in minutes for attempt `k` (1-indexed). `2^k`,
+/// clamped at `RETRY_DELAY_CAP_MINUTES` (1 day). `k == 0` is treated as
+/// `k == 1` (minimum delay) to keep the caller's arithmetic simple when
+/// the upstream attempt counter has not been bumped yet.
+pub fn retry_delay_minutes(attempt: u32) -> i64 {
+    let k = attempt.max(1);
+    if k >= 11 {
+        return RETRY_DELAY_CAP_MINUTES;
+    }
+    (1i64 << k).min(RETRY_DELAY_CAP_MINUTES)
+}
+
+/// Re-inject consumed TODOs after a crashed session. Each `(text, _at)`
+/// becomes a fresh item whose text is `bump_attempt(text)` and whose
+/// `at` is `now + retry_delay_minutes(attempt)`. Returns the IDs of the
+/// added items.
+pub fn reschedule_consumed(
+    list: &mut TodoList,
+    consumed: &[(String, String)],
+    now: NaiveDateTime,
+) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for (text, _) in consumed {
+        let (new_text, attempt) = bump_attempt(text);
+        let delay_min = retry_delay_minutes(attempt);
+        let at = now + chrono::Duration::minutes(delay_min);
+        let at_str = at.format(WAKE_TIME_FMT).to_string();
+        ids.push(list.add(new_text, at_str));
+    }
+    ids
 }
 
 fn todo_checkmark(done: bool) -> &'static str {

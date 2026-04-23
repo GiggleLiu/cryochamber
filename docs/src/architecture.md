@@ -23,12 +23,12 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
-| `socket` | Unix domain socket IPC protocol. | `enum Request` (`Ping`, `Hello`, `Hibernate`, `Reply`, `TodoAdd/Done/Remove`, `TodoList`, `Receive`), `struct Response`, `fn socket_path`, `fn send_request`. |
+| `socket` | Unix domain socket IPC protocol. | `enum Request` (`Ping`, `Hello`, `Hibernate`, `Reply`, `TodoAdd/Done/Remove`, `TodoList`), `struct Response`, `fn socket_path`, `fn send_request`. |
 | `daemon_client` | Thin CLI → daemon IPC wrapper. | `fn send_request`, `fn send_checked_request`, `fn daemon_responding`, `fn signal_daemon_wake`. |
-| `daemon` | Persistent event loop: socket server, inbox `notify` watcher, SIGUSR1 wake, timeout enforcement, retries with backoff (5s/15s/60s), delayed-wake detection. | `enum DaemonEvent`, `trait Clock`, `trait EventSource`, `async fn run`, `fn main_loop`. |
+| `daemon` | Persistent event loop: socket server, inbox `notify` watcher, SIGUSR1 wake, timeout enforcement, TODO consumption / attempt-based rescheduling on crash, delayed-wake detection. | `enum DaemonEvent`, `trait Clock`, `trait EventSource`, `async fn run`, `fn main_loop`. |
 | `daemon::effects` | Session I/O abstraction (inbox reads, reply posting, TODO mutation). | `trait SessionEffects`, `enum ReplyAuthor`, `struct FsSessionEffects`. |
 | `daemon::request` | Request parsing and hibernate-decision logic. | `enum DaemonRequest`, `enum TodoRequest`, `struct HibernateDecision`, `fn resolve_hibernate_request`. |
-| `daemon::schedule` | Retry backoff and provider rotation. | `struct RetryState`, `fn next_backoff`, `fn rotate_provider`. |
+| `daemon::schedule` | Provider rotation and wake-time scheduling. | `struct RetryState`, `fn rotate_provider`, `fn next_wake_from_todos`. |
 | `daemon::session` | Session runtime: process spawn, request/response loop, wait/terminate. | `trait SessionRuntime`, `struct ChildExitStatus`. |
 | `lifecycle` | Session startup validation and chamber lifecycle operations. | `enum DaemonLaunchMode`, `struct StartOptions`, `struct PreparedStart`, `fn require_valid_project`, `fn require_live_daemon`, `fn prepare_start`, `fn validate_agent_command`. |
 | `process` | Process management utilities. | `fn send_signal`, `fn terminate_pid`, `fn spawn_daemon`. |
@@ -40,8 +40,8 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
 | `config` | TOML project config (`cryo.toml`), with CLI overrides merged from runtime state. | `struct CryoConfig`, `struct ProviderConfig`, `enum RotateOn`, `fn load_config`, `fn save_config`. |
-| `state` | JSON runtime state (`timer.json`): session number, PID lock, retry count, CLI overrides. PID-based locking via `libc::kill(pid, 0)`. | `struct CryoState`, `fn load_state`, `fn save_state`, `fn is_locked`. |
-| `todo` | Per-project TODO list (`todo.json`); mutated through daemon IPC so scheduling changes serialize with the session lifecycle. | `struct TodoList`, `struct TodoItem`, `fn load`, `fn save`, `fn add`, `fn done`, `fn remove`, `fn display`. |
+| `state` | JSON runtime state (`timer.json`): session number, PID lock, CLI overrides. PID-based locking via `libc::kill(pid, 0)`. | `struct CryoState`, `fn load_state`, `fn save_state`, `fn is_locked`. |
+| `todo` | Per-project TODO list (`todo.json`); mutated through daemon IPC so scheduling changes serialize with the session lifecycle. Also owns attempt-bump / retry-delay helpers used by the daemon when re-injecting consumed TODOs after a crash. | `struct TodoList`, `struct TodoItem`, `fn load`, `fn save`, `fn add`, `fn done`, `fn remove`, `fn display`, `fn consume_past_due`, `fn parse_attempt`, `fn bump_attempt`, `fn retry_delay_minutes`, `fn reschedule_consumed`. |
 | `protocol` | Loads templates from `templates/` via `include_str!` and writes them into the project. | `enum ProtocolFile`, `fn protocol_filename`, `fn find_protocol_file`, `fn write_protocol_file`, `fn write_template_plan`, `fn write_config_file`. |
 
 ### Agent, logging, and chamber status
@@ -57,7 +57,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
-| `message` | File-based inbox/outbox I/O. Inbox messages are included in the agent prompt on wake. | `struct Message`, `fn ensure_dirs`, `fn write_message`, `fn read_inbox`, `fn list_inbox`, `fn archive_messages`. |
+| `message` | File-based inbox/outbox I/O. `cryo-agent receive` archives inbox messages; the daemon only checks whether inbox files exist. | `struct Message`, `fn ensure_dirs`, `fn write_message`, `fn read_inbox`, `fn list_inbox`, `fn archive_messages`. |
 | `channel` | Channel abstraction over messaging backends. | `trait MessageChannel` (read inbox, post reply). |
 | `channel::file` | Local `messages/inbox/` + `messages/outbox/` backend. | `struct FileChannel::new`. |
 | `channel::github` | GitHub Discussions backend via `gh` CLI / GraphQL. | `fn whoami`, `fn gh_graphql`, `fn build_fetch_comments_query`, `fn build_post_comment_mutation`. |
@@ -85,7 +85,8 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 - **Config / state split.** `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Daemon-authored stand-in replies.** When a session ends without any agent-authored outbox message, the daemon writes a `from: cryochamber` message so operators always see at least one update per session. All chamber-level messages (stand-in replies, periodic reports) share the single `cryochamber` sender.
 - **Agent notes via `NOTES.md`.** The agent's persistent memory across sessions is a plain markdown file the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes tab.
-- **Graceful degradation.** If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff (5s/15s/60s). `EventLogger` is always finalized even on error.
+- **Crash handling via TODO re-injection.** If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it consumed for that wake with a ` (attempt k)` suffix and an exponential delay (`2^k` minutes, capped at 1 day). There is no in-daemon backoff-retry loop — rescheduling is expressed entirely through the TODO list so it survives daemon restarts and is visible to both the agent and operators. `EventLogger` is still finalized on every outcome.
+- **Daemon does not preview inbox, agent receives it.** Wake-time prompts do not include inbox contents. The daemon only notices that inbox files exist and surfaces that fact in the session prompt. Only `cryo-agent receive` moves them into `messages/inbox/archive/`. A crashed session therefore leaves its inbox intact, and the next wake sees exactly the same messages — no special "check archive" recovery step is needed.
 - **`cryohub` is cwd-scoped.** The web dashboard binary always operates on the current directory — no `--dir` flag. The cwd must not itself be a chamber. Discovery scans `<cwd>/*` for chamber subdirectories. The service label is `com.cryo.hub.<hash>`; `cryohub status` additionally lists every other `com.cryo.hub.*` service installed on the machine.
 - **Default agent.** The CLI defaults to `opencode` (headless mode, not the TUI).
 
@@ -93,7 +94,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | File | Purpose |
 |------|---------|
-| `timer.json` | Runtime state (session number, PID lock, retry count, CLI overrides). |
+| `timer.json` | Runtime state (session number, PID lock, CLI overrides). |
 | `todo.json` | Per-project TODO items for agent task tracking. |
 | `cryo.log` | Append-only structured event log. |
 | `cryo-agent.log` | Agent stdout/stderr (raw tool-call output). |

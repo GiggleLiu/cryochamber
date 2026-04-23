@@ -172,7 +172,7 @@ use effects::{ReplyAuthor, SessionEffects};
 pub use schedule::RetryState;
 use schedule::{
     compute_sleep_timeout, decide_next_step, delayed_wake_notice, next_wake_from_todos,
-    DaemonBootstrapState, NextStep, RetryPlan, SessionRunResult,
+    DaemonBootstrapState, NextStep, SessionRunResult,
 };
 #[cfg(test)]
 use schedule::{
@@ -266,10 +266,6 @@ impl HumanReplyTracker {
 
     fn has_agent_outbound_message(&self) -> bool {
         self.agent_outbound_sent
-    }
-
-    fn known_filenames(&self) -> &[String] {
-        &self.known_filenames
     }
 
     fn unreplied_filenames(&self) -> &[String] {
@@ -448,11 +444,13 @@ fn resolve_child_exit(
 
 const PREVIOUS_SESSION_CRASH_NOTICE: &str =
     "PREVIOUS SESSION CRASHED: The agent exited without calling \
-     `cryo-agent hibernate`. A reply may have been partially sent. \
-     Check `messages/inbox/archive/` for any message that arrived \
-     during the crashed session; if it still needs a user-visible \
-     response, send it now via `cryo-agent reply` or \
-     `cryo-agent send` before doing the normal session work.";
+     `cryo-agent hibernate`. Any inbox messages the previous session \
+     received are still in `messages/inbox/` (the daemon does not \
+     preview or consume them). Run `cryo-agent receive` to read and \
+     archive them, then reply via `cryo-agent reply` / \
+     `cryo-agent send` if the user is still waiting for a response. \
+     Any TODO that triggered the crashed wake has been re-queued \
+     with an `(attempt k)` suffix and an exponential delay.";
 
 fn session_prompt_notice(
     delayed_wake: Option<&str>,
@@ -651,9 +649,7 @@ impl Daemon {
                 let response = handle_todo_request(todo_request, &mut effects).into_response();
                 let _ = responder.respond(&response);
             }
-            DaemonRequest::Hibernate { .. }
-            | DaemonRequest::Reply { .. }
-            | DaemonRequest::Receive => {
+            DaemonRequest::Hibernate { .. } | DaemonRequest::Reply { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
                     message:
@@ -728,7 +724,6 @@ impl Daemon {
                     .map(|p| p.name.as_str())
                     .unwrap_or("unknown");
                 state.retry.provider_index = next_provider_index;
-                state.retry.attempt = 0;
                 let new_name = config
                     .providers
                     .get(state.retry.provider_index)
@@ -751,17 +746,6 @@ impl Daemon {
                     if self.sleep_or_shutdown(Duration::from_secs(60)) {
                         return Ok(LoopControl::Break);
                     }
-                }
-                *state.run_now = true;
-                Ok(LoopControl::Continue)
-            }
-            NextStep::Retry {
-                next_wake: refreshed_next_wake,
-                plan,
-            } => {
-                *state.next_wake = refreshed_next_wake;
-                if self.apply_failure_retry_plan(state.retry, plan) {
-                    return Ok(LoopControl::Break);
                 }
                 *state.run_now = true;
                 Ok(LoopControl::Continue)
@@ -919,6 +903,13 @@ impl Daemon {
                     active_provider.map(|p| p.env.clone()).unwrap_or_default();
                 let provider_name = active_provider.map(|p| p.name.as_str());
 
+                // Consume past-due TODOs before spawning the agent so it
+                // does not re-react to the same scheduled item twice and
+                // the scheduler does not loop on a stale wake. If the
+                // session crashes we re-inject the consumed items with an
+                // attempt-bumped text and exponential delay.
+                let consumed_todos = self.consume_past_due_todos();
+
                 let session_result = match self.run_one_session(
                     config,
                     cryo_state,
@@ -930,6 +921,9 @@ impl Daemon {
                     Ok(outcome) => {
                         // Single source of truth: outcome decides crash-status.
                         cryo_state.previous_session_crashed = outcome.is_crash();
+                        if outcome.is_crash() {
+                            self.reschedule_consumed_after_crash(&consumed_todos);
+                        }
                         // Persist session number only after successful completion
                         self.save_state(cryo_state)?;
                         Ok(outcome)
@@ -937,6 +931,7 @@ impl Daemon {
                     Err(e) => {
                         cryo_state.session_number -= 1;
                         cryo_state.previous_session_crashed = true;
+                        self.reschedule_consumed_after_crash(&consumed_todos);
                         let _ = self.save_state(cryo_state);
                         eprintln!("Daemon: session failed: {e}");
                         Err(())
@@ -1095,26 +1090,6 @@ impl Daemon {
                 }
                 let _ = runtime.respond(ok, message);
             }
-            DaemonRequest::Receive => match effects.receive_inbox() {
-                Ok((body, filenames)) => {
-                    state.reply_tracker.record_inbox_messages(&filenames);
-                    if filenames.is_empty() {
-                        state.logger.log_event("receive: 0 messages")?;
-                    } else {
-                        state.logger.log_event(&format!(
-                            "receive: {} message{} [{}]",
-                            filenames.len(),
-                            if filenames.len() == 1 { "" } else { "s" },
-                            filenames.join(", "),
-                        ))?;
-                    }
-                    let _ = runtime.respond(true, body);
-                }
-                Err(e) => {
-                    state.logger.log_event(&format!("receive failed: {e}"))?;
-                    let _ = runtime.respond(false, format!("Failed to receive: {e}"));
-                }
-            },
         }
         Ok(())
     }
@@ -1153,12 +1128,6 @@ impl Daemon {
                 )
                 .context("failed to write daemon status for session without outbound message")?;
             logger.log_event("daemon reply: no outbound message sent by agent")?;
-        }
-
-        if !reply_tracker.known_filenames().is_empty() {
-            effects
-                .archive_inbox_messages(reply_tracker.known_filenames())
-                .context("failed to archive answered inbox messages")?;
         }
 
         Ok(())
@@ -1275,22 +1244,61 @@ impl Daemon {
         }
     }
 
-    /// Apply a precomputed retry plan with exponential backoff (5s, 10s, ..., 1h cap).
-    /// Returns true if the daemon should shut down.
-    fn apply_failure_retry_plan(&self, retry: &mut RetryState, plan: RetryPlan) -> bool {
-        retry.record_failure();
-        eprintln!(
-            "Daemon: retry {} in {}s",
-            retry.attempt,
-            plan.backoff.as_secs()
-        );
-        self.sleep_or_shutdown(plan.backoff)
-    }
-
     fn get_task(&self) -> Option<String> {
         crate::log::parse_latest_session_task(&self.log_path)
             .ok()
             .flatten()
+    }
+
+    /// Mark past-due pending TODOs as done and return their `(text, at)` so
+    /// the caller can re-inject them with an attempt bump if the session
+    /// crashes. Load/save failures are swallowed and reported to stderr —
+    /// TODO bookkeeping must never abort the session loop.
+    fn consume_past_due_todos(&self) -> Vec<(String, String)> {
+        let path = self.dir.join("todo.json");
+        let mut list = match crate::todo::TodoList::load(&path) {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("Daemon: failed to load TODO list for consumption: {e}");
+                return Vec::new();
+            }
+        };
+        let now = self.clock.local_now();
+        let consumed = list.consume_past_due(&now);
+        if !consumed.is_empty() {
+            if let Err(e) = list.save(&path) {
+                eprintln!("Daemon: failed to save consumed TODO list: {e}");
+            }
+        }
+        consumed
+    }
+
+    /// Re-inject previously-consumed TODOs after a crashed session. Each
+    /// item's text gains a ` (attempt k)` suffix (or its existing suffix is
+    /// bumped) and its `at` becomes `now + 2^k` minutes, capped at 1 day.
+    fn reschedule_consumed_after_crash(&self, consumed: &[(String, String)]) {
+        if consumed.is_empty() {
+            return;
+        }
+        let path = self.dir.join("todo.json");
+        let mut list = match crate::todo::TodoList::load(&path) {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("Daemon: failed to load TODO list for reschedule: {e}");
+                return;
+            }
+        };
+        let now = self.clock.local_now();
+        let ids = crate::todo::reschedule_consumed(&mut list, consumed, now);
+        if let Err(e) = list.save(&path) {
+            eprintln!("Daemon: failed to save rescheduled TODO list: {e}");
+            return;
+        }
+        eprintln!(
+            "Daemon: rescheduled {} consumed TODO(s) after crash (new ids: {:?})",
+            ids.len(),
+            ids,
+        );
     }
 
     /// Generate and send the periodic activity report.

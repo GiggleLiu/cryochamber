@@ -47,7 +47,6 @@ fn daemon_scheduling_and_bootstrap_live_in_schedule_module() {
 
     for item in [
         "struct RetryState",
-        "struct RetryPlan",
         "fn should_rotate_provider",
         "fn compute_sleep_timeout",
         "fn next_wake_from_todos",
@@ -213,15 +212,8 @@ struct FakeSessionEffects {
     reply_failure: Option<String>,
     replies: Vec<(ReplyAuthor, String, NaiveDateTime)>,
     inbox_filenames: Vec<String>,
-    archived_filenames: Vec<String>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
-    /// Queued results for successive `receive_inbox()` calls. Each call pops the
-    /// front; tests that don't care leave this empty and get the default.
-    receive_responses: std::collections::VecDeque<(String, Vec<String>)>,
-    /// Number of `receive_inbox()` calls observed. Used by tests that want to
-    /// assert the daemon archived via the session effect.
-    receive_calls: u32,
 }
 
 impl FakeSessionEffects {
@@ -230,11 +222,8 @@ impl FakeSessionEffects {
             reply_failure: None,
             replies: Vec::new(),
             inbox_filenames: Vec::new(),
-            archived_filenames: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
-            receive_responses: std::collections::VecDeque::new(),
-            receive_calls: 0,
         }
     }
 
@@ -274,23 +263,6 @@ impl FakeSessionEffects {
 impl SessionEffects for FakeSessionEffects {
     fn list_inbox_filenames(&self) -> Result<Vec<String>> {
         Ok(self.inbox_filenames.clone())
-    }
-
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
-        self.receive_calls += 1;
-        let response = self
-            .receive_responses
-            .pop_front()
-            .unwrap_or_else(|| ("No messages.\n".to_string(), Vec::new()));
-        self.archive_inbox_messages(&response.1)?;
-        Ok(response)
-    }
-
-    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()> {
-        self.archived_filenames.extend(filenames.iter().cloned());
-        self.inbox_filenames
-            .retain(|filename| !filenames.iter().any(|archived| archived == filename));
-        Ok(())
     }
 
     fn write_reply(
@@ -501,78 +473,6 @@ impl EventSource for FakeEventSource {
 }
 
 #[test]
-fn test_backoff_sequence() {
-    let mut state = RetryState::new(1);
-    // 5s, 10s, 20s, 40s, 80s, then keeps going capped at 3600s
-    assert_eq!(state.next_backoff(), Duration::from_secs(5));
-
-    state.record_failure();
-    assert_eq!(state.next_backoff(), Duration::from_secs(10));
-
-    state.record_failure();
-    assert_eq!(state.next_backoff(), Duration::from_secs(20));
-
-    state.record_failure();
-    assert_eq!(state.next_backoff(), Duration::from_secs(40));
-
-    state.record_failure();
-    assert_eq!(state.next_backoff(), Duration::from_secs(80));
-
-    state.record_failure();
-    assert_eq!(state.attempt, 5);
-    assert_eq!(state.next_backoff(), Duration::from_secs(160));
-}
-
-#[test]
-fn test_backoff_caps_at_one_hour() {
-    let mut state = RetryState::new(1);
-    for _ in 0..15 {
-        state.record_failure();
-    }
-    // 5 * 2^15 = 163840 > 3600, so capped
-    assert_eq!(state.next_backoff(), Duration::from_secs(3600));
-}
-
-#[test]
-fn test_backoff_reset() {
-    let mut state = RetryState::new(1);
-    state.record_failure();
-    state.record_failure();
-    assert_eq!(state.attempt, 2);
-
-    state.reset();
-    assert_eq!(state.attempt, 0);
-}
-
-#[test]
-fn test_backoff_exact_sequence() {
-    let mut retry = RetryState::new(1);
-    let expected = [5, 10, 20, 40, 80, 160, 320, 640, 1280, 2560, 3600, 3600];
-    for (i, &secs) in expected.iter().enumerate() {
-        assert_eq!(
-            retry.next_backoff(),
-            Duration::from_secs(secs),
-            "Backoff at attempt {i} should be {secs}s"
-        );
-        retry.record_failure();
-    }
-}
-
-#[test]
-fn test_backoff_cap_never_exceeds_3600() {
-    let mut retry = RetryState::new(1);
-    for _ in 0..100 {
-        let backoff = retry.next_backoff();
-        assert!(
-            backoff <= Duration::from_secs(3600),
-            "Backoff should never exceed 3600s, got {:?}",
-            backoff
-        );
-        retry.record_failure();
-    }
-}
-
-#[test]
 fn test_rotate_provider_single_provider() {
     let mut retry = RetryState::new(1);
     // With only 1 provider, rotate always returns true (can't rotate)
@@ -599,17 +499,12 @@ fn test_rotate_provider_advances_and_wraps() {
 }
 
 #[test]
-fn test_reset_clears_attempt_and_provider() {
+fn test_reset_clears_provider_index() {
     let mut retry = RetryState::new(3);
-    retry.record_failure();
-    retry.record_failure();
-    retry.rotate_provider(); // index = 1, attempt reset to 0 by rotate
-    retry.record_failure(); // attempt = 1
-    assert_eq!(retry.attempt, 1);
+    retry.rotate_provider();
     assert_eq!(retry.provider_index, 1);
 
     retry.reset();
-    assert_eq!(retry.attempt, 0);
     assert_eq!(
         retry.provider_index, 0,
         "Provider index should be reset to 0"
@@ -1065,10 +960,6 @@ fn test_daemon_request_classification_groups_todo_variants() {
         DaemonRequest::from(crate::socket::Request::TodoDone { id: 7 }),
         DaemonRequest::Todo(TodoRequest::Done { id: 7 })
     );
-    assert_eq!(
-        DaemonRequest::from(crate::socket::Request::Receive),
-        DaemonRequest::Receive
-    );
 }
 
 #[test]
@@ -1166,7 +1057,6 @@ fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
     };
     let mut retry = RetryState::new(config.providers.len());
     retry.provider_index = 1;
-    retry.attempt = 3;
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
@@ -1190,14 +1080,15 @@ fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
         }
     );
     assert_eq!(retry.provider_index, 1, "decision must be pure");
-    assert_eq!(retry.attempt, 3, "decision must not reset attempts");
 }
 
 #[test]
-fn test_decide_next_step_retries_failures_with_backoff() {
+fn test_decide_next_step_error_hibernates_without_retry() {
+    // Agent startup/driver errors no longer auto-retry. The daemon records
+    // the crash (via `previous_session_crashed`) and waits for the next
+    // TODO or inbox event instead of hammering a backoff loop.
     let config = CryoConfig::default();
-    let mut retry = RetryState::new(config.providers.len());
-    retry.attempt = 4;
+    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
@@ -1207,11 +1098,39 @@ fn test_decide_next_step_retries_failures_with_backoff() {
 
     assert_eq!(
         step,
-        NextStep::Retry {
+        NextStep::Hibernate {
             next_wake: Some(next_wake),
-            plan: RetryPlan {
-                backoff: Duration::from_secs(80),
-            },
+        }
+    );
+}
+
+#[test]
+fn test_decide_next_step_validation_failed_hibernates_without_retry() {
+    // With provider rotation disabled, a ValidationFailed outcome (agent
+    // crashed or returned --exit N) no longer triggers a retry plan. It
+    // falls through to Hibernate so the daemon waits for the next TODO.
+    let config = CryoConfig {
+        rotate_on: crate::config::RotateOn::Never,
+        ..CryoConfig::default()
+    };
+    let retry = RetryState::new(config.providers.len());
+    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
+
+    let step = decide_next_step(
+        SessionRunResult::Outcome(&outcome),
+        &config,
+        &retry,
+        Some(next_wake),
+    );
+
+    assert_eq!(
+        step,
+        NextStep::Hibernate {
+            next_wake: Some(next_wake),
         }
     );
 }
@@ -1474,14 +1393,11 @@ fn test_drive_active_session_daemon_replies_when_received_messages_unanswered() 
     let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
     let cryo_state = test_cryo_state();
     let mut runtime = FakeSessionRuntime::new(
-        vec![
-            Ok(Some(crate::socket::Request::Receive)),
-            Ok(Some(crate::socket::Request::Hibernate {
-                complete: true,
-                exit_code: 0,
-                summary: Some("done".into()),
-            })),
-        ],
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: true,
+            exit_code: 0,
+            summary: Some("done".into()),
+        }))],
         vec![
             Ok(None),
             Ok(None),
@@ -1489,10 +1405,7 @@ fn test_drive_active_session_daemon_replies_when_received_messages_unanswered() 
         ],
     );
     let mut effects = FakeSessionEffects::new();
-    effects.receive_responses.push_back((
-        "--- human-1.md ---\nFrom: human\n\nCan you check this?\n\n".into(),
-        vec!["human-1.md".into()],
-    ));
+    effects.inbox_filenames = vec!["human-1.md".into()];
 
     let outcome = daemon
         .drive_active_session(
@@ -1562,7 +1475,6 @@ fn test_drive_active_session_agent_reply_satisfies_queued_inbox_message() {
     assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
     assert_eq!(effects.replies.len(), 1);
     assert_eq!(effects.replies[0].0, ReplyAuthor::Agent);
-    assert_eq!(effects.archived_filenames, vec!["human-1.md"]);
 }
 
 #[test]
@@ -1650,7 +1562,6 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
 
     let mut runtime = FakeSessionRuntime::new(
         vec![
-            Ok(Some(crate::socket::Request::Receive)),
             Ok(Some(crate::socket::Request::Hibernate {
                 complete: false,
                 exit_code: 0,
@@ -1660,10 +1571,7 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
     let mut effects = FakeSessionEffects::new_with_pending_todo();
-    effects.receive_responses.push_back((
-        "--- msg-1.md ---\nFrom: alice\n\nhi\n\n".to_string(),
-        vec!["msg-1.md".to_string()],
-    ));
+    effects.inbox_filenames = vec!["msg-1.md".to_string()];
 
     let outcome = daemon
         .drive_active_session(
@@ -1675,10 +1583,7 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
         .unwrap();
 
     assert_eq!(outcome, SessionLoopOutcome::Hibernate);
-    assert_eq!(effects.receive_calls, 1);
-    let (ok, body) = &runtime.responses()[0];
-    assert!(*ok);
-    assert!(body.contains("msg-1.md"));
+    assert_eq!(runtime.responses(), vec![(true, "Hibernating.".into())]);
 }
 
 #[test]
@@ -2089,11 +1994,14 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
 }
 
 #[test]
-fn test_run_event_loop_validation_failures_retry_with_backoff() {
-    // ValidationFailed outcomes retry indefinitely with exponential backoff.
-    // Using virtual time the backoff sleeps are free; we assert that multiple
-    // sessions ran, proving the outer loop retried rather than exiting after
-    // the first failure.
+fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
+    // A ValidationFailed outcome used to trigger an in-loop backoff/retry.
+    // With the retry plumbing removed, the session is treated like a
+    // hibernate: the next wake is determined solely by the TODO list (or by
+    // external inbox/wake events). With a past TODO seeded, the scheduler
+    // does still re-fire on the next loop iteration, but there is no
+    // dedicated backoff path — the launcher is drained purely via scheduled
+    // wakes, and the run ends once the queue empties.
     let dir = tempfile::tempdir().unwrap();
     seed_past_todo(dir.path());
     crate::message::ensure_dirs(dir.path()).unwrap();
@@ -2138,7 +2046,8 @@ fn test_run_event_loop_validation_failures_retry_with_backoff() {
         .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
         .unwrap();
 
-    // Both failures were observed before the fallthrough PlanComplete.
+    // Two crashed sessions were consumed from the scripted launcher; the
+    // third (fallthrough PlanComplete) ends the loop.
     let invocations = launcher.session_numbers();
     assert!(
         invocations.len() >= 3,

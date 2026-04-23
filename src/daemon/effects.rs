@@ -7,11 +7,6 @@ use super::schedule::next_wake_from_todos;
 pub(super) trait SessionEffects {
     /// List unread inbox filenames without parsing message bodies.
     fn list_inbox_filenames(&self) -> Result<Vec<String>>;
-    /// Read pending inbox messages and archive them atomically. Returns the
-    /// formatted body the agent will print plus the list of filenames that
-    /// were archived (for the event log).
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)>;
-    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()>;
     fn write_reply(
         &mut self,
         author: ReplyAuthor,
@@ -67,20 +62,6 @@ impl<'a> FsSessionEffects<'a> {
 impl SessionEffects for FsSessionEffects<'_> {
     fn list_inbox_filenames(&self) -> Result<Vec<String>> {
         crate::message::list_inbox(self.dir)
-    }
-
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
-        let messages = crate::message::read_inbox(self.dir)?;
-        let body = crate::message::format_inbox(&messages);
-        let filenames: Vec<String> = messages.into_iter().map(|(name, _)| name).collect();
-        if !filenames.is_empty() {
-            crate::message::archive_messages(self.dir, &filenames)?;
-        }
-        Ok((body, filenames))
-    }
-
-    fn archive_inbox_messages(&mut self, filenames: &[String]) -> Result<()> {
-        crate::message::archive_messages(self.dir, filenames)
     }
 
     fn write_reply(

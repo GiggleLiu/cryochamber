@@ -72,11 +72,7 @@ pub struct AgentConfig {
     pub task: String,
     pub delayed_wake: Option<String>,
     pub todo_list: String,
-    /// Pre-rendered inbox. Empty `content` renders the inbox section with a
-    /// "No new messages." placeholder. `complete = false` means the inbox
-    /// overflowed the prompt cap and was intentionally omitted by the daemon
-    /// (messages are still in `messages/inbox/` for `cryo-agent receive`).
-    pub inbox: PromptSection,
+    pub inbox_waiting: bool,
 }
 
 /// A rendered prompt section plus whether the content is the complete view
@@ -130,11 +126,11 @@ pub fn build_prompt(config: &AgentConfig) -> String {
     let todo = fit_section(&config.todo_list, PROMPT_SECTION_CAP_BYTES);
     let todo_hint = section_hint(todo.complete, "cryo-agent todo list");
 
-    let inbox_hint = section_hint(config.inbox.complete, "cryo-agent receive");
-    let inbox_body = if config.inbox.content.trim().is_empty() {
-        "No new messages.".to_string()
+    let inbox_notice = if config.inbox_waiting {
+        "\n## Inbox\n\nNew inbox messages are waiting. Run `cryo-agent receive` to read and archive them.\n"
+            .to_string()
     } else {
-        config.inbox.content.clone()
+        String::new()
     };
 
     format!(
@@ -156,14 +152,13 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md before s
 
 {todo_content}
 
-## Inbox ({inbox_hint})
-
-{inbox_body}
+{inbox_notice}
 "#,
         session_number = config.session_number,
         delayed = delayed_section,
         task = config.task,
         todo_content = todo.content,
+        inbox_notice = inbox_notice,
     )
 }
 

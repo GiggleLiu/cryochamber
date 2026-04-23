@@ -41,12 +41,14 @@ The daemon isn't running. The `cryo-agent` CLI needs a running daemon to communi
 
 The daemon process died without cleaning up. Run `cryo cancel` to clear the stale state, then `cryo start` again.
 
-### Agent keeps crashing (retries exhausted)
+### Agent keeps crashing and keeps getting re-woken
 
-Check `cryo-agent.log` for the agent's raw output. Common causes:
+A crashed session re-injects the TODO that triggered it with a ` (attempt k)` suffix and a `2^k`-minute delay (capped at 1 day), so the chamber will keep retrying at increasing intervals. Inspect the TODO list (`cryo-agent todo list` from inside the chamber, or look at `todo.json`) and the agent's raw output in `cryo-agent.log`. Common causes:
 - Agent hitting rate limits (add `max_session_duration` to throttle)
 - Missing dependencies in the project
 - Agent doesn't understand the `cryo-agent` protocol (check the generated AGENTS.md/CLAUDE.md)
+
+If you want to break the cycle, remove the `(attempt k)` TODO (via `cryo-agent todo remove <id>` or by editing `todo.json`) and fix the underlying issue before adding a fresh TODO.
 
 ### `cryo-gh`: `gh: command not found`
 

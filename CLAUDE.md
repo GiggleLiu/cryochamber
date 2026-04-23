@@ -70,8 +70,8 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (stdout/stderr redirected to `cryo-agent.log`). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
-| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), and detects delayed wakes (e.g. after machine suspend). |
-| `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
+| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, consumes past-due TODOs before each session, re-injects them with a `(attempt k)` suffix and `2^k`-minute delay (capped at 1 day) on crash, and detects delayed wakes (e.g. after machine suspend). It notices when inbox messages exist but never previews or archives them. |
+| `message` | File-based inbox/outbox message system. `cryo-agent receive` reads and archives inbox messages into `messages/inbox/archive/`; the daemon only checks whether inbox files exist. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL), `zulip` (Zulip REST API). |
 | `registry` | PID file registry for tracking running daemons. Uses `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. |
 | `report` | Periodic session summary reports. Parses log, counts sessions/failures, writes summary to `messages/outbox/` for sync delivery. |
@@ -84,13 +84,14 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 ### Key Design Decisions
 
 - **Daemon mode**: `cryo start` installs an OS service (launchd on macOS, systemd on Linux) that survives reboots. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout. Set `CRYO_NO_SERVICE=1` to fall back to direct background process spawn.
-- **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `send`, `alert`), which send JSON messages over a Unix domain socket. `receive` and `time` are local (no daemon needed).
+- **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `send`, `alert`, `todo`), which send JSON messages over a Unix domain socket. `receive` and `time` are local (no daemon needed).
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
 - **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender — both per-session stand-in replies (when the agent exited without sending anything) and periodic reports. Agent-authored replies use `from: agent`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
-- **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
+- **Crash handling via TODO re-injection**: If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it consumed for that wake with a `(attempt k)` suffix and an exponential delay (`2^k` min, capped at 1 day). There is no in-daemon backoff-retry loop; rescheduling lives entirely in `todo.json`, surviving daemon restarts and visible to both agent and operator. EventLogger is always finalized.
+- **Daemon does not preview inbox, agent receives it**: Wake prompts do not include inbox contents. The daemon only checks whether inbox files exist so it can surface a notice in the session prompt. Only `cryo-agent receive` moves messages into `messages/inbox/archive/`. Crashed sessions therefore leave the inbox intact — no "check archive" recovery path is needed.
 - **Default agent**: The CLI defaults to `opencode` as the agent command (headless mode, not the TUI).
 - **Agent notes via `NOTES.md`**: The agent's persistent memory across sessions is a plain markdown file (`NOTES.md`) the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes drawer tab, and updated by the agent on its own. The removed `cryo-agent note` subcommand and `Request::Note` IPC variant are historical.
 - **`cryo-agent time` input grammar**: Accepts three forms only — empty (current time), `+N minutes|hours|days|weeks` (relative offset), and ISO8601 (`2026-04-25T10:00` or date-only) as validated pass-through. Natural-language parsing is deliberately **not** supported: the agent is an LLM that can reason about "tomorrow 9am" itself, so the tool stays small and documentable. Unknown input prints the accepted forms.
@@ -106,7 +107,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 
 ### Files Created at Runtime (per project directory)
 
-- `timer.json` — runtime state only (session number, PID lock, retry count, CLI overrides)
+- `timer.json` — runtime state only (session number, PID lock, CLI overrides)
 - `cryo.log` — append-only structured event log
 - `cryo-agent.log` — agent stdout/stderr (raw tool-call output)
 - `todo.json` — per-project TODO items for agent task tracking

@@ -102,6 +102,8 @@ cd ~/cryo-chambers && cryohub start
 
 Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary. These are configured automatically when using `/make-plan`.
 
+Inbox semantics are split deliberately: the daemon only notices that inbox messages exist, but only `cryo-agent receive` reads and archives them into `messages/inbox/archive/`.
+
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
 | Hub (Web UI) | `cryohub` | Built-in HTTP server | [Hub](https://giggleliu.github.io/cryochamber/hub.html) |

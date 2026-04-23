@@ -34,43 +34,14 @@ fn origin() -> NaiveDateTime {
 // ---------- RetryState ----------
 
 proptest! {
-    /// The backoff doubling is capped: every attempt yields a duration in
-    /// [5s, 3600s], and the sequence is monotonically non-decreasing until it
-    /// pins at the cap.
-    #[test]
-    fn prop_retry_backoff_is_bounded(attempt in 0u32..128) {
-        let mut state = RetryState::new(1);
-        state.attempt = attempt;
-        let d = state.next_backoff();
-        prop_assert!(d >= Duration::from_secs(5));
-        prop_assert!(d <= Duration::from_secs(3600));
-    }
-
-    /// Starting from zero, the backoff sequence is non-decreasing for any
-    /// number of consecutive failures. This catches any future regression that
-    /// lets the cap "snap back" or produces a spike.
-    #[test]
-    fn prop_retry_backoff_monotonic(n in 1u32..20) {
-        let mut state = RetryState::new(1);
-        let mut prev = state.next_backoff();
-        for _ in 0..n {
-            state.record_failure();
-            let cur = state.next_backoff();
-            prop_assert!(cur >= prev, "backoff went down: {prev:?} -> {cur:?}");
-            prev = cur;
-        }
-    }
-
     /// `rotate_provider` cycles indices 0..count and reports `true` exactly on
-    /// the wrap-around step. Each rotation resets the attempt counter.
+    /// the wrap-around step.
     #[test]
     fn prop_retry_rotate_cycles(count in 2usize..10, rotations in 1u32..40) {
         let mut state = RetryState::new(count);
-        state.attempt = 3;
         let mut wrapped_count = 0;
         for step in 1..=rotations {
             let wrapped = state.rotate_provider();
-            prop_assert_eq!(state.attempt, 0, "rotate must reset attempt");
             let expected_index = (step as usize) % count;
             prop_assert_eq!(state.provider_index, expected_index);
             if wrapped {

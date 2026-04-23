@@ -111,7 +111,7 @@ fn test_send_checked_request_reports_protocol_mismatch_when_probe_gets_eof() {
         // it logs an accept error and closes without writing a response.
     });
 
-    let err = send_checked_request(dir.path(), &Request::Receive)
+    let err = send_checked_request(dir.path(), &Request::Ping)
         .unwrap_err()
         .to_string();
     assert!(err.contains("IPC protocol mismatch"), "{err}");

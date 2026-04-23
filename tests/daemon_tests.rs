@@ -27,18 +27,6 @@ fn test_retry_state_provider_rotation_wraps() {
 }
 
 #[test]
-fn test_retry_state_rotation_resets_attempt() {
-    let mut retry = RetryState::new(3);
-    retry.record_failure();
-    retry.record_failure();
-    assert_eq!(retry.attempt, 2);
-
-    retry.rotate_provider();
-    assert_eq!(retry.attempt, 0); // reset on rotation
-    assert_eq!(retry.provider_index, 1);
-}
-
-#[test]
 fn test_retry_state_reset_clears_provider_index() {
     let mut retry = RetryState::new(3);
     retry.rotate_provider();
@@ -46,7 +34,6 @@ fn test_retry_state_reset_clears_provider_index() {
     assert_eq!(retry.provider_index, 2);
 
     retry.reset();
-    assert_eq!(retry.attempt, 0);
     assert_eq!(retry.provider_index, 0);
 }
 

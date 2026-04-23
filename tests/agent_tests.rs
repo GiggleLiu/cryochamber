@@ -1,12 +1,5 @@
 // tests/agent_tests.rs
-use cryochamber::agent::{build_prompt, AgentConfig, PromptSection};
-
-fn empty_inbox() -> PromptSection {
-    PromptSection {
-        content: String::new(),
-        complete: true,
-    }
-}
+use cryochamber::agent::{build_prompt, AgentConfig};
 
 #[test]
 fn test_build_prompt_first_session() {
@@ -15,7 +8,7 @@ fn test_build_prompt_first_session() {
         task: "Start the PR review plan".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 1"));
@@ -31,7 +24,7 @@ fn test_build_prompt_renders_session_and_todos() {
         task: "Follow up on PRs".to_string(),
         delayed_wake: None,
         todo_list: "1. [#a1b2] Review PR #47".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
@@ -46,7 +39,7 @@ fn test_build_prompt_omits_standing_orders() {
         task: "Do the thing".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(!prompt.contains("## Reminders"));
@@ -63,12 +56,12 @@ fn test_build_prompt_section_hints_when_complete() {
         task: "Work".to_string(),
         delayed_wake: None,
         todo_list: "1. [#a] short item".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("## Current Time (no need to call `cryo-agent time` again)"));
     assert!(prompt.contains("## TODO List (no need to call `cryo-agent todo list` again)"));
-    assert!(prompt.contains("## Inbox (no need to call `cryo-agent receive` again)"));
+    assert!(!prompt.contains("## Inbox"));
     assert!(!prompt.contains("(output of"));
 }
 
@@ -80,7 +73,7 @@ fn test_build_prompt_todo_hint_flips_on_overflow() {
         task: "Work".to_string(),
         delayed_wake: None,
         todo_list: long_list,
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("## TODO List (use `cryo-agent todo list` to get full text)"));
@@ -96,7 +89,7 @@ fn test_build_prompt_preserves_short_todo_list() {
         task: "Work".to_string(),
         delayed_wake: None,
         todo_list: "1. [#a] short item".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("1. [#a] short item"));
@@ -124,51 +117,39 @@ fn test_build_prompt_inbox_section_shows_no_messages_when_empty() {
         task: "Work".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("## Inbox (no need to call `cryo-agent receive` again)"));
-    assert!(prompt.contains("No new messages."));
+    assert!(!prompt.contains("## Inbox"));
 }
 
 #[test]
-fn test_build_prompt_inbox_inlined_when_fits() {
-    let inbox = PromptSection {
-        content: "--- alice.md ---\nFrom: alice\nSubject: hi\n\nHello\n\n".to_string(),
-        complete: true,
-    };
+fn test_build_prompt_hides_inbox_contents_even_when_waiting() {
     let config = AgentConfig {
         session_number: 1,
         task: "Work".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
-        inbox,
+        inbox_waiting: true,
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("## Inbox (no need to call `cryo-agent receive` again)"));
-    assert!(prompt.contains("From: alice"));
-    assert!(prompt.contains("Hello"));
+    assert!(prompt.contains("## Inbox"));
+    assert!(prompt.contains("Run `cryo-agent receive`"));
+    assert!(!prompt.contains("From: alice"));
+    assert!(!prompt.contains("Hello"));
 }
 
 #[test]
-fn test_build_prompt_inbox_hint_flips_when_overflowed() {
-    // Daemon signals "too big" via complete=false + empty content.
-    let inbox = PromptSection {
-        content: String::new(),
-        complete: false,
-    };
+fn test_build_prompt_hides_inbox_when_not_waiting() {
     let config = AgentConfig {
         session_number: 1,
         task: "Work".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
-        inbox,
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("## Inbox (use `cryo-agent receive` to get full text)"));
-    // Overflow path shows the no-messages placeholder since we have no content
-    // to inline — the hint is the signal to refetch.
-    assert!(prompt.contains("No new messages."));
+    assert!(!prompt.contains("## Inbox"));
 }
 
 #[test]
@@ -178,7 +159,7 @@ fn test_build_prompt_delayed_wake() {
         task: "Check status".to_string(),
         delayed_wake: Some("DELAYED WAKE: 2h late".to_string()),
         todo_list: "No todos.".to_string(),
-        inbox: empty_inbox(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("DELAYED WAKE: 2h late"));

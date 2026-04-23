@@ -33,11 +33,6 @@ pub enum Request {
         id: u32,
     },
     TodoList,
-    /// Read + archive the inbox in one atomic step. Daemon returns formatted
-    /// text for the agent to print. Archiving lives here so the "consume
-    /// messages" event and its log entry stay together; crashes before this
-    /// request leave the inbox intact for the retry session.
-    Receive,
 }
 
 /// Response from daemon to CLI.
