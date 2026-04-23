@@ -36,15 +36,6 @@ enum Commands {
         /// Reply message text
         text: String,
     },
-    /// Set a fallback alert (dead-man switch)
-    Alert {
-        /// Action type (email, webhook)
-        action: String,
-        /// Target (email address, URL)
-        target: String,
-        /// Alert message
-        message: String,
-    },
     /// Read inbox messages from human
     Receive,
     /// Print current time, compute a future time, or validate an ISO8601 timestamp
@@ -113,18 +104,6 @@ fn main() -> Result<()> {
             },
         ),
         Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
-        Commands::Alert {
-            action,
-            target,
-            message,
-        } => send(
-            &dir,
-            &Request::Alert {
-                action,
-                target,
-                message,
-            },
-        ),
         Commands::Receive => send(&dir, &Request::Receive),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),

@@ -14,7 +14,6 @@ pub enum DaemonLaunchMode {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StartOptions {
     pub agent_override: Option<String>,
-    pub max_retries_override: Option<u32>,
     pub max_session_duration_override: Option<u64>,
 }
 
@@ -74,13 +73,10 @@ pub fn prepare_start(dir: &Path, options: StartOptions) -> Result<PreparedStart>
         pid: None,
         retry_count: 0,
         agent_override: options.agent_override,
-        max_retries_override: options.max_retries_override,
         max_session_duration_override: options.max_session_duration_override,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
 

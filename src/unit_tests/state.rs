@@ -45,13 +45,10 @@ fn test_is_locked_stale_pid() {
         retry_count: 0,
 
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state), "Dead PID should not be locked");
@@ -65,13 +62,10 @@ fn test_is_locked_no_pid() {
         retry_count: 0,
 
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state), "No PID should not be locked");
@@ -85,13 +79,10 @@ fn test_is_locked_own_pid() {
         retry_count: 0,
 
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(is_locked(&state), "Own PID should be locked");

@@ -64,12 +64,6 @@ enum Action {
         /// (`"$VAR"`), or passthrough string (e.g. `"banana"` or absolute ISO).
         at: String,
     },
-    /// Call `cryo-agent alert <channel> <target> <message>`.
-    Alert {
-        channel: String,
-        target: String,
-        message: String,
-    },
     /// Call `cryo-agent send <message>`.
     Send { message: String },
     /// Call `cryo-agent reply <message>`.
@@ -201,19 +195,6 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
                 expand(text),
                 "--at".to_string(),
                 resolved,
-            ])?;
-            Ok(None)
-        }
-        Action::Alert {
-            channel,
-            target,
-            message,
-        } => {
-            call_cryo_agent(&[
-                "alert".into(),
-                expand(channel),
-                expand(target),
-                expand(message),
             ])?;
             Ok(None)
         }

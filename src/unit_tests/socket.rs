@@ -33,18 +33,6 @@ fn test_serialize_hello_request() {
 }
 
 #[test]
-fn test_serialize_alert_request() {
-    let req = Request::Alert {
-        action: "email".to_string(),
-        target: "user@example.com".to_string(),
-        message: "stuck".to_string(),
-    };
-    let json = serde_json::to_string(&req).unwrap();
-    let parsed: Request = serde_json::from_str(&json).unwrap();
-    assert!(matches!(parsed, Request::Alert { .. }));
-}
-
-#[test]
 fn test_serialize_reply_request() {
     let req = Request::Reply {
         text: "done with phase 1".to_string(),

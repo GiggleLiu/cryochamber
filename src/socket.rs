@@ -19,11 +19,6 @@ pub enum Request {
         exit_code: u8,
         summary: Option<String>,
     },
-    Alert {
-        action: String,
-        target: String,
-        message: String,
-    },
     Reply {
         text: String,
     },

@@ -1,32 +1,26 @@
-use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::config::{CryoConfig, RotateOn};
-use crate::fallback::FallbackAction;
-use crate::state::{CryoState, PendingFallbackState};
 
 use super::SessionLoopOutcome;
 
 /// Format for parsing TODO `at` timestamps (minute precision, no seconds).
 pub(super) const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
-pub(super) const FALLBACK_TIME_FMT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// Tracks retry state with exponential backoff.
 #[derive(Debug)]
 pub struct RetryState {
     pub attempt: u32,
-    pub max_retries: u32,
     pub provider_index: usize,
     provider_count: usize,
 }
 
 impl RetryState {
-    pub fn new(max_retries: u32, provider_count: usize) -> Self {
+    pub fn new(provider_count: usize) -> Self {
         Self {
             attempt: 0,
-            max_retries,
             provider_index: 0,
             provider_count,
         }
@@ -49,10 +43,6 @@ impl RetryState {
         self.provider_index = 0;
     }
 
-    pub fn exhausted(&self) -> bool {
-        self.attempt >= self.max_retries
-    }
-
     /// Advance to the next provider. Returns true if we wrapped back to index 0
     /// (all providers have been tried in this cycle). Resets retry attempt counter.
     pub fn rotate_provider(&mut self) -> bool {
@@ -63,17 +53,6 @@ impl RetryState {
         self.attempt = 0;
         self.provider_index == 0 // wrapped
     }
-}
-
-/// Pure: given the next scheduled wake and (optionally) a session-registered
-/// fallback action, produce the `(deadline, action)` to arm. We arm the
-/// fallback one hour after the scheduled wake so a missed wake fires the
-/// alert rather than silently dropping it.
-pub(super) fn scheduled_fallback_for(
-    next_wake: Option<NaiveDateTime>,
-    fallback: Option<FallbackAction>,
-) -> Option<(NaiveDateTime, FallbackAction)> {
-    next_wake.and_then(|w| fallback.map(|f| (w + chrono::Duration::hours(1), f)))
 }
 
 /// Pure: given the configured rotate-on policy and the provider pool, decide
@@ -102,14 +81,12 @@ pub(super) enum SessionRunResult<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RetryPlan {
     pub(super) backoff: Duration,
-    pub(super) send_alert: bool,
 }
 
 impl RetryPlan {
     pub(super) fn for_state(retry: &RetryState) -> Self {
         Self {
             backoff: retry.next_backoff(),
-            send_alert: retry.attempt.saturating_add(1) == retry.max_retries,
         }
     }
 }
@@ -134,7 +111,6 @@ pub(super) enum NextStep {
     PlanComplete,
     Hibernate {
         next_wake: Option<NaiveDateTime>,
-        scheduled_fallback: Option<(NaiveDateTime, FallbackAction)>,
     },
     RotateProvider {
         next_wake: Option<NaiveDateTime>,
@@ -153,9 +129,7 @@ pub(super) struct DaemonBootstrapState {
     pub(super) next_report_time: Option<NaiveDateTime>,
     pub(super) next_wake: Option<NaiveDateTime>,
     pub(super) run_now: bool,
-    pub(super) pending_fallback: Option<(NaiveDateTime, FallbackAction)>,
     pub(super) watch_inbox_path: Option<PathBuf>,
-    pub(super) cleared_invalid_pending_fallback: bool,
 }
 
 pub(super) fn decide_next_step(
@@ -166,11 +140,8 @@ pub(super) fn decide_next_step(
 ) -> NextStep {
     match session_result {
         SessionRunResult::Outcome(SessionLoopOutcome::PlanComplete) => NextStep::PlanComplete,
-        SessionRunResult::Outcome(SessionLoopOutcome::Hibernate { fallback }) => {
-            NextStep::Hibernate {
-                next_wake,
-                scheduled_fallback: scheduled_fallback_for(next_wake, fallback.clone()),
-            }
+        SessionRunResult::Outcome(SessionLoopOutcome::Hibernate) => {
+            NextStep::Hibernate { next_wake }
         }
         SessionRunResult::Outcome(SessionLoopOutcome::ValidationFailed { quick_exit }) => {
             if should_rotate_provider(&config.rotate_on, *quick_exit, config.providers.len()) {
@@ -273,24 +244,4 @@ pub(super) fn delayed_wake_notice(
             )
         }),
     }
-}
-
-pub(super) fn pending_fallback_to_state(
-    pending: Option<&(NaiveDateTime, FallbackAction)>,
-) -> Option<PendingFallbackState> {
-    pending.map(|(deadline, action)| PendingFallbackState {
-        deadline: deadline.format(FALLBACK_TIME_FMT).to_string(),
-        action: action.clone(),
-    })
-}
-
-pub(super) fn pending_fallback_from_state(
-    state: &CryoState,
-) -> Result<Option<(NaiveDateTime, FallbackAction)>> {
-    let Some(pending) = state.pending_fallback.as_ref() else {
-        return Ok(None);
-    };
-    let deadline = NaiveDateTime::parse_from_str(&pending.deadline, FALLBACK_TIME_FMT)
-        .with_context(|| format!("Invalid pending fallback deadline: {}", pending.deadline))?;
-    Ok(Some((deadline, pending.action.clone())))
 }

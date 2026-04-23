@@ -38,7 +38,7 @@ impl ReplyAuthor {
     fn from(self) -> &'static str {
         match self {
             Self::Agent => "agent",
-            Self::Daemon => "cryo-daemon",
+            Self::Daemon => "cryochamber",
         }
     }
 

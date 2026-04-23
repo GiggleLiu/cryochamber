@@ -56,14 +56,11 @@ fn test_state_roundtrip() {
         pid: None,
         retry_count: 0,
         agent_override: Some("opencode".to_string()),
-        max_retries_override: Some(3),
         max_session_duration_override: Some(1800),
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -72,7 +69,6 @@ fn test_state_roundtrip() {
         .unwrap()
         .unwrap();
     assert_eq!(loaded.session_number, 5);
-    assert_eq!(loaded.max_retries_override, Some(3));
 }
 
 #[test]

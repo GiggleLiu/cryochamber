@@ -29,9 +29,6 @@ enum Commands {
         /// Agent command to use (overrides cryo.toml)
         #[arg(long)]
         agent: Option<String>,
-        /// Failed attempts before alerting (daemon keeps retrying with backoff)
-        #[arg(long)]
-        max_retries: Option<u32>,
         /// Maximum session duration in seconds (overrides cryo.toml)
         #[arg(long)]
         max_session_duration: Option<u64>,
@@ -86,13 +83,6 @@ enum Commands {
         /// Message to include in the agent's prompt
         message: Option<String>,
     },
-    /// Execute a fallback action (internal — used by timers)
-    #[command(hide = true)]
-    FallbackExec {
-        action: String,
-        target: String,
-        message: String,
-    },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
@@ -105,9 +95,8 @@ fn main() -> Result<()> {
         Commands::Init { agent } => cmd_init(&agent),
         Commands::Start {
             agent,
-            max_retries,
             max_session_duration,
-        } => cmd_start(agent, max_retries, max_session_duration),
+        } => cmd_start(agent, max_session_duration),
         Commands::Status => cmd_status(),
         Commands::Ps { kill_all } => cmd_ps(kill_all),
         Commands::Restart => cmd_restart(),
@@ -124,21 +113,6 @@ fn main() -> Result<()> {
         Commands::Wake { message } => cmd_wake(message.as_deref()),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
-        Commands::FallbackExec {
-            action,
-            target,
-            message,
-        } => {
-            let dir = cryochamber::work_dir()?;
-            let fb = cryochamber::fallback::FallbackAction {
-                action,
-                target,
-                message,
-            };
-            let config = cryochamber::config::load_config(&cryochamber::config::config_path(&dir))?
-                .unwrap_or_default();
-            fb.execute(&dir, &config.fallback_alert)
-        }
     }
 }
 
@@ -222,7 +196,6 @@ fn terminate_daemon_if_reachable(dir: &Path, cryo_state: &CryoState) -> Result<(
 
 fn cmd_start(
     agent_override: Option<String>,
-    max_retries_override: Option<u32>,
     max_session_duration_override: Option<u64>,
 ) -> Result<()> {
     let dir = cryochamber::work_dir()?;
@@ -230,7 +203,6 @@ fn cmd_start(
         &dir,
         StartOptions {
             agent_override,
-            max_retries_override,
             max_session_duration_override,
         },
     )?;

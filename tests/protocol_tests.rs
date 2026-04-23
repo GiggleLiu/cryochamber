@@ -7,13 +7,14 @@ fn test_protocol_content_contains_commands() {
     assert!(content.contains("cryo-agent hibernate"));
     assert!(content.contains("cryo-agent send"));
     assert!(content.contains("cryo-agent receive"));
-    assert!(content.contains("cryo-agent alert"));
     assert!(content.contains("NOTES.md"));
     let removed_note_command = ["cryo-agent", "note"].join(" ");
     assert!(!content.contains(&removed_note_command));
     // Phantom commands removed (code review #3)
     assert!(!content.contains("cryo-agent status"));
     assert!(!content.contains("cryo-agent inbox"));
+    // Deprecated dead-man switch command removed.
+    assert!(!content.contains("cryo-agent alert"));
 }
 
 #[test]

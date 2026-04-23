@@ -3,7 +3,7 @@ use cryochamber::daemon::RetryState;
 
 #[test]
 fn test_retry_state_provider_rotation_advances() {
-    let mut retry = RetryState::new(5, 3); // 3 providers
+    let mut retry = RetryState::new(3); // 3 providers
     assert_eq!(retry.provider_index, 0);
 
     let wrapped = retry.rotate_provider();
@@ -17,7 +17,7 @@ fn test_retry_state_provider_rotation_advances() {
 
 #[test]
 fn test_retry_state_provider_rotation_wraps() {
-    let mut retry = RetryState::new(5, 3);
+    let mut retry = RetryState::new(3);
 
     retry.rotate_provider(); // 0 -> 1
     retry.rotate_provider(); // 1 -> 2
@@ -28,7 +28,7 @@ fn test_retry_state_provider_rotation_wraps() {
 
 #[test]
 fn test_retry_state_rotation_resets_attempt() {
-    let mut retry = RetryState::new(5, 3);
+    let mut retry = RetryState::new(3);
     retry.record_failure();
     retry.record_failure();
     assert_eq!(retry.attempt, 2);
@@ -40,7 +40,7 @@ fn test_retry_state_rotation_resets_attempt() {
 
 #[test]
 fn test_retry_state_reset_clears_provider_index() {
-    let mut retry = RetryState::new(5, 3);
+    let mut retry = RetryState::new(3);
     retry.rotate_provider();
     retry.rotate_provider();
     assert_eq!(retry.provider_index, 2);
@@ -52,7 +52,7 @@ fn test_retry_state_reset_clears_provider_index() {
 
 #[test]
 fn test_retry_state_single_provider_no_rotation() {
-    let mut retry = RetryState::new(5, 1);
+    let mut retry = RetryState::new(1);
     let wrapped = retry.rotate_provider();
     assert_eq!(retry.provider_index, 0);
     assert!(wrapped); // immediately wraps with 1 provider
@@ -60,7 +60,7 @@ fn test_retry_state_single_provider_no_rotation() {
 
 #[test]
 fn test_retry_state_no_providers() {
-    let mut retry = RetryState::new(5, 0);
+    let mut retry = RetryState::new(0);
     let wrapped = retry.rotate_provider();
     assert_eq!(retry.provider_index, 0);
     assert!(wrapped);

@@ -19,10 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::CryoConfig;
-use crate::fallback::FallbackAction;
-#[cfg(test)]
-use crate::state::PendingFallbackState;
-use crate::state::{self, CryoState, InFlightFallback};
+use crate::state::{self, CryoState};
 
 trait Clock: Send + Sync {
     fn local_now(&self) -> NaiveDateTime;
@@ -152,7 +149,7 @@ impl InboxWatcher {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionLoopOutcome {
     PlanComplete,
-    Hibernate { fallback: Option<FallbackAction> },
+    Hibernate,
     ValidationFailed { quick_exit: bool },
 }
 
@@ -175,13 +172,11 @@ use effects::{ReplyAuthor, SessionEffects};
 pub use schedule::RetryState;
 use schedule::{
     compute_sleep_timeout, decide_next_step, delayed_wake_notice, next_wake_from_todos,
-    pending_fallback_from_state, pending_fallback_to_state, DaemonBootstrapState, NextStep,
-    RetryPlan, SessionRunResult, FALLBACK_TIME_FMT,
+    DaemonBootstrapState, NextStep, RetryPlan, SessionRunResult,
 };
 #[cfg(test)]
 use schedule::{
-    detect_delayed_wake, scheduled_fallback_for, should_rotate_provider, ProviderRotationReason,
-    WAKE_TIME_FMT,
+    detect_delayed_wake, should_rotate_provider, ProviderRotationReason, WAKE_TIME_FMT,
 };
 
 #[cfg(test)]
@@ -229,7 +224,6 @@ struct ActiveSessionContext<'a> {
 
 struct ActiveRequestState<'a> {
     logger: &'a mut crate::log::EventLogger,
-    pending_fallback: &'a mut Option<FallbackAction>,
     hibernate_outcome: &'a mut Option<SessionLoopOutcome>,
     reply_tracker: &'a mut HumanReplyTracker,
 }
@@ -237,7 +231,6 @@ struct ActiveRequestState<'a> {
 struct EventLoopMutations<'a> {
     cryo_state: &'a mut CryoState,
     retry: &'a mut RetryState,
-    pending_fallback: &'a mut Option<(NaiveDateTime, FallbackAction)>,
     next_wake: &'a mut Option<NaiveDateTime>,
     run_now: &'a mut bool,
 }
@@ -554,49 +547,15 @@ impl Daemon {
         Self::with_deps(dir, clock, launcher, Arc::new(FsStateStore))
     }
 
-    /// Test-only constructor: inject a custom `StateStore` to drive
-    /// save-failure paths deterministically.
-    #[cfg(test)]
-    fn new_with_state_store(
-        dir: PathBuf,
-        clock: Arc<dyn Clock>,
-        launcher: Arc<dyn SessionLauncher>,
-        state_store: Arc<dyn StateStore>,
-    ) -> Self {
-        Self::with_deps(dir, clock, launcher, state_store)
-    }
-
     /// All in-daemon state writes funnel through this, so tests can stub
     /// `StateStore` and all save paths respond consistently.
     fn save_state(&self, cryo_state: &CryoState) -> Result<()> {
         self.state_store.save(&self.state_path, cryo_state)
     }
 
-    /// Atomic mutation of the *scheduled* fallback slot: set the value, keep
-    /// `CryoState::pending_fallback` in sync, and persist. Errors are the
-    /// caller's to handle (see per-call-site policy in the refactor plan).
-    fn set_pending_fallback(
-        &self,
-        cryo_state: &mut CryoState,
-        slot: &mut Option<(NaiveDateTime, FallbackAction)>,
-        new: Option<(NaiveDateTime, FallbackAction)>,
-    ) -> Result<()> {
-        *slot = new;
-        cryo_state.pending_fallback = pending_fallback_to_state(slot.as_ref());
-        self.save_state(cryo_state)
-    }
-
-    fn sync_pending_fallback_state(
-        &self,
-        cryo_state: &mut CryoState,
-        pending: Option<&(NaiveDateTime, FallbackAction)>,
-    ) {
-        cryo_state.pending_fallback = pending_fallback_to_state(pending);
-    }
-
     fn build_bootstrap_state(
         &self,
-        cryo_state: &mut CryoState,
+        cryo_state: &CryoState,
         config: &CryoConfig,
     ) -> DaemonBootstrapState {
         let last_report = cryo_state
@@ -620,34 +579,17 @@ impl Daemon {
             None
         };
 
-        let (pending_fallback, cleared_invalid_pending_fallback) =
-            match pending_fallback_from_state(cryo_state) {
-                Ok(pending) => (pending, false),
-                Err(e) => {
-                    eprintln!("Daemon: clearing invalid pending fallback state: {e}");
-                    cryo_state.pending_fallback = None;
-                    (None, true)
-                }
-            };
-
         DaemonBootstrapState {
             next_report_time,
             next_wake,
             run_now,
-            pending_fallback,
             watch_inbox_path,
-            cleared_invalid_pending_fallback,
         }
     }
 
-    fn prepare_shutdown_state(
-        &self,
-        cryo_state: &mut CryoState,
-        pending: Option<&(NaiveDateTime, FallbackAction)>,
-    ) {
+    fn prepare_shutdown_state(&self, cryo_state: &mut CryoState) {
         cryo_state.pid = None;
         cryo_state.instance_id = None;
-        self.sync_pending_fallback_state(cryo_state, pending);
     }
 
     fn prepare_runtime_startup<P: StartupPlatform>(
@@ -710,7 +652,6 @@ impl Daemon {
                 let _ = responder.respond(&response);
             }
             DaemonRequest::Hibernate { .. }
-            | DaemonRequest::Alert { .. }
             | DaemonRequest::Reply { .. }
             | DaemonRequest::Receive => {
                 let _ = responder.respond(&crate::socket::Response {
@@ -759,43 +700,14 @@ impl Daemon {
         match step {
             NextStep::PlanComplete => {
                 state.retry.reset();
-                // Save-failure policy: log and still break. On restart, stale
-                // on-disk fallback is harmless because the session log / plan
-                // state shows the plan is done; the daemon won't sleep again.
-                if let Err(e) =
-                    self.set_pending_fallback(state.cryo_state, state.pending_fallback, None)
-                {
-                    eprintln!("Daemon: failed to persist cleared fallback on PlanComplete: {e}");
-                }
                 eprintln!("Daemon: plan complete. Shutting down.");
                 Ok(LoopControl::Break)
             }
             NextStep::Hibernate {
                 next_wake: refreshed_next_wake,
-                scheduled_fallback,
             } => {
                 state.retry.reset();
                 *state.next_wake = refreshed_next_wake;
-                // Save-failure policy: escalate to failure retry. If we can't
-                // persist the armed fallback, do not sleep — a crash before the
-                // next save would lose the fallback entirely.
-                if let Err(e) = self.set_pending_fallback(
-                    state.cryo_state,
-                    state.pending_fallback,
-                    scheduled_fallback,
-                ) {
-                    eprintln!(
-                        "Daemon: failed to persist armed fallback after Hibernate: {e}. \
-                         Escalating to failure-retry so the daemon does not sleep \
-                         with an unpersisted fallback."
-                    );
-                    let plan = RetryPlan::for_state(state.retry);
-                    if self.apply_failure_retry_plan(state.retry, plan, &config.fallback_alert) {
-                        return Ok(LoopControl::Break);
-                    }
-                    *state.run_now = true;
-                    return Ok(LoopControl::Continue);
-                }
                 if let Some(w) = *state.next_wake {
                     eprintln!("Daemon: next wake at {}", w.format("%Y-%m-%d %H:%M"));
                 } else {
@@ -848,7 +760,7 @@ impl Daemon {
                 plan,
             } => {
                 *state.next_wake = refreshed_next_wake;
-                if self.apply_failure_retry_plan(state.retry, plan, &config.fallback_alert) {
+                if self.apply_failure_retry_plan(state.retry, plan) {
                     return Ok(LoopControl::Break);
                 }
                 *state.run_now = true;
@@ -874,7 +786,7 @@ impl Daemon {
         let mut config =
             crate::config::load_config(&crate::config::config_path(&self.dir))?.unwrap_or_default();
         config.apply_overrides(&cryo_state);
-        let bootstrap = self.build_bootstrap_state(&mut cryo_state, &config);
+        let bootstrap = self.build_bootstrap_state(&cryo_state, &config);
 
         // Save PID so other commands can detect the running daemon
         cryo_state.pid = Some(std::process::id());
@@ -889,7 +801,7 @@ impl Daemon {
         ) {
             Ok(startup) => startup,
             Err(e) => {
-                self.prepare_shutdown_state(&mut cryo_state, bootstrap.pending_fallback.as_ref());
+                self.prepare_shutdown_state(&mut cryo_state);
                 if let Err(save_err) = self.save_state(&cryo_state) {
                     eprintln!("Daemon: failed to restore state after startup failure: {save_err}");
                 }
@@ -973,18 +885,10 @@ impl Daemon {
         }
 
         let provider_count = config.providers.len();
-        let mut retry = RetryState::new(config.max_retries, provider_count);
+        let mut retry = RetryState::new(provider_count);
         let mut next_wake = bootstrap.next_wake;
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
-        let mut pending_fallback = bootstrap.pending_fallback;
-
-        // Replay any fallback that was in-flight when the previous daemon
-        // crashed. Runs exactly once before the main loop so the operator
-        // hears about a dead-man alert even if the previous run died mid-fire.
-        if let Err(e) = self.replay_in_flight_fallback(cryo_state, &config.fallback_alert) {
-            eprintln!("Daemon: in-flight fallback replay failed: {e:#}");
-        }
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -1003,19 +907,6 @@ impl Daemon {
                 // the user's message without a spurious delay warning.
                 let delayed_wake =
                     delayed_wake_notice(is_inbox_wake, next_wake, self.clock.local_now());
-                if delayed_wake.is_some() && pending_fallback.is_some() {
-                    // Delayed wake means we already slept past the deadline;
-                    // the armed fallback is stale. Save-failure policy: log and
-                    // keep running — the in-memory clear is authoritative, and
-                    // the next successful save will converge disk.
-                    if let Err(e) =
-                        self.set_pending_fallback(cryo_state, &mut pending_fallback, None)
-                    {
-                        eprintln!(
-                            "Daemon: failed to persist cleared fallback after delayed wake: {e}"
-                        );
-                    }
-                }
                 cryo_state.session_number += 1;
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
@@ -1068,7 +959,6 @@ impl Daemon {
                     EventLoopMutations {
                         cryo_state,
                         retry: &mut retry,
-                        pending_fallback: &mut pending_fallback,
                         next_wake: &mut next_wake,
                         run_now: &mut run_now,
                     },
@@ -1081,16 +971,6 @@ impl Daemon {
 
             let expected_instance_id = cryo_state.instance_id.as_deref();
             self.service_idle_socket_requests(server, expected_instance_id);
-
-            // Check fallback only when idle (not about to run a session).
-            // Log errors prominently and keep running — a failed fallback is
-            // visible to operators via the log; a crashed daemon would be
-            // strictly worse than a missed alert.
-            if let Err(e) =
-                self.check_fallback(cryo_state, &mut pending_fallback, &config.fallback_alert)
-            {
-                eprintln!("Daemon: check_fallback failed: {e:#}");
-            }
 
             // Check if periodic report is due
             if let Some(report_time) = next_report_time {
@@ -1123,9 +1003,9 @@ impl Daemon {
             }
         }
 
-        // Persist pid=None and final pending_fallback so external observers
-        // (e.g. the hub, `cryo status`) see a consistent shutdown state.
-        self.prepare_shutdown_state(cryo_state, pending_fallback.as_ref());
+        // Persist pid=None so external observers (e.g. the hub, `cryo status`)
+        // see a consistent shutdown state.
+        self.prepare_shutdown_state(cryo_state);
         if let Err(e) = self.save_state(cryo_state) {
             eprintln!("Daemon: failed to save final state: {e}");
         }
@@ -1184,29 +1064,12 @@ impl Daemon {
                     exit_code,
                     summary.as_deref(),
                     effects.has_pending_todo_with_valid_wake(),
-                    state.pending_fallback.take(),
                 );
                 state.logger.log_event(&decision.log_event)?;
-                *state.pending_fallback = decision.remaining_session_fallback;
                 if let Some(outcome) = decision.outcome {
                     *state.hibernate_outcome = Some(outcome);
                 }
                 let _ = runtime.respond(decision.response_ok, decision.response_message.into());
-            }
-            DaemonRequest::Alert {
-                action,
-                target,
-                message,
-            } => {
-                state
-                    .logger
-                    .log_event(&format!("alert: {action} -> {target}"))?;
-                *state.pending_fallback = Some(FallbackAction {
-                    action,
-                    target,
-                    message,
-                });
-                let _ = runtime.respond(true, "Alert registered".into());
             }
             DaemonRequest::Reply { text } => {
                 match effects.write_reply(ReplyAuthor::Agent, &text, self.clock.local_now()) {
@@ -1315,7 +1178,6 @@ impl Daemon {
         };
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
-        let mut pending_fallback: Option<FallbackAction> = None;
         let mut reply_tracker = HumanReplyTracker::new(&context.inbox_filenames);
         let expected_instance_id = context.cryo_state.instance_id.as_deref();
 
@@ -1355,7 +1217,6 @@ impl Daemon {
                     effects,
                     ActiveRequestState {
                         logger: &mut logger,
-                        pending_fallback: &mut pending_fallback,
                         hibernate_outcome: &mut hibernate_outcome,
                         reply_tracker: &mut reply_tracker,
                     },
@@ -1414,152 +1275,16 @@ impl Daemon {
         }
     }
 
-    /// Execute a pending fallback if its deadline has passed.
-    ///
-    /// Returns `Ok(true)` if the fallback fired, `Ok(false)` if the deadline
-    /// had not yet passed (or no fallback was armed), and `Err` if persisting
-    /// the clear or executing the action failed. Errors are surfaced to the
-    /// caller rather than swallowed so a misconfigured outbox or an unwritable
-    /// state path does not silently consume a fallback.
-    fn check_fallback(
-        &self,
-        cryo_state: &mut CryoState,
-        pending: &mut Option<(NaiveDateTime, FallbackAction)>,
-        alert_method: &str,
-    ) -> Result<bool> {
-        let due =
-            matches!(pending.as_ref(), Some((deadline, _)) if self.clock.local_now() > *deadline);
-        if !due {
-            return Ok(false);
-        }
-
-        // Borrow-checker note: we've already established the slot is `Some`.
-        // Use pattern matching instead of `take().unwrap()` so the branch is
-        // total by construction.
-        let fb = match pending.take() {
-            Some((_, fb)) => fb,
-            None => return Ok(false),
-        };
-
-        // `set_pending_fallback` with `None` keeps the CryoState field in
-        // sync and persists — so the same atomic mutation contract applies to
-        // check_fallback as to every other fallback-slot mutation in the
-        // daemon.
-        self.set_pending_fallback(cryo_state, pending, None)
-            .context("failed to persist cleared pending fallback")?;
-
-        // Record that we're about to fire *before* calling execute. If we
-        // crash between this save and `clear_in_flight_fallback` below, the
-        // next daemon startup sees the record and replays the alert with a
-        // "(replay after crash)" prefix — losing a dead-man alert is strictly
-        // worse than delivering it twice with a label.
-        let deadline_str = self.clock.local_now().format(FALLBACK_TIME_FMT).to_string();
-        let started_at = Local::now()
-            .naive_local()
-            .format(FALLBACK_TIME_FMT)
-            .to_string();
-        cryo_state.in_flight_fallback = Some(InFlightFallback {
-            deadline: deadline_str,
-            action: fb.clone(),
-            started_at,
-        });
-        self.save_state(cryo_state)
-            .context("failed to persist in-flight fallback marker")?;
-
-        eprintln!("Daemon: fallback deadline passed, executing fallback action");
-        let execute_result = fb.execute(&self.dir, alert_method);
-
-        // Clear the in-flight record regardless of whether execute succeeded
-        // or failed — the marker is about crash-safety across `execute`, not
-        // about retrying a failed send. If execute returned Err, the caller
-        // logs it; we don't keep firing on every tick.
-        cryo_state.in_flight_fallback = None;
-        if let Err(save_err) = self.save_state(cryo_state) {
-            eprintln!(
-                "Daemon: failed to clear in-flight fallback marker after execute: {save_err}"
-            );
-        }
-
-        execute_result.context("fallback execution failed")?;
-        Ok(true)
-    }
-
-    /// Replay a fallback alert that was in-flight when the daemon crashed.
-    /// Called once at startup. On success, clears the marker so subsequent
-    /// restarts don't keep replaying.
-    ///
-    /// Policy: delivery beats silence. We prepend "(replay after crash)" to
-    /// the message so operators can tell this alert survived a restart, but
-    /// we don't try to dedup against the original send — the original may
-    /// have never left the daemon.
-    fn replay_in_flight_fallback(
-        &self,
-        cryo_state: &mut CryoState,
-        alert_method: &str,
-    ) -> Result<bool> {
-        let Some(record) = cryo_state.in_flight_fallback.take() else {
-            return Ok(false);
-        };
-        eprintln!(
-            "Daemon: replaying in-flight fallback from previous run (started at {})",
-            record.started_at
-        );
-        // Persist the cleared marker first. If replay itself crashes, we
-        // don't want to replay again on next start — that risks an infinite
-        // replay loop on a fallback that deterministically crashes execute.
-        self.save_state(cryo_state)
-            .context("failed to persist cleared in-flight fallback marker before replay")?;
-
-        let replay = FallbackAction {
-            action: record.action.action.clone(),
-            target: record.action.target.clone(),
-            message: format!("(replay after crash) {}", record.action.message),
-        };
-        replay
-            .execute(&self.dir, alert_method)
-            .context("replayed fallback execution failed")?;
-        Ok(true)
-    }
-
     /// Apply a precomputed retry plan with exponential backoff (5s, 10s, ..., 1h cap).
-    /// Sends an alert once when max_retries is reached, then keeps retrying at 1h.
     /// Returns true if the daemon should shut down.
-    fn apply_failure_retry_plan(
-        &self,
-        retry: &mut RetryState,
-        plan: RetryPlan,
-        alert_method: &str,
-    ) -> bool {
+    fn apply_failure_retry_plan(&self, retry: &mut RetryState, plan: RetryPlan) -> bool {
         retry.record_failure();
-        // Send alert once when we first hit max_retries.
-        if plan.send_alert {
-            eprintln!(
-                "Daemon: {} retries failed, sending alert. Will keep retrying.",
-                retry.max_retries
-            );
-            self.send_retry_alert(alert_method);
-        }
         eprintln!(
             "Daemon: retry {} in {}s",
             retry.attempt,
             plan.backoff.as_secs()
         );
         self.sleep_or_shutdown(plan.backoff)
-    }
-
-    /// Send a system alert when retries are exhausted.
-    fn send_retry_alert(&self, alert_method: &str) {
-        let fb = FallbackAction {
-            action: "retry_exhausted".to_string(),
-            target: "operator".to_string(),
-            message: format!(
-                "Agent failed to hibernate after multiple attempts. Daemon will keep retrying. Directory: {}",
-                self.dir.display()
-            ),
-        };
-        if let Err(e) = fb.execute(&self.dir, alert_method) {
-            eprintln!("Daemon: retry alert failed: {e}");
-        }
     }
 
     fn get_task(&self) -> Option<String> {

@@ -376,37 +376,6 @@ fn cryo_agent_bin_path() -> String {
     path.to_string_lossy().to_string()
 }
 
-// --- Tests using mock agent ---
-
-#[test]
-fn test_fallback_exec_writes_outbox() {
-    let dir = tempfile::tempdir().unwrap();
-    // Ensure message dirs exist
-    fs::create_dir_all(dir.path().join("messages/outbox")).unwrap();
-    fs::create_dir_all(dir.path().join("messages/inbox")).unwrap();
-
-    cmd()
-        .args([
-            "fallback-exec",
-            "email",
-            "user@example.com",
-            "Task failed after 3 retries",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Fallback alert written"));
-
-    // Check outbox has a file
-    let outbox = fs::read_dir(dir.path().join("messages/outbox")).unwrap();
-    let files: Vec<_> = outbox.collect();
-    assert_eq!(files.len(), 1);
-
-    let content = fs::read_to_string(files[0].as_ref().unwrap().path()).unwrap();
-    assert!(content.contains("Task failed after 3 retries"));
-    assert!(content.contains("email"));
-}
-
 // --- Send ---
 
 #[test]

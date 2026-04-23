@@ -11,13 +11,10 @@ fn state_with_instance(instance_id: Option<&str>) -> CryoState {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: instance_id.map(str::to_string),
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     }
 }

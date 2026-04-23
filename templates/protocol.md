@@ -28,7 +28,7 @@ These calls are **separate concerns**. They do NOT substitute for each other:
 | What you might think | What actually happens |
 |---|---|
 | "I just sent a message, that ends the session." | Daemon never wakes again. Chamber silent. |
-| "I can hibernate silently because nothing changed." | Daemon writes a fallback status. Send a concise status yourself instead. |
+| "I can hibernate silently because nothing changed." | Daemon writes a stand-in status. Send a concise status yourself instead. |
 | "I'll hibernate without a todo — the plan tells me to come back later." | Daemon has no wake time. Chamber silent. |
 | "I'll add a todo but skip hibernate, I'm already done." | Process lingers; no next session ever starts. |
 
@@ -78,7 +78,6 @@ Then:
 
 - Update `NOTES.md` with what you did and what's next. It is your memory across sessions — read it at Step 1, append at Step 3, trim when it grows.
 - Send a concise outbox message for this session, even if it is only a status update that nothing changed.
-- Set up a dead-man switch if needed: `cryo-agent alert <action> <target> "message"`
 
 ### Step 4: Declare the next wake (TODO)
 
@@ -127,7 +126,6 @@ cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 cryo-agent send "message"                     # Send message to human (outbox)
 cryo-agent reply "message"                    # Reply to inbox messages
 cryo-agent receive                            # Read inbox messages from human
-cryo-agent alert <action> <target> "message"  # Dead-man switch (fires if you don't wake on time)
 cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required) — ONLY way to set next wake
 cryo-agent todo list                          # List all TODO items
 cryo-agent todo done <id>                     # Mark item as done

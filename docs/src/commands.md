@@ -34,7 +34,7 @@ cryohub status                              # show this dir's service + any othe
 
 These commands are used by the AI agent to communicate with the daemon. They send JSON messages over a Unix domain socket.
 Human-visible communication should go through `cryo-agent send` / `cryo-agent reply`; stdout/stderr are only written to `cryo-agent.log`.
-If a session ends without an agent outbox message, the daemon writes a fallback status message so the run is still visible.
+If a session ends without an agent outbox message, the daemon writes a stand-in status message so the run is still visible.
 
 ```bash
 cryo-agent hibernate --summary "..."   # End session (more work to do)
@@ -46,7 +46,6 @@ cryo-agent receive                     # Read inbox messages from human
 cryo-agent time                        # Current time (ISO8601 local)
 cryo-agent time "+30 minutes"          # Relative offset (minutes|hours|days|weeks)
 cryo-agent time "2026-04-25T10:00"     # ISO8601 pass-through (validates + normalizes)
-cryo-agent alert <action> <target> "msg"  # Set dead-man switch
 ```
 
 Agents keep free-form cross-session memory in `NOTES.md` in the chamber root. Read and append that file directly instead of using an IPC command.

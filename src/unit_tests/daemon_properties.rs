@@ -14,24 +14,10 @@ use std::sync::Mutex;
 
 // ---------- Strategies ----------
 
-fn fallback_strategy() -> impl Strategy<Value = FallbackAction> {
-    (
-        prop::sample::select(vec!["email", "webhook", "notify"]),
-        "[a-z@.]{1,16}",
-        "[A-Za-z0-9 ]{0,32}",
-    )
-        .prop_map(|(action, target, message)| FallbackAction {
-            action: action.to_string(),
-            target,
-            message,
-        })
-}
-
 fn hibernate_outcome_strategy() -> impl Strategy<Value = SessionLoopOutcome> {
     prop_oneof![
         Just(SessionLoopOutcome::PlanComplete),
-        fallback_strategy().prop_map(|f| SessionLoopOutcome::Hibernate { fallback: Some(f) }),
-        Just(SessionLoopOutcome::Hibernate { fallback: None }),
+        Just(SessionLoopOutcome::Hibernate),
         any::<bool>().prop_map(|q| SessionLoopOutcome::ValidationFailed { quick_exit: q }),
     ]
 }
@@ -52,8 +38,8 @@ proptest! {
     /// [5s, 3600s], and the sequence is monotonically non-decreasing until it
     /// pins at the cap.
     #[test]
-    fn prop_retry_backoff_is_bounded(attempt in 0u32..128, max_retries in 1u32..1_000) {
-        let mut state = RetryState::new(max_retries, 1);
+    fn prop_retry_backoff_is_bounded(attempt in 0u32..128) {
+        let mut state = RetryState::new(1);
         state.attempt = attempt;
         let d = state.next_backoff();
         prop_assert!(d >= Duration::from_secs(5));
@@ -65,7 +51,7 @@ proptest! {
     /// lets the cap "snap back" or produces a spike.
     #[test]
     fn prop_retry_backoff_monotonic(n in 1u32..20) {
-        let mut state = RetryState::new(n + 10, 1);
+        let mut state = RetryState::new(1);
         let mut prev = state.next_backoff();
         for _ in 0..n {
             state.record_failure();
@@ -79,7 +65,7 @@ proptest! {
     /// the wrap-around step. Each rotation resets the attempt counter.
     #[test]
     fn prop_retry_rotate_cycles(count in 2usize..10, rotations in 1u32..40) {
-        let mut state = RetryState::new(5, count);
+        let mut state = RetryState::new(count);
         state.attempt = 3;
         let mut wrapped_count = 0;
         for step in 1..=rotations {
@@ -102,7 +88,7 @@ proptest! {
     /// everything once.
     #[test]
     fn prop_retry_rotate_single_provider_always_wraps(count in 0usize..=1) {
-        let mut state = RetryState::new(5, count);
+        let mut state = RetryState::new(count);
         prop_assert!(state.rotate_provider());
         prop_assert!(state.rotate_provider());
     }
@@ -153,29 +139,23 @@ proptest! {
 // ---------- resolve_hibernate_request ----------
 
 proptest! {
-    /// Exit table (derived from the function spec):
-    ///   exit_code != 0               → ValidationFailed, remaining_session_fallback = input
-    ///   complete && exit_code == 0   → PlanComplete, remaining_session_fallback = None
-    ///   !has_pending_todos           → outcome=None, remaining_session_fallback = input
-    ///   otherwise                    → Hibernate{fallback: input}, remaining_session_fallback = None
-    ///
-    /// `resolve_hibernate_request` is pure: it takes `session_fallback` by value
-    /// and returns what the caller's slot should be after the call. No aliased
-    /// mutable state, no asymmetry across branches.
+    /// Exit table:
+    ///   exit_code != 0               → ValidationFailed
+    ///   complete && exit_code == 0   → PlanComplete
+    ///   !has_pending_todos           → outcome=None (rejected)
+    ///   otherwise                    → Hibernate
     #[test]
     fn prop_resolve_hibernate_request_matches_spec(
         complete in any::<bool>(),
         exit_code in 0u8..=10,
         summary in prop::option::of("[A-Za-z0-9 ]{0,32}"),
         has_pending_todos in any::<bool>(),
-        fallback in prop::option::of(fallback_strategy()),
     ) {
         let decision = resolve_hibernate_request(
             complete,
             exit_code,
             summary.as_deref(),
             has_pending_todos,
-            fallback.clone(),
         );
 
         if exit_code != 0 {
@@ -184,37 +164,14 @@ proptest! {
                 Some(SessionLoopOutcome::ValidationFailed { quick_exit: false })
             );
             prop_assert!(decision.response_ok, "failure path still ACKs the agent");
-            prop_assert_eq!(
-                decision.remaining_session_fallback,
-                fallback,
-                "failure preserves the session fallback"
-            );
         } else if complete {
             prop_assert_eq!(decision.outcome, Some(SessionLoopOutcome::PlanComplete));
-            prop_assert_eq!(
-                decision.remaining_session_fallback,
-                None,
-                "plan-complete discards the session fallback"
-            );
         } else if !has_pending_todos {
             prop_assert_eq!(decision.outcome, None);
             prop_assert!(!decision.response_ok);
-            prop_assert_eq!(
-                decision.remaining_session_fallback,
-                fallback,
-                "rejected hibernate preserves the session fallback"
-            );
         } else {
-            prop_assert_eq!(
-                decision.outcome,
-                Some(SessionLoopOutcome::Hibernate { fallback: fallback.clone() })
-            );
+            prop_assert_eq!(decision.outcome, Some(SessionLoopOutcome::Hibernate));
             prop_assert!(decision.response_ok);
-            prop_assert_eq!(
-                decision.remaining_session_fallback,
-                None,
-                "accepted hibernate moves the fallback into the outcome payload"
-            );
         }
     }
 }

@@ -11,14 +11,11 @@ fn test_save_and_load_state() {
         pid: Some(std::process::id()),
         retry_count: 0,
         agent_override: Some("opencode test".to_string()),
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
 
@@ -48,14 +45,11 @@ fn test_lock_mechanism() {
         pid: Some(std::process::id()),
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -74,14 +68,11 @@ fn test_is_locked_dead_process() {
         pid: Some(999999),
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -95,14 +86,11 @@ fn test_is_locked_no_pid() {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -140,13 +128,10 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -166,13 +151,10 @@ fn test_previous_session_crashed_true_roundtrip() {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: true,
     };
     save_state(&state_path, &state).unwrap();
@@ -207,20 +189,16 @@ fn test_override_fields_roundtrip() {
         pid: None,
         retry_count: 2,
         agent_override: Some("claude".to_string()),
-        max_retries_override: Some(5),
         max_session_duration_override: Some(1800),
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
     assert_eq!(loaded.agent_override, Some("claude".to_string()));
-    assert_eq!(loaded.max_retries_override, Some(5));
     assert_eq!(loaded.max_session_duration_override, Some(1800));
 }
 
@@ -234,20 +212,16 @@ fn test_none_overrides_not_serialized() {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
     assert!(!json.contains("agent_override"));
-    assert!(!json.contains("max_retries_override"));
     assert!(!json.contains("max_session_duration_override"));
     assert!(!json.contains("last_report_time"));
     assert!(!json.contains("provider_index"));
@@ -262,14 +236,11 @@ fn test_last_report_time_roundtrip() {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: Some("2026-02-28T09:00:00".to_string()),
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -293,14 +264,11 @@ fn test_provider_index_roundtrip() {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: Some(2),
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();

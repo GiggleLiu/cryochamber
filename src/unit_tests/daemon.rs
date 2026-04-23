@@ -48,14 +48,11 @@ fn daemon_scheduling_and_bootstrap_live_in_schedule_module() {
     for item in [
         "struct RetryState",
         "struct RetryPlan",
-        "fn scheduled_fallback_for",
         "fn should_rotate_provider",
         "fn compute_sleep_timeout",
         "fn next_wake_from_todos",
         "fn detect_delayed_wake",
         "fn delayed_wake_notice",
-        "fn pending_fallback_to_state",
-        "fn pending_fallback_from_state",
         "struct DaemonBootstrapState",
     ] {
         assert!(
@@ -114,12 +111,6 @@ impl TestClock {
                 sleeps: Vec::new(),
             }),
         }
-    }
-
-    fn advance(&self, duration: Duration) {
-        let mut state = self.state.lock().unwrap();
-        state.now += chrono::Duration::from_std(duration).unwrap();
-        state.elapsed += duration;
     }
 
     fn sleeps(&self) -> Vec<Duration> {
@@ -456,13 +447,10 @@ fn test_cryo_state() -> CryoState {
         pid: None,
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: Some("test-instance".into()),
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     }
 }
@@ -514,7 +502,7 @@ impl EventSource for FakeEventSource {
 
 #[test]
 fn test_backoff_sequence() {
-    let mut state = RetryState::new(5, 1);
+    let mut state = RetryState::new(1);
     // 5s, 10s, 20s, 40s, 80s, then keeps going capped at 3600s
     assert_eq!(state.next_backoff(), Duration::from_secs(5));
 
@@ -530,16 +518,14 @@ fn test_backoff_sequence() {
     state.record_failure();
     assert_eq!(state.next_backoff(), Duration::from_secs(80));
 
-    // Past max_retries — still returns backoff, capped at 3600s
     state.record_failure();
     assert_eq!(state.attempt, 5);
     assert_eq!(state.next_backoff(), Duration::from_secs(160));
-    assert!(state.exhausted());
 }
 
 #[test]
 fn test_backoff_caps_at_one_hour() {
-    let mut state = RetryState::new(20, 1);
+    let mut state = RetryState::new(1);
     for _ in 0..15 {
         state.record_failure();
     }
@@ -549,19 +535,18 @@ fn test_backoff_caps_at_one_hour() {
 
 #[test]
 fn test_backoff_reset() {
-    let mut state = RetryState::new(3, 1);
+    let mut state = RetryState::new(1);
     state.record_failure();
     state.record_failure();
     assert_eq!(state.attempt, 2);
 
     state.reset();
     assert_eq!(state.attempt, 0);
-    assert!(!state.exhausted());
 }
 
 #[test]
 fn test_backoff_exact_sequence() {
-    let mut retry = RetryState::new(20, 1);
+    let mut retry = RetryState::new(1);
     let expected = [5, 10, 20, 40, 80, 160, 320, 640, 1280, 2560, 3600, 3600];
     for (i, &secs) in expected.iter().enumerate() {
         assert_eq!(
@@ -575,7 +560,7 @@ fn test_backoff_exact_sequence() {
 
 #[test]
 fn test_backoff_cap_never_exceeds_3600() {
-    let mut retry = RetryState::new(100, 1);
+    let mut retry = RetryState::new(1);
     for _ in 0..100 {
         let backoff = retry.next_backoff();
         assert!(
@@ -589,7 +574,7 @@ fn test_backoff_cap_never_exceeds_3600() {
 
 #[test]
 fn test_rotate_provider_single_provider() {
-    let mut retry = RetryState::new(5, 1);
+    let mut retry = RetryState::new(1);
     // With only 1 provider, rotate always returns true (can't rotate)
     assert!(
         retry.rotate_provider(),
@@ -600,7 +585,7 @@ fn test_rotate_provider_single_provider() {
 
 #[test]
 fn test_rotate_provider_advances_and_wraps() {
-    let mut retry = RetryState::new(5, 3);
+    let mut retry = RetryState::new(3);
     assert_eq!(retry.provider_index, 0);
 
     assert!(!retry.rotate_provider(), "Should not wrap: 0->1");
@@ -615,7 +600,7 @@ fn test_rotate_provider_advances_and_wraps() {
 
 #[test]
 fn test_reset_clears_attempt_and_provider() {
-    let mut retry = RetryState::new(5, 3);
+    let mut retry = RetryState::new(3);
     retry.record_failure();
     retry.record_failure();
     retry.rotate_provider(); // index = 1, attempt reset to 0 by rotate
@@ -628,21 +613,6 @@ fn test_reset_clears_attempt_and_provider() {
     assert_eq!(
         retry.provider_index, 0,
         "Provider index should be reset to 0"
-    );
-}
-
-#[test]
-fn test_exhausted_boundary() {
-    let mut retry = RetryState::new(3, 1);
-    assert!(!retry.exhausted(), "Should not be exhausted at attempt 0");
-    retry.record_failure();
-    assert!(!retry.exhausted(), "Should not be exhausted at attempt 1");
-    retry.record_failure();
-    assert!(!retry.exhausted(), "Should not be exhausted at attempt 2");
-    retry.record_failure();
-    assert!(
-        retry.exhausted(),
-        "Should be exhausted at attempt 3 (== max_retries)"
     );
 }
 
@@ -1005,237 +975,9 @@ fn test_sleep_or_shutdown_uses_injected_clock() {
 }
 
 #[test]
-fn test_check_fallback_uses_injected_clock() {
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
-
-    let action = FallbackAction {
-        action: "email".to_string(),
-        target: "ops@example.com".to_string(),
-        message: "still waiting".to_string(),
-    };
-    let mut cryo_state = CryoState {
-        session_number: 1,
-        pid: None,
-        retry_count: 0,
-        agent_override: None,
-        max_retries_override: None,
-        max_session_duration_override: None,
-        last_report_time: None,
-        provider_index: None,
-        instance_id: None,
-        pending_fallback: Some(PendingFallbackState {
-            deadline: (now + chrono::Duration::minutes(1))
-                .format(FALLBACK_TIME_FMT)
-                .to_string(),
-            action: action.clone(),
-        }),
-        in_flight_fallback: None,
-        previous_session_crashed: false,
-    };
-    let mut pending = Some((now + chrono::Duration::minutes(1), action));
-
-    let fired = daemon
-        .check_fallback(&mut cryo_state, &mut pending, "outbox")
-        .expect("no error before deadline");
-    assert!(!fired, "Fallback should not fire before the deadline");
-    assert!(
-        pending.is_some(),
-        "Fallback should not fire before the deadline"
-    );
-
-    clock.advance(Duration::from_secs(61));
-    let fired = daemon
-        .check_fallback(&mut cryo_state, &mut pending, "outbox")
-        .expect("deadline-passed check succeeds");
-    assert!(fired, "check_fallback should report that it fired");
-
-    assert!(
-        pending.is_none(),
-        "Fallback should fire after fake time advances"
-    );
-    assert!(cryo_state.pending_fallback.is_none());
-    let outbox = crate::message::read_outbox(dir.path()).unwrap();
-    assert_eq!(outbox.len(), 1, "Fallback should write one outbox message");
-}
-
-#[test]
-fn test_check_fallback_propagates_save_error() {
-    // If persisting the cleared fallback fails, check_fallback must surface
-    // the error instead of silently consuming the action. The fallback is
-    // still consumed from memory (the mutation is atomic — see
-    // set_pending_fallback's contract) but the caller must see the Err.
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_state_store(
-        dir.path().to_path_buf(),
-        clock,
-        Arc::new(ProcessSessionLauncher),
-        Arc::new(FailingStateStore),
-    );
-
-    let mut cryo_state = test_cryo_state();
-    let action = FallbackAction {
-        action: "email".into(),
-        target: "ops".into(),
-        message: "stuck".into(),
-    };
-    // Deadline is already in the past so check_fallback fires immediately.
-    let mut pending = Some((now - chrono::Duration::minutes(1), action));
-
-    let err = daemon
-        .check_fallback(&mut cryo_state, &mut pending, "outbox")
-        .expect_err("save failure must surface");
-    let s = format!("{err:#}");
-    assert!(
-        s.contains("failed to persist cleared pending fallback"),
-        "error must name the save-clear step: {s}"
-    );
-}
-
-#[test]
-fn test_check_fallback_no_fallback_is_noop() {
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
-
-    let mut cryo_state = test_cryo_state();
-    let mut pending = None;
-
-    let fired = daemon
-        .check_fallback(&mut cryo_state, &mut pending, "outbox")
-        .expect("no-op must not error");
-    assert!(!fired);
-}
-
-#[test]
-fn test_check_fallback_clears_in_flight_marker_after_success() {
-    // The in-flight marker is written before execute and cleared after. If
-    // execute succeeded, the marker must be gone — otherwise the next startup
-    // would re-fire the alert unnecessarily.
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
-
-    let action = FallbackAction {
-        action: "email".into(),
-        target: "ops@example.com".into(),
-        message: "stuck".into(),
-    };
-    let mut cryo_state = test_cryo_state();
-    let mut pending = Some((now - chrono::Duration::minutes(1), action));
-
-    let fired = daemon
-        .check_fallback(&mut cryo_state, &mut pending, "outbox")
-        .expect("fire should succeed");
-    assert!(fired);
-    assert!(
-        cryo_state.in_flight_fallback.is_none(),
-        "in-flight marker must be cleared after successful execute"
-    );
-}
-
-#[test]
-fn test_replay_in_flight_fallback_sends_replay_with_label() {
-    // Simulated crash recovery: state carries an in-flight record from a
-    // previous run that died mid-fire. Replay must write an outbox message
-    // marked "(replay after crash)" and clear the marker so the next start
-    // doesn't replay again.
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.in_flight_fallback = Some(crate::state::InFlightFallback {
-        deadline: "2026-03-01T11:58:00".into(),
-        action: FallbackAction {
-            action: "email".into(),
-            target: "ops@example.com".into(),
-            message: "agent stuck".into(),
-        },
-        started_at: "2026-03-01T11:59:00".into(),
-    });
-
-    let replayed = daemon
-        .replay_in_flight_fallback(&mut cryo_state, "outbox")
-        .expect("replay must succeed");
-    assert!(replayed, "replay must report that it fired");
-    assert!(
-        cryo_state.in_flight_fallback.is_none(),
-        "marker must be cleared after replay"
-    );
-
-    let outbox = crate::message::read_outbox(dir.path()).unwrap();
-    assert_eq!(outbox.len(), 1);
-    assert!(
-        outbox[0].1.body.starts_with("(replay after crash)"),
-        "replayed message body must carry the crash-replay label: {:?}",
-        outbox[0].1.body
-    );
-}
-
-#[test]
-fn test_replay_in_flight_fallback_noop_when_empty() {
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-    let clock = Arc::new(TestClock::new(
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap(),
-    ));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
-
-    let mut cryo_state = test_cryo_state();
-    let replayed = daemon
-        .replay_in_flight_fallback(&mut cryo_state, "outbox")
-        .expect("no-op must not error");
-    assert!(!replayed);
-}
-
-#[test]
 fn test_resolve_hibernate_request_failure_retries() {
-    let fallback = FallbackAction {
-        action: "email".into(),
-        target: "ops@example.com".into(),
-        message: "stuck".into(),
-    };
-
     // Failure path does not require a pending TODO — daemon will retry.
-    let decision = resolve_hibernate_request(
-        false,
-        7,
-        Some("provider failed"),
-        false,
-        Some(fallback.clone()),
-    );
+    let decision = resolve_hibernate_request(false, 7, Some("provider failed"), false);
 
     assert_eq!(
         decision.outcome,
@@ -1250,23 +992,12 @@ fn test_resolve_hibernate_request_failure_retries() {
         decision.log_event,
         "hibernate failed: exit=7, summary=\"provider failed\""
     );
-    assert_eq!(
-        decision.remaining_session_fallback,
-        Some(fallback),
-        "failure should preserve the session fallback"
-    );
 }
 
 #[test]
-fn test_resolve_hibernate_request_complete_ignores_fallback() {
-    let fallback = FallbackAction {
-        action: "email".into(),
-        target: "ops@example.com".into(),
-        message: "stuck".into(),
-    };
-
+fn test_resolve_hibernate_request_complete() {
     // `--complete` means the plan is truly finished; no TODO needed.
-    let decision = resolve_hibernate_request(true, 0, None, false, Some(fallback));
+    let decision = resolve_hibernate_request(true, 0, None, false);
 
     assert_eq!(decision.outcome, Some(SessionLoopOutcome::PlanComplete));
     assert!(decision.response_ok);
@@ -1275,58 +1006,26 @@ fn test_resolve_hibernate_request_complete_ignores_fallback() {
         decision.log_event,
         "hibernate: plan complete, exit=0, summary=\"(no summary)\""
     );
-    assert_eq!(
-        decision.remaining_session_fallback, None,
-        "plan-complete discards the session fallback"
-    );
 }
 
 #[test]
-fn test_resolve_hibernate_request_uses_pending_fallback() {
-    let fallback = FallbackAction {
-        action: "webhook".into(),
-        target: "ops".into(),
-        message: "waiting".into(),
-    };
+fn test_resolve_hibernate_request_hibernates_with_pending_todo() {
+    let decision = resolve_hibernate_request(false, 0, Some("waiting on reply"), true);
 
-    let decision = resolve_hibernate_request(
-        false,
-        0,
-        Some("waiting on reply"),
-        true,
-        Some(fallback.clone()),
-    );
-
-    assert_eq!(
-        decision.outcome,
-        Some(SessionLoopOutcome::Hibernate {
-            fallback: Some(fallback),
-        })
-    );
+    assert_eq!(decision.outcome, Some(SessionLoopOutcome::Hibernate));
     assert!(decision.response_ok);
     assert_eq!(decision.response_message, "Hibernating.");
     assert_eq!(
         decision.log_event,
         "hibernate: exit=0, summary=\"waiting on reply\""
     );
-    assert_eq!(
-        decision.remaining_session_fallback, None,
-        "successful hibernate consumes the session fallback into the outcome"
-    );
 }
 
 #[test]
 fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
-    let fallback = FallbackAction {
-        action: "webhook".into(),
-        target: "ops".into(),
-        message: "waiting".into(),
-    };
-
     // Non-complete hibernate with no pending TODO: session must stay alive
     // so the agent can observe the error and correct.
-    let decision =
-        resolve_hibernate_request(false, 0, Some("forgot todo"), false, Some(fallback.clone()));
+    let decision = resolve_hibernate_request(false, 0, Some("forgot todo"), false);
 
     assert_eq!(
         decision.outcome, None,
@@ -1345,11 +1044,6 @@ fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
     assert_eq!(
         decision.log_event,
         "hibernate refused: no pending TODO, summary=\"forgot todo\""
-    );
-    assert_eq!(
-        decision.remaining_session_fallback,
-        Some(fallback),
-        "rejected hibernate must preserve the session fallback"
     );
 }
 
@@ -1401,171 +1095,6 @@ fn test_handle_todo_request_returns_response_and_log_event() {
     assert_eq!(effects.todos[0].text, "Check inbox");
 }
 
-/// A `StateStore` that always returns an error — used to drive the
-/// save-failure policy paths in unit tests without depending on
-/// filesystem permissions.
-struct FailingStateStore;
-
-impl StateStore for FailingStateStore {
-    fn save(&self, _path: &Path, _state: &CryoState) -> Result<()> {
-        Err(anyhow::anyhow!("save failed (test stub)"))
-    }
-}
-
-/// A `StateStore` that records each save and forwards to the real
-/// filesystem store, so tests can assert disk state after the call.
-struct RecordingStateStore {
-    inner: FsStateStore,
-    saves: Mutex<u32>,
-}
-
-impl RecordingStateStore {
-    fn new() -> Self {
-        Self {
-            inner: FsStateStore,
-            saves: Mutex::new(0),
-        }
-    }
-
-    fn save_count(&self) -> u32 {
-        *self.saves.lock().unwrap()
-    }
-}
-
-impl StateStore for RecordingStateStore {
-    fn save(&self, path: &Path, state: &CryoState) -> Result<()> {
-        *self.saves.lock().unwrap() += 1;
-        self.inner.save(path, state)
-    }
-}
-
-#[test]
-fn test_set_pending_fallback_updates_slot_and_persists() {
-    let dir = tempfile::tempdir().unwrap();
-    let clock = Arc::new(TestClock::new(
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap(),
-    ));
-    let store = Arc::new(RecordingStateStore::new());
-    let daemon = Daemon::new_with_state_store(
-        dir.path().to_path_buf(),
-        clock,
-        Arc::new(ProcessSessionLauncher),
-        store.clone(),
-    );
-
-    let mut cryo_state = test_cryo_state();
-    let mut slot: Option<(NaiveDateTime, FallbackAction)> = None;
-
-    let deadline = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap()
-        + chrono::Duration::hours(1);
-    let fallback = FallbackAction {
-        action: "email".into(),
-        target: "ops".into(),
-        message: "stuck".into(),
-    };
-
-    daemon
-        .set_pending_fallback(
-            &mut cryo_state,
-            &mut slot,
-            Some((deadline, fallback.clone())),
-        )
-        .expect("save succeeds");
-
-    assert!(slot.is_some(), "in-memory slot must be set");
-    assert!(
-        cryo_state.pending_fallback.is_some(),
-        "CryoState.pending_fallback must be synced"
-    );
-    assert_eq!(store.save_count(), 1);
-
-    // Clearing round-trips: both in-memory and CryoState go back to None.
-    daemon
-        .set_pending_fallback(&mut cryo_state, &mut slot, None)
-        .expect("save succeeds");
-    assert!(slot.is_none());
-    assert!(cryo_state.pending_fallback.is_none());
-    assert_eq!(store.save_count(), 2);
-}
-
-#[test]
-fn test_set_pending_fallback_propagates_save_error() {
-    // Per the Step C plan: the helper returns the error so each caller can
-    // apply its own save-failure policy. This test pins that contract.
-    let dir = tempfile::tempdir().unwrap();
-    let clock = Arc::new(TestClock::new(
-        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap(),
-    ));
-    let daemon = Daemon::new_with_state_store(
-        dir.path().to_path_buf(),
-        clock,
-        Arc::new(ProcessSessionLauncher),
-        Arc::new(FailingStateStore),
-    );
-
-    let mut cryo_state = test_cryo_state();
-    let mut slot: Option<(NaiveDateTime, FallbackAction)> = None;
-
-    let err = daemon
-        .set_pending_fallback(
-            &mut cryo_state,
-            &mut slot,
-            Some((
-                chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-                    .unwrap()
-                    .and_hms_opt(12, 0, 0)
-                    .unwrap(),
-                FallbackAction {
-                    action: "email".into(),
-                    target: "ops".into(),
-                    message: "m".into(),
-                },
-            )),
-        )
-        .expect_err("FailingStateStore must surface the error");
-    assert!(
-        err.to_string().contains("save failed"),
-        "error should bubble up verbatim: {err}"
-    );
-    // In-memory mutation still happened — the contract is "mutate, then try
-    // to persist"; callers decide whether to roll back or log and continue.
-    assert!(slot.is_some());
-    assert!(cryo_state.pending_fallback.is_some());
-}
-
-#[test]
-fn test_scheduled_fallback_for_deadline_is_wake_plus_one_hour() {
-    let wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let fb = FallbackAction {
-        action: "email".into(),
-        target: "ops".into(),
-        message: "m".into(),
-    };
-
-    // Both present: deadline = wake + 1h.
-    let armed = scheduled_fallback_for(Some(wake), Some(fb.clone())).unwrap();
-    assert_eq!(armed.0, wake + chrono::Duration::hours(1));
-    assert_eq!(armed.1, fb);
-
-    // No wake: nothing to arm against.
-    assert!(scheduled_fallback_for(None, Some(fb.clone())).is_none());
-    // No fallback: nothing to arm.
-    assert!(scheduled_fallback_for(Some(wake), None).is_none());
-    assert!(scheduled_fallback_for(None, None).is_none());
-}
-
 #[test]
 fn test_should_rotate_provider() {
     use crate::config::RotateOn;
@@ -1586,7 +1115,7 @@ fn test_should_rotate_provider() {
 #[test]
 fn test_decide_next_step_maps_plan_complete_to_shutdown() {
     let config = CryoConfig::default();
-    let retry = RetryState::new(config.max_retries, config.providers.len());
+    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
@@ -1604,21 +1133,14 @@ fn test_decide_next_step_maps_plan_complete_to_shutdown() {
 }
 
 #[test]
-fn test_decide_next_step_arms_hibernate_fallback_from_refreshed_wake() {
+fn test_decide_next_step_hibernate_uses_refreshed_wake() {
     let config = CryoConfig::default();
-    let retry = RetryState::new(config.max_retries, config.providers.len());
+    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
-    let fallback = FallbackAction {
-        action: "email".into(),
-        target: "ops".into(),
-        message: "stuck".into(),
-    };
-    let outcome = SessionLoopOutcome::Hibernate {
-        fallback: Some(fallback.clone()),
-    };
+    let outcome = SessionLoopOutcome::Hibernate;
 
     let step = decide_next_step(
         SessionRunResult::Outcome(&outcome),
@@ -1631,7 +1153,6 @@ fn test_decide_next_step_arms_hibernate_fallback_from_refreshed_wake() {
         step,
         NextStep::Hibernate {
             next_wake: Some(next_wake),
-            scheduled_fallback: Some((next_wake + chrono::Duration::hours(1), fallback)),
         }
     );
 }
@@ -1643,7 +1164,7 @@ fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
         providers: provider_config(3),
         ..CryoConfig::default()
     };
-    let mut retry = RetryState::new(config.max_retries, config.providers.len());
+    let mut retry = RetryState::new(config.providers.len());
     retry.provider_index = 1;
     retry.attempt = 3;
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
@@ -1673,12 +1194,9 @@ fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
 }
 
 #[test]
-fn test_decide_next_step_retries_failures_with_alert_threshold() {
-    let config = CryoConfig {
-        max_retries: 5,
-        ..CryoConfig::default()
-    };
-    let mut retry = RetryState::new(config.max_retries, config.providers.len());
+fn test_decide_next_step_retries_failures_with_backoff() {
+    let config = CryoConfig::default();
+    let mut retry = RetryState::new(config.providers.len());
     retry.attempt = 4;
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
@@ -1693,7 +1211,6 @@ fn test_decide_next_step_retries_failures_with_alert_threshold() {
             next_wake: Some(next_wake),
             plan: RetryPlan {
                 backoff: Duration::from_secs(80),
-                send_alert: true,
             },
         }
     );
@@ -1704,39 +1221,25 @@ fn test_session_loop_outcome_is_crash() {
     // `previous_session_crashed` is derived from this; the mapping is the
     // single source of truth and must cover every outcome variant.
     assert!(!SessionLoopOutcome::PlanComplete.is_crash());
-    assert!(!SessionLoopOutcome::Hibernate { fallback: None }.is_crash());
-    assert!(!SessionLoopOutcome::Hibernate {
-        fallback: Some(FallbackAction {
-            action: "email".into(),
-            target: "ops".into(),
-            message: "m".into()
-        })
-    }
-    .is_crash());
+    assert!(!SessionLoopOutcome::Hibernate.is_crash());
     assert!(SessionLoopOutcome::ValidationFailed { quick_exit: false }.is_crash());
     assert!(SessionLoopOutcome::ValidationFailed { quick_exit: true }.is_crash());
 }
 
 #[test]
 fn test_resolve_interrupted_session_prefers_hibernate_outcome() {
-    let hibernate = SessionLoopOutcome::Hibernate { fallback: None };
+    let hibernate = SessionLoopOutcome::Hibernate;
 
     let shutdown =
         resolve_interrupted_session(SessionInterruption::Shutdown, Some(hibernate.clone()));
     let timeout = resolve_interrupted_session(SessionInterruption::Timeout, Some(hibernate));
 
-    assert_eq!(
-        shutdown.outcome,
-        SessionLoopOutcome::Hibernate { fallback: None }
-    );
+    assert_eq!(shutdown.outcome, SessionLoopOutcome::Hibernate);
     assert_eq!(
         shutdown.finish_reason,
         "daemon shutdown — using agent's hibernate outcome"
     );
-    assert_eq!(
-        timeout.outcome,
-        SessionLoopOutcome::Hibernate { fallback: None }
-    );
+    assert_eq!(timeout.outcome, SessionLoopOutcome::Hibernate);
     assert_eq!(
         timeout.finish_reason,
         "session timeout — using agent's hibernate outcome"
@@ -1793,63 +1296,6 @@ fn test_resolve_child_exit_without_hibernate_marks_quick_exit() {
 }
 
 #[test]
-fn test_drive_active_session_alert_then_hibernate_returns_fallback() {
-    let dir = tempfile::tempdir().unwrap();
-    crate::message::ensure_dirs(dir.path()).unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
-    let cryo_state = test_cryo_state();
-    let mut runtime = FakeSessionRuntime::new(
-        vec![
-            Ok(Some(crate::socket::Request::Alert {
-                action: "webhook".into(),
-                target: "ops".into(),
-                message: "waiting".into(),
-            })),
-            Ok(Some(crate::socket::Request::Hibernate {
-                complete: false,
-                exit_code: 0,
-                summary: Some("waiting on reply".into()),
-            })),
-        ],
-        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
-    );
-    let mut effects = FakeSessionEffects::new_with_pending_todo();
-
-    let outcome = daemon
-        .drive_active_session(
-            &mut runtime,
-            &mut effects,
-            test_session_context(&cryo_state, 60, clock.monotonic_now()),
-            begin_test_logger(dir.path()),
-        )
-        .unwrap();
-
-    assert_eq!(
-        outcome,
-        SessionLoopOutcome::Hibernate {
-            fallback: Some(FallbackAction {
-                action: "webhook".into(),
-                target: "ops".into(),
-                message: "waiting".into(),
-            }),
-        }
-    );
-    assert_eq!(
-        runtime.responses(),
-        vec![
-            (true, "Alert registered".into()),
-            (true, "Hibernating.".into()),
-        ]
-    );
-    assert!(!runtime.terminated());
-}
-
-#[test]
 fn test_drive_active_session_timeout_after_hibernate_uses_hibernate_outcome() {
     let dir = tempfile::tempdir().unwrap();
     crate::message::ensure_dirs(dir.path()).unwrap();
@@ -1879,7 +1325,7 @@ fn test_drive_active_session_timeout_after_hibernate_uses_hibernate_outcome() {
         )
         .unwrap();
 
-    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
     assert!(runtime.terminated(), "timeout should terminate the child");
     assert_eq!(runtime.responses(), vec![(true, "Hibernating.".into())]);
 }
@@ -1944,7 +1390,7 @@ fn test_drive_active_session_writes_daemon_status_without_outbound_message() {
         )
         .unwrap();
 
-    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
     assert!(
         matches!(runtime.responses().as_slice(), [(true, message)] if message == "Hibernating."),
         "hibernate should still be accepted: {:?}",
@@ -2172,7 +1618,7 @@ fn test_drive_active_session_todo_requests_use_effects() {
         )
         .unwrap();
 
-    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
     assert_eq!(
         runtime.responses(),
         vec![
@@ -2228,37 +1674,11 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
         )
         .unwrap();
 
-    assert_eq!(outcome, SessionLoopOutcome::Hibernate { fallback: None });
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
     assert_eq!(effects.receive_calls, 1);
     let (ok, body) = &runtime.responses()[0];
     assert!(*ok);
     assert!(body.contains("msg-1.md"));
-}
-
-#[test]
-fn test_build_bootstrap_state_clears_invalid_pending_fallback() {
-    let dir = tempfile::tempdir().unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
-    let mut cryo_state = test_cryo_state();
-    cryo_state.pending_fallback = Some(PendingFallbackState {
-        deadline: "not-a-time".into(),
-        action: FallbackAction {
-            action: "email".into(),
-            target: "ops@example.com".into(),
-            message: "stuck".into(),
-        },
-    });
-
-    let bootstrap = daemon.build_bootstrap_state(&mut cryo_state, &CryoConfig::default());
-
-    assert!(bootstrap.pending_fallback.is_none());
-    assert!(bootstrap.cleared_invalid_pending_fallback);
-    assert!(cryo_state.pending_fallback.is_none());
 }
 
 #[test]
@@ -2273,7 +1693,7 @@ fn test_build_bootstrap_state_runs_immediately_for_first_session_and_overdue_wak
     let mut first_session = test_cryo_state();
     first_session.session_number = 0;
 
-    let first = daemon.build_bootstrap_state(&mut first_session, &CryoConfig::default());
+    let first = daemon.build_bootstrap_state(&first_session, &CryoConfig::default());
     assert!(first.run_now);
 
     let todo_path = dir.path().join("todo.json");
@@ -2283,7 +1703,7 @@ fn test_build_bootstrap_state_runs_immediately_for_first_session_and_overdue_wak
 
     let mut resumed = test_cryo_state();
     resumed.session_number = 3;
-    let resumed_bootstrap = daemon.build_bootstrap_state(&mut resumed, &CryoConfig::default());
+    let resumed_bootstrap = daemon.build_bootstrap_state(&resumed, &CryoConfig::default());
     assert_eq!(
         resumed_bootstrap.next_wake,
         Some(
@@ -2305,24 +1725,24 @@ fn test_build_bootstrap_state_only_enables_watcher_when_configured_and_present()
         .unwrap();
     let clock = Arc::new(TestClock::new(now));
     let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
-    let mut cryo_state = test_cryo_state();
+    let cryo_state = test_cryo_state();
     let mut config = CryoConfig::default();
 
-    let no_inbox = daemon.build_bootstrap_state(&mut cryo_state, &config);
+    let no_inbox = daemon.build_bootstrap_state(&cryo_state, &config);
     assert!(no_inbox.watch_inbox_path.is_none());
 
     let inbox = dir.path().join("messages").join("inbox");
     std::fs::create_dir_all(&inbox).unwrap();
-    let with_inbox = daemon.build_bootstrap_state(&mut cryo_state, &config);
+    let with_inbox = daemon.build_bootstrap_state(&cryo_state, &config);
     assert_eq!(with_inbox.watch_inbox_path, Some(inbox.clone()));
 
     config.watch_inbox = false;
-    let disabled = daemon.build_bootstrap_state(&mut cryo_state, &config);
+    let disabled = daemon.build_bootstrap_state(&cryo_state, &config);
     assert!(disabled.watch_inbox_path.is_none());
 }
 
 #[test]
-fn test_prepare_shutdown_state_clears_runtime_identity_and_syncs_fallback() {
+fn test_prepare_shutdown_state_clears_runtime_identity() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
@@ -2333,30 +1753,11 @@ fn test_prepare_shutdown_state_clears_runtime_identity_and_syncs_fallback() {
     let mut cryo_state = test_cryo_state();
     cryo_state.pid = Some(1234);
     cryo_state.instance_id = Some("daemon-1".into());
-    let pending = Some((
-        now + chrono::Duration::hours(1),
-        FallbackAction {
-            action: "webhook".into(),
-            target: "ops".into(),
-            message: "still waiting".into(),
-        },
-    ));
 
-    daemon.prepare_shutdown_state(&mut cryo_state, pending.as_ref());
+    daemon.prepare_shutdown_state(&mut cryo_state);
 
     assert!(cryo_state.pid.is_none());
     assert!(cryo_state.instance_id.is_none());
-    assert_eq!(
-        cryo_state.pending_fallback,
-        Some(PendingFallbackState {
-            deadline: "2026-03-01T13:00:00".into(),
-            action: FallbackAction {
-                action: "webhook".into(),
-                target: "ops".into(),
-                message: "still waiting".into(),
-            },
-        })
-    );
 }
 
 #[test]
@@ -2568,8 +1969,8 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
     let clock = Arc::new(TestClock::new(now));
 
     let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::Hibernate { fallback: None },
-        SessionLoopOutcome::Hibernate { fallback: None },
+        SessionLoopOutcome::Hibernate,
+        SessionLoopOutcome::Hibernate,
         SessionLoopOutcome::PlanComplete,
     ]));
 
@@ -2593,9 +1994,7 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        pending_fallback: None,
         watch_inbox_path: None,
-        cleared_invalid_pending_fallback: false,
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2647,7 +2046,7 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
     let clock = Arc::new(TestClock::new(now));
 
     let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::Hibernate { fallback: None },
+        SessionLoopOutcome::Hibernate,
         SessionLoopOutcome::PlanComplete,
     ]));
 
@@ -2669,9 +2068,7 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        pending_fallback: None,
         watch_inbox_path: None,
-        cleared_invalid_pending_fallback: false,
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2692,13 +2089,11 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
 }
 
 #[test]
-fn test_run_event_loop_validation_failure_triggers_retry_alert_and_backoff() {
-    // After `max_retries` ValidationFailed outcomes, the daemon sends a
-    // retry-exhaustion alert to the outbox and keeps retrying with
-    // exponential backoff. Using virtual time the backoff sleeps are free:
-    // what we actually assert is that (a) the alert was written and (b)
-    // multiple sessions ran — proving the outer loop retried rather than
-    // exiting after the first failure.
+fn test_run_event_loop_validation_failures_retry_with_backoff() {
+    // ValidationFailed outcomes retry indefinitely with exponential backoff.
+    // Using virtual time the backoff sleeps are free; we assert that multiple
+    // sessions ran, proving the outer loop retried rather than exiting after
+    // the first failure.
     let dir = tempfile::tempdir().unwrap();
     seed_past_todo(dir.path());
     crate::message::ensure_dirs(dir.path()).unwrap();
@@ -2709,9 +2104,6 @@ fn test_run_event_loop_validation_failure_triggers_retry_alert_and_backoff() {
         .unwrap();
     let clock = Arc::new(TestClock::new(now));
 
-    // Two failures, then plan complete (from the scripted launcher's
-    // fallthrough). The two failures exercise the retry path; plan complete
-    // lets the loop terminate deterministically.
     let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
         SessionLoopOutcome::ValidationFailed { quick_exit: false },
         SessionLoopOutcome::ValidationFailed { quick_exit: false },
@@ -2735,16 +2127,10 @@ fn test_run_event_loop_validation_failure_triggers_retry_alert_and_backoff() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        pending_fallback: None,
         watch_inbox_path: None,
-        cleared_invalid_pending_fallback: false,
     };
 
-    let config = CryoConfig {
-        max_retries: 1,
-        fallback_alert: "outbox".into(),
-        ..CryoConfig::default()
-    };
+    let config = CryoConfig::default();
 
     let (_tx, rx) = mpsc::channel();
 
@@ -2757,17 +2143,6 @@ fn test_run_event_loop_validation_failure_triggers_retry_alert_and_backoff() {
     assert!(
         invocations.len() >= 3,
         "expected 2 failures + 1 plan-complete = 3 invocations, got {invocations:?}"
-    );
-
-    // The retry-exhaustion alert should have been written to the outbox.
-    let outbox = dir.path().join("messages/outbox");
-    let alert_file = std::fs::read_dir(&outbox)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.path().to_string_lossy().contains("retry-exhausted"));
-    assert!(
-        alert_file.is_some(),
-        "retry-exhaustion alert should have been written to outbox"
     );
 }
 
@@ -2814,9 +2189,7 @@ fn test_rotate_on_quick_exit_rotates_in_process() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        pending_fallback: None,
         watch_inbox_path: None,
-        cleared_invalid_pending_fallback: false,
     };
 
     let config = CryoConfig {
@@ -2875,9 +2248,7 @@ fn test_rotate_on_any_failure_rotates_on_crash_in_process() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        pending_fallback: None,
         watch_inbox_path: None,
-        cleared_invalid_pending_fallback: false,
     };
 
     let config = CryoConfig {
@@ -2940,9 +2311,7 @@ fn test_provider_wrap_all_exhausted_in_process() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        pending_fallback: None,
         watch_inbox_path: None,
-        cleared_invalid_pending_fallback: false,
     };
 
     let config = CryoConfig {

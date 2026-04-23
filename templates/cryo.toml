@@ -3,21 +3,11 @@
 # Agent command (e.g. "opencode", "claude", "codex")
 agent = "{{agent}}"
 
-# Failed attempts before sending a retry alert (daemon keeps retrying).
-# Use 1 for short one-shot tasks that should fail fast; bump to 5+ for
-# long-running assistants that should survive flaky networks or API blips.
-max_retries = 1
-
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 0
 
 # Watch inbox for reactive wake
 watch_inbox = true
-
-# Fallback alert method when dead-man switch fires:
-#   "outbox" = write alert to messages/outbox/ (default; delivered by any sync channel)
-#   "none"   = disable fallback alerts entirely
-# fallback_alert = "outbox"
 
 # Periodic status report (written to messages/outbox/ for sync delivery):
 #   report_time = "09:00" (HH:MM local time)

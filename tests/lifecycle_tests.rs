@@ -12,13 +12,10 @@ fn test_state() -> cryochamber::state::CryoState {
         pid: Some(999_999),
         retry_count: 3,
         agent_override: Some("codex".to_string()),
-        max_retries_override: Some(11),
         max_session_duration_override: Some(120),
         last_report_time: Some("2026-04-22T10:00:00".to_string()),
         provider_index: Some(2),
         instance_id: Some("instance-1".to_string()),
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: true,
     }
 }
@@ -41,7 +38,6 @@ fn prepare_start_uses_cli_overrides_in_state_and_effective_agent() {
         dir.path(),
         StartOptions {
             agent_override: Some("mock".to_string()),
-            max_retries_override: Some(9),
             max_session_duration_override: Some(120),
         },
     )
@@ -51,7 +47,6 @@ fn prepare_start_uses_cli_overrides_in_state_and_effective_agent() {
     assert_eq!(prepared.state.session_number, 0);
     assert_eq!(prepared.state.pid, None);
     assert_eq!(prepared.state.agent_override.as_deref(), Some("mock"));
-    assert_eq!(prepared.state.max_retries_override, Some(9));
     assert_eq!(prepared.state.max_session_duration_override, Some(120));
 }
 
@@ -64,13 +59,10 @@ fn prepare_start_rejects_locked_state() {
         pid: Some(std::process::id()),
         retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
-        in_flight_fallback: None,
         previous_session_crashed: false,
     };
     cryochamber::state::save_state(&cryochamber::state::state_path(dir.path()), &state).unwrap();
@@ -96,7 +88,6 @@ fn stop_chamber_clears_pid_and_preserves_runtime_state() {
     assert_eq!(stopped.session_number, 7);
     assert_eq!(stopped.retry_count, 3);
     assert_eq!(stopped.agent_override.as_deref(), Some("codex"));
-    assert_eq!(stopped.max_retries_override, Some(11));
     assert_eq!(stopped.max_session_duration_override, Some(120));
     assert_eq!(
         stopped.last_report_time.as_deref(),
@@ -104,8 +95,6 @@ fn stop_chamber_clears_pid_and_preserves_runtime_state() {
     );
     assert_eq!(stopped.provider_index, Some(2));
     assert_eq!(stopped.instance_id.as_deref(), Some("instance-1"));
-    assert_eq!(stopped.pending_fallback, None);
-    assert_eq!(stopped.in_flight_fallback, None);
     assert!(stopped.previous_session_crashed);
 }
 

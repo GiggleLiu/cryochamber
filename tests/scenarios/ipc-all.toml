@@ -1,14 +1,8 @@
-description = "Exercises send, alert, and hibernate IPC commands in one session."
+description = "Exercises send and hibernate IPC commands in one session."
 
 [[actions]]
 kind = "send"
 message = "Status update for operator"
-
-[[actions]]
-kind = "alert"
-channel = "notify"
-target = "desktop"
-message = "Check on mock agent"
 
 [[actions]]
 kind = "hibernate"

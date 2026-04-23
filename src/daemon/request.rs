@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crate::fallback::FallbackAction;
-
 use super::{SessionEffects, SessionLoopOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,11 +20,6 @@ pub(super) enum DaemonRequest {
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
-    },
-    Alert {
-        action: String,
-        target: String,
-        message: String,
     },
     Reply {
         text: String,
@@ -49,15 +42,6 @@ impl From<crate::socket::Request> for DaemonRequest {
                 exit_code,
                 summary,
             },
-            crate::socket::Request::Alert {
-                action,
-                target,
-                message,
-            } => Self::Alert {
-                action,
-                target,
-                message,
-            },
             crate::socket::Request::Reply { text } => Self::Reply { text },
             crate::socket::Request::TodoAdd { text, at } => {
                 Self::Todo(TodoRequest::Add { text, at })
@@ -76,12 +60,6 @@ pub(super) struct HibernateDecision {
     /// hibernate attempt and leaves the session running so the agent can
     /// observe the error and correct itself (e.g. register a TODO).
     pub(super) outcome: Option<SessionLoopOutcome>,
-    /// What the caller's session-fallback slot should be after this call.
-    /// The caller assigns this verbatim; there is no asymmetry between branches.
-    /// - Rejected / failure-retry branches: return the input unchanged (fallback still relevant).
-    /// - `PlanComplete`: `None` (plan is done; fallback no longer meaningful).
-    /// - `Hibernate`: `None` (consumed into `SessionLoopOutcome::Hibernate { fallback }`).
-    pub(super) remaining_session_fallback: Option<FallbackAction>,
     pub(super) response_ok: bool,
     pub(super) response_message: &'static str,
     pub(super) log_event: String,
@@ -92,13 +70,11 @@ pub(super) fn resolve_hibernate_request(
     exit_code: u8,
     summary: Option<&str>,
     has_pending_todos: bool,
-    session_fallback: Option<FallbackAction>,
 ) -> HibernateDecision {
     let summary = summary.unwrap_or("(no summary)");
     if exit_code != 0 {
         return HibernateDecision {
             outcome: Some(SessionLoopOutcome::ValidationFailed { quick_exit: false }),
-            remaining_session_fallback: session_fallback,
             response_ok: true,
             response_message: "Failure recorded. Daemon will retry.",
             log_event: format!("hibernate failed: exit={exit_code}, summary=\"{summary}\""),
@@ -108,7 +84,6 @@ pub(super) fn resolve_hibernate_request(
     if complete {
         return HibernateDecision {
             outcome: Some(SessionLoopOutcome::PlanComplete),
-            remaining_session_fallback: None,
             response_ok: true,
             response_message: "Plan complete. Shutting down.",
             log_event: format!("hibernate: plan complete, exit={exit_code}, summary=\"{summary}\""),
@@ -118,7 +93,6 @@ pub(super) fn resolve_hibernate_request(
     if !has_pending_todos {
         return HibernateDecision {
             outcome: None,
-            remaining_session_fallback: session_fallback,
             response_ok: false,
             response_message:
                 "hibernate refused: no pending TODO with a valid `--at` time. Every session \
@@ -131,10 +105,7 @@ pub(super) fn resolve_hibernate_request(
     }
 
     HibernateDecision {
-        outcome: Some(SessionLoopOutcome::Hibernate {
-            fallback: session_fallback,
-        }),
-        remaining_session_fallback: None,
+        outcome: Some(SessionLoopOutcome::Hibernate),
         response_ok: true,
         response_message: "Hibernating.",
         log_event: format!("hibernate: exit={exit_code}, summary=\"{summary}\""),

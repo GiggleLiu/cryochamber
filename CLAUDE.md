@@ -70,9 +70,8 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (stdout/stderr redirected to `cryo-agent.log`). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
-| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), executes fallback actions on deadline, and detects delayed wakes (e.g. after machine suspend). |
+| `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, retries with backoff (5s/15s/60s), and detects delayed wakes (e.g. after machine suspend). |
 | `message` | File-based inbox/outbox message system. Inbox messages included in agent prompt on wake. |
-| `fallback` | Dead-man switch: writes alerts to `messages/outbox/` for external delivery. |
 | `channel` | Channel abstraction. Submodules: `file` (local inbox/outbox), `github` (Discussions via GraphQL), `zulip` (Zulip REST API). |
 | `registry` | PID file registry for tracking running daemons. Uses `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. |
 | `report` | Periodic session summary reports. Parses log, counts sessions/failures, writes summary to `messages/outbox/` for sync delivery. |
@@ -88,7 +87,8 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `note`, `send`, `alert`), which send JSON messages over a Unix domain socket. `receive` and `time` are local (no daemon needed).
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
-- **Config/state split**: `cryo.toml` is the project config (agent, retries, timeout, watch_inbox) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, retry count, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender — both per-session stand-in replies (when the agent exited without sending anything) and periodic reports. Agent-authored replies use `from: agent`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Graceful degradation**: If the agent exits without calling `cryo-agent hibernate`, the daemon treats it as a crash and retries with backoff. EventLogger is always finalized even on error.
 - **Default agent**: The CLI defaults to `opencode` as the agent command (headless mode, not the TUI).
@@ -98,7 +98,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 
 ### Files Created by `cryo init`
 
-- `cryo.toml` — project configuration (agent, max_retries, max_session_duration, watch_inbox)
+- `cryo.toml` — project configuration (agent, max_session_duration, watch_inbox)
 - `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `plan.md` — template plan file
 - `NOTES.md` — agent's persistent memory across sessions (seeded from `templates/notes.md`; agent reads/writes directly)
@@ -111,7 +111,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 - `cryo-agent.log` — agent stdout/stderr (raw tool-call output)
 - `todo.json` — per-project TODO items for agent task tracking
 - `messages/inbox/` — incoming messages for the agent
-- `messages/outbox/` — outgoing messages (fallback alerts)
+- `messages/outbox/` — outgoing messages (agent replies, daemon stand-in replies, periodic reports)
 - `messages/inbox/archive/` — processed inbox messages
 - `.cryo/cryo.sock` — Unix domain socket for agent-daemon IPC
 - `gh-sync.json` — GitHub Discussion sync state (if configured)
