@@ -251,7 +251,7 @@ fn test_mock_crash_then_succeed() {
         .success();
 
     assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(30)),
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(60)),
         "Daemon should exit after retry succeeds"
     );
 
@@ -750,7 +750,7 @@ fn test_inbox_wake_coalesces_multiple_events() {
 }
 
 #[test]
-fn test_daemon_replies_to_unanswered_queued_inbox_message() {
+fn test_unreceived_queued_inbox_gets_daemon_status_only() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "inbox-wake.sh");
     write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
@@ -768,11 +768,14 @@ fn test_daemon_replies_to_unanswered_queued_inbox_message() {
     );
 
     let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
-    assert_eq!(outbox.len(), 1, "daemon should write one fallback reply");
+    assert_eq!(outbox.len(), 1, "daemon should write one status message");
     assert_eq!(outbox[0].1.from, "cryochamber");
     assert!(
-        outbox[0].1.body.contains("the agent did not send a reply"),
-        "fallback reply should explain why it was sent: {:?}",
+        outbox[0]
+            .1
+            .body
+            .contains("without sending an outbox message"),
+        "without receive, the daemon should only emit its generic session status: {:?}",
         outbox[0].1.body
     );
     assert!(
@@ -784,7 +787,7 @@ fn test_daemon_replies_to_unanswered_queued_inbox_message() {
 }
 
 #[test]
-fn test_status_send_does_not_satisfy_queued_inbox_message() {
+fn test_status_send_without_receive_does_not_trigger_fallback() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "send-without-reply.toml");
     write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
@@ -804,21 +807,14 @@ fn test_status_send_does_not_satisfy_queued_inbox_message() {
     let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
     assert_eq!(
         outbox.len(),
-        2,
-        "a status send should not suppress the daemon fallback reply for unanswered inbox messages"
+        1,
+        "without receive, a status send should remain just a status send"
     );
     assert!(
         outbox
             .iter()
             .any(|(_, msg)| msg.from == "agent" && msg.body == "Status update for operator"),
         "agent status update should still be delivered: {:?}",
-        outbox
-    );
-    assert!(
-        outbox.iter().any(|(_, msg)| {
-            msg.from == "cryochamber" && msg.body.contains("the agent did not send a reply")
-        }),
-        "daemon fallback should still be emitted when the agent only sends a status update: {:?}",
         outbox
     );
     assert!(

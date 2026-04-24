@@ -193,7 +193,7 @@ fn test_accept_unknown_fields_ignored() {
     let server = SocketServer::bind(&sock_path).unwrap();
     server.set_nonblocking(false).unwrap();
 
-        let handle = std::thread::spawn({
+    let handle = std::thread::spawn({
         let sock_path = sock_path.clone();
         move || {
             let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
