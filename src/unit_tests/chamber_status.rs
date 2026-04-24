@@ -140,3 +140,51 @@ fn messages_are_sorted_chronologically_and_tagged_with_sessions() {
     assert_eq!(messages[1].session, Some(1));
     assert_eq!(messages[2].session, Some(2));
 }
+
+#[test]
+fn overview_agent_running_requires_live_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut st = test_state(1);
+    st.pid = Some(std::process::id());
+    st.session_active = true;
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+    let ov = overview(dir.path());
+    assert!(ov.running, "live daemon should be running");
+    assert!(
+        ov.agent_running,
+        "session_active + live pid should yield agent_running"
+    );
+}
+
+#[test]
+fn overview_agent_running_false_when_daemon_dead() {
+    let dir = tempfile::tempdir().unwrap();
+    // Spawn a throwaway process and wait for it to exit so its PID is dead.
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead_pid = child.id();
+    child.wait().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let mut st = test_state(1);
+    st.pid = Some(dead_pid);
+    st.session_active = true; // stale leftover
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+    let ov = overview(dir.path());
+    assert!(!ov.running);
+    assert!(
+        !ov.agent_running,
+        "stale session_active must not yield agent_running without a live daemon"
+    );
+}
+
+#[test]
+fn overview_agent_running_false_when_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut st = test_state(1);
+    st.pid = Some(std::process::id());
+    st.session_active = false;
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+    let ov = overview(dir.path());
+    assert!(ov.running);
+    assert!(!ov.agent_running);
+}

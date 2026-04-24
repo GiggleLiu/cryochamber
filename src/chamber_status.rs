@@ -36,6 +36,7 @@ pub struct ChamberSyncBadge {
 #[derive(Debug, Clone, Serialize)]
 pub struct ChamberOverview {
     pub running: bool,
+    pub agent_running: bool,
     pub session: Option<u32>,
     pub next_wake: Option<String>,
     pub next_wake_display: Option<String>,
@@ -119,8 +120,18 @@ pub fn overview(dir: &Path) -> ChamberOverview {
     let next_wake = next_wake(dir);
     let log_file = crate::log::log_path(dir);
 
+    let running = state.as_ref().map(crate::state::is_locked).unwrap_or(false);
+    // Only report agent_running when the daemon is actually alive — a dead
+    // daemon may have left session_active=true in timer.json after SIGKILL.
+    let agent_running = running
+        && state
+            .as_ref()
+            .map(|st| st.session_active)
+            .unwrap_or(false);
+
     ChamberOverview {
-        running: state.as_ref().map(crate::state::is_locked).unwrap_or(false),
+        running,
+        agent_running,
         session: state.as_ref().map(|st| st.session_number),
         next_wake_display: next_wake.clone(),
         wake_imminent: wake_imminent(next_wake.as_deref()),

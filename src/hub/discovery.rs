@@ -45,6 +45,7 @@ pub struct ChamberEntry {
     pub path: PathBuf,
     pub config_error: Option<String>,
     pub running: bool,
+    pub agent_running: bool,
     pub session: Option<u32>,
     pub next_wake: Option<String>,
     pub next_wake_display: Option<String>,
@@ -95,6 +96,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
                 path: canonical,
                 config_error,
                 running: false,
+                agent_running: false,
                 session: None,
                 next_wake: None,
                 next_wake_display: None,
@@ -115,6 +117,7 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
     for entry in idx.values_mut() {
         let overview = crate::chamber_status::overview(&entry.path);
         entry.running = overview.running;
+        entry.agent_running = overview.agent_running;
         entry.session = overview.session;
         entry.next_wake = overview.next_wake;
         entry.next_wake_display = overview.next_wake_display;

@@ -161,3 +161,63 @@ fn populate_runtime_exposes_rail_display_fields() {
     assert_eq!(value["wake_imminent"], false);
     assert_eq!(value["last_message_preview"], "hello preview");
 }
+
+#[test]
+fn populate_runtime_reports_agent_running_when_session_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let st = crate::state::CryoState {
+        session_number: 1,
+        pid: Some(std::process::id()),
+        retry_count: 0,
+        agent_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        previous_session_crashed: false,
+        session_active: true,
+    };
+    crate::state::save_state(&crate::state::state_path(&chamber), &st).unwrap();
+
+    let mut idx = scan_workspace(dir.path());
+    populate_runtime(&mut idx);
+    let entry = idx.values().next().expect("one chamber");
+    assert!(entry.running);
+    assert!(entry.agent_running);
+    let value = serde_json::to_value(entry).unwrap();
+    assert_eq!(value["agent_running"], true);
+}
+
+#[test]
+fn populate_runtime_reports_agent_running_false_when_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("beta");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let st = crate::state::CryoState {
+        session_number: 1,
+        pid: Some(std::process::id()),
+        retry_count: 0,
+        agent_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        previous_session_crashed: false,
+        session_active: false,
+    };
+    crate::state::save_state(&crate::state::state_path(&chamber), &st).unwrap();
+
+    let mut idx = scan_workspace(dir.path());
+    populate_runtime(&mut idx);
+    let entry = idx.values().next().expect("one chamber");
+    assert!(entry.running);
+    assert!(!entry.agent_running);
+}
