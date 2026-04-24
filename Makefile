@@ -4,7 +4,7 @@
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
-CODEX_MODEL ?= gpt-5.4
+CODEX_MODEL ?= gpt-5.5
 
 # Default target
 help:
