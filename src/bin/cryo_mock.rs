@@ -66,8 +66,6 @@ enum Action {
     },
     /// Call `cryo-agent send <message>`.
     Send { message: String },
-    /// Call `cryo-agent reply <message>`.
-    Reply { message: String },
     /// Write `content` to `path` (relative to cwd); used by env-injection tests.
     WriteFile { path: String, content: String },
     /// Spawn a detached orphan subprocess that outlives the mock agent.
@@ -200,10 +198,6 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
         }
         Action::Send { message } => {
             call_cryo_agent(&["send".into(), expand(message)])?;
-            Ok(None)
-        }
-        Action::Reply { message } => {
-            call_cryo_agent(&["reply".into(), expand(message)])?;
             Ok(None)
         }
         Action::WriteFile { path, content } => {

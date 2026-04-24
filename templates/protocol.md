@@ -17,7 +17,7 @@ These calls are **separate concerns**. They do NOT substitute for each other:
 
 | Call | What it does | What it does NOT do |
 |------|--------------|---------------------|
-| `send` / `reply` | Sends a human-visible outbox message. | Does not schedule a wake or end the session. |
+| `send` | Sends a human-visible outbox message. If you previously called `receive`, this same `send` also resolves that claimed inbox batch. | Does not schedule a wake or end the session. |
 | `todo add --at <when>` | Declares when the daemon should wake you next. | Does not end the session. |
 | `hibernate` | Ends the current session (process exits). | Does **not** schedule any wake. |
 
@@ -69,9 +69,9 @@ Then:
 ### Step 2: Work
 
 - Do the work described in your plan.
-- The only supported way to communicate with the human is through `cryo-agent send` and `cryo-agent reply`.
+- The only supported way to communicate with the human is through `cryo-agent send`.
 - Do not use stdout/stderr as a conversation channel; they are diagnostic logs in `cryo-agent.log`.
-- Reply to any inbox messages: `cryo-agent reply "response text"`
+- If you need to answer inbox mail, run `cryo-agent receive` first, then `cryo-agent send "response text"` for that received batch.
 - Update TODOs as you go: `cryo-agent todo done <id>`
 
 ### Step 3: Record
@@ -124,8 +124,7 @@ cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 
 ```
 cryo-agent send "message"                     # Send message to human (outbox)
-cryo-agent reply "message"                    # Reply to inbox messages
-cryo-agent receive                            # Read inbox messages from human
+cryo-agent receive                            # Claim current inbox batch from human
 cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required) — ONLY way to set next wake
 cryo-agent todo list                          # List all TODO items
 cryo-agent todo done <id>                     # Mark item as done
@@ -140,11 +139,11 @@ cryo-agent hibernate [--complete|--exit N] [--summary "..."]   # End the session
 - **TODO list drives your schedule.** The daemon's next wake is always the earliest pending TODO's `at` time. `hibernate` does not take a wake time.
 - **Every session sends a human-visible outbox message before hibernating.** For non-complete sessions, also add a pending TODO before `hibernate`.
 - **Inbox messages wake you early.** Humans can send messages. They appear inline in the `## Inbox` section of your prompt — follow the section hint to decide whether to call `cryo-agent receive` for the rest.
-- **Human communication goes through `cryo-agent`.** Use `send`/`reply`; stdout/stderr are logs only.
+- **Human communication goes through `cryo-agent`.** Use `send`; stdout/stderr are logs only.
 - **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.
 - **TODOs that triggered this wake are already consumed.** The daemon marks every past-due pending TODO as done before spawning you so you don't react to the same item twice. They will not appear in `## TODO List`; add a new TODO for any follow-up work.
 - **No hibernate = crash, and the consumed TODO comes back later.** If you exit without calling `cryo-agent hibernate`, the daemon re-injects each consumed TODO with a `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). There is no immediate auto-retry; the chamber simply waits for the rescheduled TODO (or an inbox message).
-- **Inbox messages are previewed, not consumed, by the daemon.** `## Inbox` shows messages currently in `messages/inbox/` as a preview. Messages are archived only when *you* call `cryo-agent receive`. If you don't run `receive`, the same messages will appear again on your next wake — including after a crash, so no message is ever lost in a crash archive.
+- **Inbox messages are previewed, not consumed, by the daemon.** `## Inbox` shows messages currently in `messages/inbox/` as a preview. When you call `cryo-agent receive`, the daemon reads and archives that batch immediately; the next successful `cryo-agent send` resolves the reply obligation for that received batch, or the daemon falls back at session end. There is no file-backed pending inbox state.
 - **No TODO = chamber goes silent.** Without a pending TODO, the daemon has nothing to wake for.
 - **Delayed wakes happen.** If the machine was suspended, you'll see a system notice. Adjust accordingly.
 - **Hibernate is terminal.** Nothing you do after hibernate will take effect. Put all work before it.

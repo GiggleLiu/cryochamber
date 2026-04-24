@@ -32,7 +32,7 @@ cryohub status                              # show this dir's service + any othe
 ## Agent IPC (`cryo-agent`)
 
 These commands are used by the AI agent to communicate with the daemon. They send JSON messages over a Unix domain socket.
-Human-visible communication should go through `cryo-agent send` / `cryo-agent reply`; stdout/stderr are only written to `cryo-agent.log`.
+Human-visible communication should go through `cryo-agent send`; stdout/stderr are only written to `cryo-agent.log`.
 If a session ends without an agent outbox message, the daemon writes a stand-in status message so the run is still visible.
 
 ```bash
@@ -41,7 +41,7 @@ cryo-agent hibernate --complete        # End session (plan done)
 cryo-agent hibernate --exit 1          # Report a failed session (daemon marks the wake crashed; the consumed TODO is re-injected with an attempt bump)
 cryo-agent todo add "text" --at <TIME> # Schedule next wake via TODO
 cryo-agent send "message"             # Send message to human (writes to outbox)
-cryo-agent receive                     # Read and archive inbox messages from human
+cryo-agent receive                     # Claim current inbox batch from human
 cryo-agent time                        # Current time (ISO8601 local)
 cryo-agent time "+30 minutes"          # Relative offset (minutes|hours|days|weeks)
 cryo-agent time "2026-04-25T10:00"     # ISO8601 pass-through (validates + normalizes)

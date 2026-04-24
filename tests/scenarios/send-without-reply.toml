@@ -1,0 +1,10 @@
+description = "Agent sends a status update but does not receive/reply to the queued inbox message."
+
+[[actions]]
+kind = "send"
+message = "Status update for operator"
+
+[[actions]]
+kind = "hibernate"
+complete = true
+summary = "Sent a status update only"

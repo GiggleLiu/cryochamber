@@ -141,12 +141,13 @@ impl SessionLauncher for ProcessSessionLauncher {
             cryo_state.session_number
         );
 
+        let store = crate::channel::store::MessageStore::new(daemon.dir.clone());
+
         // Inbox messages are not shown inline anymore. The daemon still
         // detects whether any are waiting so it can tell the agent to run
         // `cryo-agent receive`, but the content itself stays hidden until
         // the agent explicitly asks for it.
-        let inbox_filenames: Vec<String> =
-            crate::channel::store::MessageStore::new(daemon.dir.clone()).list_inbox_filenames()?;
+        let inbox_filenames: Vec<String> = store.list_inbox_filenames()?;
         let inbox_waiting = !inbox_filenames.is_empty();
 
         let todo_path = daemon.dir.join("todo.json");
@@ -206,7 +207,6 @@ impl SessionLauncher for ProcessSessionLauncher {
         let mut effects = FsSessionEffects::new(&daemon.dir);
         let context = ActiveSessionContext {
             cryo_state,
-            inbox_filenames,
             timeout_secs,
             spawn_time,
         };

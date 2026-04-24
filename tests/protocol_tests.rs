@@ -30,7 +30,7 @@ fn test_protocol_user_channel_is_cryo_agent_only() {
     assert!(content.contains("only supported way to communicate with the human"));
     assert!(content.contains("stdout/stderr"));
     assert!(content.contains("cryo-agent send"));
-    assert!(content.contains("cryo-agent reply"));
+    assert!(!content.contains("cryo-agent reply"));
 }
 
 #[test]

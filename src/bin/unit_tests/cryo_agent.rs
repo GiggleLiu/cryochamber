@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn cryo_agent_exposes_send_without_reply_subcommand() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(root.join("src/bin/cryo_agent.rs")).unwrap();
+
+    assert!(
+        source.contains("Request::Send"),
+        "cryo-agent send must map to a dedicated Request::Send variant"
+    );
+    assert!(
+        !source.contains("Reply {"),
+        "cryo-agent reply subcommand should be removed"
+    );
+}
+
+#[test]
 fn iso_pass_through_minute_precision() {
     assert_eq!(
         parse_iso_timestamp("2026-04-25T10:00").unwrap(),

@@ -31,11 +31,6 @@ enum Commands {
         /// Message text
         text: String,
     },
-    /// Reply to human (alias for send, writes to outbox)
-    Reply {
-        /// Reply message text
-        text: String,
-    },
     /// Read inbox messages from human
     Receive,
     /// Print current time, compute a future time, or validate an ISO8601 timestamp
@@ -103,7 +98,7 @@ fn main() -> Result<()> {
                 summary,
             },
         ),
-        Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
+        Commands::Send { text } => send(&dir, &Request::Send { text }),
         Commands::Receive => send(&dir, &Request::Receive),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),

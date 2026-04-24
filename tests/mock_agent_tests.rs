@@ -222,7 +222,7 @@ fn test_mock_ipc_all_commands() {
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
 
     // Verify the remaining IPC commands were logged
-    assert!(log.contains("reply:"), "Missing reply in log: {log}");
+    assert!(log.contains("send:"), "Missing send in log: {log}");
     assert!(
         log.contains("plan complete"),
         "Missing plan complete: {log}"
@@ -774,6 +774,52 @@ fn test_daemon_replies_to_unanswered_queued_inbox_message() {
         outbox[0].1.body.contains("the agent did not send a reply"),
         "fallback reply should explain why it was sent: {:?}",
         outbox[0].1.body
+    );
+    assert!(
+        !cryochamber::message::read_inbox(dir.path())
+            .unwrap()
+            .is_empty(),
+        "queued inbox message should remain until the agent explicitly receives it"
+    );
+}
+
+#[test]
+fn test_status_send_does_not_satisfy_queued_inbox_message() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "send-without-reply.toml");
+    write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(
+        outbox.len(),
+        2,
+        "a status send should not suppress the daemon fallback reply for unanswered inbox messages"
+    );
+    assert!(
+        outbox
+            .iter()
+            .any(|(_, msg)| msg.from == "agent" && msg.body == "Status update for operator"),
+        "agent status update should still be delivered: {:?}",
+        outbox
+    );
+    assert!(
+        outbox.iter().any(|(_, msg)| {
+            msg.from == "cryochamber" && msg.body.contains("the agent did not send a reply")
+        }),
+        "daemon fallback should still be emitted when the agent only sends a status update: {:?}",
+        outbox
     );
     assert!(
         !cryochamber::message::read_inbox(dir.path())

@@ -3,9 +3,7 @@ use chrono::NaiveDateTime;
 use std::path::Path;
 
 pub(super) trait SessionEffects {
-    /// List unread inbox filenames without parsing message bodies.
-    fn list_inbox_filenames(&self) -> Result<Vec<String>>;
-    fn read_and_archive_inbox(&mut self) -> Result<Vec<(String, crate::message::Message)>>;
+    fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>>;
     fn write_reply(
         &mut self,
         author: ReplyAuthor,
@@ -63,11 +61,7 @@ impl<'a> FsSessionEffects<'a> {
 }
 
 impl SessionEffects for FsSessionEffects<'_> {
-    fn list_inbox_filenames(&self) -> Result<Vec<String>> {
-        self.message_store().list_inbox_filenames()
-    }
-
-    fn read_and_archive_inbox(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
+    fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
         self.message_store().read_and_archive_inbox()
     }
 

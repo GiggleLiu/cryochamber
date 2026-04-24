@@ -33,12 +33,13 @@ fn test_serialize_hello_request() {
 }
 
 #[test]
-fn test_serialize_reply_request() {
-    let req = Request::Reply {
-        text: "done with phase 1".to_string(),
-    };
-    let json = serde_json::to_string(&req).unwrap();
-    assert!(json.contains("done with phase 1"));
+fn test_deserialize_send_request() {
+    let json = r#"{"cmd":"send","text":"status update"}"#;
+    let parsed = serde_json::from_str::<Request>(json);
+    assert!(
+        parsed.is_ok(),
+        "socket request enum must accept a dedicated send command"
+    );
 }
 
 #[test]
@@ -126,7 +127,7 @@ fn test_socket_server_roundtrip() {
 
     let resp = send_request(
         dir.path(),
-        &Request::Reply {
+        &Request::Send {
             text: "hello".into(),
         },
     )
@@ -136,7 +137,7 @@ fn test_socket_server_roundtrip() {
 
     // Server received the request
     let received = rx.recv().unwrap();
-    assert!(matches!(received, Request::Reply { text } if text == "hello"));
+    assert!(matches!(received, Request::Send { text } if text == "hello"));
 
     handle.join().unwrap();
 }
@@ -192,13 +193,13 @@ fn test_accept_unknown_fields_ignored() {
     let server = SocketServer::bind(&sock_path).unwrap();
     server.set_nonblocking(false).unwrap();
 
-    let handle = std::thread::spawn({
+        let handle = std::thread::spawn({
         let sock_path = sock_path.clone();
         move || {
             let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
             use std::io::{BufRead, BufReader, Write};
-            // Reply request with an extra unknown field
-            let json = r#"{"cmd":"reply","text":"hello","unknown_field":42}"#;
+            // Send request with an extra unknown field
+            let json = r#"{"cmd":"send","text":"hello","unknown_field":42}"#;
             stream.write_all(json.as_bytes()).unwrap();
             stream.write_all(b"\n").unwrap();
             stream.flush().unwrap();
@@ -213,7 +214,7 @@ fn test_accept_unknown_fields_ignored() {
     // serde ignores unknown fields by default (no deny_unknown_fields set)
     match result {
         Ok(Some((req, responder))) => {
-            assert!(matches!(req, Request::Reply { text } if text == "hello"));
+            assert!(matches!(req, Request::Send { text } if text == "hello"));
             responder
                 .respond(&Response {
                     ok: true,

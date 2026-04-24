@@ -28,7 +28,9 @@ fn daemon_receive_request_is_wired_through_socket_request_and_effects() {
     assert!(socket_src.contains("Receive"));
     assert!(request_src.contains("enum DaemonRequest"));
     assert!(request_src.contains("Receive,"));
-    assert!(effects_src.contains("read_and_archive_inbox"));
+    assert!(effects_src.contains("claim_inbox_batch"));
+    assert!(!effects_src.contains("archive_pending_inbox"));
+    assert!(!effects_src.contains("restore_pending_inbox"));
 }
 
 #[test]
@@ -183,6 +185,7 @@ struct FakeSessionRuntime {
     requests: Mutex<VecDeque<anyhow::Result<Option<crate::socket::Request>>>>,
     waits: Mutex<VecDeque<std::io::Result<Option<ChildExitStatus>>>>,
     responses: Mutex<Vec<(bool, String)>>,
+    respond_results: Mutex<VecDeque<anyhow::Result<()>>>,
     terminated: AtomicBool,
 }
 
@@ -195,6 +198,21 @@ impl FakeSessionRuntime {
             requests: Mutex::new(requests.into()),
             waits: Mutex::new(waits.into()),
             responses: Mutex::new(Vec::new()),
+            respond_results: Mutex::new(VecDeque::new()),
+            terminated: AtomicBool::new(false),
+        }
+    }
+
+    fn with_respond_results(
+        requests: Vec<anyhow::Result<Option<crate::socket::Request>>>,
+        waits: Vec<std::io::Result<Option<ChildExitStatus>>>,
+        respond_results: Vec<anyhow::Result<()>>,
+    ) -> Self {
+        Self {
+            requests: Mutex::new(requests.into()),
+            waits: Mutex::new(waits.into()),
+            responses: Mutex::new(Vec::new()),
+            respond_results: Mutex::new(respond_results.into()),
             terminated: AtomicBool::new(false),
         }
     }
@@ -222,7 +240,11 @@ impl SessionRuntime for FakeSessionRuntime {
 
     fn respond(&mut self, ok: bool, message: String) -> Result<()> {
         self.responses.lock().unwrap().push((ok, message));
-        Ok(())
+        self.respond_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
     }
 
     fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>> {
@@ -303,15 +325,7 @@ impl FakeSessionEffects {
 }
 
 impl SessionEffects for FakeSessionEffects {
-    fn list_inbox_filenames(&self) -> Result<Vec<String>> {
-        Ok(self
-            .inbox_messages
-            .iter()
-            .map(|(filename, _)| filename.clone())
-            .collect())
-    }
-
-    fn read_and_archive_inbox(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
+    fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
         Ok(std::mem::take(&mut self.inbox_messages))
     }
 
@@ -492,13 +506,12 @@ fn test_session_context<'a>(
 
 fn test_session_context_with_inbox<'a>(
     cryo_state: &'a CryoState,
-    inbox_filenames: Vec<String>,
+    _inbox_filenames: Vec<String>,
     timeout_secs: u64,
     spawn_time: Instant,
 ) -> ActiveSessionContext<'a> {
     ActiveSessionContext {
         cryo_state,
-        inbox_filenames,
         timeout_secs,
         spawn_time,
     }
@@ -1045,14 +1058,14 @@ fn test_handle_todo_request_returns_response_and_log_event() {
 }
 
 #[test]
-fn test_handle_receive_request_returns_formatted_messages_and_consumed_filenames() {
+fn test_handle_receive_request_returns_formatted_messages_and_claimed_filenames() {
     let mut effects = FakeSessionEffects::new();
     effects.push_inbox_message("msg-1.md", "Archive me");
 
     let outcome = handle_receive_request(&mut effects);
 
     assert!(outcome.ok);
-    assert_eq!(outcome.consumed_filenames, vec!["msg-1.md".to_string()]);
+    assert_eq!(outcome.claimed_filenames, vec!["msg-1.md".to_string()]);
     assert_eq!(
         outcome.log_event,
         Some("receive: 1 inbox message [msg-1.md]".to_string())
@@ -1414,7 +1427,8 @@ fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fa
     let cryo_state = test_cryo_state();
     let mut runtime = FakeSessionRuntime::new(
         vec![
-            Ok(Some(crate::socket::Request::Reply {
+            Ok(Some(crate::socket::Request::Receive)),
+            Ok(Some(crate::socket::Request::Send {
                 text: "Need approval".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1426,10 +1440,12 @@ fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fa
         vec![
             Ok(None),
             Ok(None),
+            Ok(None),
             Ok(Some(ChildExitStatus { code: Some(0) })),
         ],
     );
     let mut effects = FakeSessionEffects::with_reply_failure("injected reply failure");
+    effects.push_inbox_message("human-1.md", "Need approval");
 
     let err = daemon
         .drive_active_session(
@@ -1442,24 +1458,26 @@ fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fa
         .to_string();
 
     assert!(
-        err.contains("failed to write daemon status"),
+        err.contains("failed to write daemon reply"),
         "unexpected error: {err}"
     );
     let responses = runtime.responses();
-    assert_eq!(responses.len(), 2);
+    assert_eq!(responses.len(), 3);
+    assert!(responses[0].0);
+    assert!(responses[0].1.contains("--- human-1.md ---"));
     assert_eq!(
-        responses[0],
+        responses[1],
         (
             false,
-            "Failed to write reply: injected reply failure".into()
+            "Failed to write message: injected reply failure".into()
         )
     );
-    assert_eq!(responses[1], (true, "Hibernating.".into()));
+    assert_eq!(responses[2], (true, "Hibernating.".into()));
     assert!(effects.replies.is_empty());
 }
 
 #[test]
-fn test_drive_active_session_daemon_replies_when_received_messages_unanswered() {
+fn test_drive_active_session_unreceived_inbox_only_gets_daemon_status() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
@@ -1498,14 +1516,14 @@ fn test_drive_active_session_daemon_replies_when_received_messages_unanswered() 
     assert!(
         effects.replies[0]
             .1
-            .contains("the agent did not send a reply"),
-        "daemon fallback reply should explain why it was sent: {:?}",
+            .contains("without sending an outbox message"),
+        "without a claimed inbox batch, the daemon should only send its generic status: {:?}",
         effects.replies
     );
 }
 
 #[test]
-fn test_drive_active_session_agent_reply_satisfies_queued_inbox_message() {
+fn test_drive_active_session_send_after_receive_satisfies_queued_inbox_message() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
@@ -1516,8 +1534,60 @@ fn test_drive_active_session_agent_reply_satisfies_queued_inbox_message() {
     let cryo_state = test_cryo_state();
     let mut runtime = FakeSessionRuntime::new(
         vec![
-            Ok(Some(crate::socket::Request::Reply {
+            Ok(Some(crate::socket::Request::Receive)),
+            Ok(Some(crate::socket::Request::Send {
                 text: "Got it".into(),
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("human-1.md", "Need a reply");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_inbox(
+                &cryo_state,
+                vec!["human-1.md".into()],
+                60,
+                clock.monotonic_now(),
+            ),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Agent);
+    assert!(effects.inbox_messages.is_empty());
+}
+
+#[test]
+fn test_drive_active_session_send_without_receive_can_still_post_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Send {
+                text: "Still investigating".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
                 complete: true,
@@ -1549,8 +1619,68 @@ fn test_drive_active_session_agent_reply_satisfies_queued_inbox_message() {
         .unwrap();
 
     assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
-    assert_eq!(effects.replies.len(), 1);
-    assert_eq!(effects.replies[0].0, ReplyAuthor::Agent);
+    assert_eq!(
+        runtime.responses(),
+        vec![
+            (true, "Message sent".into()),
+            (true, "Plan complete. Shutting down.".into())
+        ]
+    );
+    assert!(
+        effects
+            .replies
+            .iter()
+            .any(|(author, text, _)| *author == ReplyAuthor::Agent
+                && text == "Still investigating"),
+        "plain send should still post a status message: {:?}",
+        effects.replies
+    );
+    assert_eq!(
+        effects
+            .replies
+            .iter()
+            .filter(|(author, _, _)| *author == ReplyAuthor::Daemon)
+            .count(),
+        0,
+        "unreceived inbox should remain silent until the agent explicitly reads it"
+    );
+}
+
+#[test]
+fn test_drive_active_session_receive_archives_inbox_even_when_response_delivery_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::with_respond_results(
+        vec![Ok(Some(crate::socket::Request::Receive))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+        vec![Err(anyhow::anyhow!("injected response delivery failure"))],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("msg-1.md", "Archive me on receive");
+
+    let err = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        err.contains("injected response delivery failure"),
+        "unexpected error: {err}"
+    );
+    assert!(effects.inbox_messages.is_empty());
 }
 
 #[test]

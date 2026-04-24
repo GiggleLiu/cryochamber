@@ -18,16 +18,15 @@ pub struct Message {
 
 /// Create the messages directory structure: inbox/, outbox/, inbox/archive/.
 pub fn ensure_dirs(dir: &Path) -> Result<()> {
-    let messages = dir.join("messages");
-    std::fs::create_dir_all(messages.join("inbox").join("archive"))?;
-    std::fs::create_dir_all(messages.join("outbox"))?;
+    std::fs::create_dir_all(inbox_archive_dir(dir))?;
+    std::fs::create_dir_all(message_box_dir(dir, "outbox"))?;
     Ok(())
 }
 
 /// Write a message to the given box (e.g. "inbox" or "outbox").
 /// Returns the path of the written file.
 pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBuf> {
-    let box_dir = dir.join("messages").join(box_name);
+    let box_dir = message_box_dir(dir, box_name);
     std::fs::create_dir_all(&box_dir)?;
 
     let ts = msg.timestamp.format("%Y-%m-%dT%H-%M-%S");
@@ -89,14 +88,12 @@ fn unique_suffix() -> String {
 /// Read all unread messages from inbox/, sorted by filename (timestamp order).
 /// Returns (filename, Message) pairs.
 pub fn read_inbox(dir: &Path) -> Result<Vec<(String, Message)>> {
-    let inbox = dir.join("messages").join("inbox");
-    read_message_dir(&inbox, "message")
+    read_message_dir(&message_box_dir(dir, "inbox"), "message")
 }
 
 /// List inbox filenames without parsing message bodies.
 pub fn list_inbox(dir: &Path) -> Result<Vec<String>> {
-    let inbox = dir.join("messages").join("inbox");
-    Ok(list_message_files(&inbox)?
+    Ok(list_message_files(&message_box_dir(dir, "inbox"))?
         .into_iter()
         .map(|file| file.filename)
         .collect())
@@ -104,20 +101,20 @@ pub fn list_inbox(dir: &Path) -> Result<Vec<String>> {
 
 /// Read all messages from outbox/, sorted by filename (timestamp order).
 pub fn read_outbox(dir: &Path) -> Result<Vec<(String, Message)>> {
-    let outbox = dir.join("messages").join("outbox");
-    read_message_dir(&outbox, "message")
+    read_message_dir(&message_box_dir(dir, "outbox"), "message")
 }
 
 /// Read all archived inbox messages from inbox/archive/, sorted by filename.
 pub fn read_inbox_archive(dir: &Path) -> Result<Vec<(String, Message)>> {
-    let archive = dir.join("messages").join("inbox").join("archive");
-    read_message_dir(&archive, "archived message")
+    read_message_dir(&inbox_archive_dir(dir), "archived message")
 }
 
 /// Read all archived outbox messages from outbox/archive/, sorted by filename.
 pub fn read_outbox_archive(dir: &Path) -> Result<Vec<(String, Message)>> {
-    let archive = dir.join("messages").join("outbox").join("archive");
-    read_message_dir(&archive, "archived message")
+    read_message_dir(
+        &message_box_dir(dir, "outbox").join("archive"),
+        "archived message",
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,27 +189,49 @@ pub fn format_inbox(messages: &[(String, Message)]) -> String {
 
 /// Move processed messages from inbox/ to inbox/archive/.
 pub fn archive_messages(dir: &Path, filenames: &[String]) -> Result<()> {
-    archive_box_messages(dir, "inbox", filenames)
+    move_messages(
+        &message_box_dir(dir, "inbox"),
+        &inbox_archive_dir(dir),
+        filenames,
+        "archive",
+    )
 }
 
 /// Move processed messages from outbox/ to outbox/archive/.
 pub fn archive_outbox_messages(dir: &Path, filenames: &[String]) -> Result<()> {
-    archive_box_messages(dir, "outbox", filenames)
+    move_messages(
+        &message_box_dir(dir, "outbox"),
+        &message_box_dir(dir, "outbox").join("archive"),
+        filenames,
+        "archive",
+    )
 }
 
-fn archive_box_messages(dir: &Path, box_name: &str, filenames: &[String]) -> Result<()> {
-    let source_dir = dir.join("messages").join(box_name);
-    let archive = source_dir.join("archive");
-    std::fs::create_dir_all(&archive)?;
+fn move_messages(
+    source_dir: &Path,
+    destination_dir: &Path,
+    filenames: &[String],
+    action: &str,
+) -> Result<()> {
+    std::fs::create_dir_all(destination_dir)?;
 
     for filename in filenames {
         let src = source_dir.join(filename);
-        let dst = archive.join(filename);
+        let dst = destination_dir.join(filename);
         if src.exists() {
-            std::fs::rename(&src, &dst).with_context(|| format!("Failed to archive {filename}"))?;
+            std::fs::rename(&src, &dst)
+                .with_context(|| format!("Failed to {action} {filename}"))?;
         }
     }
     Ok(())
+}
+
+fn message_box_dir(dir: &Path, box_name: &str) -> PathBuf {
+    dir.join("messages").join(box_name)
+}
+
+fn inbox_archive_dir(dir: &Path) -> PathBuf {
+    message_box_dir(dir, "inbox").join("archive")
 }
 
 /// Render a message as markdown with frontmatter.

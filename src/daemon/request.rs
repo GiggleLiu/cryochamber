@@ -16,13 +16,13 @@ pub(super) enum DaemonRequest {
     Hello {
         protocol_version: u32,
     },
+    Send {
+        text: String,
+    },
     Hibernate {
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
-    },
-    Reply {
-        text: String,
     },
     Receive,
     Todo(TodoRequest),
@@ -33,6 +33,7 @@ impl From<crate::socket::Request> for DaemonRequest {
         match request {
             crate::socket::Request::Ping => Self::Ping,
             crate::socket::Request::Hello { protocol_version } => Self::Hello { protocol_version },
+            crate::socket::Request::Send { text } => Self::Send { text },
             crate::socket::Request::Hibernate {
                 complete,
                 exit_code,
@@ -42,7 +43,6 @@ impl From<crate::socket::Request> for DaemonRequest {
                 exit_code,
                 summary,
             },
-            crate::socket::Request::Reply { text } => Self::Reply { text },
             crate::socket::Request::Receive => Self::Receive,
             crate::socket::Request::TodoAdd { text, at } => {
                 Self::Todo(TodoRequest::Add { text, at })
@@ -133,7 +133,7 @@ pub(super) struct ReceiveRequestOutcome {
     pub(super) ok: bool,
     pub(super) message: String,
     pub(super) log_event: Option<String>,
-    pub(super) consumed_filenames: Vec<String>,
+    pub(super) claimed_filenames: Vec<String>,
 }
 
 impl ReceiveRequestOutcome {
@@ -166,7 +166,7 @@ pub(super) trait TodoEffects {
 }
 
 pub(super) trait MessageEffects {
-    fn read_and_archive_inbox(
+    fn claim_inbox_batch(
         &mut self,
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
 }
@@ -192,10 +192,10 @@ impl<T: SessionEffects> TodoEffects for T {
 }
 
 impl<T: SessionEffects> MessageEffects for T {
-    fn read_and_archive_inbox(
+    fn claim_inbox_batch(
         &mut self,
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
-        SessionEffects::read_and_archive_inbox(self)
+        SessionEffects::claim_inbox_batch(self)
             .map_err(|e| TodoOperationError::new(format!("Failed to read inbox: {e}")))
     }
 }
@@ -251,7 +251,7 @@ impl TodoEffects for FileTodoEffects {
 }
 
 impl MessageEffects for FileMessageEffects {
-    fn read_and_archive_inbox(
+    fn claim_inbox_batch(
         &mut self,
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
         self.store
@@ -317,24 +317,24 @@ pub(super) fn handle_todo_request(
 }
 
 pub(super) fn handle_receive_request(effects: &mut impl MessageEffects) -> ReceiveRequestOutcome {
-    match effects.read_and_archive_inbox() {
+    match effects.claim_inbox_batch() {
         Ok(messages) => {
-            let consumed_filenames = messages
+            let claimed_filenames = messages
                 .iter()
                 .map(|(filename, _)| filename.clone())
                 .collect::<Vec<_>>();
-            let log_event = if consumed_filenames.is_empty() {
+            let log_event = if claimed_filenames.is_empty() {
                 Some("receive: inbox empty".into())
             } else {
                 Some(format!(
                     "receive: {} inbox message{} [{}]",
-                    consumed_filenames.len(),
-                    if consumed_filenames.len() == 1 {
+                    claimed_filenames.len(),
+                    if claimed_filenames.len() == 1 {
                         ""
                     } else {
                         "s"
                     },
-                    consumed_filenames.join(", "),
+                    claimed_filenames.join(", "),
                 ))
             };
             let message = if messages.is_empty() {
@@ -346,14 +346,14 @@ pub(super) fn handle_receive_request(effects: &mut impl MessageEffects) -> Recei
                 ok: true,
                 message,
                 log_event,
-                consumed_filenames,
+                claimed_filenames,
             }
         }
         Err(e) => ReceiveRequestOutcome {
             ok: false,
             message: e.response_message,
             log_event: None,
-            consumed_filenames: Vec::new(),
+            claimed_filenames: Vec::new(),
         },
     }
 }
