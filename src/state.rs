@@ -32,6 +32,10 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
 
+    /// True while the daemon is actively running an agent session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub session_active: bool,
+
     /// True iff the previous session exited without calling `cryo-agent hibernate`.
     /// Used to inject a "previous session crashed" notice into the next prompt so
     /// the agent can check `messages/inbox/archive/` and decide whether any

@@ -58,6 +58,7 @@ fn test_state_roundtrip() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
         session_active: false,
     };

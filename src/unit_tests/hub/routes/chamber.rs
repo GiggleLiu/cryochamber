@@ -17,6 +17,27 @@ fn status_json_includes_notes_content() {
 }
 
 #[test]
+fn status_json_includes_agent_running_when_session_is_active() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("timer.json"),
+        format!(
+            r#"{{
+                "session_number": 3,
+                "pid": {},
+                "session_active": true
+            }}"#,
+            std::process::id()
+        ),
+    )
+    .unwrap();
+
+    let v = status_json(dir.path());
+    assert_eq!(v["running"], true);
+    assert_eq!(v["agent_running"], true);
+}
+
+#[test]
 fn status_json_log_tail_spans_last_five_sessions() {
     // The log panel should default to the last 5 sessions, not just the
     // current one, so the operator can scan recent wake/retry history.

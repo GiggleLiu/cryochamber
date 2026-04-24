@@ -171,6 +171,30 @@ fn shell_prioritizes_completed_status_over_running() {
 }
 
 #[test]
+fn shell_uses_distinct_class_when_agent_session_is_running() {
+    assert!(
+        SHELL_HTML.contains("if (entry.agent_running && entry.running) return 'running-active';"),
+        "the rail should surface active agent sessions with a distinct status class"
+    );
+    assert!(
+        SHELL_HTML.contains("return entry.running ? '●' : '○';"),
+        "the glyph should stay the same and let the animation carry the distinction"
+    );
+}
+
+#[test]
+fn shell_css_animates_running_active_status_dot() {
+    assert!(
+        WEB_CSS.contains(".status-dot.running-active"),
+        "web CSS should define a dedicated running-active status-dot rule"
+    );
+    assert!(
+        WEB_CSS.contains("@keyframes cryo-pulse"),
+        "web CSS should define the rail pulse animation"
+    );
+}
+
+#[test]
 fn shell_emits_session_markers_between_messages_of_different_sessions() {
     // Operators asked to see which wake/session produced each message.
     // The server now tags every message with `session: N` and the thread

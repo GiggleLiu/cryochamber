@@ -30,6 +30,7 @@ pub fn status_json(dir: &Path) -> Value {
 
     json!({
         "running": status.running,
+        "agent_running": status.agent_running,
         "session": status.session,
         "agent": status.agent,
         "log_tail": status.log_tail,

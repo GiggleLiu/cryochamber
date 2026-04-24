@@ -49,6 +49,7 @@ fn test_is_locked_stale_pid() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
         session_active: false,
     };
@@ -67,6 +68,7 @@ fn test_is_locked_no_pid() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
         session_active: false,
     };
@@ -85,6 +87,7 @@ fn test_is_locked_own_pid() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
         session_active: false,
     };

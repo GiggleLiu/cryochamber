@@ -551,6 +551,7 @@ impl Daemon {
     fn prepare_shutdown_state(&self, cryo_state: &mut CryoState) {
         cryo_state.pid = None;
         cryo_state.instance_id = None;
+        cryo_state.session_active = false;
     }
 
     fn prepare_startup_state(&self, cryo_state: &mut CryoState) {
@@ -747,6 +748,7 @@ impl Daemon {
         let mut config =
             crate::config::load_config(&crate::config::config_path(&self.dir))?.unwrap_or_default();
         config.apply_overrides(&cryo_state);
+        cryo_state.session_active = false;
         let bootstrap = self.build_bootstrap_state(&cryo_state, &config);
 
         // Save PID so other commands can detect the running daemon, mint a
@@ -874,6 +876,7 @@ impl Daemon {
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
                 }
+                cryo_state.session_active = true;
                 let _ = self.save_state(cryo_state);
 
                 // Build provider env for this session
@@ -900,6 +903,7 @@ impl Daemon {
                     Ok(outcome) => {
                         // Single source of truth: outcome decides crash-status.
                         cryo_state.previous_session_crashed = outcome.is_crash();
+                        cryo_state.session_active = false;
                         if outcome.is_crash() {
                             self.reschedule_consumed_after_crash(&consumed_todos);
                         }
@@ -912,6 +916,7 @@ impl Daemon {
                         cryo_state.session_number -= 1;
                         cryo_state.session_active = false;
                         cryo_state.previous_session_crashed = true;
+                        cryo_state.session_active = false;
                         self.reschedule_consumed_after_crash(&consumed_todos);
                         let _ = self.save_state(cryo_state);
                         eprintln!("Daemon: session failed: {e}");
