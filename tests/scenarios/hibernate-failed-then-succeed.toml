@@ -1,0 +1,14 @@
+description = "Session 1 reports a retryable hibernate failure; session 2 completes."
+
+counter = ".mock-hibernate-fail-count"
+
+[[when]]
+session = "1"
+actions = [
+  { kind = "todo_add", text = "Retry failed hibernate", at = "now" },
+  { kind = "hibernate", exit = 1, summary = "Retryable failure on attempt 1" },
+]
+
+[[when]]
+session = "*"
+actions = [{ kind = "hibernate", complete = true, summary = "Recovered on retry" }]

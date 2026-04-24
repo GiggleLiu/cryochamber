@@ -3,7 +3,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::Path;
 
-use cryochamber::socket::{self, Request};
+use cryochamber::socket::Request;
 
 #[derive(Parser)]
 #[command(name = "cryo-agent", about = "Cryochamber agent IPC commands")]
@@ -30,20 +30,6 @@ enum Commands {
     Send {
         /// Message text
         text: String,
-    },
-    /// Reply to human (alias for send, writes to outbox)
-    Reply {
-        /// Reply message text
-        text: String,
-    },
-    /// Set a fallback alert (dead-man switch)
-    Alert {
-        /// Action type (email, webhook)
-        action: String,
-        /// Target (email address, URL)
-        target: String,
-        /// Alert message
-        message: String,
     },
     /// Read inbox messages from human
     Receive,
@@ -86,7 +72,7 @@ enum TodoAction {
 
 /// Send a request to the daemon and print the response. Bail on failure.
 fn send(dir: &Path, req: &Request) -> Result<()> {
-    let resp = socket::send_request(dir, req)?;
+    let resp = cryochamber::daemon_client::send_checked_request(dir, req)?;
     if resp.ok {
         println!("{}", resp.message);
         Ok(())
@@ -112,19 +98,7 @@ fn main() -> Result<()> {
                 summary,
             },
         ),
-        Commands::Send { text } | Commands::Reply { text } => send(&dir, &Request::Reply { text }),
-        Commands::Alert {
-            action,
-            target,
-            message,
-        } => send(
-            &dir,
-            &Request::Alert {
-                action,
-                target,
-                message,
-            },
-        ),
+        Commands::Send { text } => send(&dir, &Request::Send { text }),
         Commands::Receive => send(&dir, &Request::Receive),
         Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),

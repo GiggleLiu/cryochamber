@@ -36,14 +36,12 @@ fn wait_for_live_daemon_times_out_with_unlocked_state() {
     let st = crate::state::CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();

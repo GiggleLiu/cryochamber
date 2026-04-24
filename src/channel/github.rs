@@ -142,6 +142,52 @@ pub fn parse_create_discussion_response(json: &serde_json::Value) -> Result<(Str
     Ok((id, number))
 }
 
+#[derive(Debug, Clone)]
+pub struct GithubPullResult {
+    pub messages: Vec<Message>,
+    pub cursor: Option<String>,
+}
+
+/// Fetch new Discussion comments since a cursor.
+/// Comments authored by `skip_author` are omitted to prevent the bot from
+/// ingesting its own posts. This function performs only remote transport and
+/// response parsing; callers own any local message persistence.
+pub fn fetch_comments(
+    owner: &str,
+    repo: &str,
+    discussion_number: u64,
+    last_cursor: Option<&str>,
+    skip_author: Option<&str>,
+) -> Result<GithubPullResult> {
+    let mut cursor = last_cursor.map(|s| s.to_string());
+    let mut pulled = Vec::new();
+
+    loop {
+        let query = build_fetch_comments_query(owner, repo, discussion_number, cursor.as_deref());
+        let json = gh_graphql(&query)?;
+        let (messages, new_cursor, has_next) = parse_discussion_comments(&json)?;
+
+        pulled.extend(messages.into_iter().filter(|msg| {
+            skip_author
+                .map(|skip| msg.from.as_str() != skip)
+                .unwrap_or(true)
+        }));
+
+        if !new_cursor.is_empty() {
+            cursor = Some(new_cursor);
+        }
+
+        if !has_next {
+            break;
+        }
+    }
+
+    Ok(GithubPullResult {
+        messages: pulled,
+        cursor,
+    })
+}
+
 /// Enable GitHub Discussions on a repository via `gh repo edit`.
 fn enable_discussions(owner: &str, repo: &str) -> Result<()> {
     let status = Command::new("gh")
@@ -211,47 +257,6 @@ pub fn create_discussion(
     let mutation = build_create_discussion_mutation(&repo_node_id, category_id, title, body);
     let result = gh_graphql(&mutation)?;
     parse_create_discussion_response(&result)
-}
-
-/// Fetch new Discussion comments since cursor. Writes them as inbox files.
-/// Comments authored by `skip_author` (if provided) are silently dropped
-/// to prevent the bot from ingesting its own posts.
-/// Returns the new cursor.
-pub fn pull_comments(
-    owner: &str,
-    repo: &str,
-    discussion_number: u64,
-    last_cursor: Option<&str>,
-    skip_author: Option<&str>,
-    work_dir: &std::path::Path,
-) -> Result<Option<String>> {
-    crate::message::ensure_dirs(work_dir)?;
-    let mut cursor = last_cursor.map(|s| s.to_string());
-
-    loop {
-        let query = build_fetch_comments_query(owner, repo, discussion_number, cursor.as_deref());
-        let json = gh_graphql(&query)?;
-        let (messages, new_cursor, has_next) = parse_discussion_comments(&json)?;
-
-        for msg in &messages {
-            if let Some(skip) = skip_author {
-                if msg.from == skip {
-                    continue;
-                }
-            }
-            crate::message::write_message(work_dir, "inbox", msg)?;
-        }
-
-        if !new_cursor.is_empty() {
-            cursor = Some(new_cursor);
-        }
-
-        if !has_next {
-            break;
-        }
-    }
-
-    Ok(cursor)
 }
 
 /// Post a comment to a Discussion.

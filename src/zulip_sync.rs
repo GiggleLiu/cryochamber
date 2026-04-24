@@ -32,6 +32,26 @@ impl ZulipSyncState {
     }
 }
 
+pub fn initial_last_message_id(
+    import_history: bool,
+    newest_message_id: Option<u64>,
+) -> Option<u64> {
+    if import_history {
+        None
+    } else {
+        newest_message_id
+    }
+}
+
+pub fn remember_seen_message_id(previous: Option<u64>, seen: Option<u64>) -> Option<u64> {
+    match (previous, seen) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (None, Some(b)) => Some(b),
+        (Some(a), None) => Some(a),
+        (None, None) => None,
+    }
+}
+
 pub fn save_sync_state(path: &Path, state: &ZulipSyncState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
     std::fs::write(path, json)?;

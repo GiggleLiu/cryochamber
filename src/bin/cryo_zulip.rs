@@ -2,10 +2,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use cryochamber::channel::store::MessageStore;
 use cryochamber::channel::zulip::ZulipClient;
+use cryochamber::sync_common::{SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
 #[command(name = "cryo-zulip", about = "Cryochamber Zulip sync")]
@@ -27,6 +29,9 @@ enum Commands {
         /// Topic name for outgoing messages (default: "cryochamber")
         #[arg(long)]
         topic: Option<String>,
+        /// Import existing stream/topic history instead of only future messages
+        #[arg(long)]
+        history: bool,
     },
     /// Pull new messages from Zulip stream into messages/inbox/
     Pull,
@@ -62,7 +67,8 @@ fn main() -> Result<()> {
             config,
             stream,
             topic,
-        } => cmd_init(&config, &stream, topic.as_deref()),
+            history,
+        } => cmd_init(&config, &stream, topic.as_deref(), history),
         Commands::Pull => cmd_pull(),
         Commands::Push => cmd_push(),
         Commands::Sync { interval } => cmd_sync(interval),
@@ -72,7 +78,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn cmd_init(config_path: &str, stream_name: &str, topic: Option<&str>) -> Result<()> {
+fn cmd_init(
+    config_path: &str,
+    stream_name: &str,
+    topic: Option<&str>,
+    history: bool,
+) -> Result<()> {
     let dir = cryochamber::work_dir()?;
 
     let client = ZulipClient::from_zuliprc(Path::new(config_path))?;
@@ -94,24 +105,64 @@ fn cmd_init(config_path: &str, stream_name: &str, topic: Option<&str>) -> Result
     })?;
     println!("Stream ID: {stream_id}");
 
+    let topic_name = topic.unwrap_or("cryochamber");
+    let newest_message_id = if history {
+        None
+    } else {
+        client.newest_message_id(stream_id, Some(topic_name))?
+    };
+    let last_message_id =
+        cryochamber::zulip_sync::initial_last_message_id(history, newest_message_id);
+
     let sync_state = cryochamber::zulip_sync::ZulipSyncState {
         site: client.credentials().site.clone(),
         stream: stream_name.to_string(),
         stream_id,
         self_email,
         topic: topic.map(|t| t.to_string()),
-        last_message_id: None,
+        last_message_id,
         last_pushed_session: None,
     };
     cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
 
-    // Copy zuliprc to .cryo/ for later use by pull/push/sync
-    let cryo_dir = dir.join(".cryo");
-    std::fs::create_dir_all(&cryo_dir)?;
-    std::fs::copy(config_path, cryo_dir.join("zuliprc"))?;
+    copy_zuliprc_to_project(Path::new(config_path), &dir)?;
 
     println!("Saved zulip-sync.json");
     println!("Copied zuliprc to .cryo/zuliprc");
+    println!("{}", init_import_message(history, last_message_id));
+    Ok(())
+}
+
+fn init_import_message(history: bool, last_message_id: Option<u64>) -> String {
+    match (history, last_message_id) {
+        (true, _) => "Existing messages will be imported on first pull.".to_string(),
+        (false, Some(id)) => {
+            format!("Only messages newer than Zulip message {id} will be imported.")
+        }
+        (false, None) => {
+            "No existing messages found; future messages will be imported.".to_string()
+        }
+    }
+}
+
+fn copy_zuliprc_to_project(config_path: &Path, dir: &Path) -> Result<()> {
+    let cryo_dir = dir.join(".cryo");
+    std::fs::create_dir_all(&cryo_dir)?;
+    let dest = cryo_dir.join("zuliprc");
+
+    let same_file = match (
+        std::fs::canonicalize(config_path),
+        std::fs::canonicalize(&dest),
+    ) {
+        (Ok(src), Ok(dst)) => src == dst,
+        _ => false,
+    };
+    if same_file {
+        return Ok(());
+    }
+
+    std::fs::copy(config_path, &dest)
+        .with_context(|| format!("Failed to copy zuliprc to {}", dest.display()))?;
     Ok(())
 }
 
@@ -131,22 +182,11 @@ fn cmd_pull() -> Result<()> {
     let (client, mut sync_state) = load_client_from_project(&dir)?;
 
     println!("Pulling messages from stream '{}'...", sync_state.stream);
-    let new_last_id = client.pull_messages(
-        sync_state.stream_id,
-        Some(sync_state.topic_name()),
-        sync_state.last_message_id,
-        Some(&sync_state.self_email),
-        &dir,
-    )?;
-
-    if let Some(id) = new_last_id {
-        if sync_state.last_message_id != Some(id) {
-            sync_state.last_message_id = Some(id);
-            cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
-        }
+    if pull_zulip_messages_into_inbox(&dir, &client, &mut sync_state)? {
+        cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
     }
 
-    let inbox = cryochamber::message::read_inbox(&dir)?;
+    let inbox = MessageStore::new(dir).read_inbox_named()?;
     println!("Inbox: {} message(s)", inbox.len());
     Ok(())
 }
@@ -209,7 +249,7 @@ fn cmd_sync(interval_override: Option<u64>) -> Result<()> {
     let sync_state = cryochamber::zulip_sync::load_sync_state(&sync_path)?
         .context("zulip-sync.json not found. Run 'cryo-zulip init' first.")?;
 
-    cryochamber::message::ensure_dirs(&dir)?;
+    MessageStore::new(dir.clone()).ensure_dirs()?;
 
     let exe = std::env::current_exe().context("Failed to resolve cryo-zulip executable path")?;
     let interval_str = interval.to_string();
@@ -220,7 +260,7 @@ fn cmd_sync(interval_override: Option<u64>) -> Result<()> {
         &exe,
         &["sync-daemon", "--interval", &interval_str],
         &log_path,
-        true,
+        false,
     )?;
 
     println!(
@@ -243,6 +283,108 @@ fn cmd_unsync() -> Result<()> {
     Ok(())
 }
 
+struct ZulipSyncLoopBackend {
+    dir: PathBuf,
+    sync_path: PathBuf,
+    sync_state: Option<(ZulipClient, cryochamber::zulip_sync::ZulipSyncState)>,
+}
+
+impl SyncLoopBackend for ZulipSyncLoopBackend {
+    fn receive(&mut self) -> Result<SyncLoopCommand> {
+        self.sync_state = None;
+        // Config-level errors (missing zuliprc, stream not found, bad
+        // credentials) are unrecoverable without operator intervention;
+        // surface them as Halt so the loop exits cleanly with a visible
+        // reason instead of skipping sends forever.
+        let (client, mut sync_state) = match load_client_from_project(&self.dir) {
+            Ok(pair) => pair,
+            Err(e) => {
+                return Ok(SyncLoopCommand::Halt {
+                    reason: format!("zulip sync config error: {e:#}"),
+                });
+            }
+        };
+
+        // Pull: Zulip -> inbox
+        match pull_zulip_messages_into_inbox(&self.dir, &client, &mut sync_state) {
+            Ok(cursor_changed) => {
+                if cursor_changed {
+                    if let Err(e) =
+                        cryochamber::zulip_sync::save_sync_state(&self.sync_path, &sync_state)
+                    {
+                        eprintln!("Zulip sync: failed to save state: {e}");
+                    }
+                }
+            }
+            Err(e) => match cryochamber::sync_common::classify_sync_error(&e) {
+                cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
+                    return Ok(SyncLoopCommand::Halt {
+                        reason: format!("zulip sync pull auth/config error: {e:#}"),
+                    });
+                }
+                cryochamber::sync_common::SyncErrorKind::Transient => {
+                    eprintln!("Zulip sync: pull error (transient): {e}");
+                }
+            },
+        }
+
+        self.sync_state = Some((client, sync_state));
+        Ok(SyncLoopCommand::Send)
+    }
+
+    fn send(&mut self) -> Result<cryochamber::sync_common::SyncCycleStatus> {
+        let Some((client, sync_state)) = self.sync_state.take() else {
+            return Ok(cryochamber::sync_common::SyncCycleStatus::Continue);
+        };
+
+        // Push: outbox -> Zulip
+        if let Err(e) = push_outbox(&self.dir, &client, &sync_state) {
+            match cryochamber::sync_common::classify_sync_error(&e) {
+                cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
+                    return Ok(cryochamber::sync_common::SyncCycleStatus::Halt {
+                        reason: format!("zulip sync push auth/config error: {e:#}"),
+                    });
+                }
+                cryochamber::sync_common::SyncErrorKind::Transient => {
+                    eprintln!("Zulip sync: push error (transient): {e}");
+                }
+            }
+        }
+
+        Ok(cryochamber::sync_common::SyncCycleStatus::Continue)
+    }
+}
+
+fn pull_zulip_messages_into_inbox(
+    dir: &Path,
+    client: &ZulipClient,
+    sync_state: &mut cryochamber::zulip_sync::ZulipSyncState,
+) -> Result<bool> {
+    let store = MessageStore::new(dir.to_path_buf());
+    let result = client.fetch_messages_since(
+        sync_state.stream_id,
+        Some(sync_state.topic_name()),
+        sync_state.last_message_id,
+        Some(&sync_state.self_email),
+    )?;
+
+    for msg in &result.messages {
+        store.send_in(msg)?;
+    }
+
+    let new_last_id = cryochamber::zulip_sync::remember_seen_message_id(
+        sync_state.last_message_id,
+        result.newest_seen_id,
+    );
+    if let Some(id) = new_last_id {
+        if sync_state.last_message_id != Some(id) {
+            sync_state.last_message_id = Some(id);
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let interval = resolve_interval(interval_override)?;
     let dir = cryochamber::work_dir()?;
@@ -260,123 +402,26 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&shutdown))?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))?;
 
-    use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel();
-    let outbox_path = dir.join("messages").join("outbox");
-    let _watcher = {
-        let tx = tx.clone();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                if event.kind.is_create() {
-                    let _ = tx.send(());
-                }
-            }
-        })
-        .context("Failed to create outbox watcher")?;
-        watcher
-            .watch(&outbox_path, notify::RecursiveMode::NonRecursive)
-            .context("Failed to watch messages/outbox/")?;
-        watcher
-    };
-
-    let shutdown_flag = Arc::clone(&shutdown);
-    std::thread::spawn(move || {
-        while !shutdown_flag.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-        let _ = tx.send(());
-    });
+    let _watcher = cryochamber::sync_common::watch_outbox(&dir, tx.clone())?;
+    cryochamber::sync_common::spawn_shutdown_notifier(Arc::clone(&shutdown), tx);
 
     let interval_dur = std::time::Duration::from_secs(interval);
+    let mut backend = ZulipSyncLoopBackend {
+        dir: dir.clone(),
+        sync_path,
+        sync_state: None,
+    };
 
-    loop {
-        if shutdown.load(Ordering::Relaxed) {
-            eprintln!("Zulip sync: shutting down");
-            break;
-        }
-
-        let (client, mut sync_state) = match load_client_from_project(&dir) {
-            Ok(pair) => pair,
-            Err(e) => {
-                eprintln!("Zulip sync: config error: {e}");
-                std::thread::sleep(interval_dur);
-                continue;
-            }
-        };
-
-        // Pull: Zulip → inbox
-        match client.pull_messages(
-            sync_state.stream_id,
-            Some(sync_state.topic_name()),
-            sync_state.last_message_id,
-            Some(&sync_state.self_email),
-            &dir,
-        ) {
-            Ok(new_last_id) => {
-                if let Some(id) = new_last_id {
-                    if sync_state.last_message_id != Some(id) {
-                        sync_state.last_message_id = Some(id);
-                        if let Err(e) =
-                            cryochamber::zulip_sync::save_sync_state(&sync_path, &sync_state)
-                        {
-                            eprintln!("Zulip sync: failed to save state: {e}");
-                        }
-                    }
-                }
-            }
-            Err(e) => eprintln!("Zulip sync: pull error: {e}"),
-        }
-
-        // Push: outbox → Zulip
-        if let Err(e) = push_outbox(&dir, &client, &sync_state) {
-            eprintln!("Zulip sync: push error: {e}");
-        }
-
-        match rx.recv_timeout(interval_dur) {
-            Ok(()) => {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    eprintln!("Zulip sync: stopped");
+    cryochamber::sync_common::run_sync_loop(
+        "Zulip sync",
+        Arc::clone(&shutdown),
+        rx,
+        interval_dur,
+        &mut backend,
+    )?;
     // _pid_guard drops here, unlinking the pid file.
     Ok(())
-}
-
-/// Format an outbox message for posting to a Zulip stream.
-///
-/// Zulip already shows the sender's bot name above each message, so we don't
-/// re-state who wrote it in the body.
-///
-/// - Agent replies (`from == "agent"`): post the body as-is. The subject is
-///   always "Reply", which adds no information.
-/// - System messages (`from == "cryochamber"`: reports, fallback alerts):
-///   render as a Zulip blockquote with the subject as a bold header. The
-///   blockquote visually marks them as machine-generated rather than a
-///   human-style reply.
-/// - Anything else: keep the original `**from** (subject)\n\nbody` shape so
-///   non-system, non-agent senders remain attributable.
-fn format_outbox_post(msg: &cryochamber::message::Message) -> String {
-    if msg.from == "agent" {
-        msg.body.clone()
-    } else if msg.from == "cryochamber" {
-        let mut out = format!("> **{}**\n>\n", msg.subject);
-        for line in msg.body.lines() {
-            out.push_str("> ");
-            out.push_str(line);
-            out.push('\n');
-        }
-        // Trim the trailing newline that the loop added.
-        if out.ends_with('\n') {
-            out.pop();
-        }
-        out
-    } else {
-        format!("**{}** ({})\n\n{}", msg.from, msg.subject, msg.body)
-    }
 }
 
 fn push_outbox(
@@ -384,35 +429,16 @@ fn push_outbox(
     client: &ZulipClient,
     sync_state: &cryochamber::zulip_sync::ZulipSyncState,
 ) -> Result<()> {
-    let messages = cryochamber::message::read_outbox(dir)?;
-    if messages.is_empty() {
-        return Ok(());
-    }
-
-    let outbox = dir.join("messages").join("outbox");
-    let archive = outbox.join("archive");
-    std::fs::create_dir_all(&archive)?;
-
     let topic = sync_state.topic_name();
-
-    for (filename, msg) in &messages {
-        let body = format_outbox_post(msg);
-        match client.send_message(sync_state.stream_id, topic, &body) {
-            Ok(_) => {
-                eprintln!("Zulip sync: posted outbox/{filename}");
-                let src = outbox.join(filename);
-                let dst = archive.join(filename);
-                if src.exists() {
-                    std::fs::rename(&src, &dst)?;
-                }
-            }
-            Err(e) => {
-                eprintln!("Zulip sync: failed to post outbox/{filename}: {e}");
-            }
-        }
-    }
-
-    Ok(())
+    cryochamber::sync_common::push_outbox_messages(
+        dir,
+        |filename| format!("Zulip sync: posted outbox/{filename}"),
+        |body| {
+            client
+                .send_message(sync_state.stream_id, topic, body)
+                .map(|_| ())
+        },
+    )
 }
 
 fn cmd_status() -> Result<()> {

@@ -4,7 +4,7 @@
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
-CODEX_MODEL ?= gpt-5.4
+CODEX_MODEL ?= gpt-5.5
 
 # Default target
 help:
@@ -252,7 +252,7 @@ check-gh: build
 	echo ""; \
 	echo "4. Posting test comment..."; \
 	mkdir -p "$$TMPDIR/messages/inbox"; \
-	printf '--- CRYO SESSION 1 ---\ntask: health check\nagent: gh-check\ninbox: 0 messages\n[00:00:01] agent started (pid 1)\n[00:00:02] hibernate: complete, exit=0, summary="Health check passed"\n[00:00:02] agent exited (code 0)\n--- CRYO END ---\n' > "$$TMPDIR/cryo.log"; \
+	printf '%s\n' '--- CRYO SESSION 1 ---' 'task: health check' 'agent: gh-check' 'inbox: 0 messages' '[00:00:01] agent started (pid 1)' '[00:00:02] hibernate: complete, exit=0, summary="Health check passed"' '[00:00:02] agent exited (code 0)' '--- CRYO END ---' > "$$TMPDIR/cryo.log"; \
 	printf '{"plan_path":"plan.md","session_number":1,"last_command":null,"pid":null,"max_retries":1,"retry_count":0,"max_session_duration":300,"watch_inbox":false,"daemon_mode":false}' > "$$TMPDIR/timer.json"; \
 	$(CURDIR)/target/debug/cryo-gh push; \
 	RC=$$?; \

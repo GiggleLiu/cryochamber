@@ -16,7 +16,7 @@ cryo start → spawn daemon → run agent → agent calls cryo-agent hibernate �
                                   run agent → agent calls cryo-agent hibernate → ...
 ```
 
-**The daemon** (cryochamber) handles lifecycle: sleeping until wake time, watching the inbox for reactive wake, enforcing session timeout, retrying on failure, and executing fallback alerts if something goes wrong.
+**The daemon** (cryochamber) handles lifecycle: sleeping until wake time, watching the inbox for reactive wake, noting when inbox messages exist, enforcing session timeout, consuming past-due TODOs before each session, and re-injecting consumed TODOs with an attempt-bumped suffix and `2^k`-minute delay (capped at 1 day) when the agent fails to hibernate cleanly. The agent still decides when to read mail. During a session, agent-side `cryo-agent receive` routes through daemon IPC so the daemon can archive that inbox batch and remember its reply obligation for the current session.
 
 **The agent** (any AI coding agent — opencode, Claude Code, etc.) handles reasoning: reading the plan, doing the work, and deciding when to wake up next. It communicates with the daemon via `cryo-agent` CLI commands over a Unix domain socket.
 

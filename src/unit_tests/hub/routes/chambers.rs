@@ -46,14 +46,12 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
         &crate::state::CryoState {
             session_number: 5,
             pid: None,
-            retry_count: 0,
             agent_override: None,
-            max_retries_override: None,
             max_session_duration_override: None,
             last_report_time: None,
             provider_index: None,
             instance_id: None,
-            pending_fallback: None,
+            session_active: false,
             previous_session_crashed: false,
         },
     )
@@ -82,4 +80,34 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
     assert_eq!(arr[0]["running"], false);
     assert_eq!(arr[0]["completed"], true);
     assert_eq!(arr[0]["session"], 5);
+}
+
+#[tokio::test]
+async fn get_chambers_includes_agent_running_from_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let alpha = dir.path().join("alpha");
+    std::fs::create_dir_all(&alpha).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
+    std::fs::write(
+        alpha.join("timer.json"),
+        format!(
+            r#"{{
+                "session_number": 6,
+                "pid": {},
+                "session_active": true
+            }}"#,
+            std::process::id()
+        ),
+    )
+    .unwrap();
+
+    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    app.refresh();
+
+    let Json(v) = get_chambers(State(app)).await;
+    let arr = v.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["running"], true);
+    assert_eq!(arr[0]["agent_running"], true);
 }

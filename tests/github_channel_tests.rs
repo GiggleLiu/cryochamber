@@ -1,7 +1,52 @@
 use cryochamber::channel::github::{
     build_create_discussion_mutation, build_fetch_comments_query, build_post_comment_mutation,
-    parse_create_discussion_response, parse_discussion_comments,
+    fetch_comments, parse_create_discussion_response, parse_discussion_comments,
 };
+use std::ffi::OsString;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set_path_prefix(prefix: &std::path::Path) -> Self {
+        let key = "PATH";
+        let original = std::env::var_os(key);
+        let mut paths = vec![prefix.to_path_buf()];
+        if let Some(current) = original.as_ref() {
+            paths.extend(std::env::split_paths(current));
+        }
+        std::env::set_var(key, std::env::join_paths(paths).unwrap());
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match self.original.as_ref() {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+fn make_gh_stub(dir: &std::path::Path, stdout: &str) {
+    let path = dir.join("gh");
+    let mut file = std::fs::File::create(&path).unwrap();
+    writeln!(file, "#!/bin/sh").unwrap();
+    writeln!(file, "cat <<'JSON'").unwrap();
+    writeln!(file, "{stdout}").unwrap();
+    writeln!(file, "JSON").unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+}
 
 #[test]
 fn test_build_fetch_comments_query() {
@@ -76,6 +121,64 @@ fn test_parse_discussion_comments_empty() {
     let (messages, cursor, _) = parse_discussion_comments(&json).unwrap();
     assert!(messages.is_empty());
     assert!(cursor.is_empty());
+}
+
+#[test]
+fn test_github_fetch_comments_returns_messages_and_cursor_without_work_dir() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    make_gh_stub(
+        bin.path(),
+        r#"{
+  "data": {
+    "repository": {
+      "discussion": {
+        "comments": {
+          "nodes": [
+            {
+              "id": "DC_1",
+              "body": "Please update the config",
+              "author": { "login": "alice" },
+              "createdAt": "2026-02-23T10:30:00Z"
+            },
+            {
+              "id": "DC_2",
+              "body": "Bot echo",
+              "author": { "login": "mybot" },
+              "createdAt": "2026-02-23T10:31:00Z"
+            }
+          ],
+          "pageInfo": {
+            "endCursor": "cursor_abc",
+            "hasNextPage": false
+          }
+        }
+      }
+    }
+  }
+}"#,
+    );
+    let _path = EnvGuard::set_path_prefix(bin.path());
+
+    let result = fetch_comments("owner", "repo", 42, None, Some("mybot")).unwrap();
+
+    assert_eq!(result.cursor, Some("cursor_abc".to_string()));
+    assert_eq!(result.messages.len(), 1);
+    assert_eq!(result.messages[0].from, "alice");
+    assert_eq!(result.messages[0].body, "Please update the config");
+}
+
+#[test]
+fn test_github_channel_does_not_write_local_inbox_files() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/channel/github.rs"),
+    )
+    .unwrap();
+    assert!(
+        !source.contains("crate::message::ensure_dirs")
+            && !source.contains("crate::message::write_message"),
+        "channel::github must stay transport-only; inbox persistence belongs in cryo_gh"
+    );
 }
 
 #[test]

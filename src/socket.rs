@@ -4,24 +4,25 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub const IPC_PROTOCOL_VERSION: u32 = 5;
+
 /// Request from CLI to daemon via Unix socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
     Ping,
+    Hello {
+        protocol_version: u32,
+    },
     Hibernate {
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
     },
-    Alert {
-        action: String,
-        target: String,
-        message: String,
-    },
-    Reply {
+    Send {
         text: String,
     },
+    Receive,
     TodoAdd {
         text: String,
         at: String,
@@ -33,11 +34,6 @@ pub enum Request {
         id: u32,
     },
     TodoList,
-    /// Read + archive the inbox in one atomic step. Daemon returns formatted
-    /// text for the agent to print. Archiving lives here so the "consume
-    /// messages" event and its log entry stay together; crashes before this
-    /// request leave the inbox intact for the retry session.
-    Receive,
 }
 
 /// Response from daemon to CLI.
@@ -62,17 +58,22 @@ pub fn socket_path(dir: &Path) -> PathBuf {
 
 /// Send a request to the daemon and return the response.
 pub fn send_request(dir: &Path, request: &Request) -> anyhow::Result<Response> {
+    send_request_with_instance_id(dir, request, None)
+}
+
+/// Send a request to the daemon with an explicit daemon instance ID.
+pub fn send_request_with_instance_id(
+    dir: &Path,
+    request: &Request,
+    instance_id: Option<&str>,
+) -> anyhow::Result<Response> {
     let path = socket_path(dir);
     let mut stream = UnixStream::connect(&path).map_err(|e| {
         anyhow::anyhow!("Cannot connect to daemon socket at {}: {e}", path.display())
     })?;
 
-    let instance_id = crate::state::load_state(&crate::state::state_path(dir))
-        .ok()
-        .flatten()
-        .and_then(|state| state.instance_id);
     let envelope = SocketEnvelope {
-        instance_id,
+        instance_id: instance_id.map(str::to_string),
         request: request.clone(),
     };
 

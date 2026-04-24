@@ -105,22 +105,37 @@ pub async fn serve(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Res
 /// Format a duration in milliseconds as a human-readable relative string.
 /// Negative or zero values mean the time has passed.
 pub fn format_relative_time(diff_ms: i64) -> String {
-    if diff_ms <= 0 {
-        return "now".to_string();
+    match classify_relative_time(diff_ms) {
+        RelativeTimeDisplay::Now => "now".to_string(),
+        RelativeTimeDisplay::LessThanMinute => "<1m".to_string(),
+        RelativeTimeDisplay::Minutes(minutes) => format!("{minutes}m"),
+        RelativeTimeDisplay::HoursMinutes { hours, minutes } => format!("{hours}h {minutes}m"),
+        RelativeTimeDisplay::DaysHours { days, hours } => format!("{days}d {hours}h"),
     }
-    let mins = diff_ms / 60_000;
-    let hours = diff_ms / 3_600_000;
-    let days = diff_ms / 86_400_000;
-    if mins < 1 {
-        "<1m".to_string()
-    } else if hours < 1 {
-        format!("{mins}m")
-    } else if days < 1 {
-        let rem_m = (diff_ms % 3_600_000) / 60_000;
-        format!("{hours}h {rem_m}m")
-    } else {
-        let rem_h = (diff_ms % 86_400_000) / 3_600_000;
-        format!("{days}d {rem_h}h")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelativeTimeDisplay {
+    Now,
+    LessThanMinute,
+    Minutes(i64),
+    HoursMinutes { hours: i64, minutes: i64 },
+    DaysHours { days: i64, hours: i64 },
+}
+
+fn classify_relative_time(diff_ms: i64) -> RelativeTimeDisplay {
+    match diff_ms {
+        ..=0 => RelativeTimeDisplay::Now,
+        1..=59_999 => RelativeTimeDisplay::LessThanMinute,
+        60_000..=3_599_999 => RelativeTimeDisplay::Minutes(diff_ms / 60_000),
+        3_600_000..=86_399_999 => RelativeTimeDisplay::HoursMinutes {
+            hours: diff_ms / 3_600_000,
+            minutes: (diff_ms % 3_600_000) / 60_000,
+        },
+        _ => RelativeTimeDisplay::DaysHours {
+            days: diff_ms / 86_400_000,
+            hours: (diff_ms % 86_400_000) / 3_600_000,
+        },
     }
 }
 

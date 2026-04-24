@@ -17,6 +17,27 @@ fn status_json_includes_notes_content() {
 }
 
 #[test]
+fn status_json_includes_agent_running_when_session_is_active() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("timer.json"),
+        format!(
+            r#"{{
+                "session_number": 3,
+                "pid": {},
+                "session_active": true
+            }}"#,
+            std::process::id()
+        ),
+    )
+    .unwrap();
+
+    let v = status_json(dir.path());
+    assert_eq!(v["running"], true);
+    assert_eq!(v["agent_running"], true);
+}
+
+#[test]
 fn status_json_log_tail_spans_last_five_sessions() {
     // The log panel should default to the last 5 sessions, not just the
     // current one, so the operator can scan recent wake/retry history.
@@ -64,11 +85,14 @@ fn todos_json_is_empty_array_when_missing() {
 #[test]
 fn todos_json_returns_items_in_file_order() {
     let dir = tempfile::tempdir().unwrap();
-    let mut list = crate::todo::TodoList::new();
-    list.add("first".into(), "2026-05-01T10:00".into());
-    let id2 = list.add("second".into(), "2026-04-01T10:00".into());
-    list.done(id2).unwrap();
-    list.save(&dir.path().join("todo.json")).unwrap();
+    let todos = crate::todo::TodoFile::new(dir.path().join("todo.json"));
+    todos
+        .add("first".into(), "2026-05-01T10:00".into())
+        .unwrap();
+    let id2 = todos
+        .add("second".into(), "2026-04-01T10:00".into())
+        .unwrap();
+    todos.done(id2).unwrap();
 
     let v = todos_json(dir.path());
     let arr = v.as_array().unwrap();
@@ -234,6 +258,45 @@ fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
     assert_ne!(
         first, second,
         "duplicate timestamp/body messages need distinct ids"
+    );
+}
+
+#[test]
+fn lifecycle_status_json_reports_success_message() {
+    let value = lifecycle_status_json(Ok(()), "Started");
+
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "ok": true,
+            "message": "Started",
+        })
+    );
+}
+
+#[test]
+fn lifecycle_status_json_reports_error_message() {
+    let value = lifecycle_status_json(Err(anyhow::anyhow!("start failed")), "Started");
+
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "ok": false,
+            "message": "start failed",
+        })
+    );
+}
+
+#[test]
+fn wake_response_message_reports_signal_delivery() {
+    assert_eq!(wake_response_message(true), "Wake signal sent");
+}
+
+#[test]
+fn wake_response_message_reports_queued_without_daemon() {
+    assert_eq!(
+        wake_response_message(false),
+        "Message queued (no daemon running)"
     );
 }
 

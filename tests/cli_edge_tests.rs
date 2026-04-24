@@ -97,6 +97,18 @@ fn test_agent_hibernate_no_daemon() {
         .failure(); // no socket -> connection error
 }
 
+#[test]
+fn test_agent_receive_no_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+
+    agent_bin()
+        .args(["receive"])
+        .current_dir(dir.path())
+        .assert()
+        .failure();
+}
+
 // --- Double start / stale lock ---
 
 #[test]
@@ -142,7 +154,6 @@ fn test_start_stale_pid_lock() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": dead_pid,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -234,10 +245,9 @@ fn test_send_creates_inbox_directory() {
     );
 }
 
-// Note: `cryo-agent receive` now routes through the daemon socket so that
-// archiving and the "receive" event log entry are atomic with the read. It is
-// therefore no longer a local-only command; edge-case tests for it live in
-// the daemon unit tests.
+// Note: `cryo-agent receive` now goes through daemon IPC because archiving the
+// inbox mutates chamber state. The low-level message/store tests still cover
+// mailbox formatting and file operations directly.
 
 // --- Time subcommand ---
 

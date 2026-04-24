@@ -43,9 +43,24 @@ fn scan_finds_chambers_with_valid_config() {
 }
 
 #[test]
-fn scan_flags_missing_cryo_toml_as_error() {
+fn scan_skips_subdirs_without_cryo_toml() {
+    // Stray non-chamber directories (e.g. an accidental `messages/` from a
+    // mis-targeted `cryo init`) must not pollute the chamber rail.
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("broken")).unwrap();
+    std::fs::create_dir_all(dir.path().join("messages").join("inbox")).unwrap();
+    std::fs::create_dir_all(dir.path().join("notes")).unwrap();
+    let idx = scan_workspace(dir.path());
+    assert!(idx.is_empty());
+}
+
+#[test]
+fn scan_flags_malformed_cryo_toml_as_error() {
+    // A directory that *attempted* to be a chamber (has cryo.toml) but
+    // fails to parse is still surfaced so the operator can see the breakage.
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("broken");
+    std::fs::create_dir_all(&chamber).unwrap();
+    std::fs::write(chamber.join("cryo.toml"), "this is = not valid toml [[").unwrap();
     let idx = scan_workspace(dir.path());
     assert_eq!(idx.len(), 1);
     let entry = idx.values().next().unwrap();
@@ -64,14 +79,12 @@ fn populate_reads_session_and_unread() {
     let st = crate::state::CryoState {
         session_number: 7,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     crate::state::save_state(&crate::state::state_path(&alpha), &st).unwrap();
@@ -135,9 +148,9 @@ fn populate_runtime_exposes_rail_display_fields() {
     )
     .unwrap();
 
-    let mut todos = crate::todo::TodoList::new();
-    todos.add("next step".into(), "2099-05-01T10:00".into());
-    todos.save(&alpha.join("todo.json")).unwrap();
+    crate::todo::TodoFile::new(alpha.join("todo.json"))
+        .add("next step".into(), "2099-05-01T10:00".into())
+        .unwrap();
 
     crate::message::ensure_dirs(&alpha).unwrap();
     let msg = crate::message::Message {
@@ -161,4 +174,62 @@ fn populate_runtime_exposes_rail_display_fields() {
     assert_eq!(value["next_wake_display"], "2099-05-01T10:00");
     assert_eq!(value["wake_imminent"], false);
     assert_eq!(value["last_message_preview"], "hello preview");
+}
+
+#[test]
+fn populate_runtime_reports_agent_running_when_session_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let st = crate::state::CryoState {
+        session_number: 1,
+        pid: Some(std::process::id()),
+        agent_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        previous_session_crashed: false,
+        session_active: true,
+    };
+    crate::state::save_state(&crate::state::state_path(&chamber), &st).unwrap();
+
+    let mut idx = scan_workspace(dir.path());
+    populate_runtime(&mut idx);
+    let entry = idx.values().next().expect("one chamber");
+    assert!(entry.running);
+    assert!(entry.agent_running);
+    let value = serde_json::to_value(entry).unwrap();
+    assert_eq!(value["agent_running"], true);
+}
+
+#[test]
+fn populate_runtime_reports_agent_running_false_when_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("beta");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let st = crate::state::CryoState {
+        session_number: 1,
+        pid: Some(std::process::id()),
+        agent_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        previous_session_crashed: false,
+        session_active: false,
+    };
+    crate::state::save_state(&crate::state::state_path(&chamber), &st).unwrap();
+
+    let mut idx = scan_workspace(dir.path());
+    populate_runtime(&mut idx);
+    let entry = idx.values().next().expect("one chamber");
+    assert!(entry.running);
+    assert!(!entry.agent_running);
 }

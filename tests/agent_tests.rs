@@ -8,58 +8,148 @@ fn test_build_prompt_first_session() {
         task: "Start the PR review plan".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 1"));
     assert!(prompt.contains("Start the PR review plan"));
     assert!(prompt.contains("plan.md"));
     assert!(prompt.contains("CLAUDE.md"));
-    assert!(prompt.contains("cryo-agent hibernate"));
 }
 
 #[test]
-fn test_build_prompt_references_log() {
+fn test_build_prompt_renders_session_and_todos() {
     let config = AgentConfig {
         session_number: 3,
         task: "Follow up on PRs".to_string(),
         delayed_wake: None,
-        todo_list: "No todos.".to_string(),
+        todo_list: "1. [#a1b2] Review PR #47".to_string(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
-    assert!(prompt.contains("messages/inbox/"));
+    assert!(prompt.contains("Follow up on PRs"));
+    assert!(prompt.contains("Review PR #47"));
 }
 
 #[test]
-fn test_build_prompt_contains_cli_reminders() {
+fn test_build_prompt_omits_standing_orders() {
     let config = AgentConfig {
         session_number: 1,
         task: "Do the thing".to_string(),
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("cryo-agent hibernate"));
-    assert!(prompt.contains("NOTES.md"));
-    let removed_note_command = ["cryo-agent", "note"].join(" ");
-    assert!(!prompt.contains(&removed_note_command));
-    assert!(prompt.contains("cryo-agent send"));
-    assert!(prompt.contains("cryo-agent reply"));
-    assert!(prompt.contains("cryo-agent.log"));
-    assert!(prompt.contains("cryo-agent hibernate --exit 1"));
-    assert!(prompt.contains("plan.md"));
+    assert!(!prompt.contains("## Reminders"));
+    assert!(!prompt.contains("## Context"));
+    assert!(!prompt.contains("cryo-agent hibernate"));
+    assert!(!prompt.contains("cryo-agent send"));
+    assert!(!prompt.contains("NOTES.md"));
 }
 
 #[test]
-fn test_build_prompt_references_inbox() {
+fn test_build_prompt_section_hints_when_complete() {
     let config = AgentConfig {
-        session_number: 2,
-        task: "Continue".to_string(),
+        session_number: 1,
+        task: "Work".to_string(),
         delayed_wake: None,
-        todo_list: "No todos.".to_string(),
+        todo_list: "1. [#a] short item".to_string(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("messages/inbox/"));
+    assert!(prompt.contains("## Current Time (no need to call `cryo-agent time` again)"));
+    assert!(prompt.contains("## TODO List (no need to call `cryo-agent todo list` again)"));
+    assert!(!prompt.contains("## Inbox"));
+    assert!(!prompt.contains("(output of"));
+}
+
+#[test]
+fn test_build_prompt_todo_hint_flips_on_overflow() {
+    let long_list = "1. task with a reasonable description\n".repeat(200); // ~7.6 KB
+    let config = AgentConfig {
+        session_number: 1,
+        task: "Work".to_string(),
+        delayed_wake: None,
+        todo_list: long_list,
+        inbox_waiting: false,
+    };
+    let prompt = build_prompt(&config);
+    assert!(prompt.contains("## TODO List (use `cryo-agent todo list` to get full text)"));
+    // Over-cap content is omitted entirely.
+    assert!(!prompt.contains("1. task with a reasonable description"));
+    assert!(prompt.len() < 1200, "prompt was {} bytes", prompt.len());
+}
+
+#[test]
+fn test_build_prompt_preserves_short_todo_list() {
+    let config = AgentConfig {
+        session_number: 1,
+        task: "Work".to_string(),
+        delayed_wake: None,
+        todo_list: "1. [#a] short item".to_string(),
+        inbox_waiting: false,
+    };
+    let prompt = build_prompt(&config);
+    assert!(prompt.contains("1. [#a] short item"));
+}
+
+#[test]
+fn test_fit_section_under_cap_is_complete() {
+    let s = cryochamber::agent::fit_section("short", 2048);
+    assert!(s.complete);
+    assert_eq!(s.content, "short");
+}
+
+#[test]
+fn test_fit_section_over_cap_is_empty_and_incomplete() {
+    let big = "x".repeat(5_000);
+    let s = cryochamber::agent::fit_section(&big, 2048);
+    assert!(!s.complete);
+    assert!(s.content.is_empty());
+}
+
+#[test]
+fn test_build_prompt_inbox_section_shows_no_messages_when_empty() {
+    let config = AgentConfig {
+        session_number: 1,
+        task: "Work".to_string(),
+        delayed_wake: None,
+        todo_list: "No todos.".to_string(),
+        inbox_waiting: false,
+    };
+    let prompt = build_prompt(&config);
+    assert!(!prompt.contains("## Inbox"));
+}
+
+#[test]
+fn test_build_prompt_hides_inbox_contents_even_when_waiting() {
+    let config = AgentConfig {
+        session_number: 1,
+        task: "Work".to_string(),
+        delayed_wake: None,
+        todo_list: "No todos.".to_string(),
+        inbox_waiting: true,
+    };
+    let prompt = build_prompt(&config);
+    assert!(prompt.contains("## Inbox"));
+    assert!(prompt.contains("Run `cryo-agent receive`"));
+    assert!(!prompt.contains("From: alice"));
+    assert!(!prompt.contains("Hello"));
+}
+
+#[test]
+fn test_build_prompt_hides_inbox_when_not_waiting() {
+    let config = AgentConfig {
+        session_number: 1,
+        task: "Work".to_string(),
+        delayed_wake: None,
+        todo_list: "No todos.".to_string(),
+        inbox_waiting: false,
+    };
+    let prompt = build_prompt(&config);
+    assert!(!prompt.contains("## Inbox"));
 }
 
 #[test]
@@ -69,6 +159,7 @@ fn test_build_prompt_delayed_wake() {
         task: "Check status".to_string(),
         delayed_wake: Some("DELAYED WAKE: 2h late".to_string()),
         todo_list: "No todos.".to_string(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("DELAYED WAKE: 2h late"));
@@ -129,19 +220,18 @@ fn test_spawn_agent_with_empty_env_vars() {
 
 #[test]
 fn test_resolve_mock_agent() {
-    // "mock" should resolve to "sh" running "scenario.sh"
     let cmd = cryochamber::agent::build_command("mock", "test prompt").unwrap();
-    let program = format!("{:?}", cmd);
+    let program = format!("{cmd:?}");
     assert!(
-        program.contains("sh"),
-        "mock should resolve to sh: {program}"
+        program.contains("cryo-mock"),
+        "mock should resolve to cryo-mock: {program}"
     );
 }
 
 #[test]
 fn test_mock_agent_program() {
     let program = cryochamber::agent::agent_program("mock").unwrap();
-    assert_eq!(program, "sh");
+    assert_eq!(program, "cryo-mock");
 }
 
 #[test]

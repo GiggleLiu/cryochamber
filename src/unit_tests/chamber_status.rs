@@ -1,0 +1,189 @@
+use super::*;
+
+fn test_state(session_number: u32) -> crate::state::CryoState {
+    crate::state::CryoState {
+        session_number,
+        pid: None,
+        agent_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        session_active: false,
+        previous_session_crashed: false,
+    }
+}
+
+fn test_message(from: &str, body: &str, timestamp: &str) -> crate::message::Message {
+    crate::message::Message {
+        from: from.to_string(),
+        subject: String::new(),
+        body: body.to_string(),
+        timestamp: chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S").unwrap(),
+        metadata: Default::default(),
+    }
+}
+
+#[test]
+fn status_missing_timer_json_returns_stopped_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let status = status(dir.path());
+
+    assert!(!status.running);
+    assert_eq!(status.session, 0);
+    assert_eq!(status.agent, "opencode");
+}
+
+#[test]
+fn status_uses_state_agent_override_over_config_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = crate::config::CryoConfig {
+        agent: "claude".to_string(),
+        ..Default::default()
+    };
+    crate::config::save_config(&crate::config::config_path(dir.path()), &cfg).unwrap();
+    let mut st = test_state(4);
+    st.agent_override = Some("codex".to_string());
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+
+    let status = status(dir.path());
+
+    assert_eq!(status.session, 4);
+    assert_eq!(status.agent, "codex");
+}
+
+#[test]
+fn status_next_wake_uses_earliest_open_todo() {
+    let dir = tempfile::tempdir().unwrap();
+    let todos = crate::todo::TodoFile::new(dir.path().join("todo.json"));
+    todos
+        .add("later".to_string(), "2026-05-02T10:00".to_string())
+        .unwrap();
+    todos
+        .add("earlier".to_string(), "2026-05-01T09:00".to_string())
+        .unwrap();
+    let done_id = todos
+        .add("done".to_string(), "2026-04-01T09:00".to_string())
+        .unwrap();
+    todos.done(done_id).unwrap();
+
+    let status = status(dir.path());
+
+    assert_eq!(status.next_wake, Some("2026-05-01T09:00".to_string()));
+}
+
+#[test]
+fn status_completion_summary_comes_from_latest_session_log() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        crate::log::log_path(dir.path()),
+        "--- CRYO SESSION 1 | 2026-04-20T10:00:00Z ---\n\
+         [10:00:01] hibernate: plan complete, exit=0, summary=\"old summary\"\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 2 | 2026-04-20T12:00:00Z ---\n\
+         task: ship the patch\n\
+         [12:00:01] hibernate: plan complete, exit=0, summary=\"new summary\"\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+
+    let status = status(dir.path());
+
+    assert!(status.completed);
+    assert_eq!(status.task, Some("ship the patch".to_string()));
+    assert_eq!(status.completion_summary, Some("new summary".to_string()));
+}
+
+#[test]
+fn messages_are_sorted_chronologically_and_tagged_with_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    std::fs::write(
+        crate::log::log_path(dir.path()),
+        "--- CRYO SESSION 1 | 2026-04-20T10:00:00Z ---\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 2 | 2026-04-20T12:00:00Z ---\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+    crate::message::write_message(
+        dir.path(),
+        "inbox",
+        &test_message("operator", "late", "2026-04-20T13:00:00"),
+    )
+    .unwrap();
+    crate::message::write_message(
+        dir.path(),
+        "outbox",
+        &test_message("agent", "early", "2026-04-20T10:30:00"),
+    )
+    .unwrap();
+    crate::message::write_message(
+        dir.path(),
+        "inbox",
+        &test_message("operator", "pre", "2026-04-20T09:00:00"),
+    )
+    .unwrap();
+
+    let messages = messages(dir.path());
+
+    assert_eq!(
+        messages
+            .iter()
+            .map(|msg| msg.body.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pre", "early", "late"]
+    );
+    assert_eq!(messages[0].session, None);
+    assert_eq!(messages[1].session, Some(1));
+    assert_eq!(messages[2].session, Some(2));
+}
+
+#[test]
+fn overview_agent_running_requires_live_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut st = test_state(1);
+    st.pid = Some(std::process::id());
+    st.session_active = true;
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+    let ov = overview(dir.path());
+    assert!(ov.running, "live daemon should be running");
+    assert!(
+        ov.agent_running,
+        "session_active + live pid should yield agent_running"
+    );
+}
+
+#[test]
+fn overview_agent_running_false_when_daemon_dead() {
+    let dir = tempfile::tempdir().unwrap();
+    // Spawn a throwaway process and wait for it to exit so its PID is dead.
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead_pid = child.id();
+    child.wait().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let mut st = test_state(1);
+    st.pid = Some(dead_pid);
+    st.session_active = true; // stale leftover
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+    let ov = overview(dir.path());
+    assert!(!ov.running);
+    assert!(
+        !ov.agent_running,
+        "stale session_active must not yield agent_running without a live daemon"
+    );
+}
+
+#[test]
+fn overview_agent_running_false_when_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut st = test_state(1);
+    st.pid = Some(std::process::id());
+    st.session_active = false;
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+    let ov = overview(dir.path());
+    assert!(ov.running);
+    assert!(!ov.agent_running);
+}

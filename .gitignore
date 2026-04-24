@@ -31,3 +31,4 @@ examples/chambers/chess-by-mail/game_state.txt
 examples/chambers/*/.cryo
 examples/chambers/*/.ruff_cache
 examples/chambers/*/history/
+docs/diagrams/

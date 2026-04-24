@@ -19,14 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::CryoConfig;
-use crate::fallback::FallbackAction;
-use crate::state::{self, CryoState, PendingFallbackState};
-
-/// Format for parsing TODO `at` timestamps (minute precision, no seconds).
-const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
-const FALLBACK_TIME_FMT: &str = "%Y-%m-%dT%H:%M:%S";
-
-use crate::process::send_signal;
+use crate::state::{self, CryoState};
 
 trait Clock: Send + Sync {
     fn local_now(&self) -> NaiveDateTime;
@@ -126,58 +119,6 @@ fn wait_for_idle_event(
     }
 }
 
-/// Tracks retry state with exponential backoff.
-#[derive(Debug)]
-pub struct RetryState {
-    pub attempt: u32,
-    pub max_retries: u32,
-    pub provider_index: usize,
-    provider_count: usize,
-}
-
-impl RetryState {
-    pub fn new(max_retries: u32, provider_count: usize) -> Self {
-        Self {
-            attempt: 0,
-            max_retries,
-            provider_index: 0,
-            provider_count,
-        }
-    }
-
-    /// Calculate backoff duration for current attempt.
-    /// Doubles each time: 5s, 10s, 20s, ..., capped at 3600s (1 hour).
-    /// Always returns a duration (retries indefinitely with backoff).
-    pub fn next_backoff(&self) -> Duration {
-        let secs = 5u64.checked_shl(self.attempt).unwrap_or(3600).min(3600);
-        Duration::from_secs(secs)
-    }
-
-    pub fn record_failure(&mut self) {
-        self.attempt += 1;
-    }
-
-    pub fn reset(&mut self) {
-        self.attempt = 0;
-        self.provider_index = 0;
-    }
-
-    pub fn exhausted(&self) -> bool {
-        self.attempt >= self.max_retries
-    }
-
-    /// Advance to the next provider. Returns true if we wrapped back to index 0
-    /// (all providers have been tried in this cycle). Resets retry attempt counter.
-    pub fn rotate_provider(&mut self) -> bool {
-        if self.provider_count <= 1 {
-            return true; // can't rotate with 0 or 1 provider
-        }
-        self.provider_index = (self.provider_index + 1) % self.provider_count;
-        self.attempt = 0;
-        self.provider_index == 0 // wrapped
-    }
-}
-
 /// Watches `messages/inbox/` for new files and sends events to a channel.
 pub struct InboxWatcher {
     _watcher: RecommendedWatcher,
@@ -208,25 +149,52 @@ impl InboxWatcher {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionLoopOutcome {
     PlanComplete,
-    Hibernate { fallback: Option<FallbackAction> },
+    Hibernate,
     ValidationFailed { quick_exit: bool },
 }
+
+impl SessionLoopOutcome {
+    /// The single source of truth for whether a session ended in a crash /
+    /// validation failure. Used to update `CryoState::previous_session_crashed`;
+    /// an outer-loop `Err` from `run_one_session` is also a crash but is
+    /// handled separately because there is no outcome to ask.
+    fn is_crash(&self) -> bool {
+        matches!(self, SessionLoopOutcome::ValidationFailed { .. })
+    }
+}
+
+mod effects;
+mod inbox;
+mod request;
+mod schedule;
+mod session;
+
+use effects::{ReplyAuthor, SessionEffects};
+use inbox::SessionInboxState;
+pub use schedule::RetryState;
+use schedule::{
+    compute_sleep_timeout, decide_next_step, delayed_wake_notice, next_wake_from_todos,
+    DaemonBootstrapState, NextStep, SessionRunResult,
+};
+#[cfg(test)]
+use schedule::{
+    detect_delayed_wake, should_rotate_provider, ProviderRotationReason, WAKE_TIME_FMT,
+};
+
+#[cfg(test)]
+use request::TodoRequest;
+use request::{
+    handle_receive_request, handle_todo_request, resolve_hibernate_request, DaemonRequest,
+    FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
+};
+#[cfg(test)]
+use session::ChildExitStatus;
+use session::{ProcessSessionLauncher, SessionLauncher, SessionRuntime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionInterruption {
     Shutdown,
     Timeout,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HibernateDecision {
-    /// `Some` terminates the session with this outcome; `None` rejects the
-    /// hibernate attempt and leaves the session running so the agent can
-    /// observe the error and correct itself (e.g. register a TODO).
-    outcome: Option<SessionLoopOutcome>,
-    response_ok: bool,
-    response_message: &'static str,
-    log_event: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,57 +210,89 @@ struct ChildExitDecision {
     quick_exit: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopControl {
+    Break,
+    Continue,
+    Idle,
+}
+
 struct ActiveSessionContext<'a> {
     cryo_state: &'a CryoState,
     timeout_secs: u64,
     spawn_time: Instant,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DaemonBootstrapState {
-    next_report_time: Option<NaiveDateTime>,
-    next_wake: Option<NaiveDateTime>,
-    run_now: bool,
-    pending_fallback: Option<(NaiveDateTime, FallbackAction)>,
-    watch_inbox_path: Option<PathBuf>,
-    cleared_invalid_pending_fallback: bool,
+struct ActiveRequestState<'a> {
+    logger: &'a mut crate::log::EventLogger,
+    hibernate_outcome: &'a mut Option<SessionLoopOutcome>,
+    inbox_state: &'a mut SessionInboxState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ChildExitStatus {
-    code: Option<i32>,
+struct EventLoopMutations<'a> {
+    cryo_state: &'a mut CryoState,
+    retry: &'a mut RetryState,
+    next_wake: &'a mut Option<NaiveDateTime>,
+    run_now: &'a mut bool,
 }
 
-trait SessionRuntime {
-    fn accept_request(
-        &mut self,
-        expected_instance_id: Option<&str>,
-    ) -> Result<Option<crate::socket::Request>>;
-    fn respond(&mut self, ok: bool, message: String) -> Result<()>;
-    fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>>;
-    fn terminate(&mut self);
+fn daemon_unanswered_reply_text(message_count: usize) -> String {
+    let (noun, verb) = if message_count == 1 {
+        ("message", "is")
+    } else {
+        ("messages", "are")
+    };
+    format!(
+        "I received {message_count} {noun}, but the agent did not send a reply before the session ended. \
+         The daemon is replying so your {noun} {verb} not left unanswered."
+    )
 }
 
-trait SessionEffects {
-    /// Read pending inbox messages and archive them atomically. Returns the
-    /// formatted body the agent will print plus the list of filenames that
-    /// were archived (for the event log).
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)>;
-    fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()>;
-    fn todo_add(&mut self, text: &str, at: &str) -> Result<u32>;
-    fn todo_done(&mut self, id: u32) -> Result<()>;
-    fn todo_remove(&mut self, id: u32) -> Result<()>;
-    fn todo_list(&mut self) -> Result<String>;
-    /// Returns true iff at least one pending TODO has an `at` time parseable
-    /// by `WAKE_TIME_FMT`. Used to reject hibernate attempts that would leave
-    /// the chamber without a scheduled next wake.
-    fn has_pending_todo_with_valid_wake(&self) -> bool;
+fn daemon_missing_outbound_text() -> &'static str {
+    "The agent completed this session without sending an outbox message. \
+     The daemon is sending this status so every agent run has a visible message."
+}
+
+fn ipc_protocol_response(protocol_version: u32) -> crate::socket::Response {
+    let daemon_version = crate::socket::IPC_PROTOCOL_VERSION;
+    if protocol_version == daemon_version {
+        return crate::socket::Response {
+            ok: true,
+            message: format!("IPC protocol {daemon_version}"),
+        };
+    }
+
+    crate::socket::Response {
+        ok: false,
+        message: format!(
+            "IPC protocol mismatch: daemon uses {daemon_version}, client uses {protocol_version}. \
+             Run `cryo restart` after installing matching `cryo` and `cryo-agent` binaries."
+        ),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct StartupDiagnostics {
     registry_warning: Option<String>,
     watcher_warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatcherStartupNotice<'a> {
+    Warning(&'a str),
+    Started,
+    Silent,
+}
+
+fn watcher_startup_notice(
+    watcher_warning: Option<&str>,
+    watcher_started: bool,
+) -> WatcherStartupNotice<'_> {
+    match (watcher_warning, watcher_started) {
+        (Some(warning), _) => WatcherStartupNotice::Warning(warning),
+        (None, true) => WatcherStartupNotice::Started,
+        (None, false) => WatcherStartupNotice::Silent,
+    }
 }
 
 #[derive(Debug)]
@@ -319,91 +319,6 @@ trait StartupPlatform {
         inbox_path: &Path,
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<Self::Watcher>;
-}
-
-struct FsSessionEffects<'a> {
-    dir: &'a Path,
-}
-
-impl<'a> FsSessionEffects<'a> {
-    fn new(dir: &'a Path) -> Self {
-        Self { dir }
-    }
-
-    fn todo_path(&self) -> PathBuf {
-        self.dir.join("todo.json")
-    }
-}
-
-impl SessionEffects for FsSessionEffects<'_> {
-    fn receive_inbox(&mut self) -> Result<(String, Vec<String>)> {
-        let messages = crate::message::read_inbox(self.dir)?;
-        if messages.is_empty() {
-            return Ok(("No messages.\n".to_string(), Vec::new()));
-        }
-        let mut body = String::new();
-        for (filename, msg) in &messages {
-            body.push_str(&format!("--- {} ---\n", filename));
-            if !msg.from.is_empty() {
-                body.push_str(&format!("From: {}\n", msg.from));
-            }
-            if !msg.subject.is_empty() {
-                body.push_str(&format!("Subject: {}\n", msg.subject));
-            }
-            body.push('\n');
-            body.push_str(&msg.body);
-            body.push('\n');
-            body.push('\n');
-        }
-        let filenames: Vec<String> = messages.into_iter().map(|(name, _)| name).collect();
-        crate::message::archive_messages(self.dir, &filenames)?;
-        Ok((body, filenames))
-    }
-
-    fn write_reply(&mut self, text: &str, timestamp: NaiveDateTime) -> Result<()> {
-        let msg = crate::message::Message {
-            from: "agent".to_string(),
-            subject: "Reply".to_string(),
-            body: text.to_string(),
-            timestamp,
-            metadata: std::collections::BTreeMap::new(),
-        };
-        crate::message::write_message(self.dir, "outbox", &msg)?;
-        Ok(())
-    }
-
-    fn todo_add(&mut self, text: &str, at: &str) -> Result<u32> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        let id = list.add(text.to_string(), at.to_string());
-        list.save(&todo_path)?;
-        Ok(id)
-    }
-
-    fn todo_done(&mut self, id: u32) -> Result<()> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        list.done(id)?;
-        list.save(&todo_path)?;
-        Ok(())
-    }
-
-    fn todo_remove(&mut self, id: u32) -> Result<()> {
-        let todo_path = self.todo_path();
-        let mut list = crate::todo::TodoList::load(&todo_path)?;
-        list.remove(id)?;
-        list.save(&todo_path)?;
-        Ok(())
-    }
-
-    fn todo_list(&mut self) -> Result<String> {
-        let list = crate::todo::TodoList::load(&self.todo_path())?;
-        Ok(list.display())
-    }
-
-    fn has_pending_todo_with_valid_wake(&self) -> bool {
-        next_wake_from_todos(self.dir).is_some()
-    }
 }
 
 struct SystemStartupPlatform;
@@ -443,125 +358,6 @@ impl StartupPlatform for SystemStartupPlatform {
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<Self::Watcher> {
         InboxWatcher::start(inbox_path, tx)
-    }
-}
-
-struct ProcessSessionRuntime<'a> {
-    server: &'a crate::socket::SocketServer,
-    child: &'a mut std::process::Child,
-    clock: Arc<dyn Clock>,
-    pending_responder: Option<crate::socket::Responder>,
-}
-
-impl<'a> ProcessSessionRuntime<'a> {
-    fn new(
-        server: &'a crate::socket::SocketServer,
-        child: &'a mut std::process::Child,
-        clock: Arc<dyn Clock>,
-    ) -> Self {
-        Self {
-            server,
-            child,
-            clock,
-            pending_responder: None,
-        }
-    }
-}
-
-impl SessionRuntime for ProcessSessionRuntime<'_> {
-    fn accept_request(
-        &mut self,
-        expected_instance_id: Option<&str>,
-    ) -> Result<Option<crate::socket::Request>> {
-        match self.server.accept_one(expected_instance_id) {
-            Ok(Some((request, responder))) => {
-                self.pending_responder = Some(responder);
-                Ok(Some(request))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => {
-                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                    if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                        return Ok(None);
-                    }
-                }
-                Err(e)
-            }
-        }
-    }
-
-    fn respond(&mut self, ok: bool, message: String) -> Result<()> {
-        let responder = self
-            .pending_responder
-            .take()
-            .context("Missing pending session responder")?;
-        responder.respond(&crate::socket::Response { ok, message })?;
-        Ok(())
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>> {
-        self.child.try_wait().map(|status| {
-            status.map(|status| ChildExitStatus {
-                code: status.code(),
-            })
-        })
-    }
-
-    fn terminate(&mut self) {
-        let pid = self.child.id();
-        terminate_child(self.child, pid, self.clock.as_ref());
-    }
-}
-
-fn resolve_hibernate_request(
-    complete: bool,
-    exit_code: u8,
-    summary: Option<&str>,
-    has_pending_todos: bool,
-    pending_fallback: &mut Option<FallbackAction>,
-) -> HibernateDecision {
-    let summary = summary.unwrap_or("(no summary)");
-    if exit_code != 0 {
-        return HibernateDecision {
-            outcome: Some(SessionLoopOutcome::ValidationFailed { quick_exit: false }),
-            response_ok: true,
-            response_message: "Failure recorded. Daemon will retry.",
-            log_event: format!("hibernate failed: exit={exit_code}, summary=\"{summary}\""),
-        };
-    }
-
-    if complete {
-        return HibernateDecision {
-            outcome: Some(SessionLoopOutcome::PlanComplete),
-            response_ok: true,
-            response_message: "Plan complete. Shutting down.",
-            log_event: format!("hibernate: plan complete, exit={exit_code}, summary=\"{summary}\""),
-        };
-    }
-
-    if !has_pending_todos {
-        // Reject: no pending TODO means no next wake. Keep the session alive so
-        // the agent can observe the error, add a TODO, and retry hibernate.
-        return HibernateDecision {
-            outcome: None,
-            response_ok: false,
-            response_message:
-                "hibernate refused: no pending TODO with a valid `--at` time. Every session \
-                 must declare its next wake before hibernating. Run \
-                 `cryo-agent todo add \"<next step>\" --at <TIME>` (use `cryo-agent time \"+30 minutes\"` \
-                 to compute TIME), then retry `cryo-agent hibernate`. Use `cryo-agent hibernate --complete` \
-                 only if the plan is genuinely finished.",
-            log_event: format!("hibernate refused: no pending TODO, summary=\"{summary}\""),
-        };
-    }
-
-    HibernateDecision {
-        outcome: Some(SessionLoopOutcome::Hibernate {
-            fallback: pending_fallback.take(),
-        }),
-        response_ok: true,
-        response_message: "Hibernating.",
-        log_event: format!("hibernate: exit={exit_code}, summary=\"{summary}\""),
     }
 }
 
@@ -609,91 +405,42 @@ fn resolve_child_exit(
     }
 }
 
-/// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
-fn terminate_child(child: &mut std::process::Child, pid: u32, clock: &dyn Clock) {
-    send_signal(pid, libc::SIGTERM);
-    clock.sleep(Duration::from_secs(2));
-    if child.try_wait().ok().flatten().is_none() {
-        send_signal(pid, libc::SIGKILL);
-    }
-    let _ = child.wait(); // reap to prevent zombie
-}
+const PREVIOUS_SESSION_CRASH_NOTICE: &str =
+    "PREVIOUS SESSION CRASHED: The agent exited without calling \
+     `cryo-agent hibernate`. Any inbox messages the previous session \
+     received were already archived when they were read. Check \
+     `messages/inbox/archive/` if you need to inspect them, then send \
+     a human-visible response via \
+     `cryo-agent send` if the user is still waiting for a response. \
+     Any TODO that triggered the crashed wake has been re-queued \
+     with an `(attempt k)` suffix and an exponential delay.";
 
-/// Compute how long to sleep given optional wake and report deadlines.
-fn compute_sleep_timeout(
-    wake_deadline: Option<NaiveDateTime>,
-    report_deadline: Option<NaiveDateTime>,
-    now: NaiveDateTime,
-) -> Duration {
-    let to_duration =
-        |dt: NaiveDateTime| -> Duration { (dt - now).to_std().unwrap_or(Duration::ZERO) };
-    match (
-        wake_deadline.map(&to_duration),
-        report_deadline.map(&to_duration),
-    ) {
-        (Some(w), Some(r)) => w.min(r),
-        (Some(w), None) => w,
-        (None, Some(r)) => r,
-        (None, None) => Duration::from_secs(3600),
+fn session_prompt_notice(
+    delayed_wake: Option<&str>,
+    previous_session_crashed: bool,
+) -> Option<String> {
+    match (delayed_wake, previous_session_crashed) {
+        (Some(delayed), true) => Some(format!("{delayed}\n\n{PREVIOUS_SESSION_CRASH_NOTICE}")),
+        (Some(delayed), false) => Some(delayed.to_string()),
+        (None, true) => Some(PREVIOUS_SESSION_CRASH_NOTICE.to_string()),
+        (None, false) => None,
     }
 }
 
-/// Compute the next wake time from the TODO list.
-/// Iterates all pending TODOs, parses each `at` field, and returns the earliest
-/// valid timestamp. Invalid or unparseable entries are skipped with a warning.
-fn next_wake_from_todos(dir: &Path) -> Option<NaiveDateTime> {
-    let path = dir.join("todo.json");
-    let list = crate::todo::TodoList::load(&path).ok()?;
-    list.items()
-        .iter()
-        .filter(|i| !i.done && !i.at.is_empty())
-        .filter_map(|i| {
-            let parsed = NaiveDateTime::parse_from_str(&i.at, WAKE_TIME_FMT);
-            if parsed.is_err() {
-                eprintln!(
-                    "Daemon: Skipping TODO #{} with invalid at value: {:?}",
-                    i.id, i.at
-                );
-            }
-            parsed.ok()
-        })
-        .min()
+/// Persists `CryoState` to disk. Abstracted so tests can inject a stub
+/// that fails on demand, covering the "disk write failed mid-loop" paths
+/// without relying on filesystem permissions (which behave differently on
+/// macOS vs. Linux and vary with parent-directory ownership).
+trait StateStore: Send + Sync {
+    fn save(&self, path: &Path, state: &CryoState) -> Result<()>;
 }
 
-/// Check if the scheduled wake time is significantly in the past (machine suspend).
-/// Returns `Some(delay_description)` if delayed by more than 5 minutes.
-fn detect_delayed_wake(scheduled: NaiveDateTime, now: NaiveDateTime) -> Option<String> {
-    let delay = now - scheduled;
-    if delay > chrono::Duration::minutes(5) {
-        let delay_str = if delay.num_hours() > 0 {
-            format!("{}h {}m", delay.num_hours(), delay.num_minutes() % 60)
-        } else {
-            format!("{}m", delay.num_minutes())
-        };
-        Some(delay_str)
-    } else {
-        None
+struct FsStateStore;
+
+impl StateStore for FsStateStore {
+    fn save(&self, path: &Path, state: &CryoState) -> Result<()> {
+        state::save_state(path, state)
     }
-}
-
-fn pending_fallback_to_state(
-    pending: Option<&(NaiveDateTime, FallbackAction)>,
-) -> Option<PendingFallbackState> {
-    pending.map(|(deadline, action)| PendingFallbackState {
-        deadline: deadline.format(FALLBACK_TIME_FMT).to_string(),
-        action: action.clone(),
-    })
-}
-
-fn pending_fallback_from_state(
-    state: &CryoState,
-) -> Result<Option<(NaiveDateTime, FallbackAction)>> {
-    let Some(pending) = state.pending_fallback.as_ref() else {
-        return Ok(None);
-    };
-    let deadline = NaiveDateTime::parse_from_str(&pending.deadline, FALLBACK_TIME_FMT)
-        .with_context(|| format!("Invalid pending fallback deadline: {}", pending.deadline))?;
-    Ok(Some((deadline, pending.action.clone())))
 }
 
 /// The persistent daemon process.
@@ -704,14 +451,26 @@ pub struct Daemon {
     shutdown: Arc<AtomicBool>,
     wake_requested: Arc<AtomicBool>,
     clock: Arc<dyn Clock>,
+    launcher: Arc<dyn SessionLauncher>,
+    state_store: Arc<dyn StateStore>,
 }
 
 impl Daemon {
     pub fn new(dir: PathBuf) -> Self {
-        Self::with_clock(dir, Arc::new(SystemClock))
+        Self::with_deps(
+            dir,
+            Arc::new(SystemClock),
+            Arc::new(ProcessSessionLauncher),
+            Arc::new(FsStateStore),
+        )
     }
 
-    fn with_clock(dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
+    fn with_deps(
+        dir: PathBuf,
+        clock: Arc<dyn Clock>,
+        launcher: Arc<dyn SessionLauncher>,
+        state_store: Arc<dyn StateStore>,
+    ) -> Self {
         let state_path = dir.join("timer.json");
         let log_path = dir.join("cryo.log");
         Self {
@@ -721,25 +480,49 @@ impl Daemon {
             shutdown: Arc::new(AtomicBool::new(false)),
             wake_requested: Arc::new(AtomicBool::new(false)),
             clock,
+            launcher,
+            state_store,
         }
     }
 
     #[cfg(test)]
     fn new_with_clock(dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
-        Self::with_clock(dir, clock)
+        Self::with_deps(
+            dir,
+            clock,
+            Arc::new(ProcessSessionLauncher),
+            Arc::new(FsStateStore),
+        )
     }
 
-    fn sync_pending_fallback_state(
-        &self,
-        cryo_state: &mut CryoState,
-        pending: Option<&(NaiveDateTime, FallbackAction)>,
-    ) {
-        cryo_state.pending_fallback = pending_fallback_to_state(pending);
+    /// Test-only constructor: inject both the clock and the session launcher.
+    /// Production always uses `ProcessSessionLauncher`; tests pass a
+    /// `ScriptedSessionLauncher` to drive the outer event loop without
+    /// spawning real subprocesses.
+    #[cfg(test)]
+    fn new_with_clock_and_launcher(
+        dir: PathBuf,
+        clock: Arc<dyn Clock>,
+        launcher: Arc<dyn SessionLauncher>,
+    ) -> Self {
+        Self::with_deps(dir, clock, launcher, Arc::new(FsStateStore))
+    }
+
+    /// All in-daemon state writes funnel through this, so tests can stub
+    /// `StateStore` and all save paths respond consistently.
+    fn save_state(&self, cryo_state: &CryoState) -> Result<()> {
+        self.state_store.save(&self.state_path, cryo_state)
+    }
+
+    fn save_state_or_log(&self, cryo_state: &CryoState, context: &str) {
+        if let Err(e) = self.save_state(cryo_state) {
+            eprintln!("Daemon: failed to {context}: {e}");
+        }
     }
 
     fn build_bootstrap_state(
         &self,
-        cryo_state: &mut CryoState,
+        cryo_state: &CryoState,
         config: &CryoConfig,
     ) -> DaemonBootstrapState {
         let last_report = cryo_state
@@ -763,34 +546,27 @@ impl Daemon {
             None
         };
 
-        let (pending_fallback, cleared_invalid_pending_fallback) =
-            match pending_fallback_from_state(cryo_state) {
-                Ok(pending) => (pending, false),
-                Err(e) => {
-                    eprintln!("Daemon: clearing invalid pending fallback state: {e}");
-                    cryo_state.pending_fallback = None;
-                    (None, true)
-                }
-            };
-
         DaemonBootstrapState {
             next_report_time,
             next_wake,
             run_now,
-            pending_fallback,
             watch_inbox_path,
-            cleared_invalid_pending_fallback,
         }
     }
 
-    fn prepare_shutdown_state(
-        &self,
-        cryo_state: &mut CryoState,
-        pending: Option<&(NaiveDateTime, FallbackAction)>,
-    ) {
+    fn prepare_shutdown_state(&self, cryo_state: &mut CryoState) {
         cryo_state.pid = None;
         cryo_state.instance_id = None;
-        self.sync_pending_fallback_state(cryo_state, pending);
+        cryo_state.session_active = false;
+    }
+
+    fn prepare_startup_state(&self, cryo_state: &mut CryoState) {
+        cryo_state.pid = Some(std::process::id());
+        cryo_state.instance_id = Some(state::new_instance_id());
+        // Clear any stale `session_active` left over from a SIGKILL mid-session
+        // in a previous run — the hub reads this flag to animate the sidebar
+        // dot and should never see "in-session" for a daemon that isn't.
+        cryo_state.session_active = false;
     }
 
     fn prepare_runtime_startup<P: StartupPlatform>(
@@ -837,119 +613,27 @@ impl Daemon {
         request: crate::socket::Request,
         responder: crate::socket::Responder,
     ) -> Result<()> {
-        match request {
-            crate::socket::Request::Ping => {
+        match DaemonRequest::from(request) {
+            DaemonRequest::Ping => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: true,
                     message: "pong".into(),
                 });
             }
-            crate::socket::Request::TodoAdd { text, at } => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(mut list) => {
-                        let id = list.add(text, at);
-                        let response = match list.save(&todo_path) {
-                            Ok(()) => crate::socket::Response {
-                                ok: true,
-                                message: format!("Added todo #{id}"),
-                            },
-                            Err(e) => crate::socket::Response {
-                                ok: false,
-                                message: format!("Failed to save todo: {e}"),
-                            },
-                        };
-                        let _ = responder.respond(&response);
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
+            DaemonRequest::Hello { protocol_version } => {
+                let _ = responder.respond(&ipc_protocol_response(protocol_version));
             }
-            crate::socket::Request::TodoDone { id } => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(mut list) => {
-                        let response = match list.done(id) {
-                            Ok(()) => match list.save(&todo_path) {
-                                Ok(()) => crate::socket::Response {
-                                    ok: true,
-                                    message: format!("Marked todo #{id} as done"),
-                                },
-                                Err(e) => crate::socket::Response {
-                                    ok: false,
-                                    message: format!("Failed to save todo: {e}"),
-                                },
-                            },
-                            Err(e) => crate::socket::Response {
-                                ok: false,
-                                message: format!("{e}"),
-                            },
-                        };
-                        let _ = responder.respond(&response);
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
+            DaemonRequest::Todo(todo_request) => {
+                let mut effects = FileTodoEffects::new(&self.dir);
+                let response = handle_todo_request(todo_request, &mut effects).into_response();
+                let _ = responder.respond(&response);
             }
-            crate::socket::Request::TodoRemove { id } => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(mut list) => {
-                        let response = match list.remove(id) {
-                            Ok(()) => match list.save(&todo_path) {
-                                Ok(()) => crate::socket::Response {
-                                    ok: true,
-                                    message: format!("Removed todo #{id}"),
-                                },
-                                Err(e) => crate::socket::Response {
-                                    ok: false,
-                                    message: format!("Failed to save todo: {e}"),
-                                },
-                            },
-                            Err(e) => crate::socket::Response {
-                                ok: false,
-                                message: format!("{e}"),
-                            },
-                        };
-                        let _ = responder.respond(&response);
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
+            DaemonRequest::Receive => {
+                let mut effects = FileMessageEffects::new(&self.dir);
+                let outcome = handle_receive_request(&mut effects);
+                let _ = responder.respond(&outcome.into_response());
             }
-            crate::socket::Request::TodoList => {
-                let todo_path = self.dir.join("todo.json");
-                match crate::todo::TodoList::load(&todo_path) {
-                    Ok(list) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: true,
-                            message: list.display(),
-                        });
-                    }
-                    Err(e) => {
-                        let _ = responder.respond(&crate::socket::Response {
-                            ok: false,
-                            message: format!("Failed to load todo list: {e}"),
-                        });
-                    }
-                }
-            }
-            crate::socket::Request::Hibernate { .. }
-            | crate::socket::Request::Alert { .. }
-            | crate::socket::Request::Reply { .. }
-            | crate::socket::Request::Receive => {
+            DaemonRequest::Send { .. } | DaemonRequest::Hibernate { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
                     message:
@@ -987,6 +671,72 @@ impl Daemon {
         }
     }
 
+    fn apply_next_step(
+        &self,
+        step: NextStep,
+        config: &CryoConfig,
+        state: EventLoopMutations<'_>,
+    ) -> Result<LoopControl> {
+        match step {
+            NextStep::PlanComplete => {
+                state.retry.reset();
+                eprintln!("Daemon: plan complete. Shutting down.");
+                Ok(LoopControl::Break)
+            }
+            NextStep::Hibernate {
+                next_wake: refreshed_next_wake,
+            } => {
+                state.retry.reset();
+                *state.next_wake = refreshed_next_wake;
+                if let Some(w) = *state.next_wake {
+                    eprintln!("Daemon: next wake at {}", w.format("%Y-%m-%d %H:%M"));
+                } else {
+                    eprintln!("Daemon: no pending TODOs, idling");
+                }
+                Ok(LoopControl::Idle)
+            }
+            NextStep::RotateProvider {
+                next_wake: refreshed_next_wake,
+                next_provider_index,
+                wrapped,
+                reason,
+            } => {
+                *state.next_wake = refreshed_next_wake;
+                let old_name = config
+                    .providers
+                    .get(state.retry.provider_index)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                state.retry.provider_index = next_provider_index;
+                let new_name = config
+                    .providers
+                    .get(state.retry.provider_index)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("unknown");
+                eprintln!(
+                    "Daemon: rotating provider: {} -> {} (reason: {})",
+                    old_name,
+                    new_name,
+                    reason.as_str(),
+                );
+
+                // Persist immediately so `cryo status` reflects the change.
+                state.cryo_state.provider_index = Some(state.retry.provider_index);
+                self.save_state_or_log(state.cryo_state, "persist provider rotation");
+
+                if wrapped {
+                    // All providers tried — apply backoff before next cycle.
+                    eprintln!("Daemon: all providers tried, backing off before next cycle");
+                    if self.sleep_or_shutdown(Duration::from_secs(60)) {
+                        return Ok(LoopControl::Break);
+                    }
+                }
+                *state.run_now = true;
+                Ok(LoopControl::Continue)
+            }
+        }
+    }
+
     /// Run the daemon event loop. Blocks until SIGTERM or plan completion.
     pub fn run(&self) -> Result<()> {
         let mut cryo_state =
@@ -1004,12 +754,19 @@ impl Daemon {
         let mut config =
             crate::config::load_config(&crate::config::config_path(&self.dir))?.unwrap_or_default();
         config.apply_overrides(&cryo_state);
-        let bootstrap = self.build_bootstrap_state(&mut cryo_state, &config);
+        let stale_session_active = cryo_state.session_active;
+        let recovered_claimed_todos = self.reschedule_claimed_after_crash();
+        if stale_session_active || recovered_claimed_todos {
+            cryo_state.previous_session_crashed = true;
+        }
+        cryo_state.session_active = false;
+        let bootstrap = self.build_bootstrap_state(&cryo_state, &config);
 
-        // Save PID so other commands can detect the running daemon
-        cryo_state.pid = Some(std::process::id());
-        cryo_state.instance_id = Some(state::new_instance_id());
-        state::save_state(&self.state_path, &cryo_state)?;
+        // Save PID so other commands can detect the running daemon, mint a
+        // new instance_id, and clear any stale session_active from a prior
+        // SIGKILL mid-session.
+        self.prepare_startup_state(&mut cryo_state);
+        self.save_state(&cryo_state)?;
 
         let (tx, rx) = mpsc::channel();
         let startup = match self.prepare_runtime_startup(
@@ -1019,8 +776,8 @@ impl Daemon {
         ) {
             Ok(startup) => startup,
             Err(e) => {
-                self.prepare_shutdown_state(&mut cryo_state, bootstrap.pending_fallback.as_ref());
-                if let Err(save_err) = state::save_state(&self.state_path, &cryo_state) {
+                self.prepare_shutdown_state(&mut cryo_state);
+                if let Err(save_err) = self.save_state(&cryo_state) {
                     eprintln!("Daemon: failed to restore state after startup failure: {save_err}");
                 }
                 return Err(e);
@@ -1035,10 +792,17 @@ impl Daemon {
         }
 
         let watcher_started = startup.watcher.is_some();
-        if let Some(warning) = startup.diagnostics.watcher_warning {
-            eprintln!("Daemon: failed to start inbox watcher: {warning}");
-        } else if watcher_started {
-            eprintln!("Daemon: watching messages/inbox/ for new messages");
+        match watcher_startup_notice(
+            startup.diagnostics.watcher_warning.as_deref(),
+            watcher_started,
+        ) {
+            WatcherStartupNotice::Warning(warning) => {
+                eprintln!("Daemon: failed to start inbox watcher: {warning}");
+            }
+            WatcherStartupNotice::Started => {
+                eprintln!("Daemon: watching messages/inbox/ for new messages");
+            }
+            WatcherStartupNotice::Silent => {}
         }
         let _watcher = startup.watcher;
 
@@ -1059,6 +823,31 @@ impl Daemon {
             }
         });
 
+        // The event loop persists final state before
+        // returning. All we need to do after is release external OS resources.
+        let loop_result = self.run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx);
+        crate::registry::unregister(&self.dir);
+        crate::socket::SocketServer::cleanup(&sock_path);
+        eprintln!("Daemon: exited cleanly");
+        loop_result
+    }
+
+    /// The core event loop, extracted so tests can drive it without installing
+    /// real signal handlers or inotify watchers.
+    ///
+    /// Callers are responsible for populating `cryo_state.pid`/`instance_id`,
+    /// binding the socket server, and wiring whatever they want on `rx`
+    /// (inbox watcher, signal-forwarding thread, scripted events, etc.).
+    /// The loop exits on plan completion, explicit shutdown, or channel
+    /// disconnection. Final state cleanup happens in the caller.
+    fn run_event_loop(
+        &self,
+        config: &CryoConfig,
+        cryo_state: &mut CryoState,
+        bootstrap: DaemonBootstrapState,
+        server: &crate::socket::SocketServer,
+        rx: &mpsc::Receiver<DaemonEvent>,
+    ) -> Result<()> {
         let mut next_report_time = bootstrap.next_report_time;
         if config.report_interval > 0 && next_report_time.is_none() {
             eprintln!(
@@ -1071,11 +860,10 @@ impl Daemon {
         }
 
         let provider_count = config.providers.len();
-        let mut retry = RetryState::new(config.max_retries, provider_count);
+        let mut retry = RetryState::new(provider_count);
         let mut next_wake = bootstrap.next_wake;
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
-        let mut pending_fallback = bootstrap.pending_fallback;
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -1092,32 +880,14 @@ impl Daemon {
                 // (e.g. computer was sleeping), notify the agent instead of failing.
                 // Skip this check for inbox-triggered wakes — the agent should handle
                 // the user's message without a spurious delay warning.
-                let delayed_wake = if is_inbox_wake {
-                    None
-                } else {
-                    next_wake.and_then(|wake| {
-                        let now = self.clock.local_now();
-                        detect_delayed_wake(wake, now).map(|delay_str| {
-                            format!(
-                                "DELAYED WAKE: This session was scheduled for {} but is running {} late \
-                                 (the host machine was likely suspended or powered off). \
-                                 Check whether time-sensitive tasks need adjustment.",
-                                wake.format(WAKE_TIME_FMT),
-                                delay_str,
-                            )
-                        })
-                    })
-                };
-                if delayed_wake.is_some() && pending_fallback.is_some() {
-                    pending_fallback = None;
-                    self.sync_pending_fallback_state(&mut cryo_state, pending_fallback.as_ref());
-                    let _ = state::save_state(&self.state_path, &cryo_state);
-                }
+                let delayed_wake =
+                    delayed_wake_notice(is_inbox_wake, next_wake, self.clock.local_now());
                 cryo_state.session_number += 1;
+                cryo_state.session_active = true;
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
                 }
-                let _ = state::save_state(&self.state_path, &cryo_state);
+                self.save_state_or_log(cryo_state, "persist session-active state");
 
                 // Build provider env for this session
                 let active_provider = config.providers.get(retry.provider_index);
@@ -1125,137 +895,76 @@ impl Daemon {
                     active_provider.map(|p| p.env.clone()).unwrap_or_default();
                 let provider_name = active_provider.map(|p| p.name.as_str());
 
-                match self.run_one_session(
-                    &config,
-                    &cryo_state,
-                    &server,
+                // Claim past-due TODOs before spawning the agent so the
+                // prompt shows exactly what triggered the wake while the
+                // scheduler ignores those items until this session ends.
+                self.claim_past_due_todos();
+
+                let session_result = match self.run_one_session(
+                    config,
+                    cryo_state,
+                    server,
                     delayed_wake.as_deref(),
                     &provider_env,
                     provider_name,
                 ) {
                     Ok(outcome) => {
-                        // Persist session number only after successful completion
-                        state::save_state(&self.state_path, &cryo_state)?;
-                        match outcome {
-                            SessionLoopOutcome::PlanComplete => {
-                                cryo_state.previous_session_crashed = false;
-                                retry.reset();
-                                pending_fallback = None;
-                                self.sync_pending_fallback_state(
-                                    &mut cryo_state,
-                                    pending_fallback.as_ref(),
-                                );
-                                let _ = state::save_state(&self.state_path, &cryo_state);
-                                eprintln!("Daemon: plan complete. Shutting down.");
-                                break;
-                            }
-                            SessionLoopOutcome::Hibernate { fallback } => {
-                                cryo_state.previous_session_crashed = false;
-                                retry.reset();
-                                next_wake = next_wake_from_todos(&self.dir);
-                                pending_fallback = next_wake
-                                    .map(|w| (w + chrono::Duration::hours(1), fallback))
-                                    .and_then(|(deadline, fb)| fb.map(|f| (deadline, f)));
-                                self.sync_pending_fallback_state(
-                                    &mut cryo_state,
-                                    pending_fallback.as_ref(),
-                                );
-                                let _ = state::save_state(&self.state_path, &cryo_state);
-                                if let Some(w) = next_wake {
-                                    eprintln!(
-                                        "Daemon: next wake at {}",
-                                        w.format("%Y-%m-%d %H:%M")
-                                    );
-                                } else {
-                                    eprintln!("Daemon: no pending TODOs, idling");
-                                }
-                            }
-                            SessionLoopOutcome::ValidationFailed { quick_exit } => {
-                                cryo_state.previous_session_crashed = true;
-                                let _ = state::save_state(&self.state_path, &cryo_state);
-                                next_wake = next_wake_from_todos(&self.dir);
-
-                                // Check if we should rotate provider
-                                let should_rotate = !config.providers.is_empty()
-                                    && config.providers.len() > 1
-                                    && match config.rotate_on {
-                                        crate::config::RotateOn::QuickExit => quick_exit,
-                                        crate::config::RotateOn::AnyFailure => true,
-                                        crate::config::RotateOn::Never => false,
-                                    };
-
-                                if should_rotate {
-                                    let old_name = config
-                                        .providers
-                                        .get(retry.provider_index)
-                                        .map(|p| p.name.as_str())
-                                        .unwrap_or("unknown");
-                                    let wrapped = retry.rotate_provider();
-                                    let new_name = config
-                                        .providers
-                                        .get(retry.provider_index)
-                                        .map(|p| p.name.as_str())
-                                        .unwrap_or("unknown");
-                                    eprintln!(
-                                        "Daemon: rotating provider: {} -> {} (reason: {})",
-                                        old_name,
-                                        new_name,
-                                        if quick_exit { "quick-exit" } else { "failure" },
-                                    );
-
-                                    // Persist immediately so `cryo status` reflects the change
-                                    cryo_state.provider_index = Some(retry.provider_index);
-                                    let _ = state::save_state(&self.state_path, &cryo_state);
-
-                                    if wrapped {
-                                        // All providers tried — apply backoff before next cycle
-                                        eprintln!("Daemon: all providers tried, backing off before next cycle");
-                                        if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                                            break;
-                                        }
-                                    }
-                                    run_now = true;
-                                    continue;
-                                }
-
-                                // No rotation — use standard retry with backoff
-                                if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
-                                    break;
-                                }
-                                run_now = true;
-                                continue;
-                            }
+                        // Single source of truth: outcome decides crash-status.
+                        cryo_state.previous_session_crashed = outcome.is_crash();
+                        cryo_state.session_active = false;
+                        if outcome.is_crash() {
+                            self.reschedule_claimed_after_crash();
+                        } else {
+                            self.complete_claimed_todos();
                         }
+                        // Persist session number only after successful completion
+                        self.save_state_or_log(cryo_state, "persist completed session state");
+                        Ok(outcome)
                     }
                     Err(e) => {
                         cryo_state.session_number -= 1;
+                        cryo_state.session_active = false;
                         cryo_state.previous_session_crashed = true;
-                        let _ = state::save_state(&self.state_path, &cryo_state);
-                        next_wake = next_wake_from_todos(&self.dir);
+                        self.reschedule_claimed_after_crash();
+                        self.save_state_or_log(cryo_state, "persist failed session state");
                         eprintln!("Daemon: session failed: {e}");
-                        if self.handle_failure_retry(&mut retry, &config.fallback_alert) {
-                            break;
-                        }
-                        run_now = true;
-                        continue;
+                        Err(())
                     }
+                };
+
+                let refreshed_next_wake = match session_result.as_ref() {
+                    Ok(SessionLoopOutcome::PlanComplete) => next_wake,
+                    _ => next_wake_from_todos(&self.dir),
+                };
+                let session_result_ref = match &session_result {
+                    Ok(outcome) => SessionRunResult::Outcome(outcome),
+                    Err(()) => SessionRunResult::Error,
+                };
+                let step =
+                    decide_next_step(session_result_ref, config, &retry, refreshed_next_wake);
+                match self.apply_next_step(
+                    step,
+                    config,
+                    EventLoopMutations {
+                        cryo_state,
+                        retry: &mut retry,
+                        next_wake: &mut next_wake,
+                        run_now: &mut run_now,
+                    },
+                )? {
+                    LoopControl::Break => break,
+                    LoopControl::Continue => continue,
+                    LoopControl::Idle => {}
                 }
             }
 
             let expected_instance_id = cryo_state.instance_id.as_deref();
-            self.service_idle_socket_requests(&server, expected_instance_id);
-
-            // Check fallback only when idle (not about to run a session)
-            self.check_fallback(
-                &mut cryo_state,
-                &mut pending_fallback,
-                &config.fallback_alert,
-            );
+            self.service_idle_socket_requests(server, expected_instance_id);
 
             // Check if periodic report is due
             if let Some(report_time) = next_report_time {
                 if self.clock.local_now() >= report_time {
-                    self.send_periodic_report(&config, &mut cryo_state, &mut next_report_time);
+                    self.send_periodic_report(config, cryo_state, &mut next_report_time);
                 }
             }
 
@@ -1264,7 +973,7 @@ impl Daemon {
                 compute_sleep_timeout(next_wake, next_report_time, self.clock.local_now())
                     .min(Duration::from_millis(250));
 
-            match wait_for_idle_event(&rx, timeout, next_wake, || self.clock.local_now()) {
+            match wait_for_idle_event(rx, timeout, next_wake, || self.clock.local_now()) {
                 IdleWaitOutcome::WakeFromInbox => {
                     eprintln!("Daemon: inbox changed, waking up");
                     run_now = true;
@@ -1283,18 +992,20 @@ impl Daemon {
             }
         }
 
-        // Cleanup: always unregister and remove socket, even if state save fails
-        self.prepare_shutdown_state(&mut cryo_state, pending_fallback.as_ref());
-        if let Err(e) = state::save_state(&self.state_path, &cryo_state) {
-            eprintln!("Daemon: failed to save final state: {e}");
-        }
-        crate::registry::unregister(&self.dir);
-        crate::socket::SocketServer::cleanup(&sock_path);
-        eprintln!("Daemon: exited cleanly");
+        // Persist pid=None so external observers (e.g. the hub, `cryo status`)
+        // see a consistent shutdown state.
+        self.prepare_shutdown_state(cryo_state);
+        self.save_state_or_log(cryo_state, "save final state");
 
         Ok(())
     }
 
+    /// Delegate to the injected `SessionLauncher`.
+    ///
+    /// In production the launcher is `ProcessSessionLauncher`, which spawns a
+    /// real agent. In tests a `ScriptedSessionLauncher` returns canned
+    /// outcomes so the outer event loop can be exercised without wall-clock
+    /// delays or subprocess management.
     fn run_one_session(
         &self,
         config: &CryoConfig,
@@ -1304,109 +1015,15 @@ impl Daemon {
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
-        let agent_cmd = config.agent.clone();
-
-        let task = self
-            .get_task()
-            .unwrap_or_else(|| "Continue the plan".to_string());
-
-        let timeout_secs = config.max_session_duration;
-
-        eprintln!(
-            "Daemon: Session #{}: Running agent...",
-            cryo_state.session_number
-        );
-
-        // List inbox filenames for logging (agent reads files itself)
-        let inbox_filenames: Vec<String> = crate::message::list_inbox(&self.dir)?;
-
-        // Load TODO list for agent prompt
-        let todo_path = self.dir.join("todo.json");
-        let todo_display = match crate::todo::TodoList::load(&todo_path) {
-            Ok(list) => list.display(),
-            Err(err) => {
-                eprintln!(
-                    "Daemon: Error loading TODO list from {}: {}",
-                    todo_path.display(),
-                    err
-                );
-                format!("Error loading TODO list ({}). Please check todo.json.", err)
-            }
-        };
-
-        // Build system notice: delayed wake and/or previous-session crash.
-        // Both are orthogonal system-level facts the agent should know about
-        // before it starts work. They are joined with a blank line.
-        let crash_notice = if cryo_state.previous_session_crashed {
-            Some(
-                "PREVIOUS SESSION CRASHED: The agent exited without calling \
-                 `cryo-agent hibernate`. A reply may have been partially sent. \
-                 Check `messages/inbox/archive/` for any message that arrived \
-                 during the crashed session; if it still needs a user-visible \
-                 response, send it now via `cryo-agent reply` or \
-                 `cryo-agent send` before doing the normal session work."
-                    .to_string(),
-            )
-        } else {
-            None
-        };
-        let notice = match (delayed_wake, crash_notice.as_deref()) {
-            (Some(d), Some(c)) => Some(format!("{d}\n\n{c}")),
-            (Some(d), None) => Some(d.to_string()),
-            (None, Some(c)) => Some(c.to_string()),
-            (None, None) => None,
-        };
-
-        // Build prompt with task context and TODO list
-        let agent_config = crate::agent::AgentConfig {
-            session_number: cryo_state.session_number,
-            task: task.clone(),
-            delayed_wake: notice,
-            todo_list: todo_display,
-        };
-        let prompt = crate::agent::build_prompt(&agent_config);
-
-        // Begin event log
-        let mut logger = crate::log::EventLogger::begin(
-            &self.log_path,
-            cryo_state.session_number,
-            &task,
-            &agent_cmd,
-            &inbox_filenames,
-        )?;
-
-        // Log delayed wake notice
-        if let Some(notice) = delayed_wake {
-            logger.log_event(&format!("delayed wake: {notice}"))?;
-        }
-        if cryo_state.previous_session_crashed {
-            logger.log_event("previous session crashed — agent advised to check inbox archive")?;
-        }
-
-        // Open agent log file for stdout/stderr redirection
-        let agent_log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(crate::log::agent_log_path(&self.dir))?;
-
-        // Spawn agent with stdout/stderr redirected to cryo-agent.log
-        let mut child =
-            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
-        let child_pid = child.id();
-        let spawn_time = self.clock.monotonic_now();
-        logger.log_event(&format!("agent started (pid {child_pid})"))?;
-        if let Some(name) = provider_name {
-            logger.log_event(&format!("provider: {name}"))?;
-        }
-
-        let mut runtime = ProcessSessionRuntime::new(server, &mut child, Arc::clone(&self.clock));
-        let mut effects = FsSessionEffects::new(&self.dir);
-        let context = ActiveSessionContext {
+        self.launcher.run_session(
+            self,
+            config,
             cryo_state,
-            timeout_secs,
-            spawn_time,
-        };
-        self.drive_active_session(&mut runtime, &mut effects, context, logger)
+            server,
+            delayed_wake,
+            provider_env,
+            provider_name,
+        )
     }
 
     fn handle_active_request(
@@ -1414,15 +1031,35 @@ impl Daemon {
         request: crate::socket::Request,
         runtime: &mut impl SessionRuntime,
         effects: &mut impl SessionEffects,
-        logger: &mut crate::log::EventLogger,
-        pending_fallback: &mut Option<FallbackAction>,
-        hibernate_outcome: &mut Option<SessionLoopOutcome>,
+        state: ActiveRequestState<'_>,
     ) -> Result<()> {
-        match request {
-            crate::socket::Request::Ping => {
-                let _ = runtime.respond(true, "pong".into());
+        match DaemonRequest::from(request) {
+            DaemonRequest::Ping => {
+                runtime.respond(true, "pong".into())?;
             }
-            crate::socket::Request::Hibernate {
+            DaemonRequest::Hello { protocol_version } => {
+                let response = ipc_protocol_response(protocol_version);
+                runtime.respond(response.ok, response.message)?;
+            }
+            DaemonRequest::Send { text } => {
+                let has_claimed_batch = state.inbox_state.has_claimed_batch();
+                match effects.write_reply(ReplyAuthor::Agent, &text, self.clock.local_now()) {
+                    Ok(()) => {
+                        if has_claimed_batch {
+                            state.inbox_state.complete_agent_send();
+                        } else {
+                            state.inbox_state.record_status_send();
+                        }
+                        state.logger.log_event(&format!("send: \"{text}\""))?;
+                        runtime.respond(true, "Message sent".into())?;
+                    }
+                    Err(e) => {
+                        state.logger.log_event(&format!("send failed: {e}"))?;
+                        runtime.respond(false, format!("Failed to write message: {e}"))?;
+                    }
+                }
+            }
+            DaemonRequest::Hibernate {
                 complete,
                 exit_code,
                 summary,
@@ -1432,95 +1069,117 @@ impl Daemon {
                     exit_code,
                     summary.as_deref(),
                     effects.has_pending_todo_with_valid_wake(),
-                    pending_fallback,
                 );
-                logger.log_event(&decision.log_event)?;
+                state.logger.log_event(&decision.log_event)?;
                 if let Some(outcome) = decision.outcome {
-                    *hibernate_outcome = Some(outcome);
+                    *state.hibernate_outcome = Some(outcome);
                 }
-                let _ = runtime.respond(decision.response_ok, decision.response_message.into());
+                runtime.respond(decision.response_ok, decision.response_message.into())?;
             }
-            crate::socket::Request::Alert {
-                action,
-                target,
-                message,
-            } => {
-                logger.log_event(&format!("alert: {action} -> {target}"))?;
-                *pending_fallback = Some(FallbackAction {
-                    action,
-                    target,
+            DaemonRequest::Receive => {
+                if state.inbox_state.has_claimed_batch() {
+                    runtime.respond(
+                        false,
+                        "receive refused: send a message for the current inbox batch before receiving again."
+                            .into(),
+                    )?;
+                    return Ok(());
+                }
+
+                let ReceiveRequestOutcome {
+                    ok,
                     message,
-                });
-                let _ = runtime.respond(true, "Alert registered".into());
+                    log_event,
+                    claimed_filenames,
+                } = handle_receive_request(effects);
+                let response = runtime.respond(ok, message);
+                if ok {
+                    if let Err(e) = response {
+                        state.inbox_state.record_claimed_batch(&claimed_filenames);
+                        return Err(e);
+                    }
+                    state.inbox_state.record_claimed_batch(&claimed_filenames);
+                } else {
+                    response?;
+                }
+                if let Some(event) = log_event {
+                    state.logger.log_event(&event)?;
+                }
             }
-            crate::socket::Request::Reply { text } => {
-                match effects.write_reply(&text, self.clock.local_now()) {
-                    Ok(()) => {
-                        logger.log_event(&format!("reply: \"{text}\""))?;
-                        let _ = runtime.respond(true, "Reply sent".into());
-                    }
-                    Err(e) => {
-                        logger.log_event(&format!("reply failed: {e}"))?;
-                        let _ = runtime.respond(false, format!("Failed to write reply: {e}"));
-                    }
+            DaemonRequest::Todo(todo_request) => {
+                let TodoRequestOutcome {
+                    ok,
+                    message,
+                    log_event,
+                } = handle_todo_request(todo_request, effects);
+                if let Some(event) = log_event {
+                    state.logger.log_event(&event)?;
                 }
+                runtime.respond(ok, message)?;
             }
-            crate::socket::Request::TodoAdd { text, at } => match effects.todo_add(&text, &at) {
-                Ok(id) => {
-                    logger.log_event(&format!("todo add: #{id} \"{text}\" at {at}"))?;
-                    let _ = runtime.respond(true, format!("Added todo #{id}"));
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("Failed to add todo: {e}"));
-                }
-            },
-            crate::socket::Request::TodoDone { id } => match effects.todo_done(id) {
-                Ok(()) => {
-                    logger.log_event(&format!("todo done: #{id}"))?;
-                    let _ = runtime.respond(true, format!("Marked todo #{id} as done"));
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("{e}"));
-                }
-            },
-            crate::socket::Request::TodoRemove { id } => match effects.todo_remove(id) {
-                Ok(()) => {
-                    logger.log_event(&format!("todo remove: #{id}"))?;
-                    let _ = runtime.respond(true, format!("Removed todo #{id}"));
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("{e}"));
-                }
-            },
-            crate::socket::Request::TodoList => match effects.todo_list() {
-                Ok(display) => {
-                    let _ = runtime.respond(true, display);
-                }
-                Err(e) => {
-                    let _ = runtime.respond(false, format!("Failed to load todo list: {e}"));
-                }
-            },
-            crate::socket::Request::Receive => match effects.receive_inbox() {
-                Ok((body, filenames)) => {
-                    if filenames.is_empty() {
-                        logger.log_event("receive: 0 messages")?;
-                    } else {
-                        logger.log_event(&format!(
-                            "receive: {} message{} [{}]",
-                            filenames.len(),
-                            if filenames.len() == 1 { "" } else { "s" },
-                            filenames.join(", "),
-                        ))?;
-                    }
-                    let _ = runtime.respond(true, body);
-                }
-                Err(e) => {
-                    logger.log_event(&format!("receive failed: {e}"))?;
-                    let _ = runtime.respond(false, format!("Failed to receive: {e}"));
-                }
-            },
         }
         Ok(())
+    }
+
+    fn finalize_human_replies(
+        &self,
+        effects: &mut impl SessionEffects,
+        logger: &mut crate::log::EventLogger,
+        inbox_state: &mut SessionInboxState,
+    ) {
+        let mut daemon_wrote_reply = false;
+        let message_count = inbox_state.claimed_message_count();
+        if message_count > 0 {
+            let text = daemon_unanswered_reply_text(message_count);
+            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now()) {
+                Ok(()) => {
+                    if let Err(e) = logger.log_event(&format!(
+                        "daemon reply: {} unanswered inbox message{} [{}]",
+                        message_count,
+                        if message_count == 1 { "" } else { "s" },
+                        inbox_state.claimed_filenames().join(", "),
+                    )) {
+                        eprintln!("Daemon: failed to log daemon reply: {e}");
+                    }
+                    inbox_state.complete_daemon_fallback();
+                    daemon_wrote_reply = true;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Daemon: failed to write daemon reply for unanswered inbox messages: {e:#}"
+                    );
+                    if let Err(log_err) = logger.log_event(&format!("daemon reply failed: {e:#}")) {
+                        eprintln!("Daemon: failed to log daemon reply failure: {log_err}");
+                    }
+                }
+            }
+        }
+
+        if message_count == 0 && !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
+            match effects.write_reply(
+                ReplyAuthor::Daemon,
+                daemon_missing_outbound_text(),
+                self.clock.local_now(),
+            ) {
+                Ok(()) => {
+                    if let Err(e) =
+                        logger.log_event("daemon reply: no outbound message sent by agent")
+                    {
+                        eprintln!("Daemon: failed to log daemon status reply: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Daemon: failed to write daemon status for session without outbound message: {e:#}"
+                    );
+                    if let Err(log_err) =
+                        logger.log_event(&format!("daemon status reply failed: {e:#}"))
+                    {
+                        eprintln!("Daemon: failed to log daemon status reply failure: {log_err}");
+                    }
+                }
+            }
+        }
     }
 
     fn drive_active_session(
@@ -1537,7 +1196,7 @@ impl Daemon {
         };
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
-        let mut pending_fallback: Option<FallbackAction> = None;
+        let mut inbox_state = SessionInboxState::new();
         let expected_instance_id = context.cryo_state.instance_id.as_deref();
 
         loop {
@@ -1547,6 +1206,7 @@ impl Daemon {
                     SessionInterruption::Shutdown,
                     hibernate_outcome.take(),
                 );
+                self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                 logger.finish(decision.finish_reason)?;
                 return Ok(decision.outcome);
             }
@@ -1562,20 +1222,29 @@ impl Daemon {
                         SessionInterruption::Timeout,
                         hibernate_outcome.take(),
                     );
+                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
             }
 
             match runtime.accept_request(expected_instance_id) {
-                Ok(Some(request)) => self.handle_active_request(
-                    request,
-                    runtime,
-                    effects,
-                    &mut logger,
-                    &mut pending_fallback,
-                    &mut hibernate_outcome,
-                )?,
+                Ok(Some(request)) => {
+                    if let Err(e) = self.handle_active_request(
+                        request,
+                        runtime,
+                        effects,
+                        ActiveRequestState {
+                            logger: &mut logger,
+                            hibernate_outcome: &mut hibernate_outcome,
+                            inbox_state: &mut inbox_state,
+                        },
+                    ) {
+                        self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
+                        logger.finish(&format!("error handling agent request: {e}"))?;
+                        return Err(e);
+                    }
+                }
                 Ok(None) => {}
                 Err(e) => {
                     eprintln!("Daemon: socket accept error: {e}");
@@ -1609,11 +1278,13 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
+                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
                 Ok(None) => {}
                 Err(e) => {
+                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
                 }
@@ -1628,65 +1299,65 @@ impl Daemon {
         }
     }
 
-    /// Execute a pending fallback if its deadline has passed.
-    fn check_fallback(
-        &self,
-        cryo_state: &mut CryoState,
-        pending: &mut Option<(NaiveDateTime, FallbackAction)>,
-        alert_method: &str,
-    ) {
-        if let Some((deadline, _)) = pending.as_ref() {
-            if self.clock.local_now() > *deadline {
-                let (_, fb) = pending.take().unwrap();
-                self.sync_pending_fallback_state(cryo_state, pending.as_ref());
-                if let Err(e) = state::save_state(&self.state_path, cryo_state) {
-                    eprintln!("Daemon: failed to clear pending fallback state: {e}");
-                }
-                eprintln!("Daemon: fallback deadline passed, executing fallback action");
-                if let Err(e) = fb.execute(&self.dir, alert_method) {
-                    eprintln!("Daemon: fallback execution failed: {e}");
-                }
-            }
-        }
-    }
-
-    /// Handle a failure by retrying with exponential backoff (5s, 10s, ..., 1h cap).
-    /// Sends an alert once when max_retries is reached, then keeps retrying at 1h.
-    /// Returns true if the daemon should shut down.
-    fn handle_failure_retry(&self, retry: &mut RetryState, alert_method: &str) -> bool {
-        let backoff = retry.next_backoff();
-        retry.record_failure();
-        // Send alert once when we first hit max_retries
-        if retry.attempt == retry.max_retries {
-            eprintln!(
-                "Daemon: {} retries failed, sending alert. Will keep retrying.",
-                retry.max_retries
-            );
-            self.send_retry_alert(alert_method);
-        }
-        eprintln!("Daemon: retry {} in {}s", retry.attempt, backoff.as_secs());
-        self.sleep_or_shutdown(backoff)
-    }
-
-    /// Send a system alert when retries are exhausted.
-    fn send_retry_alert(&self, alert_method: &str) {
-        let fb = FallbackAction {
-            action: "retry_exhausted".to_string(),
-            target: "operator".to_string(),
-            message: format!(
-                "Agent failed to hibernate after multiple attempts. Daemon will keep retrying. Directory: {}",
-                self.dir.display()
-            ),
-        };
-        if let Err(e) = fb.execute(&self.dir, alert_method) {
-            eprintln!("Daemon: retry alert failed: {e}");
-        }
-    }
-
     fn get_task(&self) -> Option<String> {
         crate::log::parse_latest_session_task(&self.log_path)
             .ok()
             .flatten()
+    }
+
+    /// Claim past-due pending TODOs so the prompt can show them as in-flight
+    /// while the scheduler ignores them. Load/save failures are swallowed and
+    /// reported to stderr — TODO bookkeeping must never abort the session loop.
+    fn claim_past_due_todos(&self) {
+        let now = self.clock.local_now();
+        match crate::todo::TodoFile::new(self.dir.join("todo.json")).claim_due(&now) {
+            Ok(items) if !items.is_empty() => {
+                eprintln!("Daemon: claimed {} due TODO(s)", items.len());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Daemon: failed to claim TODO list: {e}");
+            }
+        }
+    }
+
+    /// Mark all claimed TODOs as done after a successful session. The claim is
+    /// the session's in-flight marker; success makes it terminal.
+    fn complete_claimed_todos(&self) {
+        match crate::todo::TodoFile::new(self.dir.join("todo.json")).complete_claimed() {
+            Ok(items) if !items.is_empty() => {
+                eprintln!("Daemon: completed {} claimed TODO(s)", items.len());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Daemon: failed to complete claimed TODOs: {e}");
+            }
+        }
+    }
+
+    /// Re-inject claimed TODOs after a crashed session. Each item's text gains
+    /// a ` (attempt k)` suffix (or its existing suffix is bumped) and its `at`
+    /// becomes `now + 2^k` minutes, capped at 1 day.
+    fn reschedule_claimed_after_crash(&self) -> bool {
+        let now = self.clock.local_now();
+        let ids = match crate::todo::TodoFile::new(self.dir.join("todo.json"))
+            .reschedule_claimed_after_crash(now)
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                eprintln!("Daemon: failed to reschedule TODO list: {e}");
+                return false;
+            }
+        };
+        if ids.is_empty() {
+            return false;
+        }
+        eprintln!(
+            "Daemon: rescheduled {} claimed TODO(s) after crash (new ids: {:?})",
+            ids.len(),
+            ids,
+        );
+        true
     }
 
     /// Generate and send the periodic activity report.
@@ -1724,7 +1395,7 @@ impl Daemon {
         let now = self.clock.local_now();
         let previous_last_report_time = cryo_state.last_report_time.clone();
         cryo_state.last_report_time = Some(now.format("%Y-%m-%dT%H:%M:%S").to_string());
-        if let Err(e) = state::save_state(&self.state_path, cryo_state) {
+        if let Err(e) = self.save_state(cryo_state) {
             eprintln!("Daemon: failed to persist last_report_time: {e}");
             cryo_state.last_report_time = previous_last_report_time;
             return;
@@ -1759,3 +1430,7 @@ impl Daemon {
 #[cfg(test)]
 #[path = "unit_tests/daemon.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "unit_tests/daemon_properties.rs"]
+mod property_tests;

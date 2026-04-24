@@ -1,0 +1,10 @@
+description = "Exercises send and hibernate IPC commands in one session."
+
+[[actions]]
+kind = "send"
+message = "Status update for operator"
+
+[[actions]]
+kind = "hibernate"
+complete = true
+summary = "IPC test passed"

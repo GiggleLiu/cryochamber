@@ -6,7 +6,6 @@ use cryochamber::state::CryoState;
 fn test_config_defaults() {
     let config = CryoConfig::default();
     assert_eq!(config.agent, "opencode");
-    assert_eq!(config.max_retries, 5);
     assert_eq!(config.max_session_duration, 0);
     assert!(config.watch_inbox);
 }
@@ -18,7 +17,6 @@ fn test_config_roundtrip() {
 
     let config = CryoConfig {
         agent: "claude".to_string(),
-        max_retries: 5,
         max_session_duration: 3600,
         watch_inbox: false,
         ..Default::default()
@@ -28,7 +26,6 @@ fn test_config_roundtrip() {
     let loaded = load_config(&path).unwrap().unwrap();
 
     assert_eq!(loaded.agent, "claude");
-    assert_eq!(loaded.max_retries, 5);
     assert_eq!(loaded.max_session_duration, 3600);
     assert!(!loaded.watch_inbox);
 }
@@ -50,7 +47,6 @@ fn test_config_partial_toml_uses_defaults() {
 
     let loaded = load_config(&path).unwrap().unwrap();
     assert_eq!(loaded.agent, "codex");
-    assert_eq!(loaded.max_retries, 5); // default
     assert_eq!(loaded.max_session_duration, 0); // default
     assert!(loaded.watch_inbox); // default
 }
@@ -61,22 +57,19 @@ fn test_apply_overrides_all() {
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: Some("claude".to_string()),
-        max_retries_override: Some(10),
         max_session_duration_override: Some(7200),
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
     config.apply_overrides(&state);
 
     assert_eq!(config.agent, "claude");
-    assert_eq!(config.max_retries, 10);
     assert_eq!(config.max_session_duration, 7200);
 }
 
@@ -84,7 +77,6 @@ fn test_apply_overrides_all() {
 fn test_apply_overrides_none_keeps_config() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
-        max_retries: 3,
         max_session_duration: 1800,
         watch_inbox: true,
         ..Default::default()
@@ -93,15 +85,13 @@ fn test_apply_overrides_none_keeps_config() {
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
@@ -109,7 +99,6 @@ fn test_apply_overrides_none_keeps_config() {
 
     // Nothing should change
     assert_eq!(config.agent, "opencode");
-    assert_eq!(config.max_retries, 3);
     assert_eq!(config.max_session_duration, 1800);
     assert!(config.watch_inbox);
 }
@@ -118,7 +107,6 @@ fn test_apply_overrides_none_keeps_config() {
 fn test_apply_overrides_partial() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
-        max_retries: 3,
         max_session_duration: 1800,
         watch_inbox: true,
         ..Default::default()
@@ -127,22 +115,19 @@ fn test_apply_overrides_partial() {
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: Some("claude".to_string()),
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
     config.apply_overrides(&state);
 
     assert_eq!(config.agent, "claude"); // overridden
-    assert_eq!(config.max_retries, 3); // unchanged
     assert_eq!(config.max_session_duration, 1800); // unchanged
     assert!(config.watch_inbox); // unchanged
 }

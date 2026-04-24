@@ -2,6 +2,39 @@ use cryochamber::channel::zulip::{
     parse_get_messages_response, parse_get_profile_response, parse_get_stream_id_response,
     ZulipClient,
 };
+use std::io::{Read, Write};
+use std::net::TcpListener;
+
+fn serve_one_zulip_response(body: &'static str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = stream.read(&mut request);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    format!("http://{addr}")
+}
+
+fn client_for_site(site: &str) -> ZulipClient {
+    let dir = tempfile::tempdir().unwrap();
+    let rc_path = dir.path().join("zuliprc");
+    std::fs::write(
+        &rc_path,
+        format!("[api]\nemail=bot@example.com\nkey=abc123secret\nsite={site}\n"),
+    )
+    .unwrap();
+    ZulipClient::from_zuliprc(&rc_path).unwrap()
+}
 
 #[test]
 fn test_parse_zuliprc() {
@@ -171,6 +204,71 @@ fn test_parse_get_messages_response_empty() {
     assert!(messages.is_empty());
     assert!(found_newest);
     assert_eq!(raw_max_id, None);
+}
+
+#[test]
+fn test_zulip_fetch_messages_since_returns_messages_and_newest_seen_id_without_work_dir() {
+    let site = serve_one_zulip_response(
+        r#"{
+  "result": "success",
+  "msg": "",
+  "messages": [
+    {
+      "id": 100,
+      "sender_email": "alice@example.com",
+      "sender_full_name": "Alice",
+      "content": "Anchor should be skipped",
+      "subject": "cryochamber",
+      "timestamp": 1740700000,
+      "type": "stream"
+    },
+    {
+      "id": 101,
+      "sender_email": "alice@example.com",
+      "sender_full_name": "Alice",
+      "content": "Please check the run",
+      "subject": "cryochamber",
+      "timestamp": 1740700060,
+      "type": "stream"
+    },
+    {
+      "id": 102,
+      "sender_email": "bot@example.com",
+      "sender_full_name": "Bot",
+      "content": "Bot echo",
+      "subject": "cryochamber",
+      "timestamp": 1740700120,
+      "type": "stream"
+    }
+  ],
+  "found_newest": true,
+  "found_oldest": false
+}"#,
+    );
+    let client = client_for_site(&site);
+
+    let result: cryochamber::channel::zulip::ZulipPullResult = client
+        .fetch_messages_since(15, Some("cryochamber"), Some(100), Some("bot@example.com"))
+        .unwrap();
+
+    assert_eq!(result.newest_seen_id, Some(102));
+    assert_eq!(result.messages.len(), 1);
+    assert_eq!(result.messages[0].from, "Alice");
+    assert_eq!(result.messages[0].body, "Please check the run");
+}
+
+#[test]
+fn test_zulip_channel_does_not_write_local_inbox_or_sync_state() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/channel/zulip.rs"),
+    )
+    .unwrap();
+    assert!(
+        !source.contains("crate::message::ensure_dirs")
+            && !source.contains("crate::message::write_message")
+            && !source.contains("crate::zulip_sync"),
+        "channel::zulip must stay transport-only; inbox persistence and sync state belong in cryo_zulip"
+    );
 }
 
 #[test]

@@ -1,5 +1,4 @@
 use super::*;
-use crate::state::{save_state, CryoState};
 
 #[test]
 fn test_serialize_hibernate_request() {
@@ -24,24 +23,32 @@ fn test_serialize_response_ok() {
 }
 
 #[test]
-fn test_serialize_alert_request() {
-    let req = Request::Alert {
-        action: "email".to_string(),
-        target: "user@example.com".to_string(),
-        message: "stuck".to_string(),
+fn test_serialize_hello_request() {
+    let req = Request::Hello {
+        protocol_version: IPC_PROTOCOL_VERSION,
     };
     let json = serde_json::to_string(&req).unwrap();
-    let parsed: Request = serde_json::from_str(&json).unwrap();
-    assert!(matches!(parsed, Request::Alert { .. }));
+    assert!(json.contains("\"cmd\":\"hello\""));
+    assert!(json.contains("\"protocol_version\":"));
 }
 
 #[test]
-fn test_serialize_reply_request() {
-    let req = Request::Reply {
-        text: "done with phase 1".to_string(),
-    };
+fn test_deserialize_send_request() {
+    let json = r#"{"cmd":"send","text":"status update"}"#;
+    let parsed = serde_json::from_str::<Request>(json);
+    assert!(
+        parsed.is_ok(),
+        "socket request enum must accept a dedicated send command"
+    );
+}
+
+#[test]
+fn test_serialize_receive_request() {
+    let req = Request::Receive;
     let json = serde_json::to_string(&req).unwrap();
-    assert!(json.contains("done with phase 1"));
+    assert!(json.contains("\"cmd\":\"receive\""));
+    let parsed: Request = serde_json::from_str(&json).unwrap();
+    assert!(matches!(parsed, Request::Receive));
 }
 
 #[test]
@@ -60,6 +67,41 @@ fn test_send_request_no_server() {
 }
 
 use std::sync::mpsc;
+
+#[test]
+fn test_send_request_with_instance_id_uses_explicit_instance_not_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = socket_path(dir.path());
+    std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+    std::fs::write(
+        dir.path().join("timer.json"),
+        r#"{"session_number":1,"pid":null,"instance_id":"state-instance"}"#,
+    )
+    .unwrap();
+
+    let server = SocketServer::bind(&sock).unwrap();
+    let handle = std::thread::spawn(move || {
+        let accepted = server.accept_one(Some("explicit-instance")).unwrap();
+        match accepted {
+            Some((Request::Ping, responder)) => {
+                responder
+                    .respond(&Response {
+                        ok: true,
+                        message: "pong".into(),
+                    })
+                    .unwrap();
+            }
+            Some((_, _)) => panic!("expected ping request"),
+            None => panic!("expected request"),
+        }
+    });
+
+    let resp = send_request_with_instance_id(dir.path(), &Request::Ping, Some("explicit-instance"))
+        .unwrap();
+    assert!(resp.ok);
+    assert_eq!(resp.message, "pong");
+    handle.join().unwrap();
+}
 
 #[test]
 fn test_socket_server_roundtrip() {
@@ -83,24 +125,9 @@ fn test_socket_server_roundtrip() {
         }
     });
 
-    // Client sends a request
-    let state = CryoState {
-        session_number: 1,
-        pid: None,
-        retry_count: 0,
-        agent_override: None,
-        max_retries_override: None,
-        max_session_duration_override: None,
-        last_report_time: None,
-        provider_index: None,
-        instance_id: Some("instance-123".to_string()),
-        pending_fallback: None,
-        previous_session_crashed: false,
-    };
-    save_state(&dir.path().join("timer.json"), &state).unwrap();
     let resp = send_request(
         dir.path(),
-        &Request::Reply {
+        &Request::Send {
             text: "hello".into(),
         },
     )
@@ -110,7 +137,7 @@ fn test_socket_server_roundtrip() {
 
     // Server received the request
     let received = rx.recv().unwrap();
-    assert!(matches!(received, Request::Reply { text } if text == "hello"));
+    assert!(matches!(received, Request::Send { text } if text == "hello"));
 
     handle.join().unwrap();
 }
@@ -171,8 +198,8 @@ fn test_accept_unknown_fields_ignored() {
         move || {
             let mut stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
             use std::io::{BufRead, BufReader, Write};
-            // Reply request with an extra unknown field
-            let json = r#"{"cmd":"reply","text":"hello","unknown_field":42}"#;
+            // Send request with an extra unknown field
+            let json = r#"{"cmd":"send","text":"hello","unknown_field":42}"#;
             stream.write_all(json.as_bytes()).unwrap();
             stream.write_all(b"\n").unwrap();
             stream.flush().unwrap();
@@ -187,7 +214,7 @@ fn test_accept_unknown_fields_ignored() {
     // serde ignores unknown fields by default (no deny_unknown_fields set)
     match result {
         Ok(Some((req, responder))) => {
-            assert!(matches!(req, Request::Reply { text } if text == "hello"));
+            assert!(matches!(req, Request::Send { text } if text == "hello"));
             responder
                 .respond(&Response {
                     ok: true,

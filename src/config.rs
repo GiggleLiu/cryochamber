@@ -35,10 +35,6 @@ pub struct CryoConfig {
     #[serde(default = "default_agent")]
     pub agent: String,
 
-    /// Failed attempts before sending a retry alert. The daemon keeps retrying.
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-
     /// Session timeout in seconds (0 = no timeout)
     #[serde(default)]
     pub max_session_duration: u64,
@@ -46,11 +42,6 @@ pub struct CryoConfig {
     /// Watch inbox for reactive wake
     #[serde(default = "default_watch_inbox")]
     pub watch_inbox: bool,
-
-    /// Fallback alert method: "outbox" (write to messages/outbox/) or "none" (suppress).
-    /// Legacy "notify" is accepted and treated as "outbox".
-    #[serde(default = "default_fallback_alert")]
-    pub fallback_alert: String,
 
     /// Time of day to send periodic report (HH:MM, local time)
     #[serde(default = "default_report_time")]
@@ -81,16 +72,8 @@ fn default_agent() -> String {
     "opencode".to_string()
 }
 
-fn default_max_retries() -> u32 {
-    5
-}
-
 fn default_watch_inbox() -> bool {
     true
-}
-
-fn default_fallback_alert() -> String {
-    "outbox".to_string()
 }
 
 fn default_report_time() -> String {
@@ -105,10 +88,8 @@ impl Default for CryoConfig {
     fn default() -> Self {
         Self {
             agent: default_agent(),
-            max_retries: default_max_retries(),
             max_session_duration: 0,
             watch_inbox: default_watch_inbox(),
-            fallback_alert: default_fallback_alert(),
             report_time: default_report_time(),
             report_interval: 0,
             rotate_on: RotateOn::default(),
@@ -123,15 +104,17 @@ impl CryoConfig {
     /// Merge CLI overrides from timer.json into this config.
     /// Only overrides fields that were explicitly set (Some).
     pub fn apply_overrides(&mut self, state: &CryoState) {
-        if let Some(ref agent) = state.agent_override {
-            self.agent = agent.clone();
-        }
-        if let Some(max_retries) = state.max_retries_override {
-            self.max_retries = max_retries;
-        }
-        if let Some(max_session_duration) = state.max_session_duration_override {
-            self.max_session_duration = max_session_duration;
-        }
+        apply_optional_override(&mut self.agent, &state.agent_override);
+        apply_optional_override(
+            &mut self.max_session_duration,
+            &state.max_session_duration_override,
+        );
+    }
+}
+
+fn apply_optional_override<T: Clone>(target: &mut T, override_value: &Option<T>) {
+    if let Some(value) = override_value {
+        *target = value.clone();
     }
 }
 

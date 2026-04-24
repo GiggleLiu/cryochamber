@@ -17,6 +17,12 @@ pub struct ZulipClient {
     agent: ureq::Agent,
 }
 
+#[derive(Debug, Clone)]
+pub struct ZulipPullResult {
+    pub messages: Vec<Message>,
+    pub newest_seen_id: Option<u64>,
+}
+
 impl ZulipClient {
     /// Parse a zuliprc INI file and create a client.
     pub fn from_zuliprc(path: &Path) -> Result<Self> {
@@ -151,6 +157,18 @@ impl ZulipClient {
         num_after: u32,
         skip_email: Option<&str>,
     ) -> Result<(Vec<Message>, bool, Option<u64>)> {
+        self.get_messages_window(stream_id, topic, anchor, 0, num_after, skip_email)
+    }
+
+    fn get_messages_window(
+        &self,
+        stream_id: u64,
+        topic: Option<&str>,
+        anchor: &str,
+        num_before: u32,
+        num_after: u32,
+        skip_email: Option<&str>,
+    ) -> Result<(Vec<Message>, bool, Option<u64>)> {
         let mut narrow = vec![serde_json::json!({
             "operator": "stream",
             "operand": stream_id
@@ -162,18 +180,26 @@ impl ZulipClient {
             }));
         }
         let narrow = serde_json::to_string(&narrow)?;
+        let num_before_str = num_before.to_string();
         let num_after_str = num_after.to_string();
         let json = self.get(
             "/messages",
             &[
                 ("narrow", &narrow),
                 ("anchor", anchor),
-                ("num_before", "0"),
+                ("num_before", &num_before_str),
                 ("num_after", &num_after_str),
                 ("apply_markdown", "false"),
             ],
         )?;
         parse_get_messages_response(&json, skip_email, topic)
+    }
+
+    /// Return the newest existing message ID in a stream/topic, if one exists.
+    pub fn newest_message_id(&self, stream_id: u64, topic: Option<&str>) -> Result<Option<u64>> {
+        let (_, _, raw_max_id) =
+            self.get_messages_window(stream_id, topic, "newest", 1, 0, None)?;
+        Ok(raw_max_id)
     }
 
     /// POST /api/v1/messages -- send a message to a stream+topic.
@@ -194,40 +220,35 @@ impl ZulipClient {
         Ok(msg_id)
     }
 
-    /// Pull all messages since last_message_id, writing each to inbox.
-    /// Returns the new last_message_id.
-    pub fn pull_messages(
+    /// Pull all messages since last_message_id.
+    /// This performs remote transport and response filtering only; callers own
+    /// local inbox persistence and sync-state cursor updates.
+    pub fn fetch_messages_since(
         &self,
         stream_id: u64,
         topic: Option<&str>,
         last_message_id: Option<u64>,
         skip_email: Option<&str>,
-        work_dir: &Path,
-    ) -> Result<Option<u64>> {
-        crate::message::ensure_dirs(work_dir)?;
+    ) -> Result<ZulipPullResult> {
         let mut anchor = match last_message_id {
             Some(id) => id.to_string(),
             None => "oldest".to_string(),
         };
-        let mut newest_id = last_message_id;
+        let mut newest_seen_id = None;
+        let mut pulled = Vec::new();
 
         loop {
             let (messages, found_newest, raw_max_id) =
                 self.get_messages(stream_id, topic, &anchor, 1000, skip_email)?;
 
-            for msg in &messages {
-                if let Some(id_str) = msg.metadata.get("zulip_message_id") {
-                    if let Ok(id) = id_str.parse::<u64>() {
-                        // Skip the anchor message itself when resuming
-                        if Some(id) == last_message_id {
-                            continue;
-                        }
-                        if newest_id.is_none() || id > newest_id.unwrap() {
-                            newest_id = Some(id);
-                        }
-                    }
+            newest_seen_id = max_optional_id(newest_seen_id, raw_max_id);
+
+            for msg in messages {
+                if message_zulip_id(&msg) == last_message_id {
+                    // Skip the anchor message itself when resuming.
+                    continue;
                 }
-                crate::message::write_message(work_dir, "inbox", msg)?;
+                pulled.push(msg);
             }
 
             if found_newest {
@@ -244,7 +265,24 @@ impl ZulipClient {
             }
         }
 
-        Ok(newest_id)
+        Ok(ZulipPullResult {
+            messages: pulled,
+            newest_seen_id,
+        })
+    }
+}
+
+fn message_zulip_id(msg: &Message) -> Option<u64> {
+    msg.metadata
+        .get("zulip_message_id")
+        .and_then(|id| id.parse::<u64>().ok())
+}
+
+fn max_optional_id(current: Option<u64>, next: Option<u64>) -> Option<u64> {
+    match (current, next) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(id), None) | (None, Some(id)) => Some(id),
+        (None, None) => None,
     }
 }
 
@@ -331,9 +369,10 @@ pub fn parse_get_messages_response(
     Ok((messages, found_newest, raw_max_id))
 }
 
+const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 /// Simple base64 encoding (no external dependency needed).
 fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = Vec::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
 
@@ -341,28 +380,40 @@ fn base64_encode(data: &[u8]) -> String {
         let b0 = data[i] as usize;
         let b1 = data[i + 1] as usize;
         let b2 = data[i + 2] as usize;
-        result.push(CHARS[b0 >> 2]);
-        result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
-        result.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)]);
-        result.push(CHARS[b2 & 0x3f]);
+        result.push(BASE64_CHARS[b0 >> 2]);
+        result.push(BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
+        result.push(BASE64_CHARS[((b1 & 0xf) << 2) | (b2 >> 6)]);
+        result.push(BASE64_CHARS[b2 & 0x3f]);
         i += 3;
     }
 
-    let remaining = data.len() - i;
-    if remaining == 1 {
-        let b0 = data[i] as usize;
-        result.push(CHARS[b0 >> 2]);
-        result.push(CHARS[(b0 & 3) << 4]);
-        result.push(b'=');
-        result.push(b'=');
-    } else if remaining == 2 {
-        let b0 = data[i] as usize;
-        let b1 = data[i + 1] as usize;
-        result.push(CHARS[b0 >> 2]);
-        result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
-        result.push(CHARS[(b1 & 0xf) << 2]);
-        result.push(b'=');
-    }
+    append_base64_tail(&mut result, &data[i..]);
 
     String::from_utf8(result).unwrap()
 }
+
+fn append_base64_tail(result: &mut Vec<u8>, tail: &[u8]) {
+    match tail {
+        [] => {}
+        [b0] => {
+            let b0 = *b0 as usize;
+            result.push(BASE64_CHARS[b0 >> 2]);
+            result.push(BASE64_CHARS[(b0 & 3) << 4]);
+            result.push(b'=');
+            result.push(b'=');
+        }
+        [b0, b1] => {
+            let b0 = *b0 as usize;
+            let b1 = *b1 as usize;
+            result.push(BASE64_CHARS[b0 >> 2]);
+            result.push(BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)]);
+            result.push(BASE64_CHARS[(b1 & 0xf) << 2]);
+            result.push(b'=');
+        }
+        _ => unreachable!("base64 tail must contain at most two bytes"),
+    }
+}
+
+#[cfg(test)]
+#[path = "../unit_tests/channel/zulip.rs"]
+mod tests;

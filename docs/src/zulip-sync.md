@@ -14,6 +14,7 @@
 ```bash
 cryo-zulip init --config ~/.zuliprc --stream my-stream  # Validate credentials, resolve stream, write zulip-sync.json
 cryo-zulip init --config ~/.zuliprc --stream my-stream --topic mychannel  # Custom topic (default: "cryochamber")
+cryo-zulip init --config ~/.zuliprc --stream my-stream --history  # Also import existing messages
 cryo-zulip sync [--interval N]                           # Start background sync daemon (default from cryo.toml or 5s)
 cryo-zulip unsync                                       # Stop the sync daemon
 cryo-zulip pull                                         # One-shot: pull new messages → inbox
@@ -54,6 +55,8 @@ cryo-zulip init --config ~/.zuliprc --stream my-stream
 ```
 
 This validates the bot credentials, resolves the stream ID, and writes `zulip-sync.json`. The zuliprc is copied to `.cryo/zuliprc` for use by the sync daemon.
+
+By default, setup only imports messages sent after setup. Add `--history` if you want the first pull to import existing messages from the selected stream/topic.
 
 ### 3. Start the daemon and sync
 
@@ -106,7 +109,7 @@ See [Chess by Mail](./examples/chess-by-mail.md) for the full example.
 
 | File | Purpose |
 |------|---------|
-| `zulip-sync.json` | Sync state: site, stream, stream ID, bot email, cursor |
+| `zulip-sync.json` | Sync state: site, stream, stream ID, bot email, last imported message |
 | `.cryo/zuliprc` | Bot credentials (copied from user's zuliprc on init) |
 | `cryo-zulip-sync.log` | Sync daemon log output |
 | `messages/inbox/` | Incoming messages (from Zulip stream) |

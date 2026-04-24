@@ -30,6 +30,41 @@ impl GhSyncState {
             .split_once('/')
             .context("repo must be in 'owner/repo' format")
     }
+
+    pub fn ensure_self_login_with<F>(&mut self, lookup: F) -> Result<bool>
+    where
+        F: FnOnce() -> Result<String>,
+    {
+        if self.self_login.is_some() {
+            return Ok(false);
+        }
+
+        self.self_login = Some(lookup()?);
+        Ok(true)
+    }
+
+    pub fn status_lines(&self) -> Vec<String> {
+        vec![
+            format!("Repo: {}", self.repo),
+            format!("Discussion: #{}", self.discussion_number),
+            format!(
+                "GitHub user: {}",
+                self.self_login.as_deref().unwrap_or("(unknown)")
+            ),
+            format!(
+                "Last read position: {}",
+                self.last_read_cursor
+                    .as_deref()
+                    .unwrap_or("(none - will read all)")
+            ),
+            format!(
+                "Last pushed session: {}",
+                self.last_pushed_session
+                    .map(|session| session.to_string())
+                    .unwrap_or_else(|| "(none)".to_string())
+            ),
+        ]
+    }
 }
 
 pub fn save_sync_state(path: &Path, state: &GhSyncState) -> Result<()> {

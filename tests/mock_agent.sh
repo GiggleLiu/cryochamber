@@ -11,7 +11,9 @@ if [ -n "$MOCK_AGENT_NOTE" ]; then
     "$CRYO_AGENT_BIN" note "$MOCK_AGENT_NOTE" 2>/dev/null || true
 fi
 
-# Default: hibernate --complete
+# Default: send a human-visible message, then hibernate --complete.
+"$CRYO_AGENT_BIN" send "${MOCK_AGENT_REPLY:-Mock agent completed this session.}" 2>/dev/null || true
+
 if [ "$MOCK_AGENT_COMPLETE" = "false" ] && [ -n "$MOCK_AGENT_WAKE" ]; then
     # Add a TODO with the wake time, then hibernate (not complete)
     "$CRYO_AGENT_BIN" todo add "scheduled wake" --at "$MOCK_AGENT_WAKE" 2>/dev/null || true

@@ -1,0 +1,14 @@
+description = "Hibernates with immediate wakes; completes on session 3."
+
+counter = ".mock-session-count"
+
+[[when]]
+session = "<3"
+actions = [
+    { kind = "todo_add", text = "next session", at = "now" },
+    { kind = "hibernate", summary = "More to do" },
+]
+
+[[when]]
+session = "*"
+actions = [{ kind = "hibernate", complete = true, summary = "Plan complete" }]

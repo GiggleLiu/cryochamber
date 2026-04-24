@@ -4,26 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::fallback::FallbackAction;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingFallbackState {
-    pub deadline: String,
-    pub action: FallbackAction,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoState {
     pub session_number: u32,
     pub pid: Option<u32>,
-    /// Current retry count for the active wake cycle. Reset to 0 on success.
-    #[serde(default)]
-    pub retry_count: u32,
     // --- CLI overrides (only set if user passed explicit flags to `cryo start`) ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_override: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_retries_override: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_session_duration_override: Option<u64>,
 
@@ -42,9 +29,12 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
 
-    /// Dead-man switch fallback that should survive daemon restarts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_fallback: Option<PendingFallbackState>,
+    /// True while the daemon has an agent subprocess running a session.
+    /// Set `true` before spawning and cleared after `run_one_session` returns
+    /// (success or crash), and again on daemon startup. The hub reads this
+    /// flag to animate the sidebar "agent running" dot.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub session_active: bool,
 
     /// True iff the previous session exited without calling `cryo-agent hibernate`.
     /// Used to inject a "previous session crashed" notice into the next prompt so
@@ -98,12 +88,8 @@ pub fn new_instance_id() -> String {
 pub fn is_locked(state: &CryoState) -> bool {
     if let Some(pid) = state.pid {
         let ret = unsafe { libc::kill(pid as i32, 0) };
-        if ret == 0 {
-            return true;
-        }
-        // EPERM means process exists but we lack permission — still locked
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        errno == libc::EPERM
+        crate::process::pid_probe_indicates_alive(ret, errno)
     } else {
         false
     }

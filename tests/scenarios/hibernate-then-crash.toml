@@ -1,0 +1,14 @@
+description = "Hibernate is accepted; subsequent nonzero exit is ignored."
+
+[[actions]]
+kind = "todo_add"
+text = "next step"
+at = "2099-12-31T23:59"
+
+[[actions]]
+kind = "hibernate"
+summary = "about to crash"
+
+[[actions]]
+kind = "exit"
+code = 1

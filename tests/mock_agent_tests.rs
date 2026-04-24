@@ -11,11 +11,18 @@ fn cryo_bin() -> assert_cmd::Command {
     assert_cmd::Command::cargo_bin("cryo").unwrap()
 }
 
-/// Initialize a cryo project in a temp directory with a specific scenario script.
+/// Initialize a cryo project in a temp directory with a specific scenario file.
+///
+/// `scenario_name` is the basename without extension (e.g. `"crash"` or
+/// `"multi-session"`); the file at `tests/scenarios/<name>.toml` is copied into
+/// the project as `scenario.toml`, where `cryo-mock` picks it up.
 fn setup_scenario(dir: &std::path::Path, scenario_name: &str) {
+    let name = scenario_name
+        .trim_end_matches(".sh")
+        .trim_end_matches(".toml");
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let src = format!("{manifest}/tests/scenarios/{scenario_name}");
-    fs::copy(&src, dir.join("scenario.sh")).unwrap();
+    let src = format!("{manifest}/tests/scenarios/{name}.toml");
+    fs::copy(&src, dir.join("scenario.toml")).unwrap_or_else(|e| panic!("copying {src}: {e}"));
     fs::write(dir.join("plan.md"), "# Test Plan\nDo mock things.").unwrap();
 
     // Init cryo project
@@ -215,8 +222,7 @@ fn test_mock_ipc_all_commands() {
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
 
     // Verify the remaining IPC commands were logged
-    assert!(log.contains("reply:"), "Missing reply in log: {log}");
-    assert!(log.contains("alert:"), "Missing alert in log: {log}");
+    assert!(log.contains("send:"), "Missing send in log: {log}");
     assert!(
         log.contains("plan complete"),
         "Missing plan complete: {log}"
@@ -245,7 +251,7 @@ fn test_mock_crash_then_succeed() {
         .success();
 
     assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(30)),
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(60)),
         "Daemon should exit after retry succeeds"
     );
 
@@ -422,30 +428,17 @@ fn test_mock_hibernate_exit_code_retries() {
 }
 
 // --- Provider rotation tests ---
-
-#[test]
-fn test_rotate_on_quick_exit_rotates() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "quick-exit.sh");
-    write_provider_config(dir.path(), "quick-exit", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // After quick exit with rotate_on=quick-exit, daemon should rotate to provider-1.
-    // The rotation is logged via eprintln (stderr), but the next session logs
-    // "provider: provider-1" to cryo.log via EventLogger.
-    assert!(
-        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
-        "Should rotate to provider-1 on quick exit"
-    );
-
-    cancel_and_wait(dir.path());
-}
+//
+// The `rotate_on=quick-exit` and `rotate_on=any-failure` positive cases, plus
+// the 2-provider wrap-around, are covered by in-process tests in
+// `src/unit_tests/daemon.rs` (`test_rotate_on_quick_exit_rotates_in_process`,
+// `test_rotate_on_any_failure_rotates_on_crash_in_process`,
+// `test_provider_wrap_all_exhausted_in_process`) — those versions run in
+// milliseconds via `ScriptedSessionLauncher` + `TestClock`.
+//
+// The tests kept here are "rotation should NOT fire" cases: they're cheap
+// enough to run against a real daemon and still serve as smoke that the
+// real spawn path honors the rotate_on configuration.
 
 #[test]
 fn test_rotate_on_quick_exit_no_rotate_on_slow_crash() {
@@ -486,29 +479,6 @@ fn test_rotate_on_quick_exit_no_rotate_on_slow_crash() {
     assert!(
         log.contains("provider: provider-0"),
         "Should be using provider-0: {log}"
-    );
-
-    cancel_and_wait(dir.path());
-}
-
-#[test]
-fn test_rotate_on_any_failure_rotates_on_crash() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "crash.sh");
-    write_provider_config(dir.path(), "any-failure", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // With rotate_on=any-failure, any ValidationFailed triggers rotation.
-    // The next session should use provider-1.
-    assert!(
-        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
-        "Should rotate to provider-1 on crash with rotate_on=any-failure"
     );
 
     cancel_and_wait(dir.path());
@@ -561,55 +531,6 @@ fn test_rotate_on_never_no_rotation() {
 }
 
 #[test]
-fn test_provider_wrap_all_exhausted() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "quick-exit.sh");
-    write_provider_config(dir.path(), "any-failure", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // With 2 providers and any-failure rotation: session 1 uses provider-0 (fails),
-    // rotates to provider-1 (session 2, fails), wraps back to provider-0 (session 3).
-    // After wrap, daemon backs off 60s. We detect the wrap by seeing provider-0
-    // appear in the log at least twice (initial + after wrap).
-    // First, wait for provider-1 to appear (first rotation).
-    assert!(
-        wait_for_log_content(dir.path(), "provider: provider-1", Duration::from_secs(15)),
-        "Should rotate to provider-1 first"
-    );
-
-    // Then wait for provider-0 to appear again (wrap completed).
-    // The daemon sleeps 60s after wrap, but provider-0 is logged at session start,
-    // so we need to wait for the second occurrence.
-    // Count occurrences: we need provider-0 to appear at least twice.
-    let found = {
-        let deadline = std::time::Instant::now() + Duration::from_secs(90);
-        loop {
-            if std::time::Instant::now() > deadline {
-                break false;
-            }
-            if let Ok(log) = fs::read_to_string(dir.path().join("cryo.log")) {
-                if log.matches("provider: provider-0").count() >= 2 {
-                    break true;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-    };
-    assert!(
-        found,
-        "Should wrap back to provider-0 after all providers exhausted"
-    );
-
-    cancel_and_wait(dir.path());
-}
-
-#[test]
 fn test_provider_env_injected() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "check-env.sh");
@@ -645,256 +566,6 @@ MOCK_VAR = "hello"
 }
 
 // --- Fallback, delayed wake, and periodic report tests ---
-
-#[test]
-fn test_fallback_fires_on_deadline() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "alert-then-crash.sh");
-
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = config.replace("max_retries = 5", "max_retries = 1");
-    // fallback_alert is commented out in the default template (# fallback_alert = "outbox"),
-    // so we always append the uncommented setting. TOML uses the last occurrence.
-    let config = format!("{config}\nfallback_alert = \"outbox\"\n");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // alert-then-crash.sh calls `cryo-agent alert` then exits with code 1.
-    // The daemon logs "alert: email -> ops@test.com" from the agent's alert command.
-    // With max_retries=1, after the first crash, handle_failure_retry fires
-    // send_retry_alert which writes a "retry_exhausted" message to outbox.
-    // The daemon's stderr (redirected to cryo.log) also contains "retries failed".
-    assert!(
-        wait_for_log_content(dir.path(), "alert", Duration::from_secs(30)),
-        "Should show alert in log (from cryo-agent alert command)"
-    );
-
-    // Wait for the retry exhaustion alert to fire and write to outbox.
-    // With max_retries=1 and 5s backoff, the alert fires after ~5s.
-    assert!(
-        wait_for_log_content(dir.path(), "retries failed", Duration::from_secs(20)),
-        "Should show retry exhaustion in log"
-    );
-
-    cancel_and_wait(dir.path());
-
-    // Check outbox for fallback message written by send_retry_alert
-    let outbox = dir.path().join("messages/outbox");
-    assert!(outbox.exists(), "Outbox directory should exist");
-    let files: Vec<_> = fs::read_dir(&outbox)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-        .collect();
-    assert!(!files.is_empty(), "Outbox should contain fallback alert");
-
-    // Verify at least one outbox file contains "retry_exhausted"
-    let has_retry_alert = files.iter().any(|f| {
-        fs::read_to_string(f.path())
-            .unwrap_or_default()
-            .contains("retry_exhausted")
-    });
-    assert!(
-        has_retry_alert,
-        "Outbox should contain retry_exhausted alert"
-    );
-}
-
-#[test]
-fn test_fallback_suppressed_when_none() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "alert-then-crash.sh");
-
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = config.replace("max_retries = 5", "max_retries = 1");
-    // fallback_alert is commented out in the default template, so append to override.
-    let config = format!("{config}\nfallback_alert = \"none\"\n");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Wait for crash to be detected
-    assert!(
-        wait_for_log_content(
-            dir.path(),
-            "agent exited without hibernate",
-            Duration::from_secs(15)
-        ),
-        "Should detect crash"
-    );
-
-    // Wait long enough for the retry alert to have been attempted (backoff 5s)
-    std::thread::sleep(Duration::from_secs(8));
-
-    cancel_and_wait(dir.path());
-
-    // Outbox should be empty — fallback_alert=none suppresses write_message
-    let outbox = dir.path().join("messages/outbox");
-    if outbox.exists() {
-        let files: Vec<_> = fs::read_dir(&outbox)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-            .collect();
-        assert!(
-            files.is_empty(),
-            "Outbox should be empty with fallback_alert=none, but found {} files",
-            files.len()
-        );
-    }
-}
-
-#[test]
-fn test_fallback_cancelled_on_success() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "alert-then-succeed.sh");
-
-    // Set fallback_alert=outbox so any fallback would be visible in outbox
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    // fallback_alert is commented out in the default template, so append the uncommented setting
-    let config = format!("{config}\nfallback_alert = \"outbox\"\n");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // alert-then-succeed.sh calls `cryo-agent alert` then `cryo-agent hibernate --complete`.
-    // The alert registers a pending_fallback, but since the agent completes the plan
-    // successfully, the fallback is never executed (pending_fallback is dropped on PlanComplete).
-    assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
-        "Daemon should exit after plan completion"
-    );
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("plan complete"),
-        "Session should complete: {log}"
-    );
-
-    // Outbox should NOT contain a fallback alert.
-    // The agent's alert command only registers a pending_fallback in memory;
-    // it doesn't write to outbox. Since the plan completed, the pending fallback
-    // is dropped without executing.
-    let outbox = dir.path().join("messages/outbox");
-    if outbox.exists() {
-        let files: Vec<_> = fs::read_dir(&outbox)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-            .collect();
-        for file in &files {
-            let content = fs::read_to_string(file.path()).unwrap();
-            assert!(
-                !content.contains("fallback") && !content.contains("retry_exhausted"),
-                "Outbox should not contain fallback alert: {content}"
-            );
-        }
-    }
-}
-
-#[test]
-fn test_pending_fallback_persists_across_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "alert-then-hibernate.sh");
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .env("TEST_WAKE_AT", "2099-12-31T23:59")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut before_restart = None;
-    while std::time::Instant::now() < deadline {
-        if let Ok(content) = fs::read_to_string(dir.path().join("timer.json")) {
-            if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
-                if !state["pid"].is_null() && state.get("pending_fallback").is_some() {
-                    before_restart = Some(state);
-                    break;
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    let before_restart =
-        before_restart.expect("pending_fallback should be persisted after hibernate");
-    let before_instance = before_restart["instance_id"]
-        .as_str()
-        .expect("daemon should persist an instance_id")
-        .to_string();
-    assert_eq!(
-        before_restart["pending_fallback"]["action"]["action"],
-        "email"
-    );
-    assert_eq!(
-        before_restart["pending_fallback"]["action"]["target"],
-        "ops@test.com"
-    );
-    assert_eq!(
-        before_restart["pending_fallback"]["action"]["message"],
-        "Watchdog set"
-    );
-
-    cryo_bin()
-        .arg("restart")
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut after_restart = None;
-    while std::time::Instant::now() < deadline {
-        if let Ok(content) = fs::read_to_string(dir.path().join("timer.json")) {
-            if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
-                if !state["pid"].is_null() && state.get("pending_fallback").is_some() {
-                    let instance = state["instance_id"].as_str().unwrap_or_default();
-                    if instance != before_instance {
-                        after_restart = Some(state);
-                        break;
-                    }
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    let after_restart =
-        after_restart.expect("pending_fallback and fresh instance_id should survive restart");
-    assert_eq!(
-        after_restart["pending_fallback"]["action"]["action"],
-        "email"
-    );
-    assert_eq!(
-        after_restart["pending_fallback"]["action"]["target"],
-        "ops@test.com"
-    );
-    assert_eq!(
-        after_restart["pending_fallback"]["action"]["message"],
-        "Watchdog set"
-    );
-
-    cancel_and_wait(dir.path());
-}
 
 #[test]
 fn test_delayed_wake_detection() {
@@ -1075,6 +746,82 @@ fn test_inbox_wake_coalesces_multiple_events() {
     assert_eq!(
         session_count, 1,
         "Multiple inbox events should coalesce into 1 session, got {session_count}: {log}"
+    );
+}
+
+#[test]
+fn test_unreceived_queued_inbox_gets_daemon_status_only() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "inbox-wake.sh");
+    write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(outbox.len(), 1, "daemon should write one status message");
+    assert_eq!(outbox[0].1.from, "cryochamber");
+    assert!(
+        outbox[0]
+            .1
+            .body
+            .contains("without sending an outbox message"),
+        "without receive, the daemon should only emit its generic session status: {:?}",
+        outbox[0].1.body
+    );
+    assert!(
+        !cryochamber::message::read_inbox(dir.path())
+            .unwrap()
+            .is_empty(),
+        "queued inbox message should remain until the agent explicitly receives it"
+    );
+}
+
+#[test]
+fn test_status_send_without_receive_does_not_trigger_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "send-without-reply.toml");
+    write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
+        "Daemon should exit after plan completion"
+    );
+
+    let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(
+        outbox.len(),
+        1,
+        "without receive, a status send should remain just a status send"
+    );
+    assert!(
+        outbox
+            .iter()
+            .any(|(_, msg)| msg.from == "agent" && msg.body == "Status update for operator"),
+        "agent status update should still be delivered: {:?}",
+        outbox
+    );
+    assert!(
+        !cryochamber::message::read_inbox(dir.path())
+            .unwrap()
+            .is_empty(),
+        "queued inbox message should remain until the agent explicitly receives it"
     );
 }
 

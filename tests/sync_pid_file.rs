@@ -48,7 +48,7 @@ fn cryo_gh_sync_daemon_manages_pid_file() {
     // Minimal gh-sync.json so the daemon does not abort.
     std::fs::write(
         workdir.join("gh-sync.json"),
-        r#"{"repo":"fake/fake","discussion_number":1,"discussion_node_id":"fake"}"#,
+        r#"{"repo":"fake/fake","discussion_number":1,"discussion_node_id":"fake","self_login":"fake-user"}"#,
     )
     .unwrap();
     std::fs::create_dir_all(workdir.join("messages").join("outbox")).unwrap();
@@ -59,6 +59,16 @@ fn cryo_gh_sync_daemon_manages_pid_file() {
         "build cryo-gh first: cargo build --bin cryo-gh"
     );
 
+    let fake_bin_dir = workdir.join("bin");
+    std::fs::create_dir_all(&fake_bin_dir).unwrap();
+    let fake_gh = fake_bin_dir.join("gh");
+    std::fs::write(&fake_gh, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut perms = std::fs::metadata(&fake_gh).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&fake_gh, perms).unwrap();
+    let old_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", fake_bin_dir.display(), old_path.to_string_lossy());
+
     let mut guard = ChildGuard(Some(
         std::process::Command::new(&bin)
             .current_dir(&workdir)
@@ -66,6 +76,7 @@ fn cryo_gh_sync_daemon_manages_pid_file() {
             .arg("--interval")
             .arg("60")
             .env("CRYO_NO_SERVICE", "1")
+            .env("PATH", path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

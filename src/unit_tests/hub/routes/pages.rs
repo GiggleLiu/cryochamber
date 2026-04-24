@@ -171,6 +171,68 @@ fn shell_prioritizes_completed_status_over_running() {
 }
 
 #[test]
+fn shell_uses_distinct_class_when_agent_session_is_running() {
+    assert!(
+        SHELL_HTML.contains("if (entry.agent_running && entry.running) return 'running-active';"),
+        "the rail should surface active agent sessions with a distinct status class"
+    );
+    assert!(
+        SHELL_HTML.contains("return entry.running ? '●' : '○';"),
+        "the glyph should stay the same and let the animation carry the distinction"
+    );
+}
+
+#[test]
+fn shell_pulses_active_session_even_when_chamber_plan_is_complete() {
+    // A chamber whose plan was previously marked complete can still be
+    // running a fresh session (e.g. a follow-up wake from a TODO). The rail
+    // should pulse on `running-active` instead of staying the steady
+    // `complete` colour, otherwise active work is invisible to the operator.
+    let active_idx = SHELL_HTML
+        .find("if (entry.agent_running && entry.running) return 'running-active';")
+        .expect("active session check must exist");
+    let complete_idx = SHELL_HTML
+        .find("if (entry.completed) return 'complete';")
+        .expect("complete check must exist");
+    assert!(
+        active_idx < complete_idx,
+        "agent_running check must precede the completed check so an active session animation overrides the steady complete colour"
+    );
+}
+
+#[test]
+fn shell_css_animates_running_active_status_dot() {
+    assert!(
+        WEB_CSS.contains(".status-dot.running-active"),
+        "web CSS should define a dedicated running-active status-dot rule"
+    );
+    assert!(
+        WEB_CSS.contains("@keyframes cryo-pulse"),
+        "web CSS should define the rail pulse animation"
+    );
+}
+
+#[test]
+fn shell_css_disables_running_active_animation_for_reduced_motion() {
+    assert!(
+        WEB_CSS.contains("@media (prefers-reduced-motion: reduce)"),
+        "web CSS should respect reduced-motion preferences"
+    );
+    assert!(
+        WEB_CSS.contains(".status-dot.running-active { animation: none; }"),
+        "running-active pulse should stop when reduced motion is requested"
+    );
+}
+
+#[test]
+fn shell_css_does_not_keep_orphan_event_log_selectors() {
+    assert!(
+        !WEB_CSS.contains(".event-log"),
+        "event-log selectors are orphaned; current shell has no matching markup"
+    );
+}
+
+#[test]
 fn shell_emits_session_markers_between_messages_of_different_sessions() {
     // Operators asked to see which wake/session produced each message.
     // The server now tags every message with `session: N` and the thread

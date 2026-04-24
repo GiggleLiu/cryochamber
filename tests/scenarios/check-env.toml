@@ -1,0 +1,10 @@
+description = "Writes $MOCK_VAR into .env-check to verify provider env injection."
+
+[[actions]]
+kind = "write_file"
+path = ".env-check"
+content = "$MOCK_VAR"
+
+[[actions]]
+kind = "hibernate"
+complete = true

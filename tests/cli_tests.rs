@@ -138,7 +138,6 @@ fn test_status_with_state() {
     let state = serde_json::json!({
         "session_number": 3,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -163,7 +162,6 @@ fn test_status_shows_latest_session_tail() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -233,7 +231,6 @@ fn test_cancel_stale_state() {
     let state = serde_json::json!({
         "session_number": 2,
         "pid": 999999,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -276,7 +273,6 @@ fn test_clean_preserves_sync_configuration() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -374,37 +370,6 @@ fn cryo_agent_bin_path() -> String {
     #[allow(deprecated)]
     let path = assert_cmd::cargo::cargo_bin("cryo-agent");
     path.to_string_lossy().to_string()
-}
-
-// --- Tests using mock agent ---
-
-#[test]
-fn test_fallback_exec_writes_outbox() {
-    let dir = tempfile::tempdir().unwrap();
-    // Ensure message dirs exist
-    fs::create_dir_all(dir.path().join("messages/outbox")).unwrap();
-    fs::create_dir_all(dir.path().join("messages/inbox")).unwrap();
-
-    cmd()
-        .args([
-            "fallback-exec",
-            "email",
-            "user@example.com",
-            "Task failed after 3 retries",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Fallback alert written"));
-
-    // Check outbox has a file
-    let outbox = fs::read_dir(dir.path().join("messages/outbox")).unwrap();
-    let files: Vec<_> = outbox.collect();
-    assert_eq!(files.len(), 1);
-
-    let content = fs::read_to_string(files[0].as_ref().unwrap().path()).unwrap();
-    assert!(content.contains("Task failed after 3 retries"));
-    assert!(content.contains("email"));
 }
 
 // --- Send ---
@@ -526,7 +491,6 @@ fn test_state_backward_compat_ignores_unknown_fields() {
         "last_command": "opencode",
         "pid": null,
         "max_retries": 1,
-        "retry_count": 0,
         "max_session_duration": 1800,
         "watch_inbox": true,
         "daemon_mode": false
@@ -715,7 +679,6 @@ fn test_daemon_status_shows_config() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),

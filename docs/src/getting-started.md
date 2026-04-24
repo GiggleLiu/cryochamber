@@ -26,7 +26,7 @@ cryo init --agent claude       # for Claude Code (writes CLAUDE.md + cryo.toml +
 
 Edit `plan.md` — describe the goal, step-by-step tasks, and notes about persistent state. See the [Mr. Lazy](./examples/mr-lazy.md) and [Chess by Mail](./examples/chess-by-mail.md) examples for reference.
 
-Review `cryo.toml` and adjust the agent command, retry policy, and inbox settings as needed.
+Review `cryo.toml` and adjust the agent command, session timeout, and inbox settings as needed.
 
 **Recommended:** Tell your AI coding agent to install the skill instead of editing files manually:
 

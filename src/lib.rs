@@ -1,10 +1,12 @@
 pub mod agent;
+pub mod chamber_status;
 pub mod channel;
 pub mod config;
 pub mod daemon;
-pub mod fallback;
+pub mod daemon_client;
 pub mod gh_sync;
 pub mod hub;
+pub mod lifecycle;
 pub mod log;
 pub mod message;
 pub mod process;
@@ -16,6 +18,7 @@ pub mod session;
 pub mod socket;
 pub mod state;
 pub mod sync_common;
+pub mod sync_control;
 pub mod todo;
 pub mod zulip_sync;
 

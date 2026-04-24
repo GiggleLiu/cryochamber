@@ -122,6 +122,32 @@ fn test_parse_sessions_exit_code_0_without_hibernate_is_failure() {
 }
 
 #[test]
+fn test_classify_session_outcome_prioritizes_failure_markers() {
+    assert_eq!(
+        classify_session_outcome(
+            "[12:00:01] hibernate: wake=2026-03-01T14:00, exit=0\n\
+             [12:00:02] quick exit detected (0.5s without hibernate)"
+        ),
+        SessionOutcome::Failed
+    );
+    assert_eq!(
+        classify_session_outcome(
+            "--- CRYO INTERRUPTED ---\n\
+             [12:00:01] hibernate: wake=2026-03-01T14:00, exit=0"
+        ),
+        SessionOutcome::Interrupted
+    );
+    assert_eq!(
+        classify_session_outcome("[12:00:01] hibernate: wake=2026-03-01T14:00, exit=0"),
+        SessionOutcome::Success
+    );
+    assert_eq!(
+        classify_session_outcome("[12:00:01] agent exited (code 1)"),
+        SessionOutcome::Failed
+    );
+}
+
+#[test]
 fn test_parse_sessions_since_empty_log() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");

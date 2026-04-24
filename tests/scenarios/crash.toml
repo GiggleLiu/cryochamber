@@ -1,0 +1,9 @@
+description = "Crashes immediately without calling hibernate."
+
+[[actions]]
+kind = "echo"
+text = "Agent crashing..."
+
+[[actions]]
+kind = "exit"
+code = 1

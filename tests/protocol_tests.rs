@@ -7,13 +7,14 @@ fn test_protocol_content_contains_commands() {
     assert!(content.contains("cryo-agent hibernate"));
     assert!(content.contains("cryo-agent send"));
     assert!(content.contains("cryo-agent receive"));
-    assert!(content.contains("cryo-agent alert"));
     assert!(content.contains("NOTES.md"));
     let removed_note_command = ["cryo-agent", "note"].join(" ");
     assert!(!content.contains(&removed_note_command));
     // Phantom commands removed (code review #3)
     assert!(!content.contains("cryo-agent status"));
     assert!(!content.contains("cryo-agent inbox"));
+    // Deprecated dead-man switch command removed.
+    assert!(!content.contains("cryo-agent alert"));
 }
 
 #[test]
@@ -29,7 +30,7 @@ fn test_protocol_user_channel_is_cryo_agent_only() {
     assert!(content.contains("only supported way to communicate with the human"));
     assert!(content.contains("stdout/stderr"));
     assert!(content.contains("cryo-agent send"));
-    assert!(content.contains("cryo-agent reply"));
+    assert!(!content.contains("cryo-agent reply"));
 }
 
 #[test]
@@ -67,6 +68,18 @@ fn test_protocol_filename_ignores_claude_in_args() {
     assert_eq!(
         protocol::protocol_filename("aider --model claude-3-opus"),
         "AGENTS.md"
+    );
+}
+
+#[test]
+fn test_protocol_file_for_agent_exposes_selection_policy() {
+    assert_eq!(
+        protocol::protocol_file_for_agent("/usr/bin/claude -p test"),
+        protocol::ProtocolFile::Claude
+    );
+    assert_eq!(
+        protocol::protocol_file_for_agent("opencode --model claude-3.7"),
+        protocol::ProtocolFile::Agents
     );
 }
 

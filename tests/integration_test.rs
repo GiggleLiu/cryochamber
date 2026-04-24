@@ -35,6 +35,7 @@ fn test_build_prompt_with_context() {
         task: "Continue work".to_string(),
         delayed_wake: None,
         todo_list: "1. [ ] Review PR (at: 2026-03-02T14:00)".to_string(),
+        inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
@@ -50,15 +51,13 @@ fn test_state_roundtrip() {
     let state = CryoState {
         session_number: 5,
         pid: None,
-        retry_count: 0,
         agent_override: Some("opencode".to_string()),
-        max_retries_override: Some(3),
         max_session_duration_override: Some(1800),
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -67,11 +66,10 @@ fn test_state_roundtrip() {
         .unwrap()
         .unwrap();
     assert_eq!(loaded.session_number, 5);
-    assert_eq!(loaded.max_retries_override, Some(3));
 }
 
 #[test]
-fn test_file_channel_roundtrip() {
+fn test_message_store_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     cryochamber::message::ensure_dirs(dir.path()).unwrap();
 
@@ -89,7 +87,7 @@ fn test_file_channel_roundtrip() {
     cryochamber::message::write_message(dir.path(), "inbox", &msg).unwrap();
 
     use cryochamber::channel::MessageChannel;
-    let channel = cryochamber::channel::file::FileChannel::new(dir.path().to_path_buf());
+    let channel = cryochamber::channel::store::MessageStore::new(dir.path().to_path_buf());
     let messages = channel.read_inbox().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].from, "human");

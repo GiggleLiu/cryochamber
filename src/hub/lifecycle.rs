@@ -1,126 +1,50 @@
-//! Per-chamber lifecycle wrappers: start, stop, restart. These reproduce the
-//! paths in `cryo start` / `cryo cancel` / `cryo restart` (see `src/bin/cryo.rs`)
-//! but take an explicit `dir: &Path` and do not read the process-wide `work_dir()`.
+//! Per-chamber lifecycle wrappers for the hub. Core chamber operations live in
+//! `crate::lifecycle`; this module keeps hub-specific cryo binary resolution.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::state::{self, CryoState};
+use crate::channel::store::MessageStore;
 
 /// Start a daemon for the chamber at `dir`. Mirrors `cmd_start` in the CLI.
 pub fn start_chamber(dir: &Path) -> Result<()> {
-    if !crate::config::config_path(dir).exists() {
-        anyhow::bail!("Not a chamber: no cryo.toml in {}", dir.display());
-    }
-    if !dir.join("plan.md").exists() {
-        anyhow::bail!("Missing plan.md in {}", dir.display());
-    }
+    let exe = resolve_cryo_exe()?;
+    let prepared = crate::lifecycle::prepare_start(dir, crate::lifecycle::StartOptions::default())?;
+    crate::lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;
 
-    if let Some(existing) = state::load_state(&state::state_path(dir))? {
-        if state::is_locked(&existing) {
-            anyhow::bail!("A daemon is already running in {}", dir.display());
-        }
-    }
+    MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
 
-    let cfg = crate::config::load_config(&crate::config::config_path(dir))?.unwrap_or_default();
-    validate_agent_command(&cfg.agent)?;
+    crate::state::save_state(&crate::state::state_path(dir), &prepared.state)?;
 
-    crate::message::ensure_dirs(dir)?;
-
-    let cryo_state = CryoState {
-        session_number: 0,
-        pid: None,
-        retry_count: 0,
-        agent_override: None,
-        max_retries_override: None,
-        max_session_duration_override: None,
-        last_report_time: None,
-        provider_index: None,
-        instance_id: None,
-        pending_fallback: None,
-        previous_session_crashed: false,
-    };
-    state::save_state(&state::state_path(dir), &cryo_state)?;
-
-    launch_daemon(dir)?;
-    wait_for_live_daemon(dir)?;
+    crate::lifecycle::launch_daemon(dir, &exe)?;
+    crate::lifecycle::wait_for_live_daemon(dir)?;
     Ok(())
 }
 
 /// Stop the daemon for the chamber at `dir`. Mirrors `cmd_cancel`, but leaves
 /// timer.json intact (stop is not the same as cancel — restart needs overrides).
 pub fn stop_chamber(dir: &Path) -> Result<()> {
-    let _ = crate::service::uninstall("daemon", dir);
-    if let Some(st) = state::load_state(&state::state_path(dir))? {
-        if state::is_locked(&st) {
-            if let Some(pid) = st.pid {
-                crate::process::terminate_pid(pid)?;
-            }
-        }
-        let updated = CryoState { pid: None, ..st };
-        state::save_state(&state::state_path(dir), &updated)?;
-    }
-    Ok(())
+    crate::lifecycle::stop_chamber(dir)
 }
 
 /// Restart = stop + start. Preserves overrides and session number.
 pub fn restart_chamber(dir: &Path) -> Result<()> {
-    stop_chamber(dir)?;
-    // `stop_chamber` cleared the PID lock, so launching again is safe.
-    launch_daemon(dir)?;
-    wait_for_live_daemon(dir)?;
-    Ok(())
-}
-
-fn new_archive_dir(dir: &Path) -> Result<PathBuf> {
-    let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let archive = dir.join("history").join(&ts);
-    std::fs::create_dir_all(&archive)
-        .with_context(|| format!("Failed to create {}", archive.display()))?;
-    Ok(archive)
-}
-
-fn move_into_archive(dir: &Path, archive: &Path, name: &str) -> Result<()> {
-    let src = dir.join(name);
-    if !src.exists() {
-        return Ok(());
-    }
-    let dst = archive.join(name);
-    if let Some(parent) = dst.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create {}", parent.display()))?;
-    }
-    std::fs::rename(&src, &dst)
-        .with_context(|| format!("Failed to move {} to {}", src.display(), dst.display()))?;
+    let exe = resolve_cryo_exe()?;
+    crate::lifecycle::restart_chamber(dir, &exe)?;
     Ok(())
 }
 
 /// Move `cryo.log` and `cryo-agent.log` into `history/<timestamp>/` within the
 /// chamber dir, returning the archive directory. Missing files are skipped.
 pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
-    let archive = new_archive_dir(dir)?;
-    for name in ["cryo.log", "cryo-agent.log"] {
-        move_into_archive(dir, &archive, name)?;
-    }
-    Ok(archive)
+    crate::lifecycle::archive_logs(dir)
 }
 
 /// Move resettable runtime state into `history/<timestamp>/`, returning the
 /// archive directory. Missing files are skipped.
 pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
-    let archive = new_archive_dir(dir)?;
-    for name in [
-        "cryo.log",
-        "cryo-agent.log",
-        "todo.json",
-        "NOTES.md",
-        "messages",
-        "timer.json",
-    ] {
-        move_into_archive(dir, &archive, name)?;
-    }
-    Ok(archive)
+    crate::lifecycle::archive_runtime(dir)
 }
 
 /// Reset the chamber: stop the daemon (if running) and archive runtime state
@@ -129,51 +53,12 @@ pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
 /// any still-running sync daemon (e.g. cryo-zulip) keeps delivering into the
 /// live directory. Destructive; the UI must confirm before calling.
 pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
-    stop_chamber(dir)?;
-    let archive = archive_runtime(dir)?;
-    crate::message::ensure_dirs(dir)?;
-    Ok(archive)
+    crate::lifecycle::reset_chamber(dir)
 }
 
-fn launch_daemon(dir: &Path) -> Result<()> {
-    let exe = resolve_cryo_exe()?;
-    if std::env::var("CRYO_NO_SERVICE").is_ok() {
-        crate::process::spawn_daemon(dir, &exe)?;
-    } else {
-        let log_path = crate::log::log_path(dir);
-        crate::service::install("daemon", dir, &exe, &["daemon"], &log_path, false)?;
-    }
-    Ok(())
-}
-
-/// Block until the daemon for `dir` has locked its PID in `timer.json` and is
-/// answering on its IPC socket. Mirrors the CLI `cmd_start` behaviour so the
-/// `app.refresh()` that follows reads a live, not stale, state. Bails after
-/// 10 seconds.
-fn wait_for_live_daemon(dir: &Path) -> Result<()> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    wait_for_live_daemon_until(dir, deadline)
-}
-
+#[cfg(test)]
 fn wait_for_live_daemon_until(dir: &Path, deadline: std::time::Instant) -> Result<()> {
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if let Some(st) = state::load_state(&state::state_path(dir))? {
-            if state::is_locked(&st) && daemon_responding(dir) {
-                return Ok(());
-            }
-        }
-        if std::time::Instant::now() > deadline {
-            anyhow::bail!("Daemon did not start within 10 seconds. Check cryo.log for errors.");
-        }
-    }
-}
-
-fn daemon_responding(dir: &Path) -> bool {
-    matches!(
-        crate::socket::send_request(dir, &crate::socket::Request::Ping),
-        Ok(resp) if resp.ok
-    )
+    crate::lifecycle::wait_for_live_daemon_until(dir, deadline)
 }
 
 /// Resolve the path to the `cryo` binary. The hub is `cryohub`, so
@@ -226,19 +111,6 @@ fn which_cryo() -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn validate_agent_command(agent_cmd: &str) -> Result<()> {
-    let program = crate::agent::agent_program(agent_cmd)?;
-    let status = std::process::Command::new("which")
-        .arg(&program)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        _ => anyhow::bail!("Agent command '{}' not found on PATH", program),
-    }
 }
 
 #[cfg(test)]

@@ -9,15 +9,13 @@ fn test_save_and_load_state() {
     let state = CryoState {
         session_number: 3,
         pid: Some(std::process::id()),
-        retry_count: 0,
         agent_override: Some("opencode test".to_string()),
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
@@ -26,7 +24,6 @@ fn test_save_and_load_state() {
 
     assert_eq!(loaded.session_number, 3);
     assert_eq!(loaded.agent_override, Some("opencode test".to_string()));
-    assert_eq!(loaded.retry_count, 0);
 }
 
 #[test]
@@ -45,15 +42,13 @@ fn test_lock_mechanism() {
     let state = CryoState {
         session_number: 1,
         pid: Some(std::process::id()),
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -70,15 +65,13 @@ fn test_is_locked_dead_process() {
     let state = CryoState {
         session_number: 1,
         pid: Some(999999),
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -90,15 +83,13 @@ fn test_is_locked_no_pid() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -134,14 +125,12 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -159,14 +148,12 @@ fn test_previous_session_crashed_true_roundtrip() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: true,
     };
     save_state(&state_path, &state).unwrap();
@@ -174,6 +161,28 @@ fn test_previous_session_crashed_true_roundtrip() {
     assert!(loaded.previous_session_crashed);
     let json = std::fs::read_to_string(&state_path).unwrap();
     assert!(json.contains("previous_session_crashed"));
+}
+
+#[test]
+fn test_session_active_true_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    std::fs::write(
+        &state_path,
+        r#"{
+            "session_number": 1,
+            "pid": null,
+            "session_active": true
+        }"#,
+    )
+    .unwrap();
+
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    save_state(&state_path, &loaded).unwrap();
+
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["session_active"], true);
 }
 
 #[test]
@@ -188,7 +197,6 @@ fn test_load_minimal_state() {
     std::fs::write(&state_path, minimal_json).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
     assert_eq!(loaded.session_number, 5);
-    assert_eq!(loaded.retry_count, 0); // default
     assert!(loaded.agent_override.is_none());
 }
 
@@ -199,21 +207,18 @@ fn test_override_fields_roundtrip() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 2,
         agent_override: Some("claude".to_string()),
-        max_retries_override: Some(5),
         max_session_duration_override: Some(1800),
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
     assert_eq!(loaded.agent_override, Some("claude".to_string()));
-    assert_eq!(loaded.max_retries_override, Some(5));
     assert_eq!(loaded.max_session_duration_override, Some(1800));
 }
 
@@ -225,21 +230,18 @@ fn test_none_overrides_not_serialized() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
     assert!(!json.contains("agent_override"));
-    assert!(!json.contains("max_retries_override"));
     assert!(!json.contains("max_session_duration_override"));
     assert!(!json.contains("last_report_time"));
     assert!(!json.contains("provider_index"));
@@ -252,15 +254,13 @@ fn test_last_report_time_roundtrip() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: Some("2026-02-28T09:00:00".to_string()),
         provider_index: None,
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -282,15 +282,13 @@ fn test_provider_index_roundtrip() {
     let state = CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
-        max_retries_override: None,
         max_session_duration_override: None,
 
         last_report_time: None,
         provider_index: Some(2),
         instance_id: None,
-        pending_fallback: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();

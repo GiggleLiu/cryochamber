@@ -1,5 +1,58 @@
 use super::*;
 
+#[test]
+fn message_direction_for_path_classifies_inbox_and_outbox_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = dir.path().join("messages").join("inbox");
+    let outbox = dir.path().join("messages").join("outbox");
+
+    assert_eq!(
+        message_direction_for_path(&inbox.join("incoming.md"), &inbox, &outbox),
+        Some(MessageDirection::Inbox)
+    );
+    assert_eq!(
+        message_direction_for_path(&outbox.join("reply.md"), &inbox, &outbox),
+        Some(MessageDirection::Outbox)
+    );
+    assert_eq!(
+        message_direction_for_path(&dir.path().join("elsewhere.md"), &inbox, &outbox),
+        None
+    );
+}
+
+#[test]
+fn classify_message_event_paths_filters_kind_extension_and_direction() {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = dir.path().join("messages").join("inbox");
+    let outbox = dir.path().join("messages").join("outbox");
+    let event = NotifyEvent {
+        kind: EventKind::Create(notify::event::CreateKind::File),
+        paths: vec![
+            inbox.join("incoming.md"),
+            outbox.join("reply.md"),
+            inbox.join("ignore.txt"),
+            dir.path().join("elsewhere.md"),
+        ],
+        attrs: Default::default(),
+    };
+
+    let classified = classify_message_event_paths(&event, &inbox, &outbox);
+
+    assert_eq!(
+        classified,
+        vec![
+            MessageEventPath {
+                path: inbox.join("incoming.md"),
+                direction: MessageDirection::Inbox,
+            },
+            MessageEventPath {
+                path: outbox.join("reply.md"),
+                direction: MessageDirection::Outbox,
+            },
+        ]
+    );
+}
+
 #[tokio::test]
 async fn watcher_emits_new_message_event_with_chamber_id() {
     let dir = tempfile::tempdir().unwrap();

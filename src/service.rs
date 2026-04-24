@@ -40,6 +40,25 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchctlInstallAction {
+    WritePlistAndLoad { unload_first: bool },
+    LoadExistingPlist,
+    Kickstart,
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_install_action(plist_changed: bool, label_loaded: bool) -> LaunchctlInstallAction {
+    match (plist_changed, label_loaded) {
+        (true, label_loaded) => LaunchctlInstallAction::WritePlistAndLoad {
+            unload_first: label_loaded,
+        },
+        (false, false) => LaunchctlInstallAction::LoadExistingPlist,
+        (false, true) => LaunchctlInstallAction::Kickstart,
+    }
+}
+
 /// Install and start a system service.
 ///
 /// - `label_prefix`: e.g. "daemon" or "gh-sync"
@@ -134,46 +153,49 @@ pub fn install(
     };
     let label_loaded = launchctl_tracks(&label);
 
-    if plist_changed {
-        if label_loaded {
-            // Unload the stale version before overwriting — launchd keeps a
-            // handle on the old file otherwise.
+    match launchctl_install_action(plist_changed, label_loaded) {
+        LaunchctlInstallAction::WritePlistAndLoad { unload_first } => {
+            if unload_first {
+                // Unload the stale version before overwriting — launchd keeps a
+                // handle on the old file otherwise.
+                let _ = std::process::Command::new("launchctl")
+                    .args(["unload", "-w"])
+                    .arg(&plist_path)
+                    .status();
+            }
+            std::fs::write(&plist_path, plist)?;
+            launchctl_load_plist(&plist_path)?;
+        }
+        LaunchctlInstallAction::LoadExistingPlist => {
+            // Plist is already up to date but launchd forgot about it (e.g. after
+            // a logout). A plain `load -w` is enough.
+            launchctl_load_plist(&plist_path)?;
+        }
+        LaunchctlInstallAction::Kickstart => {
+            // Plist unchanged and launchd knows the label — but the daemon may
+            // have exited on its own (hibernate --complete, plan finished). Use
+            // `kickstart -k` to restart it without rewriting the plist, so no
+            // "Background items added" popup fires.
+            let uid = unsafe { libc::getuid() };
             let _ = std::process::Command::new("launchctl")
-                .args(["unload", "-w"])
-                .arg(&plist_path)
+                .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
                 .status();
         }
-        std::fs::write(&plist_path, plist)?;
-        let status = std::process::Command::new("launchctl")
-            .args(["load", "-w"])
-            .arg(&plist_path)
-            .status()
-            .context("Failed to run launchctl")?;
-        if !status.success() {
-            anyhow::bail!("launchctl load failed");
-        }
-    } else if !label_loaded {
-        // Plist is already up to date but launchd forgot about it (e.g. after
-        // a logout). A plain `load -w` is enough.
-        let status = std::process::Command::new("launchctl")
-            .args(["load", "-w"])
-            .arg(&plist_path)
-            .status()
-            .context("Failed to run launchctl")?;
-        if !status.success() {
-            anyhow::bail!("launchctl load failed");
-        }
-    } else {
-        // Plist unchanged and launchd knows the label — but the daemon may
-        // have exited on its own (hibernate --complete, plan finished). Use
-        // `kickstart -k` to restart it without rewriting the plist, so no
-        // "Background items added" popup fires.
-        let uid = unsafe { libc::getuid() };
-        let _ = std::process::Command::new("launchctl")
-            .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
-            .status();
     }
 
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_load_plist(plist_path: &Path) -> Result<()> {
+    let status = std::process::Command::new("launchctl")
+        .args(["load", "-w"])
+        .arg(plist_path)
+        .status()
+        .context("Failed to run launchctl")?;
+    if !status.success() {
+        anyhow::bail!("launchctl load failed");
+    }
     Ok(())
 }
 
@@ -437,3 +459,7 @@ fn list_installed_in(
     out.sort_by(|a, b| a.label.cmp(&b.label));
     out
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "unit_tests/service.rs"]
+mod tests;
