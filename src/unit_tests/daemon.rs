@@ -2198,6 +2198,94 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
 }
 
 #[test]
+fn test_prepare_startup_state_clears_stale_session_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = Daemon::new(dir.path().to_path_buf());
+    let mut st = test_cryo_state();
+    st.pid = None;
+    st.instance_id = None;
+    st.session_active = true; // stale leftover from a prior SIGKILL'd run
+    daemon.prepare_startup_state(&mut st);
+    assert_eq!(st.pid, Some(std::process::id()));
+    assert!(
+        st.instance_id.is_some(),
+        "prepare_startup_state should mint an instance_id"
+    );
+    assert!(
+        !st.session_active,
+        "prepare_startup_state must clear stale session_active"
+    );
+}
+
+#[test]
+fn test_session_active_observed_inside_session_and_cleared_after() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    let state_path = crate::state::state_path(dir.path());
+    let captured: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
+    let captured_clone = captured.clone();
+    let state_path_clone = state_path.clone();
+    let launcher = Arc::new(ScriptedSessionLauncher::with_steps(vec![
+        ScriptedStep::with_hook(SessionLoopOutcome::PlanComplete, move || {
+            let st = crate::state::load_state(&state_path_clone).unwrap().unwrap();
+            *captured_clone.lock().unwrap() = Some(st.session_active);
+        }),
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+    cryo_state.session_active = false;
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(
+        *captured.lock().unwrap(),
+        Some(true),
+        "session_active must be true in timer.json while run_session is executing"
+    );
+    let final_state = crate::state::load_state(&state_path).unwrap().unwrap();
+    assert!(
+        !final_state.session_active,
+        "session_active must be cleared after the session returns"
+    );
+}
+
+#[test]
 fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
     // After each Hibernate, the loop calls `next_wake_from_todos`. If the
     // TODO file changes between sessions, the next iteration should see the

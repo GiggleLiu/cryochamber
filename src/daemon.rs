@@ -553,6 +553,15 @@ impl Daemon {
         cryo_state.instance_id = None;
     }
 
+    fn prepare_startup_state(&self, cryo_state: &mut CryoState) {
+        cryo_state.pid = Some(std::process::id());
+        cryo_state.instance_id = Some(state::new_instance_id());
+        // Clear any stale `session_active` left over from a SIGKILL mid-session
+        // in a previous run — the hub reads this flag to animate the sidebar
+        // dot and should never see "in-session" for a daemon that isn't.
+        cryo_state.session_active = false;
+    }
+
     fn prepare_runtime_startup<P: StartupPlatform>(
         &self,
         platform: &P,
@@ -740,9 +749,10 @@ impl Daemon {
         config.apply_overrides(&cryo_state);
         let bootstrap = self.build_bootstrap_state(&cryo_state, &config);
 
-        // Save PID so other commands can detect the running daemon
-        cryo_state.pid = Some(std::process::id());
-        cryo_state.instance_id = Some(state::new_instance_id());
+        // Save PID so other commands can detect the running daemon, mint a
+        // new instance_id, and clear any stale session_active from a prior
+        // SIGKILL mid-session.
+        self.prepare_startup_state(&mut cryo_state);
         self.save_state(&cryo_state)?;
 
         let (tx, rx) = mpsc::channel();
@@ -860,6 +870,7 @@ impl Daemon {
                 let delayed_wake =
                     delayed_wake_notice(is_inbox_wake, next_wake, self.clock.local_now());
                 cryo_state.session_number += 1;
+                cryo_state.session_active = true;
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
                 }
@@ -892,12 +903,14 @@ impl Daemon {
                         if outcome.is_crash() {
                             self.reschedule_consumed_after_crash(&consumed_todos);
                         }
+                        cryo_state.session_active = false;
                         // Persist session number only after successful completion
                         self.save_state(cryo_state)?;
                         Ok(outcome)
                     }
                     Err(e) => {
                         cryo_state.session_number -= 1;
+                        cryo_state.session_active = false;
                         cryo_state.previous_session_crashed = true;
                         self.reschedule_consumed_after_crash(&consumed_todos);
                         let _ = self.save_state(cryo_state);
