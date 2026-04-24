@@ -2234,7 +2234,9 @@ fn test_session_active_observed_inside_session_and_cleared_after() {
     let state_path_clone = state_path.clone();
     let launcher = Arc::new(ScriptedSessionLauncher::with_steps(vec![
         ScriptedStep::with_hook(SessionLoopOutcome::PlanComplete, move || {
-            let st = crate::state::load_state(&state_path_clone).unwrap().unwrap();
+            let st = crate::state::load_state(&state_path_clone)
+                .unwrap()
+                .unwrap();
             *captured_clone.lock().unwrap() = Some(st.session_active);
         }),
     ]));

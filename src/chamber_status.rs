@@ -123,11 +123,7 @@ pub fn overview(dir: &Path) -> ChamberOverview {
     let running = state.as_ref().map(crate::state::is_locked).unwrap_or(false);
     // Only report agent_running when the daemon is actually alive — a dead
     // daemon may have left session_active=true in timer.json after SIGKILL.
-    let agent_running = running
-        && state
-            .as_ref()
-            .map(|st| st.session_active)
-            .unwrap_or(false);
+    let agent_running = running && state.as_ref().map(|st| st.session_active).unwrap_or(false);
 
     ChamberOverview {
         running,
