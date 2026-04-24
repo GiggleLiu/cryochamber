@@ -1,6 +1,6 @@
 [package]
 name = "cryochamber"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "A hibernation chamber for AI agents — schedule, wake, and manage long-running agent tasks"
 license = "MIT"
