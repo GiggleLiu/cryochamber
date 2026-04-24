@@ -463,6 +463,14 @@ impl StateStore for RecordingStateStore {
     }
 }
 
+struct FailingStateStore;
+
+impl StateStore for FailingStateStore {
+    fn save(&self, _path: &Path, _state: &CryoState) -> Result<()> {
+        anyhow::bail!("injected state save failure")
+    }
+}
+
 impl StartupPlatform for FakeStartupPlatform {
     type Server = DummyServer;
     type Watcher = DummyWatcher;
@@ -1446,7 +1454,7 @@ fn test_drive_active_session_writes_daemon_status_without_outbound_message() {
 }
 
 #[test]
-fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fails() {
+fn test_drive_active_session_reply_failure_still_finishes_session_log() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
@@ -1477,20 +1485,16 @@ fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fa
     let mut effects = FakeSessionEffects::with_reply_failure("injected reply failure");
     effects.push_inbox_message("human-1.md", "Need approval");
 
-    let err = daemon
+    let outcome = daemon
         .drive_active_session(
             &mut runtime,
             &mut effects,
             test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
-        .unwrap_err()
-        .to_string();
+        .unwrap();
 
-    assert!(
-        err.contains("failed to write daemon reply"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
     let responses = runtime.responses();
     assert_eq!(responses.len(), 3);
     assert!(responses[0].0);
@@ -1504,6 +1508,16 @@ fn test_drive_active_session_reply_failure_propagates_when_daemon_status_also_fa
     );
     assert_eq!(responses[2], (true, "Hibernating.".into()));
     assert!(effects.replies.is_empty());
+
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("session complete") && log.contains("--- CRYO END ---"),
+        "logger.finish should still run when fallback writes fail: {log}"
+    );
+    assert!(
+        log.contains("daemon reply failed"),
+        "fallback write failure should remain visible in the session log: {log}"
+    );
 }
 
 #[test]
@@ -2743,6 +2757,56 @@ fn test_run_event_loop_clears_session_active_after_launcher_error() {
         !saved.last().unwrap().session_active,
         "final shutdown state must stay inactive: {saved:?}"
     );
+}
+
+#[test]
+fn test_run_event_loop_does_not_abort_on_mid_loop_state_save_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon = Daemon::with_deps(
+        dir.path().to_path_buf(),
+        clock,
+        launcher,
+        Arc::new(FailingStateStore),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(cryo_state.session_number, 1);
+    assert!(cryo_state.pid.is_none());
+    assert!(!cryo_state.session_active);
 }
 
 #[test]

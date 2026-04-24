@@ -290,7 +290,6 @@ fn classify_sync_error_detects_auth_or_config() {
         "Bad credentials",
         "Authentication failed: token expired",
         "Invalid API key",
-        "permission denied on discussion",
     ];
     for msg in cases {
         let err = anyhow::anyhow!(msg.to_string());
@@ -311,6 +310,8 @@ fn classify_sync_error_treats_unknown_as_transient() {
         "timeout waiting for response",
         "HTTP 429: rate limited",
         "gh: unknown non-auth error occurred",
+        "failed to archive outbox: Permission denied",
+        "Permission denied reading messages/inbox",
     ];
     for msg in cases {
         let err = anyhow::anyhow!(msg.to_string());

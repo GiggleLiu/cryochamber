@@ -141,6 +141,9 @@ body {
       0 0 8px 2px rgba(122,171,106,0.32);
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.running-active { animation: none; }
+}
 .chamber-name {
   font-family: var(--sans);
   font-size: 13.5px;

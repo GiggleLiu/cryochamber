@@ -214,7 +214,7 @@ fn cmd_gh_sync(interval_override: Option<u64>) -> Result<()> {
         &exe,
         &["sync-daemon", "--interval", &interval_str],
         &log_path,
-        true,
+        false,
     )?;
 
     println!(
@@ -417,3 +417,7 @@ fn cmd_gh_status() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "unit_tests/cryo_gh.rs"]
+mod tests;

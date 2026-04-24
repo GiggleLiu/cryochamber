@@ -102,7 +102,7 @@ cd ~/cryo-chambers && cryohub start
 
 Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary. These are configured automatically when using `/make-plan`.
 
-Inbox semantics are split deliberately: the daemon only notices that inbox messages exist, while `cryo-agent receive` reads and archives the current batch immediately. The daemon remembers that received batch only in the current session, and the next agent `send` or daemon fallback resolves it.
+Inbox semantics are split deliberately: the daemon only notices that inbox messages exist until the spawned agent asks to read them. Agent-side `cryo-agent receive` goes through daemon IPC, reads and archives the current inbox batch immediately, and records the reply obligation only in the current session. Operator `cryo receive` is separate: it reads messages from the agent's outbox.
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|

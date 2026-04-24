@@ -123,7 +123,6 @@ pub fn classify_sync_error(err: &anyhow::Error) -> SyncErrorKind {
         "invalid api key",
         "authentication failed",
         "not authenticated",
-        "permission denied",
         "must authenticate",
         "resource not accessible",
     ];

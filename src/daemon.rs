@@ -514,6 +514,12 @@ impl Daemon {
         self.state_store.save(&self.state_path, cryo_state)
     }
 
+    fn save_state_or_log(&self, cryo_state: &CryoState, context: &str) {
+        if let Err(e) = self.save_state(cryo_state) {
+            eprintln!("Daemon: failed to {context}: {e}");
+        }
+    }
+
     fn build_bootstrap_state(
         &self,
         cryo_state: &CryoState,
@@ -716,7 +722,7 @@ impl Daemon {
 
                 // Persist immediately so `cryo status` reflects the change.
                 state.cryo_state.provider_index = Some(state.retry.provider_index);
-                let _ = self.save_state(state.cryo_state);
+                self.save_state_or_log(state.cryo_state, "persist provider rotation");
 
                 if wrapped {
                     // All providers tried — apply backoff before next cycle.
@@ -817,7 +823,7 @@ impl Daemon {
             }
         });
 
-        // The event loop persists final state (pid, pending_fallback) before
+        // The event loop persists final state before
         // returning. All we need to do after is release external OS resources.
         let loop_result = self.run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx);
         crate::registry::unregister(&self.dir);
@@ -881,8 +887,7 @@ impl Daemon {
                 if !config.providers.is_empty() {
                     cryo_state.provider_index = Some(retry.provider_index);
                 }
-                cryo_state.session_active = true;
-                let _ = self.save_state(cryo_state);
+                self.save_state_or_log(cryo_state, "persist session-active state");
 
                 // Build provider env for this session
                 let active_provider = config.providers.get(retry.provider_index);
@@ -912,18 +917,16 @@ impl Daemon {
                         } else {
                             self.complete_claimed_todos();
                         }
-                        cryo_state.session_active = false;
                         // Persist session number only after successful completion
-                        self.save_state(cryo_state)?;
+                        self.save_state_or_log(cryo_state, "persist completed session state");
                         Ok(outcome)
                     }
                     Err(e) => {
                         cryo_state.session_number -= 1;
                         cryo_state.session_active = false;
                         cryo_state.previous_session_crashed = true;
-                        cryo_state.session_active = false;
                         self.reschedule_claimed_after_crash();
-                        let _ = self.save_state(cryo_state);
+                        self.save_state_or_log(cryo_state, "persist failed session state");
                         eprintln!("Daemon: session failed: {e}");
                         Err(())
                     }
@@ -992,9 +995,7 @@ impl Daemon {
         // Persist pid=None so external observers (e.g. the hub, `cryo status`)
         // see a consistent shutdown state.
         self.prepare_shutdown_state(cryo_state);
-        if let Err(e) = self.save_state(cryo_state) {
-            eprintln!("Daemon: failed to save final state: {e}");
-        }
+        self.save_state_or_log(cryo_state, "save final state");
 
         Ok(())
     }
@@ -1125,36 +1126,60 @@ impl Daemon {
         effects: &mut impl SessionEffects,
         logger: &mut crate::log::EventLogger,
         inbox_state: &mut SessionInboxState,
-    ) -> Result<()> {
+    ) {
         let mut daemon_wrote_reply = false;
         let message_count = inbox_state.claimed_message_count();
         if message_count > 0 {
             let text = daemon_unanswered_reply_text(message_count);
-            effects
-                .write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now())
-                .context("failed to write daemon reply for unanswered inbox messages")?;
-            logger.log_event(&format!(
-                "daemon reply: {} unanswered inbox message{} [{}]",
-                message_count,
-                if message_count == 1 { "" } else { "s" },
-                inbox_state.claimed_filenames().join(", "),
-            ))?;
-            inbox_state.complete_daemon_fallback();
-            daemon_wrote_reply = true;
+            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now()) {
+                Ok(()) => {
+                    if let Err(e) = logger.log_event(&format!(
+                        "daemon reply: {} unanswered inbox message{} [{}]",
+                        message_count,
+                        if message_count == 1 { "" } else { "s" },
+                        inbox_state.claimed_filenames().join(", "),
+                    )) {
+                        eprintln!("Daemon: failed to log daemon reply: {e}");
+                    }
+                    inbox_state.complete_daemon_fallback();
+                    daemon_wrote_reply = true;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Daemon: failed to write daemon reply for unanswered inbox messages: {e:#}"
+                    );
+                    if let Err(log_err) = logger.log_event(&format!("daemon reply failed: {e:#}")) {
+                        eprintln!("Daemon: failed to log daemon reply failure: {log_err}");
+                    }
+                }
+            }
         }
 
-        if !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
-            effects
-                .write_reply(
-                    ReplyAuthor::Daemon,
-                    daemon_missing_outbound_text(),
-                    self.clock.local_now(),
-                )
-                .context("failed to write daemon status for session without outbound message")?;
-            logger.log_event("daemon reply: no outbound message sent by agent")?;
+        if message_count == 0 && !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
+            match effects.write_reply(
+                ReplyAuthor::Daemon,
+                daemon_missing_outbound_text(),
+                self.clock.local_now(),
+            ) {
+                Ok(()) => {
+                    if let Err(e) =
+                        logger.log_event("daemon reply: no outbound message sent by agent")
+                    {
+                        eprintln!("Daemon: failed to log daemon status reply: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Daemon: failed to write daemon status for session without outbound message: {e:#}"
+                    );
+                    if let Err(log_err) =
+                        logger.log_event(&format!("daemon status reply failed: {e:#}"))
+                    {
+                        eprintln!("Daemon: failed to log daemon status reply failure: {log_err}");
+                    }
+                }
+            }
         }
-
-        Ok(())
     }
 
     fn drive_active_session(
@@ -1181,7 +1206,7 @@ impl Daemon {
                     SessionInterruption::Shutdown,
                     hibernate_outcome.take(),
                 );
-                self.finalize_human_replies(effects, &mut logger, &mut inbox_state)?;
+                self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                 logger.finish(decision.finish_reason)?;
                 return Ok(decision.outcome);
             }
@@ -1197,7 +1222,7 @@ impl Daemon {
                         SessionInterruption::Timeout,
                         hibernate_outcome.take(),
                     );
-                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state)?;
+                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
@@ -1215,7 +1240,7 @@ impl Daemon {
                             inbox_state: &mut inbox_state,
                         },
                     ) {
-                        self.finalize_human_replies(effects, &mut logger, &mut inbox_state)?;
+                        self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                         logger.finish(&format!("error handling agent request: {e}"))?;
                         return Err(e);
                     }
@@ -1253,13 +1278,13 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
-                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state)?;
+                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state)?;
+                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
                 }

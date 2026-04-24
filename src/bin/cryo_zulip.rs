@@ -260,7 +260,7 @@ fn cmd_sync(interval_override: Option<u64>) -> Result<()> {
         &exe,
         &["sync-daemon", "--interval", &interval_str],
         &log_path,
-        true,
+        false,
     )?;
 
     println!(

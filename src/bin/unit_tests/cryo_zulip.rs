@@ -137,3 +137,24 @@ fn copy_zuliprc_to_project_keeps_existing_file_when_source_is_destination() {
     let copied = std::fs::read_to_string(&config_path).unwrap();
     assert!(copied.contains("key=secret"));
 }
+
+#[test]
+fn sync_service_uses_crash_only_restart_policy() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bin/cryo_zulip.rs"),
+    )
+    .unwrap();
+    let start = source
+        .find("cryochamber::service::install(\n        \"zulip-sync\",")
+        .expect("zulip sync service install call should exist");
+    let snippet = &source[start..source[start..].find(")?;").unwrap() + start];
+
+    assert!(
+        snippet.contains("false,\n    "),
+        "sync Halt exits cleanly, so the service must not use always-restart: {snippet}"
+    );
+    assert!(
+        !snippet.contains("true,\n    "),
+        "always-restart would respawn after a clean Halt: {snippet}"
+    );
+}

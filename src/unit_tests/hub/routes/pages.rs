@@ -213,6 +213,18 @@ fn shell_css_animates_running_active_status_dot() {
 }
 
 #[test]
+fn shell_css_disables_running_active_animation_for_reduced_motion() {
+    assert!(
+        WEB_CSS.contains("@media (prefers-reduced-motion: reduce)"),
+        "web CSS should respect reduced-motion preferences"
+    );
+    assert!(
+        WEB_CSS.contains(".status-dot.running-active { animation: none; }"),
+        "running-active pulse should stop when reduced motion is requested"
+    );
+}
+
+#[test]
 fn shell_emits_session_markers_between_messages_of_different_sessions() {
     // Operators asked to see which wake/session produced each message.
     // The server now tags every message with `session: N` and the thread
