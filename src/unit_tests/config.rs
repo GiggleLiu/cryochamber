@@ -53,7 +53,6 @@ fn test_apply_overrides_all_fields() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     config.apply_overrides(&state);
     assert_eq!(config.agent, "claude");
@@ -76,7 +75,6 @@ fn test_apply_overrides_none_fields() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     config.apply_overrides(&state);
     assert_eq!(config.agent, original.agent);

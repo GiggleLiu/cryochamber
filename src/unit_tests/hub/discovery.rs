@@ -72,7 +72,6 @@ fn populate_reads_session_and_unread() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     crate::state::save_state(&crate::state::state_path(&alpha), &st).unwrap();
 

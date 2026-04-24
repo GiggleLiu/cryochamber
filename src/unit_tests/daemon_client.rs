@@ -17,7 +17,6 @@ fn state_with_instance(instance_id: Option<&str>) -> CryoState {
         instance_id: instance_id.map(str::to_string),
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     }
 }
 

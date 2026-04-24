@@ -80,7 +80,6 @@ pub fn prepare_start(dir: &Path, options: StartOptions) -> Result<PreparedStart>
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
 
     Ok(PreparedStart {

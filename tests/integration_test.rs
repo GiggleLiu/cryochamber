@@ -60,7 +60,6 @@ fn test_state_roundtrip() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
 

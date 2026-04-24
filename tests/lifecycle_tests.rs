@@ -18,7 +18,6 @@ fn test_state() -> cryochamber::state::CryoState {
         instance_id: Some("instance-1".to_string()),
         session_active: false,
         previous_session_crashed: true,
-        session_active: false,
     }
 }
 
@@ -67,7 +66,6 @@ fn prepare_start_rejects_locked_state() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     cryochamber::state::save_state(&cryochamber::state::state_path(dir.path()), &state).unwrap();
 

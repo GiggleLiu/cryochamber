@@ -507,7 +507,6 @@ fn test_cryo_state() -> CryoState {
         instance_id: Some("test-instance".into()),
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     }
 }
 

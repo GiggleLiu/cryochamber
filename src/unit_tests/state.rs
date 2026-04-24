@@ -51,7 +51,6 @@ fn test_is_locked_stale_pid() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     assert!(!is_locked(&state), "Dead PID should not be locked");
 }
@@ -70,7 +69,6 @@ fn test_is_locked_no_pid() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     assert!(!is_locked(&state), "No PID should not be locked");
 }
@@ -89,7 +87,6 @@ fn test_is_locked_own_pid() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     assert!(is_locked(&state), "Own PID should be locked");
 }

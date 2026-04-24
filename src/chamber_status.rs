@@ -114,14 +114,10 @@ pub fn overview(dir: &Path) -> ChamberOverview {
     let state = crate::state::load_state(&crate::state::state_path(dir))
         .ok()
         .flatten();
-    let (running, agent_running) = runtime_flags(state.as_ref());
     let next_wake = next_wake(dir);
     let log_file = crate::log::log_path(dir);
 
-    let running = state.as_ref().map(crate::state::is_locked).unwrap_or(false);
-    // Only report agent_running when the daemon is actually alive — a dead
-    // daemon may have left session_active=true in timer.json after SIGKILL.
-    let agent_running = running && state.as_ref().map(|st| st.session_active).unwrap_or(false);
+    let (running, agent_running) = runtime_flags(state.as_ref());
 
     ChamberOverview {
         running,

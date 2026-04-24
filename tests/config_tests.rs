@@ -66,7 +66,6 @@ fn test_apply_overrides_all() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
 
     config.apply_overrides(&state);
@@ -96,7 +95,6 @@ fn test_apply_overrides_none_keeps_config() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
 
     config.apply_overrides(&state);
@@ -128,7 +126,6 @@ fn test_apply_overrides_partial() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
 
     config.apply_overrides(&state);

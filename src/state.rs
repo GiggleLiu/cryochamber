@@ -32,7 +32,10 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
 
-    /// True while the daemon is actively running an agent session.
+    /// True while the daemon has an agent subprocess running a session.
+    /// Set `true` before spawning and cleared after `run_one_session` returns
+    /// (success or crash), and again on daemon startup. The hub reads this
+    /// flag to animate the sidebar "agent running" dot.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub session_active: bool,
 
@@ -42,13 +45,6 @@ pub struct CryoState {
     /// message still needs a response. Cleared once the notice has been delivered.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub previous_session_crashed: bool,
-
-    /// True while the daemon has an agent subprocess running a session.
-    /// Set `true` before spawning and cleared after `run_one_session` returns
-    /// (success or crash), and again on daemon startup. The hub reads this
-    /// flag to animate the sidebar "agent running" dot.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub session_active: bool,
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

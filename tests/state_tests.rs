@@ -18,7 +18,6 @@ fn test_save_and_load_state() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
 
     save_state(&state_path, &state).unwrap();
@@ -54,7 +53,6 @@ fn test_lock_mechanism() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
 
@@ -79,7 +77,6 @@ fn test_is_locked_dead_process() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     assert!(!is_locked(&state));
 }
@@ -99,7 +96,6 @@ fn test_is_locked_no_pid() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     assert!(!is_locked(&state));
 }
@@ -142,7 +138,6 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
@@ -167,7 +162,6 @@ fn test_previous_session_crashed_true_roundtrip() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: true,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -230,7 +224,6 @@ fn test_override_fields_roundtrip() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -255,7 +248,6 @@ fn test_none_overrides_not_serialized() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
     let json = std::fs::read_to_string(&state_path).unwrap();
@@ -281,7 +273,6 @@ fn test_last_report_time_roundtrip() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
@@ -311,7 +302,6 @@ fn test_provider_index_roundtrip() {
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
-        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();

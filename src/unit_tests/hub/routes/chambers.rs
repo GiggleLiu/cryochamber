@@ -54,7 +54,6 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
             instance_id: None,
             session_active: false,
             previous_session_crashed: false,
-            session_active: false,
         },
     )
     .unwrap();
