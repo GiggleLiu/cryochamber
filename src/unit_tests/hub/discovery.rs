@@ -43,9 +43,24 @@ fn scan_finds_chambers_with_valid_config() {
 }
 
 #[test]
-fn scan_flags_missing_cryo_toml_as_error() {
+fn scan_skips_subdirs_without_cryo_toml() {
+    // Stray non-chamber directories (e.g. an accidental `messages/` from a
+    // mis-targeted `cryo init`) must not pollute the chamber rail.
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("broken")).unwrap();
+    std::fs::create_dir_all(dir.path().join("messages").join("inbox")).unwrap();
+    std::fs::create_dir_all(dir.path().join("notes")).unwrap();
+    let idx = scan_workspace(dir.path());
+    assert!(idx.is_empty());
+}
+
+#[test]
+fn scan_flags_malformed_cryo_toml_as_error() {
+    // A directory that *attempted* to be a chamber (has cryo.toml) but
+    // fails to parse is still surfaced so the operator can see the breakage.
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("broken");
+    std::fs::create_dir_all(&chamber).unwrap();
+    std::fs::write(chamber.join("cryo.toml"), "this is = not valid toml [[").unwrap();
     let idx = scan_workspace(dir.path());
     assert_eq!(idx.len(), 1);
     let entry = idx.values().next().unwrap();

@@ -60,9 +60,12 @@ pub struct ChamberEntry {
 /// A map from chamber id → entry.
 pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
 
-/// Scan `<dir>/*` for chambers. Returns entries for every subdirectory
-/// (even ones with broken or missing `cryo.toml` — those get a
-/// `config_error`). Runtime fields (`running`, `session`, `next_wake`,
+/// Scan `<dir>/*` for chambers. A subdirectory is treated as a chamber
+/// only if it contains a `cryo.toml`; chambers with a malformed
+/// `cryo.toml` are still listed and tagged with `config_error` so the
+/// operator can see what's broken. Subdirectories without any
+/// `cryo.toml` (e.g. a stray `messages/` or unrelated folder) are
+/// skipped entirely. Runtime fields (`running`, `session`, `next_wake`,
 /// `unread`) are filled in by `populate_runtime`, not here.
 pub fn scan_workspace(dir: &Path) -> ChamberIndex {
     let mut out = ChamberIndex::new();
@@ -75,18 +78,17 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
             continue;
         }
         let canonical = path.canonicalize().unwrap_or(path.clone());
+        let cryo_toml = canonical.join("cryo.toml");
+        if !cryo_toml.exists() {
+            continue;
+        }
         let name = canonical
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "(unknown)".into());
-        let cryo_toml = canonical.join("cryo.toml");
-        let config_error = if !cryo_toml.exists() {
-            Some("missing cryo.toml".into())
-        } else {
-            crate::config::load_config(&cryo_toml)
-                .err()
-                .map(|e| e.to_string())
-        };
+        let config_error = crate::config::load_config(&cryo_toml)
+            .err()
+            .map(|e| e.to_string());
         let id = encode_id(&canonical);
         out.insert(
             id.clone(),
