@@ -2,6 +2,7 @@ use super::*;
 use chrono::NaiveDateTime;
 use clap::Parser;
 use cryochamber::message::Message;
+use cryochamber::sync_common::format_outbox_post;
 use std::collections::BTreeMap;
 
 fn mk(from: &str, subject: &str, body: &str) -> Message {

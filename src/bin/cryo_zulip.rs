@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use cryochamber::channel::store::MessageStore;
 use cryochamber::channel::zulip::ZulipClient;
-use cryochamber::sync_common::{format_outbox_post, SyncLoopBackend, SyncLoopCommand};
+use cryochamber::sync_common::{SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
 #[command(name = "cryo-zulip", about = "Cryochamber Zulip sync")]
@@ -429,28 +429,16 @@ fn push_outbox(
     client: &ZulipClient,
     sync_state: &cryochamber::zulip_sync::ZulipSyncState,
 ) -> Result<()> {
-    let store = MessageStore::new(dir.to_path_buf());
-    let messages = store.read_outbox_named()?;
-    if messages.is_empty() {
-        return Ok(());
-    }
-
     let topic = sync_state.topic_name();
-
-    for (filename, msg) in &messages {
-        let body = format_outbox_post(msg);
-        match client.send_message(sync_state.stream_id, topic, &body) {
-            Ok(_) => {
-                eprintln!("Zulip sync: posted outbox/{filename}");
-                store.archive_outbox(std::slice::from_ref(filename))?;
-            }
-            Err(e) => {
-                eprintln!("Zulip sync: failed to post outbox/{filename}: {e}");
-            }
-        }
-    }
-
-    Ok(())
+    cryochamber::sync_common::push_outbox_messages(
+        dir,
+        |filename| format!("Zulip sync: posted outbox/{filename}"),
+        |body| {
+            client
+                .send_message(sync_state.stream_id, topic, body)
+                .map(|_| ())
+        },
+    )
 }
 
 fn cmd_status() -> Result<()> {

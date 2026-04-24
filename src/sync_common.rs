@@ -200,6 +200,27 @@ pub fn watch_outbox(dir: &Path, tx: Sender<()>) -> Result<notify::RecommendedWat
     Ok(watcher)
 }
 
+pub fn push_outbox_messages(
+    dir: &Path,
+    success_message: impl Fn(&str) -> String,
+    mut post: impl FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    let store = crate::channel::store::MessageStore::new(dir.to_path_buf());
+    let messages = store.read_outbox_named()?;
+    if messages.is_empty() {
+        return Ok(());
+    }
+
+    for (filename, msg) in messages {
+        let body = format_outbox_post(&msg);
+        post(&body).with_context(|| format!("Failed to post outbox/{filename}"))?;
+        eprintln!("{}", success_message(&filename));
+        store.archive_outbox(std::slice::from_ref(&filename))?;
+    }
+
+    Ok(())
+}
+
 pub fn spawn_shutdown_notifier(shutdown: Arc<AtomicBool>, tx: Sender<()>) {
     std::thread::spawn(move || {
         while !shutdown.load(Ordering::Relaxed) {

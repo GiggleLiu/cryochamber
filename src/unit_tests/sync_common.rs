@@ -240,6 +240,49 @@ fn format_outbox_post_keeps_attribution_for_other_senders() {
 }
 
 #[test]
+fn push_outbox_messages_returns_post_error_and_leaves_failed_message_unarchived() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::channel::store::MessageStore::new(dir.path().to_path_buf());
+    store.send_out(&message("agent", "Reply", "hello")).unwrap();
+
+    let err = push_outbox_messages(
+        dir.path(),
+        |_| "posted".to_string(),
+        |_| anyhow::bail!("HTTP 401: Bad credentials"),
+    )
+    .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("HTTP 401"),
+        "post error should be preserved: {err:#}"
+    );
+    assert_eq!(store.read_outbox_named().unwrap().len(), 1);
+    assert!(store.read_outbox_archive_named().unwrap().is_empty());
+}
+
+#[test]
+fn push_outbox_messages_archives_successful_posts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::channel::store::MessageStore::new(dir.path().to_path_buf());
+    store.send_out(&message("agent", "Reply", "hello")).unwrap();
+    let mut posted = Vec::new();
+
+    push_outbox_messages(
+        dir.path(),
+        |_| "posted".to_string(),
+        |body| {
+            posted.push(body.to_string());
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(posted, vec!["hello".to_string()]);
+    assert!(store.read_outbox_named().unwrap().is_empty());
+    assert_eq!(store.read_outbox_archive_named().unwrap().len(), 1);
+}
+
+#[test]
 fn classify_sync_error_detects_auth_or_config() {
     let cases = [
         "HTTP 401: Requires authentication",

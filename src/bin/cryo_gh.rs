@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use cryochamber::channel::store::MessageStore;
-use cryochamber::sync_common::{format_outbox_post, SyncLoopBackend, SyncLoopCommand};
+use cryochamber::sync_common::{SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
 #[command(name = "cryo-gh", about = "Cryochamber GitHub Discussion sync")]
@@ -398,26 +398,11 @@ fn cmd_gh_sync_daemon(interval_override: Option<u64>) -> Result<()> {
 
 /// Read outbox messages and post each as a Discussion comment, then archive them.
 fn push_outbox(dir: &Path, sync_state: &cryochamber::gh_sync::GhSyncState) -> Result<()> {
-    let store = MessageStore::new(dir.to_path_buf());
-    let messages = store.read_outbox_named()?;
-    if messages.is_empty() {
-        return Ok(());
-    }
-
-    for (filename, msg) in &messages {
-        let body = format_outbox_post(msg);
-        match cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, &body) {
-            Ok(()) => {
-                eprintln!("Sync: posted outbox/{filename} to Discussion");
-                store.archive_outbox(std::slice::from_ref(filename))?;
-            }
-            Err(e) => {
-                eprintln!("Sync: failed to post outbox/{filename}: {e}");
-            }
-        }
-    }
-
-    Ok(())
+    cryochamber::sync_common::push_outbox_messages(
+        dir,
+        |filename| format!("Sync: posted outbox/{filename} to Discussion"),
+        |body| cryochamber::channel::github::post_comment(&sync_state.discussion_node_id, body),
+    )
 }
 
 fn cmd_gh_status() -> Result<()> {
