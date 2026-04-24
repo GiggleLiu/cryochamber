@@ -183,6 +183,24 @@ fn shell_uses_distinct_class_when_agent_session_is_running() {
 }
 
 #[test]
+fn shell_pulses_active_session_even_when_chamber_plan_is_complete() {
+    // A chamber whose plan was previously marked complete can still be
+    // running a fresh session (e.g. a follow-up wake from a TODO). The rail
+    // should pulse on `running-active` instead of staying the steady
+    // `complete` colour, otherwise active work is invisible to the operator.
+    let active_idx = SHELL_HTML
+        .find("if (entry.agent_running && entry.running) return 'running-active';")
+        .expect("active session check must exist");
+    let complete_idx = SHELL_HTML
+        .find("if (entry.completed) return 'complete';")
+        .expect("complete check must exist");
+    assert!(
+        active_idx < complete_idx,
+        "agent_running check must precede the completed check so an active session animation overrides the steady complete colour"
+    );
+}
+
+#[test]
 fn shell_css_animates_running_active_status_dot() {
     assert!(
         WEB_CSS.contains(".status-dot.running-active"),
