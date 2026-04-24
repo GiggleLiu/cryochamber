@@ -50,6 +50,7 @@ fn test_is_locked_stale_pid() {
         provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
+        session_active: false,
     };
     assert!(!is_locked(&state), "Dead PID should not be locked");
 }
@@ -67,6 +68,7 @@ fn test_is_locked_no_pid() {
         provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
+        session_active: false,
     };
     assert!(!is_locked(&state), "No PID should not be locked");
 }
@@ -84,6 +86,44 @@ fn test_is_locked_own_pid() {
         provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
+        session_active: false,
     };
     assert!(is_locked(&state), "Own PID should be locked");
+}
+
+#[test]
+fn test_session_active_defaults_false_when_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("timer.json");
+    std::fs::write(&path, r#"{"session_number": 1}"#).unwrap();
+    let state = load_state(&path).unwrap().unwrap();
+    assert!(
+        !state.session_active,
+        "session_active should default to false for pre-existing timer.json"
+    );
+}
+
+#[test]
+fn test_session_active_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("timer.json");
+    let mut state = CryoState {
+        session_number: 2,
+        pid: None,
+        retry_count: 0,
+        agent_override: None,
+        max_session_duration_override: None,
+        last_report_time: None,
+        provider_index: None,
+        instance_id: None,
+        previous_session_crashed: false,
+        session_active: true,
+    };
+    save_state(&path, &state).unwrap();
+    let loaded = load_state(&path).unwrap().unwrap();
+    assert!(loaded.session_active);
+    state.session_active = false;
+    save_state(&path, &state).unwrap();
+    let loaded = load_state(&path).unwrap().unwrap();
+    assert!(!loaded.session_active);
 }

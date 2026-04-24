@@ -59,6 +59,7 @@ fn test_state_roundtrip() {
         provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
+        session_active: false,
     };
     save_state(&state_path, &state).unwrap();
 

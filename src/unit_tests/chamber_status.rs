@@ -11,6 +11,7 @@ fn test_state(session_number: u32) -> crate::state::CryoState {
         provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
+        session_active: false,
     }
 }
 
