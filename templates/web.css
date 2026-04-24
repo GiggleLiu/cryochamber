@@ -119,6 +119,14 @@ body {
   flex-shrink:0;
 }
 .status-dot.running { background: var(--ok); box-shadow: 0 0 0 3px rgba(122,171,106,0.12); }
+.status-dot.running-active {
+  background: var(--ok);
+  animation: cryo-glow 1.2s ease-in-out infinite;
+}
+@keyframes cryo-glow {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(122,171,106,0.12); }
+  50%      { box-shadow: 0 0 0 6px rgba(122,171,106,0.32); }
+}
 .status-dot.stopped { background: var(--ink-faint); }
 .status-dot.complete { background: var(--cool); }
 .status-dot.error { background: var(--hot); }

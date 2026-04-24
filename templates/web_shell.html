@@ -108,6 +108,7 @@
   function statusClass(entry) {
     if (entry.config_error) return 'error';
     if (entry.completed) return 'complete';
+    if (entry.agent_running) return 'running-active';
     if (entry.running) return 'running';
     return 'stopped';
   }
