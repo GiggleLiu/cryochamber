@@ -154,7 +154,6 @@ fn test_start_stale_pid_lock() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": dead_pid,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),

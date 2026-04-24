@@ -23,7 +23,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
-| `socket` | Unix domain socket IPC protocol. | `enum Request` (`Ping`, `Hello`, `Hibernate`, `Send`, `Reply`, `Receive`, `TodoAdd/Done/Remove`, `TodoList`), `struct Response`, `fn socket_path`, `fn send_request`. |
+| `socket` | Unix domain socket IPC protocol. | `enum Request` (`Ping`, `Hello`, `Hibernate`, `Send`, `Receive`, `TodoAdd/Done/Remove`, `TodoList`), `struct Response`, `fn socket_path`, `fn send_request`. |
 | `daemon_client` | Thin CLI → daemon IPC wrapper. | `fn send_request`, `fn send_checked_request`, `fn daemon_responding`, `fn signal_daemon_wake`. |
 | `daemon` | Persistent event loop: socket server, inbox `notify` watcher, SIGUSR1 wake, timeout enforcement, TODO consumption / attempt-based rescheduling on crash, delayed-wake detection. | `enum DaemonEvent`, `trait Clock`, `trait EventSource`, `async fn run`, `fn main_loop`. |
 | `daemon::effects` | Session I/O abstraction (inbox claim/finalize, reply posting, TODO mutation). | `trait SessionEffects`, `enum ReplyAuthor`, `struct FsSessionEffects`. |

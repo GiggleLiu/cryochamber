@@ -420,17 +420,6 @@ body {
   padding-top: 16px;
 }
 
-.event-log {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-dim);
-  display:flex; gap: 10px;
-  padding-left: 8px;
-  align-self: center;
-}
-.event-log .ts { color: var(--ink-faint); }
-.event-log .kind { color: var(--cool); }
-
 /* Compose */
 .compose {
   border-top: 1px solid var(--line);

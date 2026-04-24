@@ -225,6 +225,14 @@ fn shell_css_disables_running_active_animation_for_reduced_motion() {
 }
 
 #[test]
+fn shell_css_does_not_keep_orphan_event_log_selectors() {
+    assert!(
+        !WEB_CSS.contains(".event-log"),
+        "event-log selectors are orphaned; current shell has no matching markup"
+    );
+}
+
+#[test]
 fn shell_emits_session_markers_between_messages_of_different_sessions() {
     // Operators asked to see which wake/session produced each message.
     // The server now tags every message with `session: N` and the thread

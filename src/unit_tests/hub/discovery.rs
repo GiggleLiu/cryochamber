@@ -79,7 +79,6 @@ fn populate_reads_session_and_unread() {
     let st = crate::state::CryoState {
         session_number: 7,
         pid: None,
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
@@ -188,7 +187,6 @@ fn populate_runtime_reports_agent_running_when_session_active() {
     let st = crate::state::CryoState {
         session_number: 1,
         pid: Some(std::process::id()),
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
@@ -219,7 +217,6 @@ fn populate_runtime_reports_agent_running_false_when_idle() {
     let st = crate::state::CryoState {
         session_number: 1,
         pid: Some(std::process::id()),
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,

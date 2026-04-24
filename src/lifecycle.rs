@@ -72,7 +72,6 @@ pub fn prepare_start(dir: &Path, options: StartOptions) -> Result<PreparedStart>
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: options.agent_override,
         max_session_duration_override: options.max_session_duration_override,
         last_report_time: None,

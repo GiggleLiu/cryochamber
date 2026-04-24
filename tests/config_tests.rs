@@ -57,7 +57,6 @@ fn test_apply_overrides_all() {
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: Some(7200),
 
@@ -86,7 +85,6 @@ fn test_apply_overrides_none_keeps_config() {
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
 
@@ -117,7 +115,6 @@ fn test_apply_overrides_partial() {
     let state = CryoState {
         session_number: 0,
         pid: None,
-        retry_count: 0,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: None,
 

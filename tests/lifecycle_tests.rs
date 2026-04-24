@@ -10,7 +10,6 @@ fn test_state() -> cryochamber::state::CryoState {
     cryochamber::state::CryoState {
         session_number: 7,
         pid: Some(999_999),
-        retry_count: 3,
         agent_override: Some("codex".to_string()),
         max_session_duration_override: Some(120),
         last_report_time: Some("2026-04-22T10:00:00".to_string()),
@@ -58,7 +57,6 @@ fn prepare_start_rejects_locked_state() {
     let state = cryochamber::state::CryoState {
         session_number: 7,
         pid: Some(std::process::id()),
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
@@ -88,7 +86,6 @@ fn stop_chamber_clears_pid_and_preserves_runtime_state() {
         .expect("timer.json should be preserved by stop");
     assert_eq!(stopped.pid, None);
     assert_eq!(stopped.session_number, 7);
-    assert_eq!(stopped.retry_count, 3);
     assert_eq!(stopped.agent_override.as_deref(), Some("codex"));
     assert_eq!(stopped.max_session_duration_override, Some(120));
     assert_eq!(

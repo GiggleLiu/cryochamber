@@ -518,7 +518,6 @@ fn test_cryo_state() -> CryoState {
     CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
@@ -2155,7 +2154,6 @@ fn test_run_clears_stranded_session_active_on_startup_save() {
         &CryoState {
             session_number: 3,
             pid: None,
-            retry_count: 0,
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
@@ -2207,7 +2205,6 @@ fn test_run_recovers_stale_claimed_todo_on_startup() {
         &CryoState {
             session_number: 3,
             pid: None,
-            retry_count: 0,
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
@@ -2263,7 +2260,7 @@ fn test_run_recovers_stale_claimed_todo_on_startup() {
 // These tests exercise `run_event_loop` without spawning subprocesses or
 // installing real OS resources. A `ScriptedSessionLauncher` returns canned
 // outcomes so the loop's state-management (retry reset, next_wake refresh,
-// pending_fallback handling, plan-complete shutdown) can be verified in
+// plan-complete shutdown) can be verified in
 // milliseconds. The virtual `TestClock` keeps `compute_sleep_timeout` in the
 // past so each iteration returns from `wait_for_idle_event` immediately.
 

@@ -8,9 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct CryoState {
     pub session_number: u32,
     pub pid: Option<u32>,
-    /// Current retry count for the active wake cycle. Reset to 0 on success.
-    #[serde(default)]
-    pub retry_count: u32,
     // --- CLI overrides (only set if user passed explicit flags to `cryo start`) ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_override: Option<String>,

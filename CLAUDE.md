@@ -53,7 +53,7 @@ make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 | Binary | Purpose |
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
-| `cryo-agent` | Agent-side IPC/utility CLI — `hibernate`, `send`, `receive`, `alert`, `time`, `todo` (used by the spawned agent, not by operators; most commands send requests to the daemon via socket, while `time` is local) |
+| `cryo-agent` | Agent-side IPC/utility CLI — `hibernate`, `send`, `receive`, `time`, `todo` (used by the spawned agent, not by operators; most commands send requests to the daemon via socket, while `time` is local) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |
 | `cryohub` | Workspace-wide web dashboard — `start`, `stop`, `status`, `daemon` (installs a launchd/systemd service that serves the hub UI over HTTP). |
@@ -129,7 +129,7 @@ and needs an explicit justification.
 ### Key Design Decisions
 
 - **Daemon mode**: `cryo start` installs an OS service (launchd on macOS, systemd on Linux) that survives reboots. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout. Set `CRYO_NO_SERVICE=1` to fall back to direct background process spawn.
-- **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `send`, `receive`, `alert`, `todo`), which send JSON messages over a Unix domain socket. Only `time` is purely local.
+- **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `send`, `receive`, `todo`), which send JSON messages over a Unix domain socket. Only `time` is purely local.
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
 - **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.

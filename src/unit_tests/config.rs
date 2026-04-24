@@ -44,7 +44,6 @@ fn test_apply_overrides_all_fields() {
     let state = crate::state::CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: Some(300),
 
@@ -66,7 +65,6 @@ fn test_apply_overrides_none_fields() {
     let state = crate::state::CryoState {
         session_number: 1,
         pid: None,
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
 

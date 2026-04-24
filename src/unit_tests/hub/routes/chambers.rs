@@ -46,7 +46,6 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
         &crate::state::CryoState {
             session_number: 5,
             pid: None,
-            retry_count: 0,
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,

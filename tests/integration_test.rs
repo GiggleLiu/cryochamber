@@ -51,7 +51,6 @@ fn test_state_roundtrip() {
     let state = CryoState {
         session_number: 5,
         pid: None,
-        retry_count: 0,
         agent_override: Some("opencode".to_string()),
         max_session_duration_override: Some(1800),
 

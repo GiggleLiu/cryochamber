@@ -37,6 +37,7 @@ impl ProtocolFile {
     }
 
     fn matches_executable(self, executable: &str) -> bool {
+        let executable = executable.to_ascii_lowercase();
         match self {
             Self::Claude => executable.contains("claude"),
             Self::Agents => true,

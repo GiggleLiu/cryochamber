@@ -286,12 +286,12 @@ fn cmd_unsync() -> Result<()> {
 struct ZulipSyncLoopBackend {
     dir: PathBuf,
     sync_path: PathBuf,
-    cycle_state: Option<(ZulipClient, cryochamber::zulip_sync::ZulipSyncState)>,
+    sync_state: Option<(ZulipClient, cryochamber::zulip_sync::ZulipSyncState)>,
 }
 
 impl SyncLoopBackend for ZulipSyncLoopBackend {
     fn receive(&mut self) -> Result<SyncLoopCommand> {
-        self.cycle_state = None;
+        self.sync_state = None;
         // Config-level errors (missing zuliprc, stream not found, bad
         // credentials) are unrecoverable without operator intervention;
         // surface them as Halt so the loop exits cleanly with a visible
@@ -328,12 +328,12 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
             },
         }
 
-        self.cycle_state = Some((client, sync_state));
+        self.sync_state = Some((client, sync_state));
         Ok(SyncLoopCommand::Send)
     }
 
     fn send(&mut self) -> Result<cryochamber::sync_common::SyncCycleStatus> {
-        let Some((client, sync_state)) = self.cycle_state.take() else {
+        let Some((client, sync_state)) = self.sync_state.take() else {
             return Ok(cryochamber::sync_common::SyncCycleStatus::Continue);
         };
 
@@ -410,7 +410,7 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
     let mut backend = ZulipSyncLoopBackend {
         dir: dir.clone(),
         sync_path,
-        cycle_state: None,
+        sync_state: None,
     };
 
     cryochamber::sync_common::run_sync_loop(

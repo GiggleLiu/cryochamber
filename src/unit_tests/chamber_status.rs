@@ -4,7 +4,6 @@ fn test_state(session_number: u32) -> crate::state::CryoState {
     crate::state::CryoState {
         session_number,
         pid: None,
-        retry_count: 0,
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,

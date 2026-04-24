@@ -138,7 +138,6 @@ fn test_status_with_state() {
     let state = serde_json::json!({
         "session_number": 3,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -163,7 +162,6 @@ fn test_status_shows_latest_session_tail() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -233,7 +231,6 @@ fn test_cancel_stale_state() {
     let state = serde_json::json!({
         "session_number": 2,
         "pid": 999999,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -276,7 +273,6 @@ fn test_clean_preserves_sync_configuration() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
@@ -495,7 +491,6 @@ fn test_state_backward_compat_ignores_unknown_fields() {
         "last_command": "opencode",
         "pid": null,
         "max_retries": 1,
-        "retry_count": 0,
         "max_session_duration": 1800,
         "watch_inbox": true,
         "daemon_mode": false
@@ -684,7 +679,6 @@ fn test_daemon_status_shows_config() {
     let state = serde_json::json!({
         "session_number": 1,
         "pid": null,
-        "retry_count": 0
     });
     fs::write(
         dir.path().join("timer.json"),
