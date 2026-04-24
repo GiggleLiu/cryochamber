@@ -12,11 +12,6 @@
 - [Zulip Sync](./zulip-sync.md)
 - [FAQ](./faq.md)
 
-# Examples
-
-- [Mr. Lazy](./examples/mr-lazy.md)
-- [Chess by Mail](./examples/chess-by-mail.md)
-
 # Developer Guide
 
 - [Architecture](./architecture.md)

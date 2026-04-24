@@ -23,49 +23,32 @@ cargo install cryochamber
 
 This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub` binaries.
 
-### Copy-Paste Onboarding Prompt
+### 2. Try the example chambers
 
-If you want your coding agent to set up a new Cryochamber project for you, paste this:
-
-```text
-Set up a new Cryochamber project for me in this directory.
-
-1. If `cryo` is not installed, install it with `cargo install cryochamber`.
-2. If the `make-plan` skill is not installed and your coding agent supports custom skills, install it from the Cryochamber repo: clone https://github.com/GiggleLiu/cryochamber somewhere local, then use your agent's skill installation mechanism to install `/path/to/cryochamber/.claude/skills/make-plan`.
-3. Invoke the `make-plan` skill to create the Cryochamber project and generate the initial plan/config files.
-4. Start the daemon with `cryo start`.
-5. Tell me which files were created or updated, and whether the service started successfully.
-```
-
-### 2. Write your plan and configure
-
-Edit `plan.md` with your task — describe the goal, step-by-step tasks, and notes about persistent state. Edit `cryo.toml` to configure the agent command, retry policy, and inbox settings. See [`examples/`](examples/) for reference (chess-by-mail, mr-lazy).
-
-**Recommended:** If your AI coding agent supports custom skills, install `make-plan` from the Cryochamber repo:
-
-> Add the make-plan skill from https://github.com/GiggleLiu/cryochamber
-
-Then invoke the `make-plan` skill to create a new project interactively via guided Q&A.
-
-### 3. Start the service
+Clone the repo and start the hub over the bundled examples (`mr-lazy`, `chess-by-mail`, `personal-assistant`):
 
 ```bash
-cryo start                                                    # start the daemon
+git clone https://github.com/GiggleLiu/cryochamber
+cd cryochamber/examples/chambers
+cryohub start --foreground
 ```
 
-Depending on the way you interact with your agent, start the corresponding service wtih:
-```bash
-cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
-cryo-zulip sync
-cryo-gh init --repo owner/repo                                # if using GitHub Discussions
-cryo-gh sync
-cd <chambers-parent-dir> && cryohub start                     # if using the web UI
-```
+`cryohub` prints a `http://host:port` URL — open it in your browser to manage the example chambers from the web UI.
 
-### 4. Manage the running service
+### 3. Write your own plan
 
-Go to the project folder and type:
+If your AI coding agent supports custom skills, install the `make-plan` skill from the repo you just cloned (point your agent's skill installer at `<repo>/.claude/skills/make-plan`), then ask the agent:
+
+> Invoke the `make-plan` skill to create a new cryochamber project here.
+
+The skill will walk you through `plan.md` and `cryo.toml` interactively. Without skill support, copy one of the `examples/chambers/*` directories as a starting point and edit `plan.md` (the task) and `cryo.toml` (agent command, retry policy, inbox settings) by hand.
+
+### 4. Manage the running chamber
+
+From inside a chamber directory:
+
 ```bash
+cryo start           # start the daemon (installs an OS service)
 cryo status          # check if the daemon is running
 cryo watch           # follow the live log
 cryo send "message"  # send a message to the agent
@@ -88,25 +71,14 @@ cd ~/my-chambers
 cryohub start
 ```
 
-`cryohub` always operates on the current directory; it rejects starting from a chamber dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons. Running daemons registered elsewhere on the machine (outside the hub's cwd) appear as **external** chambers for monitoring only.
-
-**Single-chamber layout:**
-
-```bash
-mkdir -p ~/cryo-chambers
-ln -s $(pwd) ~/cryo-chambers/my-chamber
-cd ~/cryo-chambers && cryohub start
-```
+`cryohub` always operates on the current directory; it rejects starting from a chamber dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons.
 
 ## Messaging Channels
 
-Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox directories. The cryo daemon and agent remain unaware of the channel — all sync is handled by a dedicated binary. These are configured automatically when using `/make-plan`.
-
-Inbox semantics are split deliberately: the daemon only notices that inbox messages exist until the spawned agent asks to read them. Agent-side `cryo-agent receive` goes through daemon IPC, reads and archives the current inbox batch immediately, and records the reply obligation only in the current session. Operator `cryo receive` is separate: it reads messages from the agent's outbox.
+Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox.
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Hub](https://giggleliu.github.io/cryochamber/hub.html) |
 | GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
 
