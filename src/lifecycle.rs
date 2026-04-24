@@ -78,6 +78,7 @@ pub fn prepare_start(dir: &Path, options: StartOptions) -> Result<PreparedStart>
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 

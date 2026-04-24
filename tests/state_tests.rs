@@ -16,6 +16,7 @@ fn test_save_and_load_state() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
@@ -50,6 +51,7 @@ fn test_lock_mechanism() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -73,6 +75,7 @@ fn test_is_locked_dead_process() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -91,6 +94,7 @@ fn test_is_locked_no_pid() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     assert!(!is_locked(&state));
@@ -132,6 +136,7 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -155,6 +160,7 @@ fn test_previous_session_crashed_true_roundtrip() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: true,
     };
     save_state(&state_path, &state).unwrap();
@@ -162,6 +168,28 @@ fn test_previous_session_crashed_true_roundtrip() {
     assert!(loaded.previous_session_crashed);
     let json = std::fs::read_to_string(&state_path).unwrap();
     assert!(json.contains("previous_session_crashed"));
+}
+
+#[test]
+fn test_session_active_true_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_path = dir.path().join("timer.json");
+    std::fs::write(
+        &state_path,
+        r#"{
+            "session_number": 1,
+            "pid": null,
+            "session_active": true
+        }"#,
+    )
+    .unwrap();
+
+    let loaded = load_state(&state_path).unwrap().unwrap();
+    save_state(&state_path, &loaded).unwrap();
+
+    let json = std::fs::read_to_string(&state_path).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["session_active"], true);
 }
 
 #[test]
@@ -194,6 +222,7 @@ fn test_override_fields_roundtrip() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -217,6 +246,7 @@ fn test_none_overrides_not_serialized() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -241,6 +271,7 @@ fn test_last_report_time_roundtrip() {
         last_report_time: Some("2026-02-28T09:00:00".to_string()),
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();
@@ -269,6 +300,7 @@ fn test_provider_index_roundtrip() {
         last_report_time: None,
         provider_index: Some(2),
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     save_state(&state_path, &state).unwrap();

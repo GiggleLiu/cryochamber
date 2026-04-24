@@ -16,6 +16,7 @@ fn test_state() -> cryochamber::state::CryoState {
         last_report_time: Some("2026-04-22T10:00:00".to_string()),
         provider_index: Some(2),
         instance_id: Some("instance-1".to_string()),
+        session_active: false,
         previous_session_crashed: true,
     }
 }
@@ -63,6 +64,7 @@ fn prepare_start_rejects_locked_state() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     cryochamber::state::save_state(&cryochamber::state::state_path(dir.path()), &state).unwrap();

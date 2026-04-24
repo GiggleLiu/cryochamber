@@ -42,6 +42,7 @@ fn wait_for_live_daemon_times_out_with_unlocked_state() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();

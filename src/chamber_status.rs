@@ -6,6 +6,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize)]
 pub struct ChamberStatus {
     pub running: bool,
+    pub agent_running: bool,
     pub session: u32,
     pub agent: String,
     pub log_tail: String,
@@ -36,6 +37,7 @@ pub struct ChamberSyncBadge {
 #[derive(Debug, Clone, Serialize)]
 pub struct ChamberOverview {
     pub running: bool,
+    pub agent_running: bool,
     pub session: Option<u32>,
     pub next_wake: Option<String>,
     pub next_wake_display: Option<String>,
@@ -53,21 +55,16 @@ pub fn status(dir: &Path) -> ChamberStatus {
         .flatten()
         .unwrap_or_default();
 
-    let (running, session, agent) = match crate::state::load_state(&crate::state::state_path(dir))
+    let state = crate::state::load_state(&crate::state::state_path(dir))
         .ok()
-        .flatten()
-    {
-        Some(st) => {
-            let is_running = crate::state::is_locked(&st);
-            let effective_agent = st
-                .agent_override
-                .as_deref()
-                .unwrap_or(&cfg.agent)
-                .to_string();
-            (is_running, st.session_number, effective_agent)
-        }
-        None => (false, 0, cfg.agent.clone()),
-    };
+        .flatten();
+    let (running, agent_running) = runtime_flags(state.as_ref());
+    let session = state.as_ref().map(|st| st.session_number).unwrap_or(0);
+    let agent = state
+        .as_ref()
+        .and_then(|st| st.agent_override.as_deref())
+        .unwrap_or(&cfg.agent)
+        .to_string();
 
     let log_file = crate::log::log_path(dir);
     let completion_summary = crate::log::parse_latest_session_plan_complete(&log_file)
@@ -77,6 +74,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
 
     ChamberStatus {
         running,
+        agent_running,
         session,
         agent,
         log_tail: crate::log::read_recent_sessions(&log_file, 5)
@@ -116,11 +114,13 @@ pub fn overview(dir: &Path) -> ChamberOverview {
     let state = crate::state::load_state(&crate::state::state_path(dir))
         .ok()
         .flatten();
+    let (running, agent_running) = runtime_flags(state.as_ref());
     let next_wake = next_wake(dir);
     let log_file = crate::log::log_path(dir);
 
     ChamberOverview {
-        running: state.as_ref().map(crate::state::is_locked).unwrap_or(false),
+        running,
+        agent_running,
         session: state.as_ref().map(|st| st.session_number),
         next_wake_display: next_wake.clone(),
         wake_imminent: wake_imminent(next_wake.as_deref()),
@@ -163,6 +163,14 @@ fn wake_imminent(next_wake: Option<&str>) -> bool {
             (0..=3_600_000).contains(&diff_ms)
         })
         .unwrap_or(false)
+}
+
+fn runtime_flags(state: Option<&crate::state::CryoState>) -> (bool, bool) {
+    let running = state.map(crate::state::is_locked).unwrap_or(false);
+    let agent_running = state
+        .map(|st| st.session_active && running)
+        .unwrap_or(false);
+    (running, agent_running)
 }
 
 fn message_sessions(dir: &Path) -> Vec<crate::log::SessionSummary> {

@@ -70,6 +70,7 @@ fn populate_reads_session_and_unread() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     crate::state::save_state(&crate::state::state_path(&alpha), &st).unwrap();

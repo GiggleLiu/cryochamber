@@ -51,6 +51,7 @@ fn test_apply_overrides_all_fields() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     config.apply_overrides(&state);
@@ -72,6 +73,7 @@ fn test_apply_overrides_none_fields() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
     config.apply_overrides(&state);

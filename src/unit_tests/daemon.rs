@@ -434,6 +434,24 @@ impl FakeStartupPlatform {
     }
 }
 
+#[derive(Default)]
+struct RecordingStateStore {
+    saved_states: Mutex<Vec<CryoState>>,
+}
+
+impl RecordingStateStore {
+    fn saved_states(&self) -> Vec<CryoState> {
+        self.saved_states.lock().unwrap().clone()
+    }
+}
+
+impl StateStore for RecordingStateStore {
+    fn save(&self, _path: &Path, state: &CryoState) -> Result<()> {
+        self.saved_states.lock().unwrap().push(state.clone());
+        Ok(())
+    }
+}
+
 impl StartupPlatform for FakeStartupPlatform {
     type Server = DummyServer;
     type Watcher = DummyWatcher;
@@ -487,6 +505,7 @@ fn test_cryo_state() -> CryoState {
         last_report_time: None,
         provider_index: None,
         instance_id: Some("test-instance".into()),
+        session_active: false,
         previous_session_crashed: false,
     }
 }
@@ -1992,6 +2011,58 @@ fn test_prepare_runtime_startup_propagates_socket_bind_failure() {
     assert_eq!(platform.watcher_calls(), 0);
 }
 
+#[test]
+fn test_run_clears_stranded_session_active_on_startup_save() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::config::save_config(
+        &crate::config::config_path(dir.path()),
+        &crate::config::CryoConfig::default(),
+    )
+    .unwrap();
+    crate::state::save_state(
+        &crate::state::state_path(dir.path()),
+        &CryoState {
+            session_number: 3,
+            pid: None,
+            retry_count: 0,
+            agent_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+            instance_id: None,
+            session_active: true,
+            previous_session_crashed: false,
+        },
+    )
+    .unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let state_store = Arc::new(RecordingStateStore::default());
+    let daemon = Daemon::with_deps(
+        dir.path().to_path_buf(),
+        clock,
+        Arc::new(ProcessSessionLauncher),
+        state_store.clone(),
+    );
+    daemon.shutdown.store(true, Ordering::Relaxed);
+
+    daemon.run().unwrap();
+
+    let saved = state_store.saved_states();
+    assert!(
+        !saved.is_empty(),
+        "daemon should persist startup state before shutting down"
+    );
+    assert!(
+        !saved[0].session_active,
+        "startup save should clear a stranded active-session flag: {saved:?}"
+    );
+}
+
 // ---------- In-process multi-session event-loop tests ----------
 //
 // These tests exercise `run_event_loop` without spawning subprocesses or
@@ -2094,6 +2165,23 @@ impl SessionLauncher for ScriptedSessionLauncher {
             hook();
         }
         Ok(step.outcome)
+    }
+}
+
+struct ErrorSessionLauncher;
+
+impl SessionLauncher for ErrorSessionLauncher {
+    fn run_session(
+        &self,
+        _daemon: &Daemon,
+        _config: &CryoConfig,
+        _cryo_state: &CryoState,
+        _server: &crate::socket::SocketServer,
+        _delayed_wake: Option<&str>,
+        _provider_env: &std::collections::HashMap<String, String>,
+        _provider_name: Option<&str>,
+    ) -> Result<SessionLoopOutcome> {
+        anyhow::bail!("injected launcher failure");
     }
 }
 
@@ -2255,6 +2343,135 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
     // Both sessions ran; second was triggered by the past-TODO wake.
     assert_eq!(launcher.session_numbers(), vec![1, 2]);
     assert!(!cryo_state.previous_session_crashed);
+}
+
+#[test]
+fn test_run_event_loop_marks_session_active_during_successful_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let state_store = Arc::new(RecordingStateStore::default());
+    let daemon = Daemon::with_deps(
+        dir.path().to_path_buf(),
+        clock,
+        launcher,
+        state_store.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    let saved = state_store.saved_states();
+    assert!(
+        saved.len() >= 3,
+        "expected startup, post-session, and final shutdown saves, got {saved:?}"
+    );
+    assert!(
+        saved[0].session_active,
+        "session should be marked active before launch"
+    );
+    assert!(
+        !saved[1].session_active,
+        "post-session save should clear the active flag: {saved:?}"
+    );
+    assert!(
+        !saved.last().unwrap().session_active,
+        "final shutdown state must stay inactive: {saved:?}"
+    );
+}
+
+#[test]
+fn test_run_event_loop_clears_session_active_after_launcher_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ErrorSessionLauncher);
+    let state_store = Arc::new(RecordingStateStore::default());
+    let daemon = Daemon::with_deps(
+        dir.path().to_path_buf(),
+        clock,
+        launcher,
+        state_store.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    let saved = state_store.saved_states();
+    assert!(
+        saved.len() >= 3,
+        "expected startup, error, and final shutdown saves, got {saved:?}"
+    );
+    assert!(
+        saved[0].session_active,
+        "session should be marked active before launch"
+    );
+    assert!(
+        !saved[1].session_active,
+        "error path should clear the active flag before persisting: {saved:?}"
+    );
+    assert!(
+        !saved.last().unwrap().session_active,
+        "final shutdown state must stay inactive: {saved:?}"
+    );
 }
 
 #[test]

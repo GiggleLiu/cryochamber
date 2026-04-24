@@ -64,6 +64,7 @@ fn test_apply_overrides_all() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
@@ -92,6 +93,7 @@ fn test_apply_overrides_none_keeps_config() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
@@ -122,6 +124,7 @@ fn test_apply_overrides_partial() {
         last_report_time: None,
         provider_index: None,
         instance_id: None,
+        session_active: false,
         previous_session_crashed: false,
     };
 
