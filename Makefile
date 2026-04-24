@@ -382,7 +382,7 @@ ifndef V
 	$(error Usage: make release V=x.y.z)
 endif
 	@echo "Releasing v$(V)..."
-	sed -i 's/^version = ".*"/version = "$(V)"/' Cargo.toml
+	perl -i -pe 's/^version = ".*"/version = "$(V)"/' Cargo.toml
 	cargo check
 	git add Cargo.toml
 	git commit -m "release: v$(V)"
