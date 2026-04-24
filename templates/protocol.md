@@ -51,8 +51,8 @@ Your prompt already carries the session-dynamic context — **do not re-fetch wh
 
 - `## Current Time` — the daemon's wall-clock at wake.
 - `## Task` — the session directive.
-- `## TODO List` — pending TODOs.
-- `## Inbox` — new inbox messages (up to 10, each up to ~2 KB).
+- `## TODO List` — pending TODOs plus claimed `[~]` TODOs for this session.
+- `## Inbox` — whether new inbox messages are waiting; run `cryo-agent receive` to read them.
 - `## System Notice` — only present after a delayed wake.
 
 Each pre-rendered section's header ends with a hint:
@@ -72,7 +72,7 @@ Then:
 - The only supported way to communicate with the human is through `cryo-agent send`.
 - Do not use stdout/stderr as a conversation channel; they are diagnostic logs in `cryo-agent.log`.
 - If you need to answer inbox mail, run `cryo-agent receive` first, then `cryo-agent send "response text"` for that received batch.
-- Update TODOs as you go: `cryo-agent todo done <id>`
+- Update TODOs as you go: `cryo-agent todo done <id>`. Claimed TODOs show as `[~]`; they become done automatically when the session ends successfully.
 
 ### Step 3: Record
 
@@ -138,12 +138,12 @@ cryo-agent hibernate [--complete|--exit N] [--summary "..."]   # End the session
 
 - **TODO list drives your schedule.** The daemon's next wake is always the earliest pending TODO's `at` time. `hibernate` does not take a wake time.
 - **Every session sends a human-visible outbox message before hibernating.** For non-complete sessions, also add a pending TODO before `hibernate`.
-- **Inbox messages wake you early.** Humans can send messages. They appear inline in the `## Inbox` section of your prompt — follow the section hint to decide whether to call `cryo-agent receive` for the rest.
+- **Inbox messages wake you early.** Humans can send messages. The prompt tells you when inbox mail is waiting; call `cryo-agent receive` to read and archive the current batch.
 - **Human communication goes through `cryo-agent`.** Use `send`; stdout/stderr are logs only.
 - **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.
-- **TODOs that triggered this wake are already consumed.** The daemon marks every past-due pending TODO as done before spawning you so you don't react to the same item twice. They will not appear in `## TODO List`; add a new TODO for any follow-up work.
-- **No hibernate = crash, and the consumed TODO comes back later.** If you exit without calling `cryo-agent hibernate`, the daemon re-injects each consumed TODO with a `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). There is no immediate auto-retry; the chamber simply waits for the rescheduled TODO (or an inbox message).
-- **Inbox messages are previewed, not consumed, by the daemon.** `## Inbox` shows messages currently in `messages/inbox/` as a preview. When you call `cryo-agent receive`, the daemon reads and archives that batch immediately; the next successful `cryo-agent send` resolves the reply obligation for that received batch, or the daemon falls back at session end. There is no file-backed pending inbox state.
+- **TODOs that triggered this wake are claimed.** The daemon marks every past-due pending TODO as `[~]` before spawning you so the prompt shows the trigger but the scheduler ignores it. Add a new pending TODO for any follow-up work.
+- **Session end makes claimed TODOs terminal.** Successful sessions mark claimed TODOs `[x]`. If you exit without calling `cryo-agent hibernate`, the daemon marks each claimed TODO done and creates a fresh retry TODO with a `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day).
+- **Inbox messages are consumed only by `receive`.** When you call `cryo-agent receive`, the daemon reads and archives that batch immediately; the next successful `cryo-agent send` resolves the reply obligation for that received batch, or the daemon falls back at session end. There is no file-backed pending inbox state.
 - **No TODO = chamber goes silent.** Without a pending TODO, the daemon has nothing to wake for.
 - **Delayed wakes happen.** If the machine was suspended, you'll see a system notice. Adjust accordingly.
 - **Hibernate is terminal.** Nothing you do after hibernate will take effect. Put all work before it.

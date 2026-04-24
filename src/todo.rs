@@ -10,12 +10,14 @@ const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
 /// clamped to one day so a persistently failing TODO still polls once a day.
 const RETRY_DELAY_CAP_MINUTES: i64 = 24 * 60;
 
-/// A single todo item with an ID, text, scheduled time, and completion status.
+/// A single todo item with an ID, text, scheduled time, and lifecycle state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: u32,
     pub text: String,
     pub done: bool,
+    #[serde(default)]
+    pub claimed: bool,
     #[serde(default)]
     pub at: String,
     #[serde(default = "default_created")]
@@ -53,7 +55,13 @@ impl TodoFile {
         Ok(items
             .iter()
             .map(|item| {
-                let check = if item.done { "x" } else { " " };
+                let check = if item.done {
+                    "x"
+                } else if item.claimed {
+                    "~"
+                } else {
+                    " "
+                };
                 format!("{}. [{}] {} (at: {})", item.id, check, item.text, item.at)
             })
             .collect::<Vec<_>>()
@@ -63,7 +71,7 @@ impl TodoFile {
     pub fn next_wake_time(&self) -> Result<Option<String>> {
         Ok(load_items(&self.path)?
             .iter()
-            .filter(|i| !i.done && !i.at.is_empty())
+            .filter(|i| !i.done && !i.claimed && !i.at.is_empty())
             .map(|i| i.at.as_str())
             .min()
             .map(String::from))
@@ -72,7 +80,7 @@ impl TodoFile {
     pub fn next_valid_wake(&self) -> Result<Option<NaiveDateTime>> {
         Ok(load_items(&self.path)?
             .iter()
-            .filter(|i| !i.done && !i.at.is_empty())
+            .filter(|i| !i.done && !i.claimed && !i.at.is_empty())
             .filter_map(|i| {
                 let parsed = NaiveDateTime::parse_from_str(&i.at, WAKE_TIME_FMT);
                 if parsed.is_err() {
@@ -90,7 +98,7 @@ impl TodoFile {
         self.update(|items| {
             if let Some(existing) = items
                 .iter()
-                .find(|i| !i.done && i.text == text && i.at == at)
+                .find(|i| !i.done && !i.claimed && i.text == text && i.at == at)
             {
                 return Ok(existing.id);
             }
@@ -100,6 +108,7 @@ impl TodoFile {
                 id,
                 text,
                 done: false,
+                claimed: false,
                 at,
                 created,
             });
@@ -114,6 +123,7 @@ impl TodoFile {
                 .find(|i| i.id == id)
                 .with_context(|| format!("Todo item {id} not found"))?;
             item.done = true;
+            item.claimed = false;
             Ok(())
         })
     }
@@ -129,46 +139,63 @@ impl TodoFile {
         })
     }
 
-    pub fn consume_past_due(&self, now: &NaiveDateTime) -> Result<Vec<(String, String)>> {
+    pub fn claim_due(&self, now: &NaiveDateTime) -> Result<Vec<TodoItem>> {
         let mut items = load_items(&self.path)?;
-        let mut consumed = Vec::new();
+        let mut claimed = Vec::new();
         for item in &mut items {
-            if item.done || item.at.is_empty() {
+            if item.done || item.claimed || item.at.is_empty() {
                 continue;
             }
             if let Ok(at) = NaiveDateTime::parse_from_str(&item.at, WAKE_TIME_FMT) {
                 if at <= *now {
-                    consumed.push((item.text.clone(), item.at.clone()));
-                    item.done = true;
+                    item.claimed = true;
+                    claimed.push(item.clone());
                 }
             }
         }
-        if !consumed.is_empty() {
+        if !claimed.is_empty() {
             save_items(&self.path, &items)?;
         }
-        Ok(consumed)
+        Ok(claimed)
     }
 
-    pub fn reschedule_consumed(
-        &self,
-        consumed: &[(String, String)],
-        now: NaiveDateTime,
-    ) -> Result<Vec<u32>> {
-        if consumed.is_empty() {
-            return Ok(Vec::new());
-        }
-
+    pub fn complete_claimed(&self) -> Result<Vec<TodoItem>> {
         self.update(|items| {
+            let mut completed = Vec::new();
+            for item in items.iter_mut() {
+                if item.done || !item.claimed {
+                    continue;
+                }
+                item.done = true;
+                item.claimed = false;
+                completed.push(item.clone());
+            }
+            Ok(completed)
+        })
+    }
+
+    pub fn reschedule_claimed_after_crash(&self, now: NaiveDateTime) -> Result<Vec<u32>> {
+        self.update(|items| {
+            let mut consumed = Vec::new();
+            for item in items.iter_mut() {
+                if item.done || !item.claimed {
+                    continue;
+                }
+                consumed.push((item.text.clone(), item.at.clone()));
+                item.done = true;
+                item.claimed = false;
+            }
+
             let mut ids = Vec::with_capacity(consumed.len());
             for (text, _) in consumed {
-                let (new_text, attempt) = bump_attempt(text);
+                let (new_text, attempt) = bump_attempt(&text);
                 let delay_min = retry_delay_minutes(attempt);
                 let at = now + chrono::Duration::minutes(delay_min);
                 let at_str = at.format(WAKE_TIME_FMT).to_string();
 
                 if let Some(existing) = items
                     .iter()
-                    .find(|i| !i.done && i.text == new_text && i.at == at_str)
+                    .find(|i| !i.done && !i.claimed && i.text == new_text && i.at == at_str)
                 {
                     ids.push(existing.id);
                     continue;
@@ -180,11 +207,13 @@ impl TodoFile {
                     id,
                     text: new_text,
                     done: false,
+                    claimed: false,
                     at: at_str,
                     created,
                 });
                 ids.push(id);
             }
+
             Ok(ids)
         })
     }

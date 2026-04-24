@@ -101,21 +101,27 @@ and needs an explicit justification.
    `daemon_unanswered_reply_text` for that batch
    (`finalize_human_replies`).
 3. **Every TODO is honoured, and every failure is reported.** When a
-   TODO's `at` time arrives the daemon consumes it and runs a session.
-   If that session crashes, `reschedule_consumed_after_crash` creates a
-   *new* TODO with an `(attempt k)` suffix and a `2^k`-minute delay
-   capped at 1 day, so the task keeps being retried and the operator
-   can see how many attempts have been made. A manually-completed TODO
+   TODO's `at` time arrives the daemon claims it and runs a session.
+   The claimed item stays visible as `[~]` in `## TODO List` while the
+   session is active, but the scheduler ignores it so the same wake
+   does not loop. If the session succeeds, the daemon marks the claimed
+   item done. If that session crashes, `reschedule_claimed_after_crash`
+   marks the original done and creates a *new* TODO with an
+   `(attempt k)` suffix and a `2^k`-minute delay capped at 1 day, so
+   the task keeps being retried and the operator can see how many
+   attempts have been made. A manually-completed TODO
    (`cryo-agent todo done`) is the only way to stop the retry cycle
    short of a successful session.
-4. **Consumption is terminal — a message or TODO dies the moment it
-   is picked up, regardless of whether processing succeeded.** An
+4. **Claim/consumption is terminal — a picked-up message or TODO
+   never returns to pending, regardless of whether processing
+   succeeded.** An
    inbox message read by `cryo-agent receive` is archived into
    `messages/inbox/archive/` immediately and is never re-delivered or
-   restored to the inbox. A TODO consumed by `consume_past_due` is
-   marked `done = true` and is never un-done. Retries are always
-   implemented as *new* items with fresh IDs, not by reopening the
-   original. This prevents the same trigger from re-spawning the
+   restored to the inbox. A TODO claimed for a session is never moved
+   back to plain pending: successful sessions mark it done, and failed
+   sessions mark it done plus add a fresh retry item. Retries are
+   always implemented as *new* items with fresh IDs, not by reopening
+   the original. This prevents the same trigger from re-spawning the
    agent on every subsequent wake tick and keeps the retry count
    honest. If a human still wants action on an unanswered message,
    they resend.
@@ -129,7 +135,7 @@ and needs an explicit justification.
 - **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender — both per-session fallback replies (when the agent never sends a human-visible message after claiming inbox, or crashes) and periodic reports. Agent-authored human-visible messages use `from: agent`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
-- **Crash handling via TODO re-injection**: If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it consumed for that wake with a `(attempt k)` suffix and an exponential delay (`2^k` min, capped at 1 day). There is no in-daemon backoff-retry loop; rescheduling lives entirely in `todo.json`, surviving daemon restarts and visible to both agent and operator. EventLogger is always finalized.
+- **Crash handling via TODO re-injection**: If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it claimed for that wake with a `(attempt k)` suffix and an exponential delay (`2^k` min, capped at 1 day). There is no in-daemon backoff-retry loop; rescheduling lives entirely in `todo.json`, surviving daemon restarts and visible to both agent and operator. EventLogger is always finalized.
 - **Inbox contract**: There is no `cryo-agent reply`. Wake prompts do not include inbox contents; the daemon only checks whether inbox files exist so it can surface a notice in the session prompt. When the agent runs `cryo-agent receive`, the daemon reads and archives the current inbox batch immediately. The next successful `cryo-agent send` is the reply by definition for that received batch. If the agent exits or crashes before such a `send`, the daemon writes the fallback message for that batch. Inbox messages are never retried; only TODOs have retry semantics. If the human still wants action, they resend.
 - **Default agent**: The CLI defaults to `opencode` as the agent command (headless mode, not the TUI).
 - **Agent notes via `NOTES.md`**: The agent's persistent memory across sessions is a plain markdown file (`NOTES.md`) the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes drawer tab, and updated by the agent on its own. The removed `cryo-agent note` subcommand and `Request::Note` IPC variant are historical.
@@ -146,7 +152,7 @@ and needs an explicit justification.
   - `cryo-agent` is **not** the external model runner; it is the agent-side IPC/utility CLI the spawned agent uses to talk back to the daemon.
 
 - **API to manipulate TODOs**: `src/todo.rs::TodoFile`.
-  - `TodoFile` is the single file-backed API for `todo.json`: `add`, `done`, `remove`, `items`, `display`, `next_wake_time`, `next_valid_wake`, `consume_past_due`, `reschedule_consumed`.
+  - `TodoFile` is the single file-backed API for `todo.json`: `add`, `done`, `remove`, `items`, `display`, `next_wake_time`, `next_valid_wake`, `claim_due`, `complete_claimed`, `reschedule_claimed_after_crash`.
   - `cryo-agent todo ...` does not touch `todo.json` directly; it sends `socket::Request::{TodoAdd, TodoDone, TodoRemove, TodoList}` through `daemon_client::send_checked_request`.
   - Daemon request handling goes through `SessionEffects` / `FsSessionEffects`, which delegate to `TodoFile`.
   - Scheduler-side daemon logic also uses `TodoFile` directly for wake computation and crash retry requeue.
@@ -166,7 +172,7 @@ and needs an explicit justification.
   - Session startup only lists unread inbox filenames; the daemon does not preview inbox bodies.
   - `DaemonRequest::Send` writes the agent-authored outbox message and, if a claimed inbox batch exists, also finalizes that batch.
   - Session finalization may write a fallback `from: cryochamber` reply or status update if the agent did not send a human-visible response. Fallback reply obligation applies only to the batch this session already received; unread inbox files stay unread for a future session.
-  - Past-due TODOs are consumed when a session starts; on crash the daemon creates fresh retry TODOs rather than "un-consuming" the originals.
+  - Past-due TODOs are claimed when a session starts; on success the daemon marks them done, and on crash it marks them done while creating fresh retry TODOs rather than "un-claiming" the originals.
 
 ### Files Created by `cryo init`
 

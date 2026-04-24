@@ -748,6 +748,11 @@ impl Daemon {
         let mut config =
             crate::config::load_config(&crate::config::config_path(&self.dir))?.unwrap_or_default();
         config.apply_overrides(&cryo_state);
+        let stale_session_active = cryo_state.session_active;
+        let recovered_claimed_todos = self.reschedule_claimed_after_crash();
+        if stale_session_active || recovered_claimed_todos {
+            cryo_state.previous_session_crashed = true;
+        }
         cryo_state.session_active = false;
         let bootstrap = self.build_bootstrap_state(&cryo_state, &config);
 
@@ -885,12 +890,10 @@ impl Daemon {
                     active_provider.map(|p| p.env.clone()).unwrap_or_default();
                 let provider_name = active_provider.map(|p| p.name.as_str());
 
-                // Consume past-due TODOs before spawning the agent so it
-                // does not re-react to the same scheduled item twice and
-                // the scheduler does not loop on a stale wake. If the
-                // session crashes we re-inject the consumed items with an
-                // attempt-bumped text and exponential delay.
-                let consumed_todos = self.consume_past_due_todos();
+                // Claim past-due TODOs before spawning the agent so the
+                // prompt shows exactly what triggered the wake while the
+                // scheduler ignores those items until this session ends.
+                self.claim_past_due_todos();
 
                 let session_result = match self.run_one_session(
                     config,
@@ -905,7 +908,9 @@ impl Daemon {
                         cryo_state.previous_session_crashed = outcome.is_crash();
                         cryo_state.session_active = false;
                         if outcome.is_crash() {
-                            self.reschedule_consumed_after_crash(&consumed_todos);
+                            self.reschedule_claimed_after_crash();
+                        } else {
+                            self.complete_claimed_todos();
                         }
                         cryo_state.session_active = false;
                         // Persist session number only after successful completion
@@ -917,7 +922,7 @@ impl Daemon {
                         cryo_state.session_active = false;
                         cryo_state.previous_session_crashed = true;
                         cryo_state.session_active = false;
-                        self.reschedule_consumed_after_crash(&consumed_todos);
+                        self.reschedule_claimed_after_crash();
                         let _ = self.save_state(cryo_state);
                         eprintln!("Daemon: session failed: {e}");
                         Err(())
@@ -1275,43 +1280,59 @@ impl Daemon {
             .flatten()
     }
 
-    /// Mark past-due pending TODOs as done and return their `(text, at)` so
-    /// the caller can re-inject them with an attempt bump if the session
-    /// crashes. Load/save failures are swallowed and reported to stderr —
-    /// TODO bookkeeping must never abort the session loop.
-    fn consume_past_due_todos(&self) -> Vec<(String, String)> {
+    /// Claim past-due pending TODOs so the prompt can show them as in-flight
+    /// while the scheduler ignores them. Load/save failures are swallowed and
+    /// reported to stderr — TODO bookkeeping must never abort the session loop.
+    fn claim_past_due_todos(&self) {
         let now = self.clock.local_now();
-        crate::todo::TodoFile::new(self.dir.join("todo.json"))
-            .consume_past_due(&now)
-            .map_err(|e| {
-                eprintln!("Daemon: failed to consume TODO list: {e}");
-                e
-            })
-            .unwrap_or_default()
+        match crate::todo::TodoFile::new(self.dir.join("todo.json")).claim_due(&now) {
+            Ok(items) if !items.is_empty() => {
+                eprintln!("Daemon: claimed {} due TODO(s)", items.len());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Daemon: failed to claim TODO list: {e}");
+            }
+        }
     }
 
-    /// Re-inject previously-consumed TODOs after a crashed session. Each
-    /// item's text gains a ` (attempt k)` suffix (or its existing suffix is
-    /// bumped) and its `at` becomes `now + 2^k` minutes, capped at 1 day.
-    fn reschedule_consumed_after_crash(&self, consumed: &[(String, String)]) {
-        if consumed.is_empty() {
-            return;
+    /// Mark all claimed TODOs as done after a successful session. The claim is
+    /// the session's in-flight marker; success makes it terminal.
+    fn complete_claimed_todos(&self) {
+        match crate::todo::TodoFile::new(self.dir.join("todo.json")).complete_claimed() {
+            Ok(items) if !items.is_empty() => {
+                eprintln!("Daemon: completed {} claimed TODO(s)", items.len());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Daemon: failed to complete claimed TODOs: {e}");
+            }
         }
+    }
+
+    /// Re-inject claimed TODOs after a crashed session. Each item's text gains
+    /// a ` (attempt k)` suffix (or its existing suffix is bumped) and its `at`
+    /// becomes `now + 2^k` minutes, capped at 1 day.
+    fn reschedule_claimed_after_crash(&self) -> bool {
         let now = self.clock.local_now();
         let ids = match crate::todo::TodoFile::new(self.dir.join("todo.json"))
-            .reschedule_consumed(consumed, now)
+            .reschedule_claimed_after_crash(now)
         {
             Ok(ids) => ids,
             Err(e) => {
                 eprintln!("Daemon: failed to reschedule TODO list: {e}");
-                return;
+                return false;
             }
         };
+        if ids.is_empty() {
+            return false;
+        }
         eprintln!(
-            "Daemon: rescheduled {} consumed TODO(s) after crash (new ids: {:?})",
+            "Daemon: rescheduled {} claimed TODO(s) after crash (new ids: {:?})",
             ids.len(),
             ids,
         );
+        true
     }
 
     /// Generate and send the periodic activity report.

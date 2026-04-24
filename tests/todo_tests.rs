@@ -213,11 +213,20 @@ fn test_display_formatting() {
     todos
         .add("Second".to_string(), "2026-03-05T14:00".to_string())
         .unwrap();
+    todos
+        .add("Claimed".to_string(), "2026-03-01T09:00".to_string())
+        .unwrap();
     todos.done(1).unwrap();
+    todos
+        .claim_due(
+            &chrono::NaiveDateTime::parse_from_str("2026-03-01T09:30", "%Y-%m-%dT%H:%M").unwrap(),
+        )
+        .unwrap();
 
     let output = todos.display().unwrap();
     assert!(output.starts_with("1. [x] First (at: 2026-03-01T10:00)\n"));
     assert!(output.contains("2. [ ] Second (at: 2026-03-05T14:00)"));
+    assert!(output.contains("3. [~] Claimed (at: 2026-03-01T09:00)"));
 }
 
 fn agent_cmd() -> Command {
@@ -260,6 +269,17 @@ fn test_cli_todo_list_no_daemon() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("Cannot connect"));
+}
+
+#[test]
+fn test_cli_todo_pop_is_not_a_command() {
+    let dir = tempfile::tempdir().unwrap();
+    agent_cmd()
+        .args(["todo", "pop"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unrecognized subcommand"));
 }
 
 #[test]

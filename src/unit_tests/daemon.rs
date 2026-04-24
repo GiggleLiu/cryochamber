@@ -284,6 +284,7 @@ impl FakeSessionEffects {
             id: 1,
             text: "test setup pending todo".to_string(),
             done: false,
+            claimed: false,
             at: "2099-12-31T23:59".to_string(),
             created: "unknown".to_string(),
         });
@@ -300,6 +301,7 @@ impl FakeSessionEffects {
             id: 1,
             text: "test setup pending todo".to_string(),
             done: false,
+            claimed: false,
             at: "2099-12-31T23:59".to_string(),
             created: "unknown".to_string(),
         });
@@ -349,6 +351,7 @@ impl SessionEffects for FakeSessionEffects {
             id,
             text: text.to_string(),
             done: false,
+            claimed: false,
             at: at.to_string(),
             created: "unknown".to_string(),
         });
@@ -362,6 +365,7 @@ impl SessionEffects for FakeSessionEffects {
             .find(|item| item.id == id)
             .ok_or_else(|| anyhow::anyhow!("TODO #{id} not found"))?;
         item.done = true;
+        item.claimed = false;
         Ok(())
     }
 
@@ -382,7 +386,13 @@ impl SessionEffects for FakeSessionEffects {
             .todos
             .iter()
             .map(|item| {
-                let check = if item.done { "x" } else { " " };
+                let check = if item.done {
+                    "x"
+                } else if item.claimed {
+                    "~"
+                } else {
+                    " "
+                };
                 format!("{}. [{}] {} (at: {})", item.id, check, item.text, item.at)
             })
             .collect::<Vec<_>>()
@@ -392,6 +402,7 @@ impl SessionEffects for FakeSessionEffects {
     fn has_pending_todo_with_valid_wake(&self) -> bool {
         self.todos.iter().any(|item| {
             !item.done
+                && !item.claimed
                 && !item.at.is_empty()
                 && NaiveDateTime::parse_from_str(&item.at, WAKE_TIME_FMT).is_ok()
         })
@@ -1774,6 +1785,112 @@ fn test_drive_active_session_todo_requests_use_effects() {
 }
 
 #[test]
+fn test_run_event_loop_completes_claimed_todo_after_successful_session() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon =
+        Daemon::new_with_clock_and_launcher(dir.path().to_path_buf(), clock.clone(), launcher);
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let (_tx, rx) = mpsc::channel();
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    let items = crate::todo::TodoFile::new(dir.path().join("todo.json"))
+        .items()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].done);
+    assert!(!items[0].claimed);
+}
+
+#[test]
+fn test_run_event_loop_reschedules_claimed_todo_after_crash() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_past_todo(dir.path());
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+    ]));
+    let daemon =
+        Daemon::new_with_clock_and_launcher(dir.path().to_path_buf(), clock.clone(), launcher);
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    let items = crate::todo::TodoFile::new(dir.path().join("todo.json"))
+        .items()
+        .unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items[0].done);
+    assert!(!items[0].claimed);
+    assert_eq!(items[1].text, "keep going (attempt 1)");
+    assert_eq!(items[1].at, "2026-03-01T12:02");
+    assert!(!items[1].done);
+    assert!(!items[1].claimed);
+    assert!(cryo_state.previous_session_crashed);
+}
+
+#[test]
 fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
     let dir = tempfile::tempdir().unwrap();
     crate::message::ensure_dirs(dir.path()).unwrap();
@@ -2060,6 +2177,70 @@ fn test_run_clears_stranded_session_active_on_startup_save() {
     assert!(
         !saved[0].session_active,
         "startup save should clear a stranded active-session flag: {saved:?}"
+    );
+}
+
+#[test]
+fn test_run_recovers_stale_claimed_todo_on_startup() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::config::save_config(
+        &crate::config::config_path(dir.path()),
+        &crate::config::CryoConfig::default(),
+    )
+    .unwrap();
+    crate::state::save_state(
+        &crate::state::state_path(dir.path()),
+        &CryoState {
+            session_number: 3,
+            pid: None,
+            retry_count: 0,
+            agent_override: None,
+            max_session_duration_override: None,
+            last_report_time: None,
+            provider_index: None,
+            instance_id: None,
+            session_active: true,
+            previous_session_crashed: false,
+        },
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("todo.json"),
+        r#"[{"id":1,"text":"stale wake","done":false,"claimed":true,"at":"2026-03-01T10:00","created":"unknown"}]"#,
+    )
+    .unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let state_store = Arc::new(RecordingStateStore::default());
+    let daemon = Daemon::with_deps(
+        dir.path().to_path_buf(),
+        clock,
+        Arc::new(ProcessSessionLauncher),
+        state_store.clone(),
+    );
+    daemon.shutdown.store(true, Ordering::Relaxed);
+
+    daemon.run().unwrap();
+
+    let items = crate::todo::TodoFile::new(dir.path().join("todo.json"))
+        .items()
+        .unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items[0].done);
+    assert!(!items[0].claimed);
+    assert_eq!(items[1].text, "stale wake (attempt 1)");
+    assert_eq!(items[1].at, "2026-03-01T12:02");
+    assert!(!items[1].done);
+    assert!(!items[1].claimed);
+
+    let saved = state_store.saved_states();
+    assert!(
+        saved[0].previous_session_crashed,
+        "startup state should remember that the previous session crashed: {saved:?}"
     );
 }
 
