@@ -42,6 +42,13 @@ make copilot-review # request Copilot code review on current PR
 make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 ```
 
+## Codex CLI (for `make run-plan`)
+
+`make run-plan` invokes `codex exec` on the latest plan in `docs/plans/` (default `RUNNER=codex`).
+Auth: `codex login` (ChatGPT) or `printenv OPENAI_API_KEY | codex login --with-api-key`.
+Verify with `codex login status`. Override model via `CODEX_MODEL=gpt-5.5 make run-plan`,
+switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-output.log`.
+
 ## Architecture
 
 ### Core Loop
