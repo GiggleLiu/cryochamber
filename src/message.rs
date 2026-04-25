@@ -14,6 +14,7 @@ pub struct Message {
     pub body: String,
     pub timestamp: NaiveDateTime,
     pub metadata: BTreeMap<String, String>,
+    pub is_question: bool,
 }
 
 /// Create the messages directory structure: inbox/, outbox/, inbox/archive/.
@@ -244,6 +245,9 @@ pub fn message_to_markdown(msg: &Message) -> String {
         "timestamp: {}",
         msg.timestamp.format("%Y-%m-%dT%H:%M:%S")
     ));
+    if msg.is_question {
+        lines.push("question: true".to_string());
+    }
     for (key, value) in &msg.metadata {
         lines.push(format!("{key}: {value}"));
     }
@@ -266,6 +270,7 @@ pub fn parse_message(content: &str) -> Result<Message> {
         body: sections.body.to_string(),
         timestamp: fields.timestamp,
         metadata: fields.metadata,
+        is_question: fields.is_question,
     })
 }
 
@@ -298,6 +303,7 @@ struct FrontmatterFields {
     subject: String,
     timestamp: NaiveDateTime,
     metadata: BTreeMap<String, String>,
+    is_question: bool,
 }
 
 fn parse_frontmatter_fields(
@@ -309,6 +315,7 @@ fn parse_frontmatter_fields(
         subject: String::new(),
         timestamp: fallback_timestamp,
         metadata: BTreeMap::new(),
+        is_question: false,
     };
 
     for line in frontmatter.lines() {
@@ -320,6 +327,7 @@ fn parse_frontmatter_fields(
                     fields.timestamp = ts;
                 }
             }
+            FrontmatterLine::Question(value) => fields.is_question = value,
             FrontmatterLine::Metadata { key, value } => {
                 fields.metadata.insert(key, value);
             }
@@ -335,6 +343,7 @@ enum FrontmatterLine {
     From(String),
     Subject(String),
     Timestamp(String),
+    Question(bool),
     Metadata { key: String, value: String },
     Skip,
 }
@@ -352,6 +361,7 @@ fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
         "from" => FrontmatterLine::From(value),
         "subject" => FrontmatterLine::Subject(value),
         "timestamp" => FrontmatterLine::Timestamp(value),
+        "question" => FrontmatterLine::Question(value.eq_ignore_ascii_case("true")),
         _ => FrontmatterLine::Metadata {
             key: key.to_string(),
             value,

@@ -13,6 +13,7 @@ fn msg(from: &str, body: &str, year: i32, month: u32, day: u32, hour: u32, minut
             .and_hms_opt(hour, minute, 0)
             .unwrap(),
         metadata: BTreeMap::new(),
+        is_question: false,
     }
 }
 

@@ -987,9 +987,14 @@ impl Daemon {
                 let response = ipc_protocol_response(protocol_version);
                 runtime.respond(response.ok, response.message)?;
             }
-            DaemonRequest::Send { text } => {
+            DaemonRequest::Send { text, question } => {
                 let has_claimed_batch = state.inbox_state.has_claimed_batch();
-                match effects.write_reply(ReplyAuthor::Agent, &text, self.clock.local_now()) {
+                match effects.write_reply(
+                    ReplyAuthor::Agent,
+                    &text,
+                    self.clock.local_now(),
+                    question,
+                ) {
                     Ok(()) => {
                         if has_claimed_batch {
                             state.inbox_state.complete_agent_send();
@@ -1091,7 +1096,7 @@ impl Daemon {
         let message_count = inbox_state.claimed_message_count();
         if message_count > 0 {
             let text = daemon_unanswered_reply_text(message_count);
-            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now()) {
+            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now(), false) {
                 Ok(()) => {
                     if let Err(e) = logger.log_event(&format!(
                         "daemon reply: {} unanswered inbox message{} [{}]",
@@ -1120,6 +1125,7 @@ impl Daemon {
                 ReplyAuthor::Daemon,
                 daemon_missing_outbound_text(),
                 self.clock.local_now(),
+                false,
             ) {
                 Ok(()) => {
                     if let Err(e) =

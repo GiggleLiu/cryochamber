@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 6;
+pub const IPC_PROTOCOL_VERSION: u32 = 7;
 
 /// Filter for `cryo-agent dialog`. Matches the CLI flags
 /// `--last N` (default 20), `--all`, `--since <iso>`.
@@ -31,6 +31,8 @@ pub enum Request {
     },
     Send {
         text: String,
+        #[serde(default)]
+        question: bool,
     },
     Receive,
     Dialog {

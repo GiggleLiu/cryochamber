@@ -30,6 +30,10 @@ enum Commands {
     Send {
         /// Message text
         text: String,
+        /// Mark this message as a question awaiting a human reply.
+        /// The hub rail shows a `?` badge until any human inbox message arrives.
+        #[arg(long)]
+        question: bool,
     },
     /// Read inbox messages from human
     Receive,
@@ -113,7 +117,7 @@ fn main() -> Result<()> {
                 summary,
             },
         ),
-        Commands::Send { text } => send(&dir, &Request::Send { text }),
+        Commands::Send { text, question } => send(&dir, &Request::Send { text, question }),
         Commands::Receive => send(&dir, &Request::Receive),
         Commands::Dialog(args) => {
             let filter = dialog_filter_from_args(args)?;

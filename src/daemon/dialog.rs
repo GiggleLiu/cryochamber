@@ -141,6 +141,7 @@ mod render_helpers_tests {
                 .and_hms_opt(hour, 0, 0)
                 .unwrap(),
             metadata: BTreeMap::new(),
+            is_question: false,
         }
     }
 

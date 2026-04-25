@@ -14,6 +14,7 @@ fn msg(from: &str, body: &str, day: u32, hour: u32) -> Message {
             .and_hms_opt(hour, 0, 0)
             .unwrap(),
         metadata: BTreeMap::new(),
+        is_question: false,
     }
 }
 

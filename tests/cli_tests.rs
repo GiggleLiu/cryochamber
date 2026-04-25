@@ -466,6 +466,7 @@ fn test_receive_shows_outbox_messages() {
         )
         .unwrap(),
         metadata: std::collections::BTreeMap::new(),
+        is_question: false,
     };
     cryochamber::message::write_message(dir.path(), "outbox", &msg).unwrap();
 

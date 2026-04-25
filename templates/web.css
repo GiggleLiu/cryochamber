@@ -172,15 +172,16 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chamber .unread {
+.chamber .question-badge {
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
-  background: var(--accent);
+  background: #f0a03a;
   color: #2a1d07;
   padding: 1px 6px;
   border-radius: 8px;
   line-height: 14px;
+  cursor: default;
 }
 .chamber-preview {
   font-family: var(--sans);
@@ -582,6 +583,9 @@ body {
   align-self: flex-end;
   background: rgba(244,198,120,0.07);
   border: 1px solid rgba(244,198,120,0.18);
+}
+.msg.question {
+  border-left: 2px solid #f0a03a;
 }
 .msg-meta {
   font-family: var(--mono);

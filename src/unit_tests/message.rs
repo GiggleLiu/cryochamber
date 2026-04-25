@@ -92,6 +92,7 @@ fn read_message_dir_skips_malformed_messages() {
         timestamp: NaiveDateTime::parse_from_str("2026-03-01T12:00:00", "%Y-%m-%dT%H:%M:%S")
             .unwrap(),
         metadata: BTreeMap::new(),
+        is_question: false,
     };
     std::fs::write(messages_dir.join("a.md"), message_to_markdown(&valid)).unwrap();
     std::fs::write(messages_dir.join("b.md"), "not a valid message").unwrap();
@@ -164,5 +165,91 @@ fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Messa
         body: body.to_string(),
         timestamp: NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S").unwrap(),
         metadata: BTreeMap::new(),
+        is_question: false,
     }
+}
+
+#[test]
+fn parse_message_sets_is_question_when_frontmatter_question_true() {
+    let raw = "---\nfrom: agent\nsubject: What is ice?\ntimestamp: 2026-04-25T15:30:00\n\
+               question: true\n---\n\nQuestion: What is ice?\n";
+
+    let msg = parse_message(raw).unwrap();
+
+    assert!(msg.is_question, "question: true should set is_question");
+    assert!(
+        !msg.metadata.contains_key("question"),
+        "question flag should not leak into metadata"
+    );
+}
+
+#[test]
+fn parse_message_defaults_is_question_to_false_when_absent() {
+    let raw = "---\nfrom: agent\nsubject: Status\ntimestamp: 2026-04-25T15:30:00\n---\n\nHi.\n";
+
+    let msg = parse_message(raw).unwrap();
+
+    assert!(!msg.is_question);
+}
+
+#[test]
+fn parse_message_sets_is_question_false_when_question_false() {
+    let raw = "---\nfrom: agent\nsubject: Status\ntimestamp: 2026-04-25T15:30:00\n\
+               question: false\n---\n\nHi.\n";
+
+    let msg = parse_message(raw).unwrap();
+
+    assert!(!msg.is_question);
+}
+
+#[test]
+fn message_to_markdown_emits_question_true_when_is_question_set() {
+    let msg = Message {
+        from: "agent".to_string(),
+        subject: "What is ice?".to_string(),
+        body: "Question: What is ice?".to_string(),
+        timestamp: NaiveDateTime::parse_from_str("2026-04-25T15:30:00", "%Y-%m-%dT%H:%M:%S")
+            .unwrap(),
+        metadata: BTreeMap::new(),
+        is_question: true,
+    };
+
+    let out = message_to_markdown(&msg);
+
+    assert!(
+        out.contains("question: true"),
+        "expected question: true in frontmatter, got:\n{out}"
+    );
+}
+
+#[test]
+fn message_to_markdown_omits_question_field_when_is_question_false() {
+    let msg = test_message("agent", "Status", "Hi.", "2026-04-25T15:30:00");
+
+    let out = message_to_markdown(&msg);
+
+    assert!(
+        !out.contains("question:"),
+        "expected no question field for non-question, got:\n{out}"
+    );
+}
+
+#[test]
+fn message_round_trip_preserves_is_question() {
+    let msg = Message {
+        from: "agent".to_string(),
+        subject: "What is ice?".to_string(),
+        body: "Question: What is ice?".to_string(),
+        timestamp: NaiveDateTime::parse_from_str("2026-04-25T15:30:00", "%Y-%m-%dT%H:%M:%S")
+            .unwrap(),
+        metadata: BTreeMap::new(),
+        is_question: true,
+    };
+
+    let parsed = parse_message(&message_to_markdown(&msg)).unwrap();
+
+    assert!(parsed.is_question);
+    assert_eq!(parsed.from, msg.from);
+    assert_eq!(parsed.subject, msg.subject);
+    assert_eq!(parsed.body, msg.body);
 }

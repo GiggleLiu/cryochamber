@@ -87,6 +87,7 @@ impl MessageChannel for MessageStore {
             body: body.to_string(),
             timestamp: Local::now().naive_local(),
             metadata: BTreeMap::new(),
+            is_question: false,
         };
         self.send_out(&msg)?;
         Ok(())

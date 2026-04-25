@@ -160,6 +160,7 @@ fn test_socket_server_roundtrip() {
         dir.path(),
         &Request::Send {
             text: "hello".into(),
+            question: false,
         },
     )
     .unwrap();
@@ -168,7 +169,7 @@ fn test_socket_server_roundtrip() {
 
     // Server received the request
     let received = rx.recv().unwrap();
-    assert!(matches!(received, Request::Send { text } if text == "hello"));
+    assert!(matches!(received, Request::Send { text, .. } if text == "hello"));
 
     handle.join().unwrap();
 }
@@ -245,7 +246,7 @@ fn test_accept_unknown_fields_ignored() {
     // serde ignores unknown fields by default (no deny_unknown_fields set)
     match result {
         Ok(Some((req, responder))) => {
-            assert!(matches!(req, Request::Send { text } if text == "hello"));
+            assert!(matches!(req, Request::Send { text, .. } if text == "hello"));
             responder
                 .respond(&Response {
                     ok: true,

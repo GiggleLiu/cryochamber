@@ -50,7 +50,7 @@ pub struct ChamberEntry {
     pub next_wake: Option<String>,
     pub next_wake_display: Option<String>,
     pub wake_imminent: bool,
-    pub unread: usize,
+    pub has_open_question: bool,
     pub task: Option<String>,
     pub last_message_preview: Option<String>,
     pub completed: bool,
@@ -66,7 +66,7 @@ pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
 /// operator can see what's broken. Subdirectories without any
 /// `cryo.toml` (e.g. a stray `messages/` or unrelated folder) are
 /// skipped entirely. Runtime fields (`running`, `session`, `next_wake`,
-/// `unread`) are filled in by `populate_runtime`, not here.
+/// `has_open_question`) are filled in by `populate_runtime`, not here.
 pub fn scan_workspace(dir: &Path) -> ChamberIndex {
     let mut out = ChamberIndex::new();
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -103,7 +103,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
                 next_wake: None,
                 next_wake_display: None,
                 wake_imminent: false,
-                unread: 0,
+                has_open_question: false,
                 task: None,
                 last_message_preview: None,
                 completed: false,
@@ -124,7 +124,7 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
         entry.next_wake = overview.next_wake;
         entry.next_wake_display = overview.next_wake_display;
         entry.wake_imminent = overview.wake_imminent;
-        entry.unread = overview.unread;
+        entry.has_open_question = overview.has_open_question;
         entry.task = overview.task;
         entry.last_message_preview = overview.last_message_preview;
         entry.completed = overview.completed;

@@ -11,6 +11,7 @@ pub(super) trait SessionEffects {
         author: ReplyAuthor,
         text: &str,
         timestamp: NaiveDateTime,
+        is_question: bool,
     ) -> Result<()>;
     fn todo_add(&mut self, text: &str, at: &str) -> Result<u32>;
     fn todo_done(&mut self, id: u32) -> Result<()>;
@@ -80,13 +81,20 @@ impl SessionEffects for FsSessionEffects<'_> {
         author: ReplyAuthor,
         text: &str,
         timestamp: NaiveDateTime,
+        is_question: bool,
     ) -> Result<()> {
+        let body = if is_question {
+            format!("Question: {text}")
+        } else {
+            text.to_string()
+        };
         let msg = crate::message::Message {
             from: author.from().to_string(),
             subject: author.subject().to_string(),
-            body: text.to_string(),
+            body,
             timestamp,
             metadata: std::collections::BTreeMap::new(),
+            is_question,
         };
         self.message_store().send_out(&msg)?;
         Ok(())

@@ -70,6 +70,7 @@ pub fn write_report_to_outbox(
             ),
             ("period_hours".to_string(), summary.period_hours.to_string()),
         ]),
+        is_question: false,
     };
     MessageStore::new(work_dir.to_path_buf()).send_out(&msg)
 }

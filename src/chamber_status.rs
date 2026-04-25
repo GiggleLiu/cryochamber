@@ -164,6 +164,7 @@ pub struct ChamberMessage {
     pub body: String,
     pub timestamp: String,
     pub session: Option<u32>,
+    pub is_question: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -180,7 +181,7 @@ pub struct ChamberOverview {
     pub next_wake: Option<String>,
     pub next_wake_display: Option<String>,
     pub wake_imminent: bool,
-    pub unread: usize,
+    pub has_open_question: bool,
     pub task: Option<String>,
     pub last_message_preview: Option<String>,
     pub completed: bool,
@@ -276,10 +277,7 @@ pub fn overview(dir: &Path) -> ChamberOverview {
         next_wake_display: next_wake.clone(),
         wake_imminent: wake_imminent(next_wake.as_deref()),
         next_wake,
-        unread: store
-            .read_inbox_named()
-            .map(|messages| messages.len())
-            .unwrap_or(0),
+        has_open_question: has_open_question_for(&store),
         task: crate::log::parse_latest_session_task(&log_file)
             .ok()
             .flatten(),
@@ -296,6 +294,67 @@ pub fn overview(dir: &Path) -> ChamberOverview {
             })
             .collect(),
     }
+}
+
+/// True iff the chamber has an open agent-asked question — that is, the
+/// most recent outbox message marked `is_question` is newer than the most
+/// recent human inbox reply (across `inbox/` and `inbox/archive/`).
+///
+/// `operator` and `cryochamber` inbox messages are *not* counted as
+/// replies; they represent system actions (wake signals, fallback notices)
+/// rather than answers from the user.
+pub fn has_open_question(dir: &Path) -> bool {
+    has_open_question_for(&MessageStore::new(dir.to_path_buf()))
+}
+
+fn has_open_question_for(store: &MessageStore) -> bool {
+    let last_human_reply_ts = latest_human_inbox_timestamp(store);
+    let mut outbox: Vec<(String, Message)> = Vec::new();
+    if let Ok(messages) = store.read_outbox_named() {
+        outbox.extend(messages);
+    }
+    if let Ok(messages) = store.read_outbox_archive_named() {
+        outbox.extend(messages);
+    }
+    // Reverse-chrono walk: stop at the first message older than the last
+    // human reply, and return true on the first question seen above that.
+    outbox.sort_by(|left, right| {
+        right
+            .1
+            .timestamp
+            .cmp(&left.1.timestamp)
+            .then_with(|| right.0.cmp(&left.0))
+    });
+    for (_, msg) in outbox {
+        if let Some(reply_ts) = last_human_reply_ts {
+            if msg.timestamp <= reply_ts {
+                return false;
+            }
+        }
+        if msg.is_question {
+            return true;
+        }
+    }
+    false
+}
+
+fn latest_human_inbox_timestamp(store: &MessageStore) -> Option<chrono::NaiveDateTime> {
+    let mut messages = Vec::new();
+    if let Ok(inbox) = store.read_inbox_named() {
+        messages.extend(inbox);
+    }
+    if let Ok(archive) = store.read_inbox_archive_named() {
+        messages.extend(archive);
+    }
+    messages
+        .into_iter()
+        .filter(|(_, msg)| is_human_reply_sender(&msg.from))
+        .map(|(_, msg)| msg.timestamp)
+        .max()
+}
+
+fn is_human_reply_sender(from: &str) -> bool {
+    !matches!(from, "operator" | "cryochamber" | "agent")
 }
 
 fn next_wake(dir: &Path) -> Option<String> {
@@ -383,6 +442,7 @@ fn message_model(
         body: msg.body.clone(),
         timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
         session: session_for_message(sessions, msg.timestamp),
+        is_question: msg.is_question,
     }
 }
 

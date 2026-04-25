@@ -161,10 +161,11 @@
     name.textContent = c.name;
     row1.appendChild(dot);
     row1.appendChild(name);
-    if (c.unread > 0) {
+    if (c.has_open_question) {
       const badge = document.createElement('span');
-      badge.className = 'unread';
-      badge.textContent = c.unread;
+      badge.className = 'question-badge';
+      badge.textContent = '?';
+      badge.title = 'Open question — agent is waiting on you';
       row1.appendChild(badge);
     }
     row.appendChild(row1);
@@ -519,6 +520,7 @@
     const row = document.createElement('div');
     // outbox = agent (left), inbox = human (right)
     row.className = 'msg ' + (m.direction === 'outbox' ? 'agent' : 'human');
+    if (m.is_question) row.classList.add('question');
     row.dataset.key = messageKey(m);
     row.dataset.day = dayKey(m.timestamp);
     if (m.session != null) row.dataset.session = String(m.session);

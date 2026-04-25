@@ -21,6 +21,7 @@ pub(super) enum DaemonRequest {
     },
     Send {
         text: String,
+        question: bool,
     },
     Hibernate {
         complete: bool,
@@ -37,7 +38,7 @@ impl From<crate::socket::Request> for DaemonRequest {
             crate::socket::Request::Ping => Self::Ping,
             crate::socket::Request::Hello { protocol_version } => Self::Hello { protocol_version },
             crate::socket::Request::Dialog { filter } => Self::Dialog { filter },
-            crate::socket::Request::Send { text } => Self::Send { text },
+            crate::socket::Request::Send { text, question } => Self::Send { text, question },
             crate::socket::Request::Hibernate {
                 complete,
                 exit_code,

@@ -20,6 +20,7 @@ fn test_message(from: &str, body: &str, timestamp: &str) -> crate::message::Mess
         body: body.to_string(),
         timestamp: chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S").unwrap(),
         metadata: Default::default(),
+        is_question: false,
     }
 }
 
@@ -328,4 +329,129 @@ fn overview_agent_running_false_when_idle() {
     let ov = overview(dir.path());
     assert!(ov.running);
     assert!(!ov.agent_running);
+}
+
+fn write_outbox_msg(dir: &std::path::Path, from: &str, body: &str, ts: &str, is_question: bool) {
+    let store = MessageStore::new(dir.to_path_buf());
+    store.ensure_dirs().unwrap();
+    let msg = crate::message::Message {
+        from: from.to_string(),
+        subject: String::new(),
+        body: body.to_string(),
+        timestamp: chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").unwrap(),
+        metadata: Default::default(),
+        is_question,
+    };
+    store.send_out(&msg).unwrap();
+}
+
+fn write_inbox_msg(dir: &std::path::Path, from: &str, body: &str, ts: &str) {
+    let store = MessageStore::new(dir.to_path_buf());
+    store.ensure_dirs().unwrap();
+    let msg = crate::message::Message {
+        from: from.to_string(),
+        subject: String::new(),
+        body: body.to_string(),
+        timestamp: chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").unwrap(),
+        metadata: Default::default(),
+        is_question: false,
+    };
+    store.send_in(&msg).unwrap();
+}
+
+#[test]
+fn has_open_question_false_when_no_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(!has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_false_when_outbox_has_no_question() {
+    let dir = tempfile::tempdir().unwrap();
+    write_outbox_msg(
+        dir.path(),
+        "agent",
+        "Status update",
+        "2026-04-25T10:00:00",
+        false,
+    );
+    assert!(!has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_true_when_question_exists_and_no_inbox_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    write_outbox_msg(
+        dir.path(),
+        "agent",
+        "What is ice?",
+        "2026-04-25T10:00:00",
+        true,
+    );
+    assert!(has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_false_when_human_reply_is_newer_than_question() {
+    let dir = tempfile::tempdir().unwrap();
+    write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);
+    write_inbox_msg(dir.path(), "human", "answer", "2026-04-25T11:00:00");
+    assert!(!has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_true_when_question_is_newer_than_last_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    write_inbox_msg(dir.path(), "human", "old reply", "2026-04-25T09:00:00");
+    write_outbox_msg(
+        dir.path(),
+        "agent",
+        "fresh question",
+        "2026-04-25T10:00:00",
+        true,
+    );
+    assert!(has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_ignores_operator_inbox_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);
+    // Operator wake message arrives later but should NOT clear the indicator.
+    write_inbox_msg(dir.path(), "operator", "wake", "2026-04-25T11:00:00");
+    assert!(has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_ignores_cryochamber_inbox_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);
+    write_inbox_msg(
+        dir.path(),
+        "cryochamber",
+        "system note",
+        "2026-04-25T11:00:00",
+    );
+    assert!(has_open_question(dir.path()));
+}
+
+#[test]
+fn has_open_question_uses_archived_inbox_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    // Reply was processed and archived (the normal case after the agent reads it).
+    write_inbox_msg(dir.path(), "human", "answer", "2026-04-25T11:00:00");
+    let store = MessageStore::new(dir.path().to_path_buf());
+    let filenames: Vec<String> = store.list_inbox_filenames().unwrap().into_iter().collect();
+    store.archive_inbox(&filenames).unwrap();
+    write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);
+    // Question is older than the archived reply, so no open question.
+    assert!(!has_open_question(dir.path()));
+}
+
+#[test]
+fn overview_exposes_has_open_question() {
+    let dir = tempfile::tempdir().unwrap();
+    write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);
+    let ov = overview(dir.path());
+    assert!(ov.has_open_question);
 }
