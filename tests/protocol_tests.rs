@@ -133,7 +133,8 @@ fn test_write_template_plan_creates_new() {
     let path = dir.path().join("plan.md");
     assert!(path.exists());
     let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.contains("# Hello Cryo"));
+    assert!(content.contains("# Interstellar Traveler"));
+    assert!(content.contains("cryo-agent dialog"));
 }
 
 #[test]
