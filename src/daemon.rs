@@ -185,8 +185,9 @@ use schedule::{
 #[cfg(test)]
 use request::TodoRequest;
 use request::{
-    handle_receive_request, handle_todo_request, resolve_hibernate_request, DaemonRequest,
-    FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
+    handle_dialog_request, handle_receive_request, handle_todo_request, resolve_hibernate_request,
+    DaemonRequest, FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome,
+    TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;
@@ -624,11 +625,10 @@ impl Daemon {
             DaemonRequest::Hello { protocol_version } => {
                 let _ = responder.respond(&ipc_protocol_response(protocol_version));
             }
-            DaemonRequest::Dialog { .. } => {
-                let _ = responder.respond(&crate::socket::Response {
-                    ok: false,
-                    message: "dialog not yet implemented".into(),
-                });
+            DaemonRequest::Dialog { filter } => {
+                let mut effects = FileMessageEffects::new(&self.dir);
+                let outcome = handle_dialog_request(filter, &[], &mut effects);
+                let _ = responder.respond(&outcome.into_response());
             }
             DaemonRequest::Todo(todo_request) => {
                 let mut effects = FileTodoEffects::new(&self.dir);
