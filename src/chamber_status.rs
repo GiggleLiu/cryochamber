@@ -4,6 +4,103 @@ use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::path::Path;
 
+/// Parse `cryo.toml` text into a flat list of display rows for the Settings
+/// drawer. Top-level scalars become single rows; the `providers` array is
+/// expanded to one row per provider (name + the *keys* of its env map, never
+/// the values, since they may hold API secrets). Unknown sections collapse
+/// to a placeholder row. Returns an empty vector for empty or unparseable
+/// input so the frontend can fall back to the raw text view.
+pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
+    if src.is_empty() {
+        return Vec::new();
+    }
+    // The toml v1 crate's `s.parse::<Value>()` parses a single value, not a
+    // document. For a TOML document we need `from_str::<Table>`.
+    let table: toml::Table = match toml::from_str(src) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut rows = Vec::new();
+    for (key, val) in &table {
+        match val {
+            toml::Value::String(s) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: format!("\"{s}\""),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Integer(i) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: i.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Float(f) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: f.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Boolean(b) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: b.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Datetime(d) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: d.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Array(arr) if key == "providers" => {
+                for (i, prov) in arr.iter().enumerate() {
+                    rows.push(provider_row(i, prov));
+                }
+            }
+            toml::Value::Array(arr) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: format!("[{} items]", arr.len()),
+                kind: "section".into(),
+            }),
+            toml::Value::Table(_) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: "[table]".into(),
+                kind: "section".into(),
+            }),
+        }
+    }
+    rows
+}
+
+fn provider_row(index: usize, value: &toml::Value) -> SettingsRow {
+    let table = match value.as_table() {
+        Some(t) => t,
+        None => {
+            return SettingsRow {
+                key: format!("providers[{index}]"),
+                value: "(invalid)".into(),
+                kind: "section".into(),
+            }
+        }
+    };
+    let name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unnamed)");
+    let env_keys: Vec<&str> = table
+        .get("env")
+        .and_then(|v| v.as_table())
+        .map(|env| env.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let env_summary = if env_keys.is_empty() {
+        String::new()
+    } else {
+        format!(" · env: {}", env_keys.join(", "))
+    };
+    SettingsRow {
+        key: format!("providers[{index}]"),
+        value: format!("{name}{env_summary}"),
+        kind: "section".into(),
+    }
+}
+
 /// Render markdown to HTML, escaping any embedded raw HTML so plan.md can't
 /// inject script tags into the hub UI. Output is empty when input is empty.
 pub fn render_markdown_safe(src: &str) -> String {
@@ -34,12 +131,21 @@ pub struct ChamberStatus {
     pub log_tail: String,
     pub next_wake: Option<String>,
     pub notes_content: String,
+    pub notes_html: String,
     pub plan_content: String,
     pub plan_html: String,
     pub config_content: String,
+    pub settings_rows: Vec<SettingsRow>,
     pub task: Option<String>,
     pub completed: bool,
     pub completion_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingsRow {
+    pub key: String,
+    pub value: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +205,10 @@ pub fn status(dir: &Path) -> ChamberStatus {
 
     let plan_content = std::fs::read_to_string(dir.join("plan.md")).unwrap_or_default();
     let plan_html = render_markdown_safe(&plan_content);
+    let notes_content = std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default();
+    let notes_html = render_markdown_safe(&notes_content);
+    let config_content = std::fs::read_to_string(dir.join("cryo.toml")).unwrap_or_default();
+    let settings_rows = parse_settings_rows(&config_content);
 
     ChamberStatus {
         running,
@@ -110,10 +220,12 @@ pub fn status(dir: &Path) -> ChamberStatus {
             .flatten()
             .unwrap_or_default(),
         next_wake: next_wake(dir),
-        notes_content: std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default(),
+        notes_content,
+        notes_html,
         plan_content,
         plan_html,
-        config_content: std::fs::read_to_string(dir.join("cryo.toml")).unwrap_or_default(),
+        config_content,
+        settings_rows,
         task: crate::log::parse_latest_session_task(&log_file)
             .ok()
             .flatten(),

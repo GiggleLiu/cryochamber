@@ -101,7 +101,20 @@ fn status_json_plan_and_config_empty_when_files_missing() {
     let v = status_json(dir.path());
     assert_eq!(v["plan_content"], "");
     assert_eq!(v["plan_html"], "");
+    assert_eq!(v["notes_content"], "");
+    assert_eq!(v["notes_html"], "");
     assert_eq!(v["config_content"], "");
+}
+
+#[test]
+fn status_json_renders_notes_markdown() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("NOTES.md"), "## Notes\n\n- alpha\n- beta\n").unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["notes_content"], "## Notes\n\n- alpha\n- beta\n");
+    let html = v["notes_html"].as_str().expect("notes_html");
+    assert!(html.contains("<h2>Notes</h2>"), "got {html}");
+    assert!(html.contains("<li>alpha</li>"), "got {html}");
 }
 
 #[test]

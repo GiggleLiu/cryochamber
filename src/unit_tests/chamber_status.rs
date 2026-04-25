@@ -95,6 +95,18 @@ fn status_reads_plan_and_config_from_disk() {
 }
 
 #[test]
+fn status_renders_notes_markdown_to_html() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("NOTES.md"), "# Notes\n\n- one\n- two\n").unwrap();
+
+    let status = status(dir.path());
+
+    assert_eq!(status.notes_content, "# Notes\n\n- one\n- two\n");
+    assert!(status.notes_html.contains("<h1>Notes</h1>"));
+    assert!(status.notes_html.contains("<li>one</li>"));
+}
+
+#[test]
 fn status_plan_and_config_empty_when_files_missing() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -102,6 +114,8 @@ fn status_plan_and_config_empty_when_files_missing() {
 
     assert!(status.plan_content.is_empty());
     assert!(status.plan_html.is_empty());
+    assert!(status.notes_content.is_empty());
+    assert!(status.notes_html.is_empty());
     assert!(status.config_content.is_empty());
 }
 
@@ -128,6 +142,61 @@ fn render_markdown_safe_drops_image_urls() {
         !out.contains("attacker.example"),
         "image src must not leak into output, got: {out}"
     );
+}
+
+#[test]
+fn parse_settings_rows_handles_scalars_and_providers() {
+    // Top-level scalars become individual rows. The `providers` array
+    // expands into one row per entry, redacting env *values* (which can
+    // hold API keys) but listing the env *keys* so the operator can
+    // verify what each provider sets.
+    let toml = r#"
+agent = "claude"
+max_session_duration = 600
+watch_inbox = true
+
+[[providers]]
+name = "anthropic"
+env = { ANTHROPIC_API_KEY = "sk-secret-1", ANTHROPIC_MODEL = "claude-sonnet-4-6" }
+
+[[providers]]
+name = "openai"
+env = { OPENAI_API_KEY = "sk-secret-2" }
+"#;
+    let rows = parse_settings_rows(toml);
+    let by_key: std::collections::HashMap<&str, &str> = rows
+        .iter()
+        .map(|r| (r.key.as_str(), r.value.as_str()))
+        .collect();
+
+    assert_eq!(by_key.get("agent").copied(), Some("\"claude\""));
+    assert_eq!(by_key.get("max_session_duration").copied(), Some("600"));
+    assert_eq!(by_key.get("watch_inbox").copied(), Some("true"));
+
+    let p0 = by_key.get("providers[0]").expect("providers[0]");
+    assert!(p0.starts_with("anthropic"));
+    assert!(p0.contains("ANTHROPIC_API_KEY"));
+    assert!(p0.contains("ANTHROPIC_MODEL"));
+    assert!(
+        !p0.contains("sk-secret"),
+        "env values must never leak into the settings rows; got {p0}"
+    );
+
+    let p1 = by_key.get("providers[1]").expect("providers[1]");
+    assert!(p1.starts_with("openai"));
+    assert!(p1.contains("OPENAI_API_KEY"));
+    assert!(!p1.contains("sk-secret-2"), "got {p1}");
+}
+
+#[test]
+fn parse_settings_rows_returns_empty_for_invalid_toml() {
+    let rows = parse_settings_rows("this is not = valid toml [[[");
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn parse_settings_rows_returns_empty_for_empty_input() {
+    assert!(parse_settings_rows("").is_empty());
 }
 
 #[test]

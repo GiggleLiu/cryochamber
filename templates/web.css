@@ -187,7 +187,14 @@ body {
 .chamber-meta .when {
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.chamber-meta .when.soon { color: var(--accent); }
+/* Wake time in the chamber rail always reads as a cued, actionable signal.
+   The previous variant rendered non-imminent wakes in the same gray as
+   surrounding meta text, which made one chamber's wake "stand out" and
+   another's "blend in" depending purely on how soon it was due — visually
+   inconsistent for what is the same kind of information. The Todos-panel
+   `.when` keeps its imminence colouring; that's a list of items where
+   relative urgency is the point. */
+.chamber-meta .when { color: var(--accent); }
 
 .rail-foot {
   padding: 10px 14px;
@@ -222,7 +229,11 @@ body {
   display:flex; align-items: flex-start; justify-content: space-between;
   gap: 24px;
 }
-.thread-head .left { min-width: 0; }
+/* `.left` must grow to fill the row so the lifecycle buttons inside its
+   `.task-row` can be pushed to the right edge by `margin-left: auto`. Without
+   `flex: 1`, the column is sized to content and there's no extra space for
+   the auto margin to absorb. */
+.thread-head .left { flex: 1; min-width: 0; }
 .thread-head .title {
   font-family: var(--serif);
   font-weight: 400;
@@ -237,12 +248,26 @@ body {
   color: var(--ink-faint);
   letter-spacing: 0.06em;
 }
+.thread-head .task-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+}
 .thread-head .task {
+  /* Don't `flex: 1` — that would grow the task to 64ch and bunch the
+     lifecycle buttons against the text. Keep .task at content width
+     (capped at 64ch by `max-width`); .lifecycle's `margin-left: auto`
+     then floats the buttons to the right edge of the row. */
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--sans);
   font-size: 13px;
   color: var(--ink-dim);
-  margin-top: 6px;
   max-width: 64ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .thread-head .task .label {
   font-family: var(--mono);
@@ -277,7 +302,8 @@ body {
 
 .lifecycle {
   display:flex; gap: 6px;
-  margin-top: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .lifecycle button {
   font-family: var(--mono);
@@ -418,22 +444,49 @@ body {
 }
 .plan-md th { background: var(--panel-2); }
 
-/* Notes tab body — agent's free-form memory, rendered as plaintext. */
-.file-pre {
-  margin: 0;
-  font-family: var(--sans);
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--ink);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-width: 76ch;
+/* Drawer Settings panel — structured key/value display parsed from
+   cryo.toml. Falls back to raw monospace text if parsing fails. */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
 }
-.file-pre.empty { color: var(--ink-faint); font-style: italic; }
-
-/* Drawer Settings panel — cryo.toml as monospace text. */
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) 1fr;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-row .k {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+.settings-row .v {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.settings-row.section .k { color: var(--accent); }
+.settings-row.section .v { color: var(--ink-dim); }
+.settings-empty {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-style: italic;
+  margin-top: 4px;
+}
 .settings-pre {
-  margin: 0;
+  margin: 8px 0 0;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.55;
@@ -444,14 +497,6 @@ body {
   padding: 10px 12px;
   overflow-x: auto;
   white-space: pre;
-}
-.settings-pre.empty {
-  color: var(--ink-faint);
-  font-style: italic;
-  background: none;
-  border: none;
-  padding: 0;
-  white-space: normal;
 }
 
 /* Messages tab body needs to wrap thread + compose like the original

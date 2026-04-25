@@ -272,27 +272,53 @@ fn shell_gives_thread_min_height_so_overflow_can_scroll() {
 }
 
 #[test]
-fn shell_preserves_file_pre_scroll_across_sse_refreshes() {
-    // Every status SSE tick re-renders the Notes (and Plan) tab bodies.
-    // Replacing textContent unconditionally would reset scrollTop to 0 and
-    // yank a reader mid-way down the file back to the top. The shared
-    // `setFilePre` helper must skip when content is unchanged and save +
-    // restore scrollTop when it does write.
+fn shell_preserves_rendered_markdown_scroll_across_sse_refreshes() {
+    // Every status SSE tick re-renders Plan and Notes tab bodies. Both go
+    // through `setRenderedMarkdown`, which must skip when content is
+    // unchanged and save + restore the scroll container's scrollTop when
+    // it does write. Otherwise a reader mid-way down the document gets
+    // yanked back to the top on every refresh.
     assert!(
-        SHELL_HTML.contains("function setFilePre"),
-        "Notes/Plan rendering should funnel through a setFilePre helper"
+        SHELL_HTML.contains("function setRenderedMarkdown"),
+        "Plan/Notes rendering should funnel through setRenderedMarkdown"
     );
     assert!(
-        SHELL_HTML.contains("if (el.textContent === text && !el.classList.contains('empty')) return"),
-        "setFilePre should skip rewrite when content unchanged"
+        SHELL_HTML
+            .contains("if (view[lastKey] === html && !el.classList.contains('empty')) return"),
+        "setRenderedMarkdown should skip rewrite when html unchanged"
     );
     assert!(
-        SHELL_HTML.contains("const prev = el.scrollTop;"),
-        "setFilePre should snapshot scrollTop before mutating"
+        SHELL_HTML.contains("prev = scroller.scrollTop;"),
+        "setRenderedMarkdown should snapshot the scroller's scrollTop"
     );
     assert!(
-        SHELL_HTML.contains("el.scrollTop = prev;"),
-        "setFilePre must restore scrollTop after writing text"
+        SHELL_HTML.contains("scroller.scrollTop = prev;"),
+        "setRenderedMarkdown must restore scrollTop after writing"
+    );
+    assert!(
+        SHELL_HTML.contains("if (stickToBottom && wasAtBottom)"),
+        "setRenderedMarkdown should follow the tail when caller asks for stickToBottom"
+    );
+    assert!(
+        SHELL_HTML.contains("scroller.scrollTop = scroller.scrollHeight;"),
+        "stickToBottom branch must scroll to the new bottom after writing"
+    );
+}
+
+#[test]
+fn shell_opens_notes_at_bottom_by_default() {
+    // Agent's Notes is appended to over time; opening at the top would
+    // bury the latest entry beneath an SSE-refreshed wall of history.
+    // renderNotes must call setRenderedMarkdown with stickToBottom set
+    // so the first render lands at the bottom and subsequent updates
+    // follow the tail when the operator is already there.
+    assert!(
+        SHELL_HTML.contains("function renderNotes")
+            && SHELL_HTML[SHELL_HTML.find("function renderNotes").unwrap()..]
+                .lines()
+                .take(12)
+                .any(|l| l.contains("stickToBottom: true")),
+        "renderNotes must opt into the stickToBottom behaviour of setRenderedMarkdown"
     );
 }
 

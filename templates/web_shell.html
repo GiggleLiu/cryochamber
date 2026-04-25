@@ -253,8 +253,11 @@
       panels: { todos: null, sync: null, settings: null, log: null },
       syncEl: null,
       notesEl: null,
+      notesLastHtml: null,
       planEl: null,
+      planLastHtml: null,
       settingsEl: null,
+      settingsLastSig: null,
       logEl: null,
       messagesBodyEl: null,
       planBodyEl: null,
@@ -302,18 +305,23 @@
     title.appendChild(name);
     title.appendChild(session);
 
+    // The task line and the lifecycle buttons (start / stop / reset) live on
+    // a shared row to keep the chamber head tight. The task text grows to
+    // fill, the buttons hug the right edge.
+    const taskRow = document.createElement('div');
+    taskRow.className = 'task-row';
     const task = document.createElement('div');
     task.className = 'task';
-    left.appendChild(task);
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'lifecycle';
+    taskRow.appendChild(task);
+    taskRow.appendChild(lifecycle);
+    left.appendChild(taskRow);
 
     const plan = document.createElement('div');
     plan.className = 'plan-complete';
     plan.style.display = 'none';
     left.appendChild(plan);
-
-    const lifecycle = document.createElement('div');
-    lifecycle.className = 'lifecycle';
-    left.appendChild(lifecycle);
 
     const right = document.createElement('div');
     const wake = document.createElement('span');
@@ -644,21 +652,32 @@
     });
   }
 
-  function initDrawerTabs() {
-    const tabs   = document.querySelectorAll('.drawer-tab');
+  function activateDrawerTab(name) {
+    const tabs = document.querySelectorAll('.drawer-tab');
     const panels = document.querySelectorAll('.drawer-body');
-    tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        const name = tab.getAttribute('data-tab');
-        tabs.forEach(t => t.classList.toggle('active', t === tab));
-        panels.forEach(p => {
-          p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
-        });
-        if (name === 'log' && view && view.logEl) {
-          view.logEl.scrollTop = view.logEl.scrollHeight;
-        }
-      });
+    let matched = false;
+    tabs.forEach(t => {
+      const isMatch = t.getAttribute('data-tab') === name;
+      t.classList.toggle('active', isMatch);
+      if (isMatch) matched = true;
     });
+    if (!matched) return;
+    panels.forEach(p => {
+      p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
+    });
+    if (name === 'log' && view && view.logEl) {
+      view.logEl.scrollTop = view.logEl.scrollHeight;
+    }
+  }
+
+  function initDrawerTabs() {
+    document.querySelectorAll('.drawer-tab').forEach(tab => {
+      tab.addEventListener('click', () => activateDrawerTab(tab.getAttribute('data-tab')));
+    });
+    // ?drawer=todos|sync|settings|log opens that drawer panel on load.
+    // Useful for direct links and scripted screenshots.
+    const initial = new URLSearchParams(window.location.search).get('drawer');
+    if (initial) activateDrawerTab(initial);
   }
 
   const TODO_PENDING_CAP = 20;
@@ -865,7 +884,7 @@
     const notesTab = document.createElement('div');
     notesTab.className = 'center-tab';
     notesTab.dataset.tab = 'notes';
-    notesTab.textContent = 'Notes';
+    notesTab.textContent = "Agent's Notes";
 
     bar.appendChild(messagesTab);
     bar.appendChild(planTab);
@@ -935,88 +954,136 @@
 
   function buildNotesBody(box) {
     box.innerHTML = '';
-    const pre = document.createElement('pre');
-    pre.className = 'file-pre';
-    box.appendChild(pre);
-    view.notesEl = pre;
-  }
-
-  function setFilePre(el, content, emptyLabel) {
-    const text = content || '';
-    if (text === '') {
-      if (!el.classList.contains('empty') || el.textContent !== emptyLabel) {
-        el.classList.add('empty');
-        el.textContent = emptyLabel;
-      }
-      return;
-    }
-    if (el.textContent === text && !el.classList.contains('empty')) return;
-    const prev = el.scrollTop;
-    el.classList.remove('empty');
-    el.textContent = text;
-    el.scrollTop = prev;
+    const article = document.createElement('article');
+    article.className = 'plan-md';
+    box.appendChild(article);
+    view.notesEl = article;
+    view.notesLastHtml = null;
   }
 
   function renderNotes(status) {
     if (!view || !view.notesEl) return;
-    setFilePre(view.notesEl, status.notes_content || '', 'No NOTES.md in this chamber.');
+    setRenderedMarkdown(
+      view.notesEl,
+      status.notes_html || '',
+      'notesLastHtml',
+      "No NOTES.md in this chamber.",
+      { stickToBottom: true }
+    );
   }
 
   function renderPlan(status) {
     if (!view || !view.planEl) return;
-    const html = status.plan_html || '';
+    setRenderedMarkdown(
+      view.planEl,
+      status.plan_html || '',
+      'planLastHtml',
+      'No plan.md in this chamber.'
+    );
+  }
+
+  // Shared renderer for tab bodies whose content is server-rendered HTML
+  // (currently Plan and Notes). Uses innerHTML directly because the source
+  // markdown was rendered through `render_markdown_safe`, which already
+  // escapes raw HTML and drops image tags.
+  //
+  // `opts.stickToBottom` makes the renderer "follow the tail": on first
+  // render and on any update where the operator was already scrolled to the
+  // bottom, the scroller jumps to the new bottom. Otherwise scrollTop is
+  // preserved so the operator's reading position survives SSE refreshes.
+  // The empty-on-init case naturally counts as "at bottom" so the first
+  // non-empty render lands at the bottom.
+  function setRenderedMarkdown(el, html, lastKey, emptyLabel, opts) {
+    const stickToBottom = !!(opts && opts.stickToBottom);
     if (html === '') {
-      if (!view.planEl.classList.contains('empty') || view.planLastHtml !== '') {
-        view.planEl.classList.add('empty');
-        view.planEl.textContent = 'No plan.md in this chamber.';
-        view.planLastHtml = '';
+      if (!el.classList.contains('empty') || view[lastKey] !== '') {
+        el.classList.add('empty');
+        el.textContent = emptyLabel;
+        view[lastKey] = '';
       }
       return;
     }
-    if (view.planLastHtml === html && !view.planEl.classList.contains('empty')) return;
-    const prev = view.planEl.parentNode ? view.planEl.parentNode.scrollTop : 0;
-    view.planEl.classList.remove('empty');
-    // plan_html is rendered server-side by pulldown-cmark with raw HTML
-    // events escaped to text, so this innerHTML write is safe by construction.
-    view.planEl.innerHTML = html;
-    view.planLastHtml = html;
-    if (view.planEl.parentNode) view.planEl.parentNode.scrollTop = prev;
+    if (view[lastKey] === html && !el.classList.contains('empty')) return;
+    const scroller = el.parentNode;
+    let prev = 0;
+    let wasAtBottom = false;
+    if (scroller) {
+      prev = scroller.scrollTop;
+      wasAtBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 30;
+    }
+    el.classList.remove('empty');
+    el.innerHTML = html;
+    view[lastKey] = html;
+    if (scroller) {
+      if (stickToBottom && wasAtBottom) {
+        scroller.scrollTop = scroller.scrollHeight;
+      } else {
+        scroller.scrollTop = prev;
+      }
+    }
+  }
+
+  function settingsSignature(rows, raw) {
+    if (!rows || rows.length === 0) return raw === '' ? 'empty' : 'raw:' + raw;
+    return 'rows:' + rows.map(r => `${r.kind}|${r.key}|${r.value}`).join('\n');
   }
 
   function renderSettings(status) {
     const box = document.getElementById('panel-settings');
     if (!box) return;
-    const text = status.config_content || '';
-    if (view.settingsEl && box.contains(view.settingsEl)) {
-      const isEmpty = view.settingsEl.classList.contains('empty');
-      const current = isEmpty ? '' : view.settingsEl.textContent;
-      if (current === text) return;
-      const prev = view.settingsEl.scrollTop;
-      if (text === '') {
-        view.settingsEl.classList.add('empty');
-        view.settingsEl.textContent = 'No cryo.toml in this chamber.';
-      } else {
-        view.settingsEl.classList.remove('empty');
-        view.settingsEl.textContent = text;
-      }
-      view.settingsEl.scrollTop = prev;
-      return;
-    }
+    const rows = Array.isArray(status.settings_rows) ? status.settings_rows : [];
+    const raw = status.config_content || '';
+    const sig = settingsSignature(rows, raw);
+    if (sig === view.settingsLastSig) return;
+    view.settingsLastSig = sig;
+
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'section-title';
     title.textContent = 'cryo.toml';
     box.appendChild(title);
-    const pre = document.createElement('pre');
-    pre.className = 'settings-pre';
-    if (text === '') {
-      pre.classList.add('empty');
-      pre.textContent = 'No cryo.toml in this chamber.';
-    } else {
-      pre.textContent = text;
+
+    if (raw === '') {
+      const empty = document.createElement('div');
+      empty.className = 'settings-empty';
+      empty.textContent = 'No cryo.toml in this chamber.';
+      box.appendChild(empty);
+      view.settingsEl = empty;
+      return;
     }
-    box.appendChild(pre);
-    view.settingsEl = pre;
+
+    if (rows.length === 0) {
+      // Couldn't parse — fall back to the raw text so the user can still
+      // see what's there and fix it.
+      const note = document.createElement('div');
+      note.className = 'settings-empty';
+      note.textContent = '(could not parse — showing raw text)';
+      box.appendChild(note);
+      const pre = document.createElement('pre');
+      pre.className = 'settings-pre';
+      pre.textContent = raw;
+      box.appendChild(pre);
+      view.settingsEl = pre;
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'settings-list';
+    for (const row of rows) {
+      const item = document.createElement('div');
+      item.className = 'settings-row' + (row.kind === 'section' ? ' section' : '');
+      const key = document.createElement('span');
+      key.className = 'k';
+      key.textContent = row.key;
+      const val = document.createElement('span');
+      val.className = 'v';
+      val.textContent = row.value;
+      item.appendChild(key);
+      item.appendChild(val);
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+    view.settingsEl = list;
   }
 
   function appendLogLine(line) {
