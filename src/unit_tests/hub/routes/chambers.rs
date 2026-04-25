@@ -160,3 +160,119 @@ mod validate_name {
         assert!(v("alpha\u{0007}").is_err());
     }
 }
+
+mod post_new {
+    use crate::hub::routes::chambers::{post_new, NewChamberPayload};
+    use crate::hub::state::AppState;
+    use axum::{extract::State, response::Json};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn creates_new_chamber_returns_201_and_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        app.refresh();
+
+        let resp = post_new(
+            State(app.clone()),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+            }),
+        )
+        .await;
+
+        let (status, Json(body)) = resp;
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        assert!(body.get("id").is_some());
+
+        let alpha = dir.path().join("alpha");
+        assert!(alpha.join("cryo.toml").exists());
+        assert!(alpha.join("AGENTS.md").exists());
+        assert!(alpha.join("plan.md").exists());
+        assert!(alpha.join("README.md").exists());
+        assert!(alpha.join("NOTES.md").exists());
+        assert!(alpha.join("messages/inbox").exists());
+        assert!(alpha.join("messages/outbox").exists());
+
+        let idx = app.chambers.read().unwrap();
+        assert!(idx.values().any(|c| c.name == "alpha"));
+    }
+
+    #[tokio::test]
+    async fn empty_name_rejected_400() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload { name: "".into() }),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "name is empty");
+    }
+
+    #[tokio::test]
+    async fn name_with_slash_rejected_400() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "a/b".into(),
+            }),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "name contains illegal characters");
+    }
+
+    #[tokio::test]
+    async fn collision_with_existing_chamber_rejected_400() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("alpha")).unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&dir.path().join("alpha").join("cryo.toml"), &cfg).unwrap();
+
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        app.refresh();
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+            }),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "chamber already exists");
+    }
+
+    #[tokio::test]
+    async fn scaffold_parity_with_cryo_init() {
+        let cli_dir = tempfile::tempdir().unwrap();
+        crate::protocol::scaffold_chamber(cli_dir.path(), "opencode").unwrap();
+
+        let hub_dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(hub_dir.path().to_path_buf()));
+        let _ = post_new(
+            State(app),
+            Json(NewChamberPayload { name: "x".into() }),
+        )
+        .await;
+
+        for file in ["cryo.toml", "AGENTS.md", "plan.md", "README.md", "NOTES.md"] {
+            let cli_bytes = std::fs::read(cli_dir.path().join(file)).unwrap();
+            let hub_bytes = std::fs::read(hub_dir.path().join("x").join(file)).unwrap();
+            if file == "README.md" {
+                assert_eq!(cli_bytes.len() > 0, hub_bytes.len() > 0);
+            } else {
+                assert_eq!(
+                    cli_bytes, hub_bytes,
+                    "scaffold drift: {file} differs between cli and hub paths"
+                );
+            }
+        }
+
+        let _ = json!({});
+    }
+}
