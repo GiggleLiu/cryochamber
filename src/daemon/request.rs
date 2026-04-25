@@ -160,6 +160,10 @@ impl TodoOperationError {
             response_message: message.into(),
         }
     }
+
+    pub(super) fn message(&self) -> &str {
+        &self.response_message
+    }
 }
 
 pub(super) trait TodoEffects {
@@ -398,4 +402,158 @@ pub(super) fn handle_receive_request(effects: &mut impl MessageEffects) -> Recei
             claimed_filenames: Vec::new(),
         },
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DialogRequestOutcome {
+    pub(super) ok: bool,
+    pub(super) message: String,
+    pub(super) log_event: Option<String>,
+    pub(super) claimed_filenames: Vec<String>,
+}
+
+impl DialogRequestOutcome {
+    pub(super) fn into_response(self) -> crate::socket::Response {
+        crate::socket::Response {
+            ok: self.ok,
+            message: self.message,
+        }
+    }
+}
+
+pub(super) fn handle_dialog_request(
+    filter: crate::socket::DialogFilter,
+    extra_session_new: &[String],
+    effects: &mut impl MessageEffects,
+) -> DialogRequestOutcome {
+    use crate::daemon::dialog::{render_dialog, DialogInputs};
+
+    let claimed = match effects.claim_inbox_batch() {
+        Ok(claimed) => claimed,
+        Err(error) => {
+            return DialogRequestOutcome {
+                ok: false,
+                message: format!("dialog refused: {}", error.message()),
+                log_event: None,
+                claimed_filenames: Vec::new(),
+            };
+        }
+    };
+    let claimed_filenames = claimed
+        .iter()
+        .map(|(filename, _)| filename.clone())
+        .collect::<Vec<_>>();
+
+    let archived_inbox = match effects.read_inbox_archive() {
+        Ok(messages) => messages,
+        Err(error) => {
+            return DialogRequestOutcome {
+                ok: false,
+                message: format!("dialog refused: {}", error.message()),
+                log_event: None,
+                claimed_filenames,
+            };
+        }
+    };
+
+    let archived_outbox = match effects.read_outbox_archive() {
+        Ok(messages) => messages,
+        Err(error) => {
+            return DialogRequestOutcome {
+                ok: false,
+                message: format!("dialog refused: {}", error.message()),
+                log_event: None,
+                claimed_filenames,
+            };
+        }
+    };
+
+    let resolved_filter = match resolve_dialog_filter(filter) {
+        Ok(filter) => filter,
+        Err(message) => {
+            return DialogRequestOutcome {
+                ok: false,
+                message,
+                log_event: None,
+                claimed_filenames,
+            };
+        }
+    };
+
+    let mut new_filenames = claimed_filenames.clone();
+    for filename in extra_session_new {
+        if !new_filenames.iter().any(|existing| existing == filename) {
+            new_filenames.push(filename.clone());
+        }
+    }
+
+    let message = render_dialog(
+        &DialogInputs {
+            archived_inbox,
+            archived_outbox,
+            new_filenames,
+        },
+        resolved_filter,
+    );
+
+    let log_event = if claimed_filenames.is_empty() {
+        Some("dialog: no new messages claimed".to_string())
+    } else {
+        Some(format!(
+            "dialog: claimed {} message{} [{}]",
+            claimed_filenames.len(),
+            if claimed_filenames.len() == 1 { "" } else { "s" },
+            claimed_filenames.join(", ")
+        ))
+    };
+
+    DialogRequestOutcome {
+        ok: true,
+        message,
+        log_event,
+        claimed_filenames,
+    }
+}
+
+fn resolve_dialog_filter(
+    filter: crate::socket::DialogFilter,
+) -> std::result::Result<crate::daemon::dialog::DialogFilterResolved, String> {
+    use crate::daemon::dialog::DialogFilterResolved;
+
+    match filter {
+        crate::socket::DialogFilter::All => Ok(DialogFilterResolved::All),
+        crate::socket::DialogFilter::LastN { count } => {
+            if count == 0 {
+                Err("dialog refused: --last must be at least 1".to_string())
+            } else {
+                Ok(DialogFilterResolved::LastN(count))
+            }
+        }
+        crate::socket::DialogFilter::Since { iso } => {
+            let parsed = parse_dialog_since(&iso).ok_or_else(|| {
+                format!(
+                    "dialog refused: --since {iso:?} is not a recognized timestamp \
+                     (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM)"
+                )
+            })?;
+            Ok(DialogFilterResolved::Since(parsed))
+        }
+    }
+}
+
+fn parse_dialog_since(input: &str) -> Option<chrono::NaiveDateTime> {
+    for format in [
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+    ] {
+        if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(input, format) {
+            return Some(parsed);
+        }
+    }
+
+    chrono::NaiveDate::parse_from_str(input, "%Y-%m-%d")
+        .ok()
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
 }

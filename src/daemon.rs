@@ -1446,5 +1446,9 @@ mod tests;
 mod dialog_tests;
 
 #[cfg(test)]
+#[path = "unit_tests/daemon/request.rs"]
+mod request_tests;
+
+#[cfg(test)]
 #[path = "unit_tests/daemon_properties.rs"]
 mod property_tests;
