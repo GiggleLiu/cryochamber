@@ -1,117 +1,153 @@
-# Zulip Sync
+# Zulip sync
 
-`cryo-zulip` bridges a cryochamber project with a Zulip stream, enabling remote monitoring and two-way messaging. Stream messages become inbox messages for the agent; outbox messages from the agent are posted back to the stream.
+`cryo-zulip` bridges a chamber with a Zulip stream, giving you remote monitoring and two-way messaging from the Zulip web or mobile app. Stream messages become inbox messages for the agent, and outbox messages from the agent are posted back to the stream.
 
 ## Prerequisites
 
-- A Zulip server with a bot account
-- A `zuliprc` file with bot credentials (standard Zulip INI format with `[api]` section containing `email`, `key`, `site`)
-- A Zulip stream accessible by the bot
-- An initialized cryochamber project (`cryo init`)
+Before you begin, make sure you have:
 
-## Commands
+- A Zulip server with a bot account.
+- A `zuliprc` file with bot credentials. This is a standard Zulip INI file with an `[api]` section containing `email`, `key`, and `site`.
+- A Zulip stream the bot has permission to read and post to.
+- An initialized cryochamber project. See [Getting Started](./getting-started.md) if you don't have one yet.
 
-```bash
-cryo-zulip init --config ~/.zuliprc --stream my-stream  # Validate credentials, resolve stream, write zulip-sync.json
-cryo-zulip init --config ~/.zuliprc --stream my-stream --topic mychannel  # Custom topic (default: "cryochamber")
-cryo-zulip init --config ~/.zuliprc --stream my-stream --history  # Also import existing messages
-cryo-zulip sync [--interval N]                           # Start background sync daemon (default from cryo.toml or 5s)
-cryo-zulip unsync                                       # Stop the sync daemon
-cryo-zulip pull                                         # One-shot: pull new messages → inbox
-cryo-zulip push                                         # One-shot: push latest session log → stream
-cryo-zulip status                                       # Show sync configuration
-```
+## Set up sync
 
-## How Sync Works
+1. Link the chamber to your Zulip stream:
 
-`cryo-zulip sync` spawns a background daemon (just like `cryo start` does). It does two things in a loop:
+   ```bash
+   cryo-zulip init --config ~/.zuliprc --stream my-stream
+   ```
 
-**Stream → Inbox** (pull direction): Polls the Zulip stream for new messages every `--interval` seconds (default: `zulip_poll_interval` in `cryo.toml`, or 5s). New messages are written to `messages/inbox/` where the cryo daemon picks them up on the next session. The bot's own messages are filtered out to prevent echo loops.
+   This validates the bot credentials, resolves the stream ID, and writes `zulip-sync.json`. The `zuliprc` is copied into `.cryo/zuliprc` for the sync daemon to use.
 
-**Outbox → Stream** (push direction): Watches `messages/outbox/` for new files. When the agent sends a message (via `cryo-agent send`), the sync daemon posts it to the Zulip stream and archives the file to `messages/outbox/archive/`.
+   Optional flags:
+
+   - `--topic mychannel` — use a custom topic. Defaults to `cryochamber`.
+   - `--history` — import existing messages from the stream/topic on the first pull. Without this flag, only messages posted after setup are imported.
+
+2. Start the cryo daemon:
+
+   ```bash
+   cryo start
+   ```
+
+3. Start the sync daemon:
+
+   ```bash
+   cryo-zulip sync
+   ```
+
+   By default this polls Zulip every 5 seconds. Override the interval with `--interval 30`.
+
+4. Verify both daemons are running:
+
+   ```bash
+   cryo status
+   cryo-zulip status
+   ```
+
+Both daemons run as system services (launchd on macOS, systemd on Linux) and survive reboots. Sync logs go to `cryo-zulip-sync.log`.
+
+> **Warning**: Don't commit, push, or sync `.cryo/zuliprc` — it holds your bot's API key. The file is gitignored by default; never include it in messages or sync payloads.
+
+## Send a message from Zulip
+
+1. Open the Zulip stream in the web or mobile app.
+2. Post a message in the configured topic.
+3. Within the poll interval (default 5s), the sync daemon writes the message to `messages/inbox/`.
+4. The cryo daemon wakes the agent on the next session, or immediately if `watch_inbox = true` in `cryo.toml`.
+
+The bot's own messages are filtered out so you won't get an echo loop.
+
+## Read agent replies on Zulip
+
+When the agent runs `cryo-agent send "message"`, the sync daemon detects the new outbox file and posts it to the Zulip stream within seconds.
+
+## Stop sync
+
+1. Stop the sync daemon:
+
+   ```bash
+   cryo-zulip unsync
+   ```
+
+2. (Optional) Stop the cryo daemon as well:
+
+   ```bash
+   cryo cancel
+   ```
+
+## Example: Chess by mail over Zulip
+
+Play correspondence chess against an AI agent by sending moves from Zulip:
+
+1. Change into the example chamber:
+
+   ```bash
+   cd examples/chambers/chess-by-mail
+   ```
+
+2. Link it to a Zulip stream:
+
+   ```bash
+   cryo-zulip init --config ~/.zuliprc --stream chess-game
+   ```
+
+3. Start both daemons:
+
+   ```bash
+   cryo start
+   cryo-zulip sync --interval 30
+   ```
+
+4. Send your moves as messages in the Zulip stream.
+
+See [Chess by Mail](./examples/chess-by-mail.md) for the full walkthrough.
+
+## How sync works
+
+`cryo-zulip sync` runs a background loop that does two things:
+
+| Direction | What happens |
+|-----------|--------------|
+| **Stream → inbox** (pull) | Polls the Zulip stream for new messages every `--interval` seconds. New messages are written to `messages/inbox/`. The bot's own messages are filtered out. |
+| **Outbox → stream** (push) | Watches `messages/outbox/` for new files. New files are posted to the stream and archived to `messages/outbox/archive/`. |
 
 ```text
 Zulip Stream                      Local filesystem
 ────────────                      ─────────────────
 New message        ──(pull)──→    messages/inbox/       → agent reads on wake
-                   ←─(push)──    messages/outbox/      ← agent writes via cryo-agent send
+                   ←─(push)──     messages/outbox/      ← agent writes via cryo-agent send
 ```
 
-The sync is managed as a system service (launchd on macOS, systemd on Linux) that **survives reboots**. Logs go to `cryo-zulip-sync.log`.
-
-## Recommended Workflow
-
-### 1. Initialize the project
-
-```bash
-cryo init --agent claude
-# edit plan.md with your task
-```
-
-### 2. Link to Zulip
-
-```bash
-cryo-zulip init --config ~/.zuliprc --stream my-stream
-```
-
-This validates the bot credentials, resolves the stream ID, and writes `zulip-sync.json`. The zuliprc is copied to `.cryo/zuliprc` for use by the sync daemon.
-
-By default, setup only imports messages sent after setup. Add `--history` if you want the first pull to import existing messages from the selected stream/topic.
-
-### 3. Start the daemon and sync
-
-```bash
-cryo start
-cryo-zulip sync
-```
-
-Both run as background daemons. Monitor with `cryo watch`.
-
-### 4. Send messages from Zulip
-
-Post a message in the Zulip stream from the web UI or mobile app. The sync daemon picks it up within 30 seconds and writes it to `messages/inbox/`. The cryo daemon wakes the agent on the next session (or immediately if `watch_inbox = true`).
-
-### 5. Read agent replies on Zulip
-
-When the agent calls `cryo-agent send "message"`, the outbox file is detected immediately by the sync watcher and posted to the Zulip stream.
-
-### 6. Stop
-
-```bash
-cryo-zulip unsync   # stop sync daemon
-cryo cancel         # stop cryo daemon
-```
-
-## One-Shot Usage
+## One-shot pull and push
 
 For manual or scripted use without the sync daemon:
 
 ```bash
-cryo-zulip pull    # fetch new stream messages into inbox
+cryo-zulip pull    # fetch new stream messages into messages/inbox/
 cryo-zulip push    # post the latest session log to the stream
 ```
 
-## Example: Chess by Mail over Zulip
+## Command reference
 
-Play correspondence chess against an AI agent, sending moves from the Zulip web UI:
-
-```bash
-cd examples/chambers/chess-by-mail
-cryo-zulip init --config ~/.zuliprc --stream chess-game
-cryo init && cryo start
-cryo-zulip sync --interval 30
-# Send your moves as messages in the Zulip stream!
-```
-
-See [Chess by Mail](./examples/chess-by-mail.md) for the full example.
+| Command | What it does |
+|---------|--------------|
+| `cryo-zulip init --config <zuliprc> --stream <name> [--topic <topic>] [--history]` | Validate credentials, resolve the stream, write `zulip-sync.json`. |
+| `cryo-zulip sync [--interval N]` | Start the background sync daemon. Default interval comes from `cryo.toml` or falls back to 5 seconds. |
+| `cryo-zulip unsync` | Stop the sync daemon. |
+| `cryo-zulip pull` | One-shot pull. |
+| `cryo-zulip push` | One-shot push. |
+| `cryo-zulip status` | Show sync configuration. |
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `zulip-sync.json` | Sync state: site, stream, stream ID, bot email, last imported message |
-| `.cryo/zuliprc` | Bot credentials (copied from user's zuliprc on init) |
-| `cryo-zulip-sync.log` | Sync daemon log output |
-| `messages/inbox/` | Incoming messages (from Zulip stream) |
-| `messages/outbox/` | Outgoing messages (posted to Zulip stream) |
-| `messages/outbox/archive/` | Posted outbox messages (archived after sync) |
+| `zulip-sync.json` | Sync state: site, stream, stream ID, bot email, last imported message. |
+| `.cryo/zuliprc` | Bot credentials, copied from your `zuliprc` on init. **Never commit or sync.** |
+| `cryo-zulip-sync.log` | Sync daemon log output. |
+| `messages/inbox/` | Incoming messages (from the Zulip stream). |
+| `messages/outbox/` | Outgoing messages (posted to the Zulip stream). |
+| `messages/outbox/archive/` | Archived outbox messages after they are posted. |

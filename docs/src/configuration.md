@@ -1,48 +1,44 @@
 # Configuration
 
-`cryo init` creates a `cryo.toml` file with project settings:
+Each chamber is configured through a `cryo.toml` file in its directory. `cryo init` creates one with sensible defaults.
+
+## Sample `cryo.toml`
 
 ```toml
-# cryo.toml — Cryochamber project configuration
-agent = "opencode"        # Agent command (opencode, claude, codex, etc.)
+# cryo.toml — cryochamber project configuration
+agent = "opencode"        # Agent command (opencode, claude, codex, ...)
 max_session_duration = 0  # Session timeout in seconds (0 = no timeout)
-watch_inbox = true        # Watch inbox for reactive wake
+watch_inbox = true        # Wake immediately when a new inbox file appears
 
 # Periodic status report written to messages/outbox/
-# report_time = "09:00"     # HH:MM local time
-# report_interval = 24      # hours between reports; 0 disables reports
+# report_time = "09:00"     # local wall-clock time (HH:MM)
+# report_interval = 24      # hours between reports (0 disables)
 ```
 
 ## Fields
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex. |
-| `max_session_duration` | `0` | Session timeout in seconds. `0` disables timeout. |
-| `watch_inbox` | `true` | Watch `messages/inbox/` for new files and wake immediately. |
-| `report_time` | `"09:00"` | Local wall-clock time for periodic status reports, formatted as `HH:MM`. |
-| `report_interval` | `0` | Hours between periodic reports. `0` disables reports; common values are `24` for daily and `168` for weekly. Reports are written to `messages/outbox/`. |
+| Field                  | Default      | Description                                                                                                                                                |
+|------------------------|--------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `agent`                | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex, or any executable on `PATH`.                                                    |
+| `max_session_duration` | `0`          | Session timeout in seconds. `0` disables the timeout.                                                                                                      |
+| `watch_inbox`          | `true`       | Watch `messages/inbox/` for new files and wake the agent immediately.                                                                                      |
+| `report_time`          | `"09:00"`    | Local wall-clock time for periodic reports, formatted `HH:MM`.                                                                                             |
+| `report_interval`      | `0`          | Hours between periodic reports. `0` disables reports; common values are `24` (daily) and `168` (weekly). Reports are written to `messages/outbox/`.        |
 
-`cryohub` settings are not `cryo.toml` fields — they are CLI flags
-(`cryohub start [--host 0.0.0.0] [--port 8765]`, host/port default to
-`127.0.0.1:8765`). `cryohub` always operates on the current directory; `cd`
-into a directory whose immediate subdirectories are chambers (not into a
-chamber itself) before running it.
+> **Note**: Cryohub settings are not in `cryo.toml`. Pass `--host` and `--port` on the command line (defaults: `127.0.0.1:8765`). Cryohub always operates on the current directory and refuses to start in a directory that itself contains a `cryo.toml`.
 
-## CLI Overrides
+## Override config from the command line
 
-CLI flags to `cryo start` override config values for that session:
+Flags passed to `cryo start` override `cryo.toml` for that session. The overrides are stored in `timer.json` (runtime state) and do not modify `cryo.toml`.
 
 ```bash
-cryo start --agent claude             # override agent
-cryo start --max-session-duration 3600  # override timeout
+cryo start --agent claude               # override the agent
+cryo start --max-session-duration 3600  # override the timeout
 ```
 
-These overrides are stored in `timer.json` (runtime state) and do not modify `cryo.toml`.
+## Config vs. state
 
-## Config vs State
-
-| File | Purpose | Persists |
-|------|---------|----------|
-| `cryo.toml` | Project configuration (checked into git) | Yes |
-| `timer.json` | Runtime state (session number, PID lock, CLI overrides) | No (ephemeral) |
+| File         | Purpose                                                       | Persists across runs |
+|--------------|---------------------------------------------------------------|----------------------|
+| `cryo.toml`  | Project configuration. Check into git.                        | Yes                  |
+| `timer.json` | Runtime state (session number, PID lock, CLI overrides).      | No                   |

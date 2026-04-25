@@ -10,7 +10,7 @@
 - [Hub](./hub.md)
 - [GitHub Sync](./github-sync.md)
 - [Zulip Sync](./zulip-sync.md)
-- [FAQ](./faq.md)
+- [FAQ and troubleshooting](./faq.md)
 
 # Developer Guide
 

@@ -32,3 +32,5 @@ examples/chambers/*/.cryo
 examples/chambers/*/.ruff_cache
 examples/chambers/*/history/
 docs/diagrams/
+
+.DS_Store

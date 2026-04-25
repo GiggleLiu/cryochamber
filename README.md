@@ -11,76 +11,110 @@
 
 Our goal is to automate long-running activities that are too irregular for cron. A conference deadline slips because submissions are low. A space probe's next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about *when* to wake and *what* to do next, with a persistent daemon that manages the lifecycle.
 
-## Quick Start
+## Quick start
 
-**Prerequisites:** Rust toolchain ([rustup.rs](https://rustup.rs)), an AI coding agent ([OpenCode](https://github.com/opencode-ai/opencode), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex)), macOS or Linux.
+### Prerequisites
 
-### 1. Install cryochamber
+- The Rust toolchain. Install from [rustup.rs](https://rustup.rs).
+- An AI coding agent on your `PATH`: [OpenCode](https://github.com/opencode-ai/opencode), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex).
+- macOS or Linux.
+
+### Step 1: Install cryochamber
+
+Install the binaries from crates.io:
 
 ```bash
 cargo install cryochamber
 ```
 
-This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub` binaries.
+This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub`.
 
-### 2. Try the example chambers
+### Step 2: Try the example chambers
 
-Clone the repo and start the hub over the bundled examples (`mr-lazy`, `chess-by-mail`, `personal-assistant`):
+Run the bundled examples (`mr-lazy`, `chess-by-mail`, `personal-assistant`) in the web dashboard.
 
-```bash
-git clone https://github.com/GiggleLiu/cryochamber
-cd cryochamber/examples/chambers
-cryohub start --foreground
-```
+1. Clone the repository:
 
-`cryohub` prints a `http://host:port` URL — open it in your browser to manage the example chambers from the web UI.
+   ```bash
+   git clone https://github.com/GiggleLiu/cryochamber
+   ```
 
-### 3. Write your own plan
+2. Change into the examples directory:
 
-If your AI coding agent supports custom skills, install the `make-plan` skill from the repo you just cloned (point your agent's skill installer at `<repo>/.claude/skills/make-plan`), then ask the agent:
+   ```bash
+   cd cryochamber/examples/chambers
+   ```
+
+3. Start the hub in the foreground:
+
+   ```bash
+   cryohub start --foreground
+   ```
+
+4. Open the `http://host:port` URL that `cryohub` prints in your browser.
+
+### Step 3: Create your own chamber
+
+You have two options.
+
+**Option A — Use the `make-plan` skill (recommended).**
+If your agent supports custom skills, install the bundled skill (point your agent's skill installer at `<repo>/.claude/skills/make-plan`), then prompt your agent:
 
 > Invoke the `make-plan` skill to create a new cryochamber project here.
 
-The skill will walk you through `plan.md` and `cryo.toml` interactively. Without skill support, copy one of the `examples/chambers/*` directories as a starting point and edit `plan.md` (the task) and `cryo.toml` (agent command, retry policy, inbox settings) by hand.
+The skill walks you through `plan.md` and `cryo.toml` interactively.
 
-### 4. Manage the running chamber
+**Option B — Scaffold by hand.**
+Copy one of `examples/chambers/*` as a starting point, or run `cryo init` in an empty directory and edit `plan.md` and `cryo.toml`.
 
-From inside a chamber directory:
+### Step 4: Manage the running chamber
 
-```bash
-cryo start           # start the daemon (installs an OS service)
-cryo status          # check if the daemon is running
-cryo watch           # follow the live log
-cryo send "message"  # send a message to the agent
-cryo cancel          # stop the daemon
-```
+Run these from inside the chamber directory:
 
-## Cryohub (multi-chamber)
+| Command | What it does |
+|---------|--------------|
+| `cryo start` | Start the daemon (installs an OS service that survives reboots). |
+| `cryo status` | Show whether the daemon is running. |
+| `cryo watch` | Follow the live log. |
+| `cryo send "message"` | Send a message to the agent. |
+| `cryo cancel` | Stop the daemon. |
 
-`cryohub` runs a directory-scoped dashboard. `cd` into a directory whose immediate subdirectories are chambers (each has its own `cryo.toml`), then start it:
+For the full guide, see [Getting Started](https://giggleliu.github.io/cryochamber/getting-started.html).
 
-```
-~/my-chambers/
-  chess-by-mail/
-  mr-lazy/
-  reports/
-```
+## Cryohub (multi-chamber dashboard)
 
-```bash
-cd ~/my-chambers
-cryohub start
-```
+Cryohub is a directory-scoped web dashboard that manages every chamber under the current directory.
 
-`cryohub` always operates on the current directory; it rejects starting from a chamber dir. The UI lists every chamber with a status dot, lets you send messages, wake the agent, and start/stop/restart daemons.
+![cryohub dashboard with the mr-lazy chamber selected](docs/src/images/cryohub-dashboard.png)
 
-## Messaging Channels
+1. Arrange your chambers as immediate subdirectories of a workspace folder:
 
-Cryochamber supports external messaging channels that sync between a remote service and the local inbox/outbox.
+   ```text
+   ~/my-chambers/
+     chess-by-mail/
+     mr-lazy/
+     reports/
+   ```
 
-| Channel | Binary | Backend | Docs |
-|---------|--------|---------|------|
-| GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
-| Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
+2. Start the hub from the workspace root:
+
+   ```bash
+   cd ~/my-chambers
+   cryohub start
+   ```
+
+3. Open the printed URL in your browser. The UI lists every chamber with a status dot and lets you send messages, wake the agent, and start, stop, or restart daemons.
+
+See [Hub](https://giggleliu.github.io/cryochamber/hub.html) for the full reference.
+
+## Messaging channels
+
+Cryochamber syncs the local inbox and outbox with external messaging services through a dedicated binary per channel. The cryo daemon and agent stay channel-agnostic.
+
+| Channel            | Binary       | Backend            | Docs                                                                          |
+|--------------------|--------------|--------------------|-------------------------------------------------------------------------------|
+| GitHub Discussions | `cryo-gh`    | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html)       |
+| Zulip              | `cryo-zulip` | Zulip REST API     | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html)         |
 
 ## License
 
