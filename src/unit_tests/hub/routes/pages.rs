@@ -233,6 +233,58 @@ fn shell_css_does_not_keep_orphan_event_log_selectors() {
 }
 
 #[test]
+fn shell_renders_new_chamber_button_and_modal() {
+    assert!(
+        SHELL_HTML.contains("id=\"chamber-new\""),
+        "rail head should expose a new-chamber button"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-backdrop\""),
+        "shell should include the new-chamber modal backdrop"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-create\""),
+        "shell should include a create action inside the modal"
+    );
+}
+
+#[test]
+fn shell_wires_new_chamber_modal_to_api_and_selection() {
+    assert!(
+        SHELL_HTML.contains("fetch('/api/chambers/new'"),
+        "modal create action should POST to the new chamber API"
+    );
+    assert!(
+        SHELL_HTML.contains("await loadChambers();"),
+        "successful chamber creation should refresh the rail from the server"
+    );
+    assert!(
+        SHELL_HTML.contains("await selectChamber(body.id"),
+        "successful chamber creation should select the new chamber"
+    );
+    assert!(
+        SHELL_HTML.contains("showErr('name is empty')"),
+        "empty chamber names should be rejected inline before hitting the network"
+    );
+}
+
+#[test]
+fn shell_css_styles_new_chamber_modal() {
+    assert!(
+        WEB_CSS.contains(".rail-add"),
+        "web CSS should style the rail add button"
+    );
+    assert!(
+        WEB_CSS.contains(".modal-backdrop"),
+        "web CSS should style the modal backdrop"
+    );
+    assert!(
+        WEB_CSS.contains(".modal-btn-primary"),
+        "web CSS should style the modal primary action"
+    );
+}
+
+#[test]
 fn shell_emits_session_markers_between_messages_of_different_sessions() {
     // Operators asked to see which wake/session produced each message.
     // The server now tags every message with `session: N` and the thread

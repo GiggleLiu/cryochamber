@@ -24,6 +24,7 @@
     <div class="rail-head">
       <span class="title">Chambers</span>
       <span class="count" id="rail-count">0</span>
+      <button class="rail-add" id="chamber-new" title="New chamber">+</button>
     </div>
     <input class="rail-search" id="rail-search" placeholder="Filter chambers…">
     <div class="rail-list" id="chamber-list"></div>
@@ -55,6 +56,19 @@
 </div>
 
 <div id="toast" class="toast"></div>
+
+<div class="modal-backdrop" id="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title">New chamber</h3>
+    <label for="modal-name-input">Name</label>
+    <input id="modal-name-input" type="text" placeholder="my-chamber" autocomplete="off">
+    <div class="modal-error" id="modal-error" hidden></div>
+    <div class="modal-actions">
+      <button id="modal-cancel" class="modal-btn">Cancel</button>
+      <button id="modal-create" class="modal-btn modal-btn-primary">Create</button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function() {
@@ -1217,6 +1231,75 @@
     scheduleRailRefresh(d.chamber_id);
   });
   evt.addEventListener('index', async () => { await loadChambers(); });
+
+  (function () {
+    const btnOpen = document.getElementById('chamber-new');
+    const backdrop = document.getElementById('modal-backdrop');
+    const input = document.getElementById('modal-name-input');
+    const errBox = document.getElementById('modal-error');
+    const btnCancel = document.getElementById('modal-cancel');
+    const btnCreate = document.getElementById('modal-create');
+
+    function showModal() {
+      errBox.hidden = true;
+      errBox.textContent = '';
+      input.value = '';
+      backdrop.hidden = false;
+      setTimeout(() => input.focus(), 0);
+    }
+
+    function hideModal() {
+      backdrop.hidden = true;
+    }
+
+    function showErr(msg) {
+      errBox.textContent = msg;
+      errBox.hidden = false;
+    }
+
+    btnOpen.addEventListener('click', showModal);
+    btnCancel.addEventListener('click', hideModal);
+    backdrop.addEventListener('click', e => {
+      if (e.target === backdrop) hideModal();
+    });
+    document.addEventListener('keydown', e => {
+      if (!backdrop.hidden && e.key === 'Escape') hideModal();
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+
+    btnCreate.addEventListener('click', async () => {
+      const name = input.value.trim();
+      if (!name) {
+        showErr('name is empty');
+        return;
+      }
+
+      btnCreate.disabled = true;
+      try {
+        const r = await fetch('/api/chambers/new', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (r.status === 201) {
+          hideModal();
+          await loadChambers();
+          if (body.id) {
+            await selectChamber(body.id);
+          }
+        } else {
+          showErr((body && body.error) || `error: HTTP ${r.status}`);
+        }
+      } catch (e) {
+        showErr(`error: ${e}`);
+      } finally {
+        btnCreate.disabled = false;
+      }
+    });
+  })();
 
   // Expose for subsequent task wiring.
   window.__hub = { state, fetchJSON, toast, escapeHtml, hash32, renderRail, loadChambers, selectChamber };
