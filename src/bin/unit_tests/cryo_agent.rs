@@ -162,7 +162,10 @@ fn dialog_last_and_all_rejected() {
         since: None,
     });
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("mutually exclusive"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("mutually exclusive"));
 }
 
 #[test]

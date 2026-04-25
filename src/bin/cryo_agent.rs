@@ -127,8 +127,7 @@ fn main() -> Result<()> {
 fn dialog_filter_from_args(args: DialogArgs) -> Result<cryochamber::socket::DialogFilter> {
     use cryochamber::socket::DialogFilter;
 
-    let selected =
-        args.last.is_some() as u8 + args.all as u8 + args.since.is_some() as u8;
+    let selected = args.last.is_some() as u8 + args.all as u8 + args.since.is_some() as u8;
     if selected > 1 {
         anyhow::bail!("--last, --all, and --since are mutually exclusive");
     }

@@ -163,9 +163,9 @@ impl SessionLoopOutcome {
     }
 }
 
+pub(super) mod dialog;
 mod effects;
 mod inbox;
-pub(super) mod dialog;
 mod request;
 mod schedule;
 mod session;
@@ -186,8 +186,7 @@ use schedule::{
 use request::TodoRequest;
 use request::{
     handle_dialog_request, handle_receive_request, handle_todo_request, resolve_hibernate_request,
-    DaemonRequest, FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome,
-    TodoRequestOutcome,
+    DaemonRequest, FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;

@@ -35,11 +35,15 @@ impl MessageEffects for FakeMessages {
         Ok(claimed)
     }
 
-    fn read_inbox_archive(&self) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
+    fn read_inbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
         Ok(self.archived_inbox.clone())
     }
 
-    fn read_outbox_archive(&self) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
+    fn read_outbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
         Ok(self.archived_outbox.clone())
     }
 }

@@ -502,7 +502,11 @@ pub(super) fn handle_dialog_request(
         Some(format!(
             "dialog: claimed {} message{} [{}]",
             claimed_filenames.len(),
-            if claimed_filenames.len() == 1 { "" } else { "s" },
+            if claimed_filenames.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
             claimed_filenames.join(", ")
         ))
     };

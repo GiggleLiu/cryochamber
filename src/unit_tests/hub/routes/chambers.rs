@@ -203,11 +203,8 @@ mod post_new {
     async fn empty_name_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        let (status, Json(body)) = post_new(
-            State(app),
-            Json(NewChamberPayload { name: "".into() }),
-        )
-        .await;
+        let (status, Json(body)) =
+            post_new(State(app), Json(NewChamberPayload { name: "".into() })).await;
         assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "name is empty");
     }
@@ -216,13 +213,8 @@ mod post_new {
     async fn name_with_slash_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        let (status, Json(body)) = post_new(
-            State(app),
-            Json(NewChamberPayload {
-                name: "a/b".into(),
-            }),
-        )
-        .await;
+        let (status, Json(body)) =
+            post_new(State(app), Json(NewChamberPayload { name: "a/b".into() })).await;
         assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "name contains illegal characters");
     }
@@ -254,17 +246,13 @@ mod post_new {
 
         let hub_dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::new(hub_dir.path().to_path_buf()));
-        let _ = post_new(
-            State(app),
-            Json(NewChamberPayload { name: "x".into() }),
-        )
-        .await;
+        let _ = post_new(State(app), Json(NewChamberPayload { name: "x".into() })).await;
 
         for file in ["cryo.toml", "AGENTS.md", "plan.md", "README.md", "NOTES.md"] {
             let cli_bytes = std::fs::read(cli_dir.path().join(file)).unwrap();
             let hub_bytes = std::fs::read(hub_dir.path().join("x").join(file)).unwrap();
             if file == "README.md" {
-                assert_eq!(cli_bytes.len() > 0, hub_bytes.len() > 0);
+                assert_eq!(!cli_bytes.is_empty(), !hub_bytes.is_empty());
             } else {
                 assert_eq!(
                     cli_bytes, hub_bytes,
@@ -274,5 +262,50 @@ mod post_new {
         }
 
         let _ = json!({});
+    }
+
+    #[tokio::test]
+    async fn create_dir_failure_returns_500() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace_file = dir.path().join("workspace-file");
+        std::fs::write(&workspace_file, "not a directory").unwrap();
+
+        let app = Arc::new(AppState::new(workspace_file));
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("failed to create directory"));
+    }
+}
+
+mod path_under {
+    use std::path::Path;
+
+    use super::super::path_under as p;
+
+    #[test]
+    fn accepts_child_path() {
+        assert!(p(
+            Path::new("/tmp/workspace"),
+            Path::new("/tmp/workspace/alpha")
+        ));
+    }
+
+    #[test]
+    fn rejects_same_path_and_parent_components() {
+        assert!(!p(Path::new("/tmp/workspace"), Path::new("/tmp/workspace")));
+        assert!(!p(
+            Path::new("/tmp/workspace"),
+            Path::new("/tmp/workspace/../escape")
+        ));
     }
 }

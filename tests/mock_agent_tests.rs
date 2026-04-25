@@ -252,12 +252,20 @@ fn test_mock_dialog_round_trip() {
         .success();
 
     assert!(
-        wait_for_log_content(dir.path(), "dialog: claimed 1 message", Duration::from_secs(15)),
+        wait_for_log_content(
+            dir.path(),
+            "dialog: claimed 1 message",
+            Duration::from_secs(15)
+        ),
         "Log should show dialog claiming the inbox batch"
     );
 
     let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
-    assert_eq!(outbox.len(), 1, "dialog scenario should send one agent reply");
+    assert_eq!(
+        outbox.len(),
+        1,
+        "dialog scenario should send one agent reply"
+    );
     assert_eq!(outbox[0].1.from, "agent");
     assert!(
         outbox[0].1.body.contains("ack: hello from human"),
@@ -266,7 +274,11 @@ fn test_mock_dialog_round_trip() {
     );
 
     let archived = cryochamber::message::read_inbox_archive(dir.path()).unwrap();
-    assert_eq!(archived.len(), 1, "dialog should archive the claimed inbox batch");
+    assert_eq!(
+        archived.len(),
+        1,
+        "dialog should archive the claimed inbox batch"
+    );
     assert!(
         archived[0].1.body.contains("hello from human"),
         "archived inbox should contain the original human message: {:?}",

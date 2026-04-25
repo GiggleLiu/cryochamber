@@ -2092,8 +2092,10 @@ fn test_drive_active_session_dialog_failure_after_claim_still_triggers_fallback(
 
     assert_eq!(outcome, SessionLoopOutcome::Hibernate);
     assert_eq!(runtime.responses().len(), 2);
-    assert_eq!(runtime.responses()[0].0, false);
-    assert!(runtime.responses()[0].1.contains("not a recognized timestamp"));
+    assert!(!runtime.responses()[0].0);
+    assert!(runtime.responses()[0]
+        .1
+        .contains("not a recognized timestamp"));
     assert_eq!(runtime.responses()[1], (true, "Hibernating.".into()));
     assert!(effects.inbox_messages.is_empty());
     assert_eq!(effects.replies.len(), 1);
