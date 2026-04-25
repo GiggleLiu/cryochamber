@@ -1975,6 +1975,139 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
 }
 
 #[test]
+fn test_drive_active_session_dialog_request_returns_transcript_and_preserves_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Dialog {
+                filter: crate::socket::DialogFilter::All,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.archived_outbox.push((
+        "agent-0.md".into(),
+        crate::message::Message {
+            from: "agent".into(),
+            subject: "Reply".into(),
+            body: "Previous update".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+                .unwrap()
+                .and_hms_opt(18, 0, 0)
+                .unwrap(),
+            metadata: Default::default(),
+        },
+    ));
+    effects.push_inbox_message("msg-1.md", "Archive me");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    assert_eq!(runtime.responses().len(), 2);
+    assert!(runtime.responses()[0].0);
+    assert!(runtime.responses()[0].1.contains("Previous update"));
+    assert!(runtime.responses()[0].1.contains("Archive me"));
+    assert!(runtime.responses()[0].1.contains("new since last session"));
+    assert_eq!(runtime.responses()[1], (true, "Hibernating.".into()));
+    assert!(effects.inbox_messages.is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("the agent did not send a reply"),
+        "dialog should preserve the fallback reply obligation: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
+fn test_drive_active_session_dialog_failure_after_claim_still_triggers_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Dialog {
+                filter: crate::socket::DialogFilter::Since {
+                    iso: "yesterday".into(),
+                },
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.push_inbox_message("msg-1.md", "Archive me");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    assert_eq!(runtime.responses().len(), 2);
+    assert_eq!(runtime.responses()[0].0, false);
+    assert!(runtime.responses()[0].1.contains("not a recognized timestamp"));
+    assert_eq!(runtime.responses()[1], (true, "Hibernating.".into()));
+    assert!(effects.inbox_messages.is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("the agent did not send a reply"),
+        "a failed dialog after claim must still preserve fallback reply behavior: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
 fn test_build_bootstrap_state_runs_immediately_for_first_session_and_overdue_wake() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)

@@ -1048,9 +1048,6 @@ impl Daemon {
                 let response = ipc_protocol_response(protocol_version);
                 runtime.respond(response.ok, response.message)?;
             }
-            DaemonRequest::Dialog { .. } => {
-                runtime.respond(false, "dialog not yet implemented".into())?;
-            }
             DaemonRequest::Send { text } => {
                 let has_claimed_batch = state.inbox_state.has_claimed_batch();
                 match effects.write_reply(ReplyAuthor::Agent, &text, self.clock.local_now()) {
@@ -1113,6 +1110,20 @@ impl Daemon {
                     response?;
                 }
                 if let Some(event) = log_event {
+                    state.logger.log_event(&event)?;
+                }
+            }
+            DaemonRequest::Dialog { filter } => {
+                let outcome =
+                    handle_dialog_request(filter, state.inbox_state.claimed_filenames(), effects);
+                let response = runtime.respond(outcome.ok, outcome.message.clone());
+                if !outcome.claimed_filenames.is_empty() {
+                    state
+                        .inbox_state
+                        .record_claimed_batch(&outcome.claimed_filenames);
+                }
+                response?;
+                if let Some(event) = outcome.log_event {
                     state.logger.log_event(&event)?;
                 }
             }
