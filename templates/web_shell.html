@@ -147,6 +147,63 @@
     return 'stopped';
   }
 
+  // Server emits wake/scheduled times as 'YYYY-MM-DDTHH:MM' in local time.
+  // Browsers parse date-time strings without an offset as local time, so
+  // `new Date(iso)` matches the daemon's `chrono::Local` clock.
+  function formatWakeRelative(iso, nowMs) {
+    if (!iso) return null;
+    const target = new Date(iso);
+    const t = target.getTime();
+    if (!Number.isFinite(t)) return null;
+    const diffMin = Math.round((t - (nowMs ?? Date.now())) / 60000);
+    let text;
+    if (diffMin <= -60 * 24) text = `${Math.round(-diffMin / (60 * 24))}d ago`;
+    else if (diffMin <= -60)  text = `${Math.round(-diffMin / 60)}h ago`;
+    else if (diffMin < 0)     text = `${-diffMin}m ago`;
+    else if (diffMin < 1)     text = 'now';
+    else if (diffMin < 60)    text = `in ${diffMin}m`;
+    else if (diffMin < 60 * 24) {
+      const h = Math.floor(diffMin / 60);
+      const m = diffMin % 60;
+      text = m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
+    } else text = `in ${Math.floor(diffMin / (60 * 24))}d`;
+    return { text, soon: diffMin >= 0 && diffMin <= 60 };
+  }
+
+  // Renders a wake-time element with a live-updating relative label
+  // (`in 5m`). The absolute ISO is stashed on the element so the 30s
+  // ticker can re-render in place without re-fetching, and exposed via
+  // `title` so operators can still see the exact time on hover.
+  function applyWake(el, iso, prefix) {
+    prefix = prefix || '';
+    if (!iso) {
+      delete el.dataset.wakeIso;
+      delete el.dataset.wakePrefix;
+      el.removeAttribute('title');
+      el.classList.remove('soon');
+      el.textContent = '';
+      return;
+    }
+    el.dataset.wakeIso = iso;
+    if (prefix) el.dataset.wakePrefix = prefix;
+    else delete el.dataset.wakePrefix;
+    el.title = iso;
+    const rel = formatWakeRelative(iso);
+    el.textContent = prefix + (rel ? rel.text : iso);
+    el.classList.toggle('soon', !!(rel && rel.soon));
+  }
+
+  function refreshWakeRelatives() {
+    document.querySelectorAll('[data-wake-iso]').forEach(el => {
+      const iso = el.dataset.wakeIso;
+      const prefix = el.dataset.wakePrefix || '';
+      const rel = formatWakeRelative(iso);
+      if (!rel) return;
+      el.textContent = prefix + rel.text;
+      el.classList.toggle('soon', rel.soon);
+    });
+  }
+
   function buildChamberRow(c) {
     const row = document.createElement('div');
     row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
@@ -183,8 +240,8 @@
     task.className = 'task';
     task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
     const when = document.createElement('span');
-    when.className = 'when' + (c.wake_imminent ? ' soon' : '');
-    when.textContent = c.next_wake_display || '';
+    when.className = 'when';
+    applyWake(when, c.next_wake_display);
     meta.appendChild(task);
     meta.appendChild(when);
     row.appendChild(meta);
@@ -395,8 +452,13 @@
       }
     }
     if (status.next_wake) {
-      view.wakeChip.innerHTML = '<span class="pulse"></span>next wake · ' +
-        escapeHtml(status.next_wake);
+      view.wakeChip.innerHTML = '';
+      const pulse = document.createElement('span');
+      pulse.className = 'pulse';
+      const txt = document.createElement('span');
+      view.wakeChip.appendChild(pulse);
+      view.wakeChip.appendChild(txt);
+      applyWake(txt, status.next_wake, 'next wake · ');
       view.wakeChip.style.display = '';
     } else {
       view.wakeChip.style.display = 'none';
@@ -761,8 +823,8 @@
     row.appendChild(text);
     if (t.at) {
       const when = document.createElement('span');
-      when.className = 'when' + (t.at_soon ? ' soon' : '');
-      when.textContent = t.at;
+      when.className = 'when';
+      applyWake(when, t.at);
       row.appendChild(when);
     }
     return row;
@@ -1279,6 +1341,12 @@
     scheduleRailRefresh(d.chamber_id);
   });
   evt.addEventListener('index', async () => { await loadChambers(); });
+
+  // Server returns absolute datetimes; tick once a wall-clock minute (with a
+  // little extra so we don't drift past the boundary) to repaint relative
+  // labels in place. SSE-driven re-renders also call `applyWake`, so the
+  // ticker only matters when nothing is changing on the daemon.
+  setInterval(refreshWakeRelatives, 30_000);
 
   const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 
