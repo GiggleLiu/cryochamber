@@ -94,3 +94,93 @@ fn looks_like_iso_detects_date_prefix() {
     assert!(!looks_like_iso_date("tomorrow 9am"));
     assert!(!looks_like_iso_date("+30 minutes"));
 }
+
+#[test]
+fn dialog_default_parses_to_last_20() {
+    use clap::Parser;
+    use cryochamber::socket::DialogFilter;
+
+    let cli = super::Cli::parse_from(["cryo-agent", "dialog"]);
+    let filter = super::dialog_filter_from_args(match &cli.command {
+        super::Commands::Dialog(args) => args.clone(),
+        _ => unreachable!(),
+    })
+    .unwrap();
+    assert!(matches!(filter, DialogFilter::LastN { count: 20 }));
+}
+
+#[test]
+fn dialog_last_5_parses() {
+    use clap::Parser;
+    use cryochamber::socket::DialogFilter;
+
+    let cli = super::Cli::parse_from(["cryo-agent", "dialog", "--last", "5"]);
+    let filter = super::dialog_filter_from_args(match &cli.command {
+        super::Commands::Dialog(args) => args.clone(),
+        _ => unreachable!(),
+    })
+    .unwrap();
+    assert!(matches!(filter, DialogFilter::LastN { count: 5 }));
+}
+
+#[test]
+fn dialog_all_parses() {
+    use clap::Parser;
+    use cryochamber::socket::DialogFilter;
+
+    let cli = super::Cli::parse_from(["cryo-agent", "dialog", "--all"]);
+    let filter = super::dialog_filter_from_args(match &cli.command {
+        super::Commands::Dialog(args) => args.clone(),
+        _ => unreachable!(),
+    })
+    .unwrap();
+    assert!(matches!(filter, DialogFilter::All));
+}
+
+#[test]
+fn dialog_since_parses() {
+    use clap::Parser;
+    use cryochamber::socket::DialogFilter;
+
+    let cli = super::Cli::parse_from(["cryo-agent", "dialog", "--since", "2026-04-25T09:00"]);
+    let filter = super::dialog_filter_from_args(match &cli.command {
+        super::Commands::Dialog(args) => args.clone(),
+        _ => unreachable!(),
+    })
+    .unwrap();
+    match filter {
+        DialogFilter::Since { iso } => assert_eq!(iso, "2026-04-25T09:00"),
+        _ => panic!("expected Since"),
+    }
+}
+
+#[test]
+fn dialog_last_and_all_rejected() {
+    let result = super::dialog_filter_from_args(super::DialogArgs {
+        last: Some(5),
+        all: true,
+        since: None,
+    });
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("mutually exclusive"));
+}
+
+#[test]
+fn dialog_last_and_since_rejected() {
+    let result = super::dialog_filter_from_args(super::DialogArgs {
+        last: Some(5),
+        all: false,
+        since: Some("2026-04-25".to_string()),
+    });
+    assert!(result.is_err());
+}
+
+#[test]
+fn dialog_all_and_since_rejected() {
+    let result = super::dialog_filter_from_args(super::DialogArgs {
+        last: None,
+        all: true,
+        since: Some("2026-04-25".to_string()),
+    });
+    assert!(result.is_err());
+}
