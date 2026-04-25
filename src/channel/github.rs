@@ -124,6 +124,7 @@ pub fn parse_discussion_comments(json: &serde_json::Value) -> Result<(Vec<Messag
             body,
             timestamp,
             metadata,
+            is_question: false,
         });
     }
 

@@ -124,6 +124,7 @@ cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 
 ```
 cryo-agent send "message"                     # Send message to human (outbox)
+cryo-agent send --question "what should I do?"# Send a question (rail shows ? until human replies)
 cryo-agent receive                            # Claim current inbox batch from human
 cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required) — ONLY way to set next wake
 cryo-agent todo list                          # List all TODO items

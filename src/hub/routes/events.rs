@@ -28,6 +28,7 @@ pub async fn get_events(
                     subject,
                     body,
                     timestamp,
+                    is_question,
                 } => Event::default()
                     .event("message")
                     .json_data(json!({
@@ -37,6 +38,7 @@ pub async fn get_events(
                         "subject": subject,
                         "body": body,
                         "timestamp": timestamp,
+                        "is_question": is_question,
                     }))
                     .unwrap(),
                 SseEvent::StatusChange { chamber_id } => Event::default()

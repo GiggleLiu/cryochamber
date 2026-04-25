@@ -363,6 +363,7 @@ pub fn parse_get_messages_response(
             body: content,
             timestamp,
             metadata,
+            is_question: false,
         });
     }
 

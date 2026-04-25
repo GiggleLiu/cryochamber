@@ -12,6 +12,7 @@ fn mk(from: &str, subject: &str, body: &str) -> Message {
         body: body.into(),
         timestamp: NaiveDateTime::default(),
         metadata: BTreeMap::new(),
+        is_question: false,
     }
 }
 

@@ -489,6 +489,7 @@ fn build_inbox_message(from: &str, subject: &str, body: &str) -> Message {
         body: body.to_string(),
         timestamp: chrono::Local::now().naive_local(),
         metadata: std::collections::BTreeMap::new(),
+        is_question: false,
     }
 }
 

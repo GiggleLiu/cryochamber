@@ -99,6 +99,7 @@ pub async fn post_send(
         body: req.body,
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
+        is_question: false,
     };
     match store.send_in(&msg) {
         Ok(_) => {
@@ -109,6 +110,7 @@ pub async fn post_send(
                 subject: msg.subject.clone(),
                 body: msg.body.clone(),
                 timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                is_question: msg.is_question,
             });
             Ok(Json(json!({"ok": true, "message": "Message sent"})))
         }
@@ -139,6 +141,7 @@ pub async fn post_wake(
         body,
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
+        is_question: false,
     };
     if let Err(e) = store.send_in(&msg) {
         return Ok(Json(

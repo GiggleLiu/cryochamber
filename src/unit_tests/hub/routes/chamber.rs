@@ -117,6 +117,7 @@ fn messages_json_sorted_by_timestamp() {
             .and_hms_opt(0, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     let late = crate::message::Message {
         from: "b".into(),
@@ -127,6 +128,7 @@ fn messages_json_sorted_by_timestamp() {
             .and_hms_opt(0, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &late).unwrap();
     crate::message::write_message(dir.path(), "outbox", &early).unwrap();
@@ -165,6 +167,7 @@ fn messages_json_tags_each_message_with_the_session_that_owns_it() {
             .and_hms_opt(9, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     // Inside session 1.
     let s1 = crate::message::Message {
@@ -176,6 +179,7 @@ fn messages_json_tags_each_message_with_the_session_that_owns_it() {
             .and_hms_opt(10, 30, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     // Inside session 2.
     let s2 = crate::message::Message {
@@ -187,6 +191,7 @@ fn messages_json_tags_each_message_with_the_session_that_owns_it() {
             .and_hms_opt(13, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &pre).unwrap();
     crate::message::write_message(dir.path(), "inbox", &s1).unwrap();
@@ -214,6 +219,7 @@ fn messages_json_includes_outbox_archive() {
             .and_hms_opt(9, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     let path = crate::message::write_message(dir.path(), "outbox", &msg).unwrap();
     // Simulate sync daemon archiving the delivered outbox message.
@@ -244,6 +250,7 @@ fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
         body: "same body".into(),
         timestamp,
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
     crate::message::write_message(dir.path(), "inbox", &msg).unwrap();

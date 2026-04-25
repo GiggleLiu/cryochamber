@@ -258,7 +258,7 @@ impl SessionRuntime for FakeSessionRuntime {
 
 struct FakeSessionEffects {
     reply_failure: Option<String>,
-    replies: Vec<(ReplyAuthor, String, NaiveDateTime)>,
+    replies: Vec<(ReplyAuthor, String, NaiveDateTime, bool)>,
     inbox_messages: Vec<(String, crate::message::Message)>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
@@ -321,6 +321,7 @@ impl FakeSessionEffects {
                     .and_hms_opt(12, 0, 0)
                     .unwrap(),
                 metadata: Default::default(),
+                is_question: false,
             },
         ));
     }
@@ -336,11 +337,13 @@ impl SessionEffects for FakeSessionEffects {
         author: ReplyAuthor,
         text: &str,
         timestamp: NaiveDateTime,
+        is_question: bool,
     ) -> Result<()> {
         if let Some(message) = &self.reply_failure {
             anyhow::bail!("{message}");
         }
-        self.replies.push((author, text.to_string(), timestamp));
+        self.replies
+            .push((author, text.to_string(), timestamp, is_question));
         Ok(())
     }
 
@@ -1466,6 +1469,7 @@ fn test_drive_active_session_reply_failure_still_finishes_session_log() {
         vec![
             Ok(Some(crate::socket::Request::Receive)),
             Ok(Some(crate::socket::Request::Send {
+                question: false,
                 text: "Need approval".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1579,6 +1583,7 @@ fn test_drive_active_session_send_after_receive_satisfies_queued_inbox_message()
         vec![
             Ok(Some(crate::socket::Request::Receive)),
             Ok(Some(crate::socket::Request::Send {
+                question: false,
                 text: "Got it".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1630,6 +1635,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
     let mut runtime = FakeSessionRuntime::new(
         vec![
             Ok(Some(crate::socket::Request::Send {
+                question: false,
                 text: "Still investigating".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1673,7 +1679,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
         effects
             .replies
             .iter()
-            .any(|(author, text, _)| *author == ReplyAuthor::Agent
+            .any(|(author, text, _, _)| *author == ReplyAuthor::Agent
                 && text == "Still investigating"),
         "plain send should still post a status message: {:?}",
         effects.replies
@@ -1682,7 +1688,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
         effects
             .replies
             .iter()
-            .filter(|(author, _, _)| *author == ReplyAuthor::Daemon)
+            .filter(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
             .count(),
         0,
         "unreceived inbox should remain silent until the agent explicitly reads it"
@@ -3082,5 +3088,76 @@ fn test_provider_wrap_all_exhausted_in_process() {
     assert!(
         elapsed < Duration::from_secs(1),
         "provider wrap with virtual clock should be sub-second; took {elapsed:?}"
+    );
+}
+
+#[test]
+fn fs_session_effects_write_reply_with_question_writes_frontmatter_and_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut effects = crate::daemon::effects::FsSessionEffects::new(dir.path());
+    let ts = chrono::NaiveDate::from_ymd_opt(2026, 4, 25)
+        .unwrap()
+        .and_hms_opt(15, 30, 0)
+        .unwrap();
+
+    effects
+        .write_reply(
+            crate::daemon::effects::ReplyAuthor::Agent,
+            "What is ice?",
+            ts,
+            true,
+        )
+        .unwrap();
+
+    let outbox = dir.path().join("messages").join("outbox");
+    let mut entries: Vec<_> = std::fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1, "expected exactly one outbox file");
+    let content = std::fs::read_to_string(entries.remove(0).path()).unwrap();
+
+    assert!(
+        content.contains("question: true"),
+        "expected frontmatter `question: true`; got:\n{content}"
+    );
+    assert!(
+        content.contains("\nQuestion: What is ice?"),
+        "expected body to start with `Question: `; got:\n{content}"
+    );
+}
+
+#[test]
+fn fs_session_effects_write_reply_without_question_omits_frontmatter_and_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut effects = crate::daemon::effects::FsSessionEffects::new(dir.path());
+    let ts = chrono::NaiveDate::from_ymd_opt(2026, 4, 25)
+        .unwrap()
+        .and_hms_opt(15, 30, 0)
+        .unwrap();
+
+    effects
+        .write_reply(
+            crate::daemon::effects::ReplyAuthor::Agent,
+            "Status update",
+            ts,
+            false,
+        )
+        .unwrap();
+
+    let outbox = dir.path().join("messages").join("outbox");
+    let mut entries: Vec<_> = std::fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+    let content = std::fs::read_to_string(entries.remove(0).path()).unwrap();
+
+    assert!(!content.contains("question: true"), "got:\n{content}");
+    assert!(
+        !content.contains("Question: Status update"),
+        "got:\n{content}"
     );
 }

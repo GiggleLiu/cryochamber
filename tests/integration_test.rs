@@ -83,6 +83,7 @@ fn test_message_store_roundtrip() {
         )
         .unwrap(),
         metadata: std::collections::BTreeMap::new(),
+        is_question: false,
     };
     cryochamber::message::write_message(dir.path(), "inbox", &msg).unwrap();
 
