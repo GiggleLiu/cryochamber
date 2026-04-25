@@ -43,12 +43,12 @@
     <div class="drawer-tabs">
       <div class="drawer-tab active" data-tab="todos">Todos<span class="tab-count" id="todos-count">0</span></div>
       <div class="drawer-tab" data-tab="sync">Sync</div>
-      <div class="drawer-tab" data-tab="notes">Notes</div>
+      <div class="drawer-tab" data-tab="settings">Settings</div>
       <div class="drawer-tab" data-tab="log">Log</div>
     </div>
     <div class="drawer-body" data-panel="todos" id="panel-todos"></div>
     <div class="drawer-body hidden" data-panel="sync" id="panel-sync"></div>
-    <div class="drawer-body hidden" data-panel="notes" id="panel-notes"></div>
+    <div class="drawer-body hidden" data-panel="settings" id="panel-settings"></div>
     <div class="drawer-body hidden" data-panel="log" id="panel-log"></div>
   </aside>
 
@@ -250,10 +250,16 @@
       headerTaskLine: null,
       planCompleteBox: null,
       lifecycleBtns: null,
-      panels: { todos: null, sync: null, notes: null, log: null },
+      panels: { todos: null, sync: null, settings: null, log: null },
       syncEl: null,
       notesEl: null,
+      planEl: null,
+      settingsEl: null,
       logEl: null,
+      messagesBodyEl: null,
+      planBodyEl: null,
+      notesBodyEl: null,
+      messagesUnreadEl: null,
       lastMsgKey: null,
       lastTodoSig: null,
       lastSyncSig: null,
@@ -651,9 +657,6 @@
         if (name === 'log' && view && view.logEl) {
           view.logEl.scrollTop = view.logEl.scrollHeight;
         }
-        if (name === 'notes' && view && view.notesEl) {
-          view.notesEl.scrollTop = 0;
-        }
       });
     });
   }
@@ -835,34 +838,185 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  // Center-pane tab strip: Messages / Plan / Notes. Tab bodies are siblings
+  // hidden via `.hidden`; we never tear down a body when switching tabs so
+  // each panel's scrollTop and textarea drafts survive tab changes.
+  function centerTabStorageKey(chamberId) { return `hub:tab:${chamberId}`; }
+
+  function buildCenterTabs(pane, chamberId, entry) {
+    const bar = document.createElement('div');
+    bar.className = 'center-tabs';
+
+    const messagesTab = document.createElement('div');
+    messagesTab.className = 'center-tab';
+    messagesTab.dataset.tab = 'messages';
+    messagesTab.textContent = 'Messages';
+    const unread = document.createElement('span');
+    unread.className = 'tab-count';
+    unread.hidden = true;
+    messagesTab.appendChild(unread);
+    view.messagesUnreadEl = unread;
+
+    const planTab = document.createElement('div');
+    planTab.className = 'center-tab';
+    planTab.dataset.tab = 'plan';
+    planTab.textContent = 'Plan';
+
+    const notesTab = document.createElement('div');
+    notesTab.className = 'center-tab';
+    notesTab.dataset.tab = 'notes';
+    notesTab.textContent = 'Notes';
+
+    bar.appendChild(messagesTab);
+    bar.appendChild(planTab);
+    bar.appendChild(notesTab);
+    pane.appendChild(bar);
+
+    const messagesBody = document.createElement('div');
+    messagesBody.className = 'center-tab-body messages-body';
+    messagesBody.dataset.panel = 'messages';
+    pane.appendChild(messagesBody);
+
+    const planBody = document.createElement('div');
+    planBody.className = 'center-tab-body file-body-panel hidden';
+    planBody.dataset.panel = 'plan';
+    pane.appendChild(planBody);
+
+    const notesBody = document.createElement('div');
+    notesBody.className = 'center-tab-body file-body-panel hidden';
+    notesBody.dataset.panel = 'notes';
+    pane.appendChild(notesBody);
+
+    view.messagesBodyEl = messagesBody;
+    view.planBodyEl = planBody;
+    view.notesBodyEl = notesBody;
+
+    const tabs = [messagesTab, planTab, notesTab];
+    const bodies = [messagesBody, planBody, notesBody];
+    function activate(name) {
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+      bodies.forEach(b => b.classList.toggle('hidden', b.dataset.panel !== name));
+      try { localStorage.setItem(centerTabStorageKey(chamberId), name); } catch (e) {}
+    }
+    tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
+
+    let initial = 'messages';
+    // ?tab=plan|notes wins for shareable / scriptable links; falls back to
+    // the per-chamber localStorage value, then to messages.
+    const queryTab = new URLSearchParams(window.location.search).get('tab');
+    if (queryTab && tabs.some(t => t.dataset.tab === queryTab)) {
+      initial = queryTab;
+    } else {
+      try {
+        const saved = localStorage.getItem(centerTabStorageKey(chamberId));
+        if (saved && tabs.some(t => t.dataset.tab === saved)) initial = saved;
+      } catch (e) {}
+    }
+    activate(initial);
+
+    updateMessagesUnreadBadge(entry);
+  }
+
+  function updateMessagesUnreadBadge(entry) {
+    if (!view || !view.messagesUnreadEl) return;
+    const n = entry && entry.unread ? entry.unread : 0;
+    view.messagesUnreadEl.textContent = n > 0 ? n : '';
+    view.messagesUnreadEl.hidden = n === 0;
+  }
+
+  function buildPlanBody(box) {
+    box.innerHTML = '';
+    const article = document.createElement('article');
+    article.className = 'plan-md';
+    box.appendChild(article);
+    view.planEl = article;
+    view.planLastHtml = null;
+  }
+
+  function buildNotesBody(box) {
+    box.innerHTML = '';
+    const pre = document.createElement('pre');
+    pre.className = 'file-pre';
+    box.appendChild(pre);
+    view.notesEl = pre;
+  }
+
+  function setFilePre(el, content, emptyLabel) {
+    const text = content || '';
+    if (text === '') {
+      if (!el.classList.contains('empty') || el.textContent !== emptyLabel) {
+        el.classList.add('empty');
+        el.textContent = emptyLabel;
+      }
+      return;
+    }
+    if (el.textContent === text && !el.classList.contains('empty')) return;
+    const prev = el.scrollTop;
+    el.classList.remove('empty');
+    el.textContent = text;
+    el.scrollTop = prev;
+  }
+
   function renderNotes(status) {
-    const box = document.getElementById('panel-notes');
-    const nextContent = status.notes_content || '';
-    // Every SSE status tick re-renders the whole panel — rebuilding the DOM
-    // would reset scrollTop to 0 and yank the reader back to the top. Reuse
-    // the existing `<pre>` and preserve its scroll position when the content
-    // didn't meaningfully change.
-    if (view.notesEl && box.contains(view.notesEl)) {
-      if (view.notesEl.textContent === nextContent) return;
-      const prevScroll = view.notesEl.scrollTop;
-      view.notesEl.textContent = nextContent;
-      view.notesEl.scrollTop = prevScroll;
+    if (!view || !view.notesEl) return;
+    setFilePre(view.notesEl, status.notes_content || '', 'No NOTES.md in this chamber.');
+  }
+
+  function renderPlan(status) {
+    if (!view || !view.planEl) return;
+    const html = status.plan_html || '';
+    if (html === '') {
+      if (!view.planEl.classList.contains('empty') || view.planLastHtml !== '') {
+        view.planEl.classList.add('empty');
+        view.planEl.textContent = 'No plan.md in this chamber.';
+        view.planLastHtml = '';
+      }
+      return;
+    }
+    if (view.planLastHtml === html && !view.planEl.classList.contains('empty')) return;
+    const prev = view.planEl.parentNode ? view.planEl.parentNode.scrollTop : 0;
+    view.planEl.classList.remove('empty');
+    // plan_html is rendered server-side by pulldown-cmark with raw HTML
+    // events escaped to text, so this innerHTML write is safe by construction.
+    view.planEl.innerHTML = html;
+    view.planLastHtml = html;
+    if (view.planEl.parentNode) view.planEl.parentNode.scrollTop = prev;
+  }
+
+  function renderSettings(status) {
+    const box = document.getElementById('panel-settings');
+    if (!box) return;
+    const text = status.config_content || '';
+    if (view.settingsEl && box.contains(view.settingsEl)) {
+      const isEmpty = view.settingsEl.classList.contains('empty');
+      const current = isEmpty ? '' : view.settingsEl.textContent;
+      if (current === text) return;
+      const prev = view.settingsEl.scrollTop;
+      if (text === '') {
+        view.settingsEl.classList.add('empty');
+        view.settingsEl.textContent = 'No cryo.toml in this chamber.';
+      } else {
+        view.settingsEl.classList.remove('empty');
+        view.settingsEl.textContent = text;
+      }
+      view.settingsEl.scrollTop = prev;
       return;
     }
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'section-title';
-    title.textContent = 'NOTES.md';
+    title.textContent = 'cryo.toml';
     box.appendChild(title);
-    const wrap = document.createElement('div');
-    wrap.className = 'notes-wrap';
     const pre = document.createElement('pre');
-    pre.className = 'notes';
-    pre.id = 'notes';
-    pre.textContent = nextContent;
-    wrap.appendChild(pre);
-    box.appendChild(wrap);
-    view.notesEl = pre;
+    pre.className = 'settings-pre';
+    if (text === '') {
+      pre.classList.add('empty');
+      pre.textContent = 'No cryo.toml in this chamber.';
+    } else {
+      pre.textContent = text;
+    }
+    box.appendChild(pre);
+    view.settingsEl = pre;
   }
 
   function appendLogLine(line) {
@@ -888,13 +1042,18 @@
     view = newView();
     view.chamberId = id;
     buildHead(pane, entry, status);
-    buildThread(pane, messages);
+    buildCenterTabs(pane, id, entry);
+    buildThread(view.messagesBodyEl, messages);
+    buildCompose(view.messagesBodyEl, id);
+    buildPlanBody(view.planBodyEl);
+    buildNotesBody(view.notesBodyEl);
     view.syncEl = document.getElementById('panel-sync');
-    buildCompose(pane, id);
     renderTodos(todos);
     renderSync(id, sync);
     renderLog(status);
     renderNotes(status);
+    renderPlan(status);
+    renderSettings(status);
     document.getElementById('drawer').hidden = false;
   }
 
@@ -918,6 +1077,9 @@
       updateLifecycleButtons(entry);
       renderLog(data.status); // refreshes log_tail baseline
       renderNotes(data.status);
+      renderPlan(data.status);
+      renderSettings(data.status);
+      updateMessagesUnreadBadge(entry);
     }
     if (data.sync)     renderSync(id, data.sync);
     if (data.todos)    renderTodos(data.todos);

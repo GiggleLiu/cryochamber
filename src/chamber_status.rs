@@ -1,7 +1,29 @@
 use crate::channel::store::MessageStore;
 use crate::message::Message;
+use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::path::Path;
+
+/// Render markdown to HTML, escaping any embedded raw HTML so plan.md can't
+/// inject script tags into the hub UI. Output is empty when input is empty.
+pub fn render_markdown_safe(src: &str) -> String {
+    if src.is_empty() {
+        return String::new();
+    }
+    let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let parser = Parser::new_ext(src, opts).map(|event| match event {
+        Event::Html(s) | Event::InlineHtml(s) => Event::Text(s),
+        // Drop raw images — they're a side-channel for fetching arbitrary URLs
+        // from the operator's browser, and plan.md is reference text, not a
+        // gallery. Keeps the rendered output minimal and predictable.
+        Event::Start(Tag::Image { .. }) => Event::Start(Tag::Emphasis),
+        Event::End(TagEnd::Image) => Event::End(TagEnd::Emphasis),
+        other => other,
+    });
+    let mut out = String::with_capacity(src.len() + src.len() / 4);
+    html::push_html(&mut out, parser);
+    out
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChamberStatus {
@@ -12,6 +34,9 @@ pub struct ChamberStatus {
     pub log_tail: String,
     pub next_wake: Option<String>,
     pub notes_content: String,
+    pub plan_content: String,
+    pub plan_html: String,
+    pub config_content: String,
     pub task: Option<String>,
     pub completed: bool,
     pub completion_summary: Option<String>,
@@ -72,6 +97,9 @@ pub fn status(dir: &Path) -> ChamberStatus {
         .flatten();
     let completed = completion_summary.is_some();
 
+    let plan_content = std::fs::read_to_string(dir.join("plan.md")).unwrap_or_default();
+    let plan_html = render_markdown_safe(&plan_content);
+
     ChamberStatus {
         running,
         agent_running,
@@ -83,6 +111,9 @@ pub fn status(dir: &Path) -> ChamberStatus {
             .unwrap_or_default(),
         next_wake: next_wake(dir),
         notes_content: std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default(),
+        plan_content,
+        plan_html,
+        config_content: std::fs::read_to_string(dir.join("cryo.toml")).unwrap_or_default(),
         task: crate::log::parse_latest_session_task(&log_file)
             .ok()
             .flatten(),

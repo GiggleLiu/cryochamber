@@ -76,6 +76,35 @@ fn status_json_notes_content_empty_when_file_missing() {
 }
 
 #[test]
+fn status_json_includes_plan_and_config_content() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("plan.md"), "# Plan\n- step one\n").unwrap();
+    std::fs::write(
+        dir.path().join("cryo.toml"),
+        "agent = \"opencode\"\nmax_session_duration = 600\n",
+    )
+    .unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["plan_content"], "# Plan\n- step one\n");
+    assert_eq!(
+        v["config_content"],
+        "agent = \"opencode\"\nmax_session_duration = 600\n"
+    );
+    let plan_html = v["plan_html"].as_str().expect("plan_html");
+    assert!(plan_html.contains("<h1>Plan</h1>"), "got {plan_html}");
+    assert!(plan_html.contains("<li>step one</li>"), "got {plan_html}");
+}
+
+#[test]
+fn status_json_plan_and_config_empty_when_files_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["plan_content"], "");
+    assert_eq!(v["plan_html"], "");
+    assert_eq!(v["config_content"], "");
+}
+
+#[test]
 fn todos_json_is_empty_array_when_missing() {
     let dir = tempfile::tempdir().unwrap();
     let v = todos_json(dir.path());

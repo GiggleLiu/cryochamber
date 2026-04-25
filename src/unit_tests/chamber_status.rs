@@ -74,6 +74,71 @@ fn status_next_wake_uses_earliest_open_todo() {
 }
 
 #[test]
+fn status_reads_plan_and_config_from_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("plan.md"), "## Plan\n1. wake\n2. work\n").unwrap();
+    std::fs::write(
+        dir.path().join("cryo.toml"),
+        "agent = \"claude\"\nwatch_inbox = true\n",
+    )
+    .unwrap();
+
+    let status = status(dir.path());
+
+    assert_eq!(status.plan_content, "## Plan\n1. wake\n2. work\n");
+    assert_eq!(
+        status.config_content,
+        "agent = \"claude\"\nwatch_inbox = true\n"
+    );
+    assert!(status.plan_html.contains("<h2>Plan</h2>"));
+    assert!(status.plan_html.contains("<li>wake</li>"));
+}
+
+#[test]
+fn status_plan_and_config_empty_when_files_missing() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let status = status(dir.path());
+
+    assert!(status.plan_content.is_empty());
+    assert!(status.plan_html.is_empty());
+    assert!(status.config_content.is_empty());
+}
+
+#[test]
+fn render_markdown_safe_escapes_raw_html() {
+    let out = render_markdown_safe("Hello <script>alert(1)</script> world");
+    assert!(
+        !out.contains("<script>"),
+        "raw script tag must be escaped, got: {out}"
+    );
+    assert!(
+        out.contains("&lt;script&gt;"),
+        "raw HTML should be escaped to text, got: {out}"
+    );
+}
+
+#[test]
+fn render_markdown_safe_drops_image_urls() {
+    // Images become plain emphasis so a malicious plan can't make the
+    // operator's browser fetch arbitrary URLs.
+    let out = render_markdown_safe("see ![alt](http://attacker.example/pixel.gif)");
+    assert!(!out.contains("<img"), "img tag must not appear, got: {out}");
+    assert!(
+        !out.contains("attacker.example"),
+        "image src must not leak into output, got: {out}"
+    );
+}
+
+#[test]
+fn render_markdown_safe_renders_basic_markdown() {
+    let out = render_markdown_safe("# Title\n\n- one\n- two\n");
+    assert!(out.contains("<h1>Title</h1>"));
+    assert!(out.contains("<li>one</li>"));
+    assert!(out.contains("<li>two</li>"));
+}
+
+#[test]
 fn status_completion_summary_comes_from_latest_session_log() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

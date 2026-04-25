@@ -272,22 +272,27 @@ fn shell_gives_thread_min_height_so_overflow_can_scroll() {
 }
 
 #[test]
-fn shell_preserves_notes_scroll_across_sse_refreshes() {
-    // Every status SSE tick calls renderNotes. Blowing away the DOM each
-    // time resets the `<pre>`'s scrollTop to 0, so a reader mid-way down
-    // the notes keeps getting yanked back to the top. The update path
-    // must reuse the existing node and preserve scrollTop.
+fn shell_preserves_file_pre_scroll_across_sse_refreshes() {
+    // Every status SSE tick re-renders the Notes (and Plan) tab bodies.
+    // Replacing textContent unconditionally would reset scrollTop to 0 and
+    // yank a reader mid-way down the file back to the top. The shared
+    // `setFilePre` helper must skip when content is unchanged and save +
+    // restore scrollTop when it does write.
     assert!(
-        SHELL_HTML.contains("if (view.notesEl && box.contains(view.notesEl))"),
-        "renderNotes should reuse the existing notes <pre> on update"
+        SHELL_HTML.contains("function setFilePre"),
+        "Notes/Plan rendering should funnel through a setFilePre helper"
     );
     assert!(
-        SHELL_HTML.contains("view.notesEl.scrollTop = prevScroll"),
-        "renderNotes must restore scrollTop after updating text"
+        SHELL_HTML.contains("if (el.textContent === text && !el.classList.contains('empty')) return"),
+        "setFilePre should skip rewrite when content unchanged"
     );
     assert!(
-        SHELL_HTML.contains("if (view.notesEl.textContent === nextContent) return"),
-        "renderNotes should skip when content is unchanged"
+        SHELL_HTML.contains("const prev = el.scrollTop;"),
+        "setFilePre should snapshot scrollTop before mutating"
+    );
+    assert!(
+        SHELL_HTML.contains("el.scrollTop = prev;"),
+        "setFilePre must restore scrollTop after writing text"
     );
 }
 
