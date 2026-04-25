@@ -260,6 +260,8 @@ struct FakeSessionEffects {
     reply_failure: Option<String>,
     replies: Vec<(ReplyAuthor, String, NaiveDateTime)>,
     inbox_messages: Vec<(String, crate::message::Message)>,
+    archived_inbox: Vec<(String, crate::message::Message)>,
+    archived_outbox: Vec<(String, crate::message::Message)>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
 }
@@ -270,6 +272,8 @@ impl FakeSessionEffects {
             reply_failure: None,
             replies: Vec::new(),
             inbox_messages: Vec::new(),
+            archived_inbox: Vec::new(),
+            archived_outbox: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
         }
@@ -328,7 +332,17 @@ impl FakeSessionEffects {
 
 impl SessionEffects for FakeSessionEffects {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
-        Ok(std::mem::take(&mut self.inbox_messages))
+        let claimed = std::mem::take(&mut self.inbox_messages);
+        self.archived_inbox.extend(claimed.iter().cloned());
+        Ok(claimed)
+    }
+
+    fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(self.archived_inbox.clone())
+    }
+
+    fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(self.archived_outbox.clone())
     }
 
     fn write_reply(

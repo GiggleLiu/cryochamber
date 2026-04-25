@@ -173,6 +173,14 @@ pub(super) trait MessageEffects {
     fn claim_inbox_batch(
         &mut self,
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
+
+    fn read_inbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
+
+    fn read_outbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
 }
 
 impl<T: SessionEffects> TodoEffects for T {
@@ -201,6 +209,20 @@ impl<T: SessionEffects> MessageEffects for T {
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
         SessionEffects::claim_inbox_batch(self)
             .map_err(|e| TodoOperationError::new(format!("Failed to read inbox: {e}")))
+    }
+
+    fn read_inbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        SessionEffects::read_inbox_archive(self)
+            .map_err(|e| TodoOperationError::new(format!("Failed to read inbox archive: {e}")))
+    }
+
+    fn read_outbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        SessionEffects::read_outbox_archive(self)
+            .map_err(|e| TodoOperationError::new(format!("Failed to read outbox archive: {e}")))
     }
 }
 
@@ -261,6 +283,22 @@ impl MessageEffects for FileMessageEffects {
         self.store
             .read_and_archive_inbox()
             .map_err(|e| TodoOperationError::new(format!("Failed to read inbox: {e}")))
+    }
+
+    fn read_inbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        self.store
+            .read_inbox_archive_named()
+            .map_err(|e| TodoOperationError::new(format!("Failed to read inbox archive: {e}")))
+    }
+
+    fn read_outbox_archive(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        self.store
+            .read_outbox_archive_named()
+            .map_err(|e| TodoOperationError::new(format!("Failed to read outbox archive: {e}")))
     }
 }
 
