@@ -118,7 +118,6 @@ fn watcher_startup_notice_is_silent_without_warning_or_watcher() {
 struct TestClockState {
     now: NaiveDateTime,
     elapsed: Duration,
-    sleeps: Vec<Duration>,
 }
 
 struct TestClock {
@@ -133,13 +132,8 @@ impl TestClock {
             state: Mutex::new(TestClockState {
                 now,
                 elapsed: Duration::ZERO,
-                sleeps: Vec::new(),
             }),
         }
-    }
-
-    fn sleeps(&self) -> Vec<Duration> {
-        self.state.lock().unwrap().sleeps.clone()
     }
 }
 
@@ -155,7 +149,6 @@ impl Clock for TestClock {
 
     fn sleep(&self, duration: Duration) {
         let mut state = self.state.lock().unwrap();
-        state.sleeps.push(duration);
         state.now += chrono::Duration::from_std(duration).unwrap();
         state.elapsed += duration;
     }
@@ -924,28 +917,6 @@ fn test_next_wake_from_todos_all_invalid_returns_none() {
     todos.add("bad2".into(), "also-bad".into()).unwrap();
     let wake = next_wake_from_todos(dir.path());
     assert!(wake.is_none(), "All invalid entries should yield None");
-}
-
-#[test]
-fn test_sleep_or_shutdown_uses_injected_clock() {
-    let dir = tempfile::tempdir().unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
-
-    assert!(!daemon.sleep_or_shutdown(Duration::from_millis(600)));
-    assert_eq!(
-        clock.sleeps(),
-        vec![
-            Duration::from_millis(250),
-            Duration::from_millis(250),
-            Duration::from_millis(100),
-        ]
-    );
-    assert_eq!(clock.local_now(), now + chrono::Duration::milliseconds(600));
 }
 
 #[test]
@@ -2999,8 +2970,8 @@ fn fs_session_effects_write_reply_with_question_writes_frontmatter_and_prefix() 
         "expected frontmatter `question: true`; got:\n{content}"
     );
     assert!(
-        content.contains("\nQuestion: What is ice?"),
-        "expected body to start with `Question: `; got:\n{content}"
+        content.contains("\nWhat is ice?"),
+        "expected body to be the raw text without prefix; got:\n{content}"
     );
 }
 

@@ -107,20 +107,22 @@ pub async fn post_new(
         );
     }
 
-    if target.exists() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "chamber already exists" })),
-        );
-    }
-
-    if let Err(e) = std::fs::create_dir(&target) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("failed to create directory: {e}")
-            })),
-        );
+    match std::fs::create_dir(&target) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "chamber already exists" })),
+            );
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("failed to create directory: {e}")
+                })),
+            );
+        }
     }
 
     if let Err(e) = crate::protocol::scaffold_chamber(&target, "opencode") {

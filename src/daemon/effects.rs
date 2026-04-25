@@ -83,15 +83,10 @@ impl SessionEffects for FsSessionEffects<'_> {
         timestamp: NaiveDateTime,
         is_question: bool,
     ) -> Result<()> {
-        let body = if is_question {
-            format!("Question: {text}")
-        } else {
-            text.to_string()
-        };
         let msg = crate::message::Message {
             from: author.from().to_string(),
             subject: author.subject().to_string(),
-            body,
+            body: text.to_string(),
             timestamp,
             metadata: std::collections::BTreeMap::new(),
             is_question,

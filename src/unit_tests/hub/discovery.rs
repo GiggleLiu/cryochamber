@@ -93,7 +93,7 @@ fn populate_reads_session_and_unread() {
     let msg = crate::message::Message {
         from: "agent".into(),
         subject: "hi".into(),
-        body: "Question: yo?".into(),
+        body: "yo?".into(),
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
         is_question: true,

@@ -1375,23 +1375,6 @@ impl Daemon {
             eprintln!("Daemon: next report at {}", next.format("%Y-%m-%d %H:%M"));
         }
     }
-
-    /// Sleep for `duration`, but return early if shutdown is signaled.
-    /// Returns true if shutdown was requested.
-    #[cfg(test)]
-    fn sleep_or_shutdown(&self, duration: Duration) -> bool {
-        let step = Duration::from_millis(250);
-        let mut remaining = duration;
-        while remaining > Duration::ZERO {
-            if self.shutdown.load(Ordering::Relaxed) {
-                return true;
-            }
-            let sleep_time = remaining.min(step);
-            self.clock.sleep(sleep_time);
-            remaining = remaining.saturating_sub(sleep_time);
-        }
-        false
-    }
 }
 
 #[cfg(test)]

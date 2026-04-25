@@ -172,7 +172,7 @@ fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Messa
 #[test]
 fn parse_message_sets_is_question_when_frontmatter_question_true() {
     let raw = "---\nfrom: agent\nsubject: What is ice?\ntimestamp: 2026-04-25T15:30:00\n\
-               question: true\n---\n\nQuestion: What is ice?\n";
+               question: true\n---\n\nWhat is ice?\n";
 
     let msg = parse_message(raw).unwrap();
 
@@ -207,7 +207,7 @@ fn message_to_markdown_emits_question_true_when_is_question_set() {
     let msg = Message {
         from: "agent".to_string(),
         subject: "What is ice?".to_string(),
-        body: "Question: What is ice?".to_string(),
+        body: "What is ice?".to_string(),
         timestamp: NaiveDateTime::parse_from_str("2026-04-25T15:30:00", "%Y-%m-%dT%H:%M:%S")
             .unwrap(),
         metadata: BTreeMap::new(),
@@ -239,7 +239,7 @@ fn message_round_trip_preserves_is_question() {
     let msg = Message {
         from: "agent".to_string(),
         subject: "What is ice?".to_string(),
-        body: "Question: What is ice?".to_string(),
+        body: "What is ice?".to_string(),
         timestamp: NaiveDateTime::parse_from_str("2026-04-25T15:30:00", "%Y-%m-%dT%H:%M:%S")
             .unwrap(),
         metadata: BTreeMap::new(),
