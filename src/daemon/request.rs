@@ -16,6 +16,9 @@ pub(super) enum DaemonRequest {
     Hello {
         protocol_version: u32,
     },
+    Dialog {
+        filter: crate::socket::DialogFilter,
+    },
     Send {
         text: String,
     },
@@ -33,6 +36,7 @@ impl From<crate::socket::Request> for DaemonRequest {
         match request {
             crate::socket::Request::Ping => Self::Ping,
             crate::socket::Request::Hello { protocol_version } => Self::Hello { protocol_version },
+            crate::socket::Request::Dialog { filter } => Self::Dialog { filter },
             crate::socket::Request::Send { text } => Self::Send { text },
             crate::socket::Request::Hibernate {
                 complete,

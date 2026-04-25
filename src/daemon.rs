@@ -623,6 +623,12 @@ impl Daemon {
             DaemonRequest::Hello { protocol_version } => {
                 let _ = responder.respond(&ipc_protocol_response(protocol_version));
             }
+            DaemonRequest::Dialog { .. } => {
+                let _ = responder.respond(&crate::socket::Response {
+                    ok: false,
+                    message: "dialog not yet implemented".into(),
+                });
+            }
             DaemonRequest::Todo(todo_request) => {
                 let mut effects = FileTodoEffects::new(&self.dir);
                 let response = handle_todo_request(todo_request, &mut effects).into_response();
@@ -1040,6 +1046,9 @@ impl Daemon {
             DaemonRequest::Hello { protocol_version } => {
                 let response = ipc_protocol_response(protocol_version);
                 runtime.respond(response.ok, response.message)?;
+            }
+            DaemonRequest::Dialog { .. } => {
+                runtime.respond(false, "dialog not yet implemented".into())?;
             }
             DaemonRequest::Send { text } => {
                 let has_claimed_batch = state.inbox_state.has_claimed_batch();
