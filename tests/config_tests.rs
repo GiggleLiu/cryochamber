@@ -1,6 +1,10 @@
 // tests/config_tests.rs
-use cryochamber::config::{config_path, load_config, save_config, CryoConfig};
+use cryochamber::config::{
+    config_path, load_config, save_config, CryoConfig, ProviderConfig,
+    LEGACY_PROVIDERS_DEPRECATION_WARNING,
+};
 use cryochamber::state::CryoState;
+use std::collections::HashMap;
 
 #[test]
 fn test_config_defaults() {
@@ -61,7 +65,6 @@ fn test_apply_overrides_all() {
         max_session_duration_override: Some(7200),
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -89,7 +92,6 @@ fn test_apply_overrides_none_keeps_config() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -119,7 +121,6 @@ fn test_apply_overrides_partial() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -164,19 +165,39 @@ fn test_config_path() {
 }
 
 #[test]
-fn test_rotate_on_default_is_never() {
-    let config = CryoConfig::default();
-    assert_eq!(config.rotate_on, cryochamber::config::RotateOn::Never);
-    assert!(config.providers.is_empty());
-}
-
-#[test]
-fn test_config_with_providers_roundtrip() {
+fn test_config_with_provider_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = config_path(dir.path());
 
     let toml_content = r#"
 agent = "opencode"
+
+[provider]
+name = "openai"
+env = { OPENCODE_PROVIDER = "openai", OPENAI_API_KEY = "sk-test" }
+"#;
+    std::fs::write(&path, toml_content).unwrap();
+    let loaded = load_config(&path).unwrap().unwrap();
+
+    let provider = loaded.active_provider().expect("active provider");
+    assert_eq!(provider.name, "openai");
+    assert_eq!(provider.env.get("OPENCODE_PROVIDER").unwrap(), "openai");
+    assert_eq!(provider.env.get("OPENAI_API_KEY").unwrap(), "sk-test");
+    assert!(!loaded.uses_legacy_providers());
+
+    let serialized = toml::to_string_pretty(&loaded).unwrap();
+    assert!(serialized.contains("[provider]"));
+    assert!(!serialized.contains("[[providers]]"));
+}
+
+#[test]
+fn test_legacy_providers_roundtrip_canonicalizes_to_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+
+    let toml_content = r#"
+agent = "opencode"
+# Legacy rotation settings should be ignored when read and not reserialized.
 rotate_on = "quick-exit"
 
 [[providers]]
@@ -190,15 +211,51 @@ env = { OPENAI_API_KEY = "sk-test", OPENAI_BASE_URL = "https://api.openai.com/v1
     std::fs::write(&path, toml_content).unwrap();
     let loaded = load_config(&path).unwrap().unwrap();
 
-    assert_eq!(loaded.rotate_on, cryochamber::config::RotateOn::QuickExit);
+    assert!(loaded.uses_legacy_providers());
     assert_eq!(loaded.providers.len(), 2);
     assert_eq!(loaded.providers[0].name, "anthropic");
+    assert_eq!(loaded.active_provider().unwrap().name, "anthropic");
     assert_eq!(
         loaded.providers[0].env.get("ANTHROPIC_API_KEY").unwrap(),
         "sk-ant-test"
     );
     assert_eq!(loaded.providers[1].name, "openai");
     assert_eq!(loaded.providers[1].env.len(), 2);
+
+    let serialized = toml::to_string_pretty(&loaded).unwrap();
+    assert!(
+        !serialized.contains("rotate_on"),
+        "rotation policy should not be part of saved config: {serialized}"
+    );
+    assert!(serialized.contains("[provider]"));
+    assert!(
+        !serialized.contains("[[providers]]"),
+        "legacy provider arrays should be read-only compatibility input: {serialized}"
+    );
+    assert!(LEGACY_PROVIDERS_DEPRECATION_WARNING.contains("[[providers]]"));
+}
+
+#[test]
+fn test_save_config_canonicalizes_legacy_providers() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+    let mut env = HashMap::new();
+    env.insert("OPENAI_API_KEY".to_string(), "sk-test".to_string());
+    let config = CryoConfig {
+        providers: vec![ProviderConfig {
+            name: "openai".to_string(),
+            env,
+        }],
+        ..CryoConfig::default()
+    };
+
+    save_config(&path, &config).unwrap();
+
+    let serialized = std::fs::read_to_string(&path).unwrap();
+    assert!(serialized.contains("[provider]"));
+    assert!(!serialized.contains("[[providers]]"));
+    let loaded = load_config(&path).unwrap().unwrap();
+    assert_eq!(loaded.active_provider().unwrap().name, "openai");
 }
 
 #[test]
@@ -208,16 +265,7 @@ fn test_config_without_providers_backward_compatible() {
     std::fs::write(&path, "agent = \"opencode\"\n").unwrap();
 
     let loaded = load_config(&path).unwrap().unwrap();
-    assert_eq!(loaded.rotate_on, cryochamber::config::RotateOn::Never);
+    assert!(loaded.provider.is_none());
     assert!(loaded.providers.is_empty());
-}
-
-#[test]
-fn test_rotate_on_any_failure() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = config_path(dir.path());
-    std::fs::write(&path, "agent = \"opencode\"\nrotate_on = \"any-failure\"\n").unwrap();
-
-    let loaded = load_config(&path).unwrap().unwrap();
-    assert_eq!(loaded.rotate_on, cryochamber::config::RotateOn::AnyFailure);
+    assert!(loaded.active_provider().is_none());
 }

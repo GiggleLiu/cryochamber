@@ -74,8 +74,6 @@ fn daemon_scheduling_and_bootstrap_live_in_schedule_module() {
     let daemon_src = std::fs::read_to_string(root.join("src/daemon.rs")).unwrap();
 
     for item in [
-        "struct RetryState",
-        "fn should_rotate_provider",
         "fn compute_sleep_timeout",
         "fn next_wake_from_todos",
         "fn detect_delayed_wake",
@@ -535,7 +533,6 @@ fn test_cryo_state() -> CryoState {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: Some("test-instance".into()),
         session_active: false,
         previous_session_crashed: false,
@@ -584,45 +581,6 @@ impl EventSource for FakeEventSource {
             *self.drained_inbox.lock().unwrap() += 1;
         }
     }
-}
-
-#[test]
-fn test_rotate_provider_single_provider() {
-    let mut retry = RetryState::new(1);
-    // With only 1 provider, rotate always returns true (can't rotate)
-    assert!(
-        retry.rotate_provider(),
-        "Single provider should always wrap"
-    );
-    assert_eq!(retry.provider_index, 0);
-}
-
-#[test]
-fn test_rotate_provider_advances_and_wraps() {
-    let mut retry = RetryState::new(3);
-    assert_eq!(retry.provider_index, 0);
-
-    assert!(!retry.rotate_provider(), "Should not wrap: 0->1");
-    assert_eq!(retry.provider_index, 1);
-
-    assert!(!retry.rotate_provider(), "Should not wrap: 1->2");
-    assert_eq!(retry.provider_index, 2);
-
-    assert!(retry.rotate_provider(), "Should wrap: 2->0");
-    assert_eq!(retry.provider_index, 0);
-}
-
-#[test]
-fn test_reset_clears_provider_index() {
-    let mut retry = RetryState::new(3);
-    retry.rotate_provider();
-    assert_eq!(retry.provider_index, 1);
-
-    retry.reset();
-    assert_eq!(
-        retry.provider_index, 0,
-        "Provider index should be reset to 0"
-    );
 }
 
 #[test]
@@ -1127,59 +1085,27 @@ fn test_handle_receive_request_returns_formatted_messages_and_claimed_filenames(
 }
 
 #[test]
-fn test_should_rotate_provider() {
-    use crate::config::RotateOn;
-    // <2 providers: never rotate, regardless of policy.
-    assert!(!should_rotate_provider(&RotateOn::AnyFailure, true, 0));
-    assert!(!should_rotate_provider(&RotateOn::AnyFailure, true, 1));
-    // Never: always false.
-    assert!(!should_rotate_provider(&RotateOn::Never, true, 3));
-    assert!(!should_rotate_provider(&RotateOn::Never, false, 3));
-    // AnyFailure: always true when >=2 providers.
-    assert!(should_rotate_provider(&RotateOn::AnyFailure, false, 2));
-    assert!(should_rotate_provider(&RotateOn::AnyFailure, true, 2));
-    // QuickExit: only when quick_exit is true.
-    assert!(!should_rotate_provider(&RotateOn::QuickExit, false, 2));
-    assert!(should_rotate_provider(&RotateOn::QuickExit, true, 2));
-}
-
-#[test]
 fn test_decide_next_step_maps_plan_complete_to_shutdown() {
-    let config = CryoConfig::default();
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let outcome = SessionLoopOutcome::PlanComplete;
 
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
+    let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
 
     assert_eq!(step, NextStep::PlanComplete);
 }
 
 #[test]
 fn test_decide_next_step_hibernate_uses_refreshed_wake() {
-    let config = CryoConfig::default();
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let outcome = SessionLoopOutcome::Hibernate;
 
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
-
+    let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
     assert_eq!(
         step,
         NextStep::Hibernate {
@@ -1189,53 +1115,16 @@ fn test_decide_next_step_hibernate_uses_refreshed_wake() {
 }
 
 #[test]
-fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::AnyFailure,
-        providers: provider_config(3),
-        ..CryoConfig::default()
-    };
-    let mut retry = RetryState::new(config.providers.len());
-    retry.provider_index = 1;
-    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
-
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
-
-    assert_eq!(
-        step,
-        NextStep::RotateProvider {
-            next_wake: Some(next_wake),
-            next_provider_index: 2,
-            wrapped: false,
-            reason: ProviderRotationReason::Failure,
-        }
-    );
-    assert_eq!(retry.provider_index, 1, "decision must be pure");
-}
-
-#[test]
 fn test_decide_next_step_error_hibernates_without_retry() {
     // Agent startup/driver errors no longer auto-retry. The daemon records
     // the crash (via `previous_session_crashed`) and waits for the next
     // TODO or inbox event instead of hammering a backoff loop.
-    let config = CryoConfig::default();
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
 
-    let step = decide_next_step(SessionRunResult::Error, &config, &retry, Some(next_wake));
-
+    let step = decide_next_step(SessionRunResult::Error, Some(next_wake));
     assert_eq!(
         step,
         NextStep::Hibernate {
@@ -1249,29 +1138,81 @@ fn test_decide_next_step_validation_failed_hibernates_without_retry() {
     // With provider rotation disabled, a ValidationFailed outcome (agent
     // crashed or returned --exit N) no longer triggers a retry plan. It
     // falls through to Hibernate so the daemon waits for the next TODO.
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::Never,
-        ..CryoConfig::default()
-    };
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
 
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
-
+    let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
     assert_eq!(
         step,
         NextStep::Hibernate {
             next_wake: Some(next_wake),
         }
+    );
+}
+
+#[test]
+fn test_legacy_rotate_on_does_not_rotate_provider_in_event_loop() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let config: CryoConfig = toml::from_str(
+        r#"
+agent = "opencode"
+rotate_on = "any-failure"
+
+[[providers]]
+name = "provider-0"
+
+[[providers]]
+name = "provider-1"
+"#,
+    )
+    .unwrap();
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+
+    let providers = launcher.providers();
+    assert_eq!(
+        providers,
+        vec![Some("provider-0".into())],
+        "legacy rotate_on must be ignored; provider rotation is removed: {providers:?}"
     );
 }
 
@@ -2306,7 +2247,6 @@ fn test_run_clears_stranded_session_active_on_startup_save() {
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
-            provider_index: None,
             instance_id: None,
             session_active: true,
             previous_session_crashed: false,
@@ -2357,7 +2297,6 @@ fn test_run_recovers_stale_claimed_todo_on_startup() {
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
-            provider_index: None,
             instance_id: None,
             session_active: true,
             previous_session_crashed: false,
@@ -2524,15 +2463,6 @@ impl SessionLauncher for ErrorSessionLauncher {
     ) -> Result<SessionLoopOutcome> {
         anyhow::bail!("injected launcher failure");
     }
-}
-
-fn provider_config(n: usize) -> Vec<crate::config::ProviderConfig> {
-    (0..n)
-        .map(|i| crate::config::ProviderConfig {
-            name: format!("provider-{i}"),
-            env: std::collections::HashMap::new(),
-        })
-        .collect()
 }
 
 /// Seed a single pending TODO so the daemon always has a "next wake" it can
@@ -3027,209 +2957,5 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
     assert!(
         invocations.len() >= 3,
         "expected 2 failures + 1 plan-complete = 3 invocations, got {invocations:?}"
-    );
-}
-
-// ---------- Provider rotation (ported from mock_agent_tests.rs) ----------
-//
-// These tests previously drove real `cryo start` subprocesses and wall-clock
-// sleeps; `test_provider_wrap_all_exhausted` alone could run 60-90s because
-// of the real 60s post-wrap backoff. The in-process versions below exercise
-// the same `RetryState` + `cryo_state.provider_index` transitions in
-// milliseconds by scripting `ValidationFailed` outcomes and letting the
-// virtual clock absorb the backoff sleeps.
-
-#[test]
-fn test_rotate_on_quick_exit_rotates_in_process() {
-    let dir = tempfile::tempdir().unwrap();
-    seed_past_todo(dir.path());
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-
-    // Session 1 quick-exits; launcher queue empties → session 2 PlanComplete.
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-    ]));
-
-    let daemon = Daemon::new_with_clock_and_launcher(
-        dir.path().to_path_buf(),
-        clock.clone(),
-        launcher.clone(),
-    );
-
-    let sock_path = dir.path().join("test.sock");
-    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
-    server.set_nonblocking(true).unwrap();
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.session_number = 0;
-    cryo_state.pid = Some(std::process::id());
-
-    let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
-        next_wake: None,
-        run_now: true,
-        watch_inbox_path: None,
-    };
-
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::QuickExit,
-        providers: provider_config(2),
-        ..CryoConfig::default()
-    };
-
-    let (_tx, rx) = mpsc::channel();
-    daemon
-        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
-        .unwrap();
-
-    // Session 1 used provider-0, then rotated. Session 2 used provider-1.
-    let providers = launcher.providers();
-    assert_eq!(
-        providers,
-        vec![Some("provider-0".into()), Some("provider-1".into())],
-        "quick-exit with rotate_on=quick-exit should rotate: {providers:?}"
-    );
-}
-
-#[test]
-fn test_rotate_on_any_failure_rotates_on_crash_in_process() {
-    let dir = tempfile::tempdir().unwrap();
-    seed_past_todo(dir.path());
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-
-    // Slow crash (quick_exit=false) — would NOT rotate under rotate_on=quick-exit,
-    // but SHOULD rotate under rotate_on=any-failure. This is the contrast the
-    // original integration test verified end-to-end.
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: false },
-    ]));
-
-    let daemon = Daemon::new_with_clock_and_launcher(
-        dir.path().to_path_buf(),
-        clock.clone(),
-        launcher.clone(),
-    );
-
-    let sock_path = dir.path().join("test.sock");
-    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
-    server.set_nonblocking(true).unwrap();
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.session_number = 0;
-    cryo_state.pid = Some(std::process::id());
-
-    let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
-        next_wake: None,
-        run_now: true,
-        watch_inbox_path: None,
-    };
-
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::AnyFailure,
-        providers: provider_config(2),
-        ..CryoConfig::default()
-    };
-
-    let (_tx, rx) = mpsc::channel();
-    daemon
-        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
-        .unwrap();
-
-    let providers = launcher.providers();
-    assert_eq!(
-        providers,
-        vec![Some("provider-0".into()), Some("provider-1".into())],
-        "any-failure rotation should fire on a slow crash: {providers:?}"
-    );
-}
-
-#[test]
-fn test_provider_wrap_all_exhausted_in_process() {
-    // With 2 providers and rotate_on=any-failure, every failure rotates. After
-    // p0 → p1 → p0 (wrap), the daemon applies a 60s backoff before the next
-    // cycle. The real integration test paid that 60s in wall-clock time; here
-    // the virtual clock absorbs it instantly.
-    let dir = tempfile::tempdir().unwrap();
-    seed_past_todo(dir.path());
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-
-    // Three failures drive the full wrap cycle: p0 → p1 → p0 (wrap) → next
-    // session uses p0 again. Fourth outcome is PlanComplete (fallthrough).
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-    ]));
-
-    let daemon = Daemon::new_with_clock_and_launcher(
-        dir.path().to_path_buf(),
-        clock.clone(),
-        launcher.clone(),
-    );
-
-    let sock_path = dir.path().join("test.sock");
-    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
-    server.set_nonblocking(true).unwrap();
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.session_number = 0;
-    cryo_state.pid = Some(std::process::id());
-
-    let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
-        next_wake: None,
-        run_now: true,
-        watch_inbox_path: None,
-    };
-
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::AnyFailure,
-        providers: provider_config(2),
-        ..CryoConfig::default()
-    };
-
-    let (_tx, rx) = mpsc::channel();
-
-    let start = std::time::Instant::now();
-    daemon
-        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
-        .unwrap();
-    let elapsed = start.elapsed();
-
-    // Expected provider sequence: p0, p1, p0 (after wrap), p0 (fallthrough).
-    let providers = launcher.providers();
-    assert!(
-        providers.len() >= 3,
-        "expected at least 3 invocations to drive the wrap, got {providers:?}"
-    );
-    assert_eq!(providers[0], Some("provider-0".into()));
-    assert_eq!(providers[1], Some("provider-1".into()));
-    assert_eq!(
-        providers[2],
-        Some("provider-0".into()),
-        "after wrap the sequence restarts at provider-0"
-    );
-
-    // The old integration test was >60s because of the real 60s backoff.
-    // The virtual clock absorbs that — this whole thing should be <1s.
-    assert!(
-        elapsed < Duration::from_secs(1),
-        "provider wrap with virtual clock should be sub-second; took {elapsed:?}"
     );
 }

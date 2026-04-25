@@ -5,11 +5,11 @@ use serde::Serialize;
 use std::path::Path;
 
 /// Parse `cryo.toml` text into a flat list of display rows for the Settings
-/// drawer. Top-level scalars become single rows; the `providers` array is
-/// expanded to one row per provider (name + the *keys* of its env map, never
-/// the values, since they may hold API secrets). Unknown sections collapse
-/// to a placeholder row. Returns an empty vector for empty or unparseable
-/// input so the frontend can fall back to the raw text view.
+/// drawer. Top-level scalars become single rows; the `provider` table and
+/// legacy `providers` array are expanded to provider rows (name + the *keys*
+/// of env maps, never the values, since they may hold API secrets). Unknown
+/// sections collapse to a placeholder row. Returns an empty vector for empty
+/// or unparseable input so the frontend can fall back to the raw text view.
 pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
     if src.is_empty() {
         return Vec::new();
@@ -59,6 +59,9 @@ pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
                 value: format!("[{} items]", arr.len()),
                 kind: "section".into(),
             }),
+            toml::Value::Table(table) if key == "provider" => {
+                rows.push(provider_table_row("provider".to_string(), table));
+            }
             toml::Value::Table(_) => rows.push(SettingsRow {
                 key: key.clone(),
                 value: "[table]".into(),
@@ -80,6 +83,10 @@ fn provider_row(index: usize, value: &toml::Value) -> SettingsRow {
             }
         }
     };
+    provider_table_row(format!("providers[{index}]"), table)
+}
+
+fn provider_table_row(key: String, table: &toml::Table) -> SettingsRow {
     let name = table
         .get("name")
         .and_then(|v| v.as_str())
@@ -95,7 +102,7 @@ fn provider_row(index: usize, value: &toml::Value) -> SettingsRow {
         format!(" · env: {}", env_keys.join(", "))
     };
     SettingsRow {
-        key: format!("providers[{index}]"),
+        key,
         value: format!("{name}{env_summary}"),
         kind: "section".into(),
     }

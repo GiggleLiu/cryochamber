@@ -172,15 +172,12 @@ mod session;
 
 use effects::{ReplyAuthor, SessionEffects};
 use inbox::SessionInboxState;
-pub use schedule::RetryState;
 use schedule::{
     compute_sleep_timeout, decide_next_step, delayed_wake_notice, next_wake_from_todos,
     DaemonBootstrapState, NextStep, SessionRunResult,
 };
 #[cfg(test)]
-use schedule::{
-    detect_delayed_wake, should_rotate_provider, ProviderRotationReason, WAKE_TIME_FMT,
-};
+use schedule::{detect_delayed_wake, WAKE_TIME_FMT};
 
 #[cfg(test)]
 use request::TodoRequest;
@@ -214,7 +211,6 @@ struct ChildExitDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoopControl {
     Break,
-    Continue,
     Idle,
 }
 
@@ -231,10 +227,7 @@ struct ActiveRequestState<'a> {
 }
 
 struct EventLoopMutations<'a> {
-    cryo_state: &'a mut CryoState,
-    retry: &'a mut RetryState,
     next_wake: &'a mut Option<NaiveDateTime>,
-    run_now: &'a mut bool,
 }
 
 fn daemon_unanswered_reply_text(message_count: usize) -> String {
@@ -680,19 +673,16 @@ impl Daemon {
     fn apply_next_step(
         &self,
         step: NextStep,
-        config: &CryoConfig,
         state: EventLoopMutations<'_>,
     ) -> Result<LoopControl> {
         match step {
             NextStep::PlanComplete => {
-                state.retry.reset();
                 eprintln!("Daemon: plan complete. Shutting down.");
                 Ok(LoopControl::Break)
             }
             NextStep::Hibernate {
                 next_wake: refreshed_next_wake,
             } => {
-                state.retry.reset();
                 *state.next_wake = refreshed_next_wake;
                 if let Some(w) = *state.next_wake {
                     eprintln!("Daemon: next wake at {}", w.format("%Y-%m-%d %H:%M"));
@@ -700,45 +690,6 @@ impl Daemon {
                     eprintln!("Daemon: no pending TODOs, idling");
                 }
                 Ok(LoopControl::Idle)
-            }
-            NextStep::RotateProvider {
-                next_wake: refreshed_next_wake,
-                next_provider_index,
-                wrapped,
-                reason,
-            } => {
-                *state.next_wake = refreshed_next_wake;
-                let old_name = config
-                    .providers
-                    .get(state.retry.provider_index)
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("unknown");
-                state.retry.provider_index = next_provider_index;
-                let new_name = config
-                    .providers
-                    .get(state.retry.provider_index)
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("unknown");
-                eprintln!(
-                    "Daemon: rotating provider: {} -> {} (reason: {})",
-                    old_name,
-                    new_name,
-                    reason.as_str(),
-                );
-
-                // Persist immediately so `cryo status` reflects the change.
-                state.cryo_state.provider_index = Some(state.retry.provider_index);
-                self.save_state_or_log(state.cryo_state, "persist provider rotation");
-
-                if wrapped {
-                    // All providers tried — apply backoff before next cycle.
-                    eprintln!("Daemon: all providers tried, backing off before next cycle");
-                    if self.sleep_or_shutdown(Duration::from_secs(60)) {
-                        return Ok(LoopControl::Break);
-                    }
-                }
-                *state.run_now = true;
-                Ok(LoopControl::Continue)
             }
         }
     }
@@ -865,8 +816,6 @@ impl Daemon {
             eprintln!("Daemon: next report at {}", nrt.format("%Y-%m-%d %H:%M"));
         }
 
-        let provider_count = config.providers.len();
-        let mut retry = RetryState::new(provider_count);
         let mut next_wake = bootstrap.next_wake;
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
@@ -890,13 +839,10 @@ impl Daemon {
                     delayed_wake_notice(is_inbox_wake, next_wake, self.clock.local_now());
                 cryo_state.session_number += 1;
                 cryo_state.session_active = true;
-                if !config.providers.is_empty() {
-                    cryo_state.provider_index = Some(retry.provider_index);
-                }
                 self.save_state_or_log(cryo_state, "persist session-active state");
 
                 // Build provider env for this session
-                let active_provider = config.providers.get(retry.provider_index);
+                let active_provider = config.active_provider();
                 let provider_env: std::collections::HashMap<String, String> =
                     active_provider.map(|p| p.env.clone()).unwrap_or_default();
                 let provider_name = active_provider.map(|p| p.name.as_str());
@@ -946,20 +892,14 @@ impl Daemon {
                     Ok(outcome) => SessionRunResult::Outcome(outcome),
                     Err(()) => SessionRunResult::Error,
                 };
-                let step =
-                    decide_next_step(session_result_ref, config, &retry, refreshed_next_wake);
+                let step = decide_next_step(session_result_ref, refreshed_next_wake);
                 match self.apply_next_step(
                     step,
-                    config,
                     EventLoopMutations {
-                        cryo_state,
-                        retry: &mut retry,
                         next_wake: &mut next_wake,
-                        run_now: &mut run_now,
                     },
                 )? {
                     LoopControl::Break => break,
-                    LoopControl::Continue => continue,
                     LoopControl::Idle => {}
                 }
             }
@@ -1432,6 +1372,7 @@ impl Daemon {
 
     /// Sleep for `duration`, but return early if shutdown is signaled.
     /// Returns true if shutdown was requested.
+    #[cfg(test)]
     fn sleep_or_shutdown(&self, duration: Duration) -> bool {
         let step = Duration::from_millis(250);
         let mut remaining = duration;

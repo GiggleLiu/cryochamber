@@ -7,7 +7,6 @@ fn test_state(session_number: u32) -> crate::state::CryoState {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -145,23 +144,18 @@ fn render_markdown_safe_drops_image_urls() {
 }
 
 #[test]
-fn parse_settings_rows_handles_scalars_and_providers() {
-    // Top-level scalars become individual rows. The `providers` array
-    // expands into one row per entry, redacting env *values* (which can
-    // hold API keys) but listing the env *keys* so the operator can
-    // verify what each provider sets.
+fn parse_settings_rows_handles_scalars_and_provider() {
+    // Top-level scalars become individual rows. The `provider` table redacts
+    // env *values* (which can hold API keys) but lists env *keys* so the
+    // operator can verify what the provider sets.
     let toml = r#"
 agent = "claude"
 max_session_duration = 600
 watch_inbox = true
 
-[[providers]]
+[provider]
 name = "anthropic"
 env = { ANTHROPIC_API_KEY = "sk-secret-1", ANTHROPIC_MODEL = "claude-sonnet-4-6" }
-
-[[providers]]
-name = "openai"
-env = { OPENAI_API_KEY = "sk-secret-2" }
 "#;
     let rows = parse_settings_rows(toml);
     let by_key: std::collections::HashMap<&str, &str> = rows
@@ -173,7 +167,7 @@ env = { OPENAI_API_KEY = "sk-secret-2" }
     assert_eq!(by_key.get("max_session_duration").copied(), Some("600"));
     assert_eq!(by_key.get("watch_inbox").copied(), Some("true"));
 
-    let p0 = by_key.get("providers[0]").expect("providers[0]");
+    let p0 = by_key.get("provider").expect("provider");
     assert!(p0.starts_with("anthropic"));
     assert!(p0.contains("ANTHROPIC_API_KEY"));
     assert!(p0.contains("ANTHROPIC_MODEL"));
@@ -181,8 +175,22 @@ env = { OPENAI_API_KEY = "sk-secret-2" }
         !p0.contains("sk-secret"),
         "env values must never leak into the settings rows; got {p0}"
     );
+}
 
-    let p1 = by_key.get("providers[1]").expect("providers[1]");
+#[test]
+fn parse_settings_rows_handles_legacy_providers_array() {
+    let toml = r#"
+[[providers]]
+name = "openai"
+env = { OPENAI_API_KEY = "sk-secret-2" }
+"#;
+    let rows = parse_settings_rows(toml);
+    let by_key: std::collections::HashMap<&str, &str> = rows
+        .iter()
+        .map(|r| (r.key.as_str(), r.value.as_str()))
+        .collect();
+
+    let p1 = by_key.get("providers[0]").expect("providers[0]");
     assert!(p1.starts_with("openai"));
     assert!(p1.contains("OPENAI_API_KEY"));
     assert!(!p1.contains("sk-secret-2"), "got {p1}");

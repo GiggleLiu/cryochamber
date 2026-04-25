@@ -60,8 +60,28 @@
 <div class="modal-backdrop" id="modal-backdrop" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <h3 id="modal-title">New chamber</h3>
-    <label for="modal-name-input">Name</label>
-    <input id="modal-name-input" type="text" placeholder="my-chamber" autocomplete="off">
+    <div class="modal-field">
+      <label for="modal-name-input">Name</label>
+      <input id="modal-name-input" type="text" placeholder="my-chamber" autocomplete="off">
+    </div>
+    <details class="modal-provider-details" id="modal-provider-details">
+      <summary>API key provider</summary>
+      <div class="modal-field">
+        <label for="modal-provider-input">Provider</label>
+        <input id="modal-provider-input" list="modal-provider-options" type="text" placeholder="provider-id" autocomplete="off">
+        <datalist id="modal-provider-options"></datalist>
+      </div>
+      <div class="modal-field">
+        <label for="modal-model-input">Model</label>
+        <input id="modal-model-input" list="modal-model-options" type="text" placeholder="model-id" autocomplete="off">
+        <datalist id="modal-model-options"></datalist>
+      </div>
+      <div class="modal-field">
+        <label for="modal-api-key-input">API key</label>
+        <input id="modal-api-key-input" type="password" placeholder="sk-..." autocomplete="off">
+      </div>
+      <div class="modal-model-status" id="modal-model-status"></div>
+    </details>
     <div class="modal-error" id="modal-error" hidden></div>
     <div class="modal-actions">
       <button id="modal-cancel" class="modal-btn">Cancel</button>
@@ -319,17 +339,11 @@
     title.appendChild(name);
     title.appendChild(session);
 
-    // The task line and the lifecycle buttons (start / stop / reset) live on
-    // a shared row to keep the chamber head tight. The task text grows to
-    // fill, the buttons hug the right edge.
     const taskRow = document.createElement('div');
     taskRow.className = 'task-row';
     const task = document.createElement('div');
     task.className = 'task';
-    const lifecycle = document.createElement('div');
-    lifecycle.className = 'lifecycle';
     taskRow.appendChild(task);
-    taskRow.appendChild(lifecycle);
     left.appendChild(taskRow);
 
     const plan = document.createElement('div');
@@ -338,9 +352,13 @@
     left.appendChild(plan);
 
     const right = document.createElement('div');
+    right.className = 'thread-actions';
     const wake = document.createElement('span');
     wake.className = 'wake-chip';
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'lifecycle';
     right.appendChild(wake);
+    right.appendChild(lifecycle);
 
     head.appendChild(left);
     head.appendChild(right);
@@ -401,6 +419,9 @@
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
     }
+    if (!entry.running) {
+      btns.appendChild(btn('archive', () => confirmArchive(entry.id, entry.name), 'danger', pending));
+    }
   }
 
   function setLifecyclePending(id, pending) {
@@ -418,6 +439,31 @@
   function confirmReset(id, name) {
     const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
     if (window.confirm(msg)) lifecycle(id, 'reset');
+  }
+
+  function confirmArchive(id, name) {
+    const msg = `Archive "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • move the chamber directory to .cryo-archive/\n  • remove it from this workspace rail\n\nThe files remain recoverable from the archive folder.`;
+    if (window.confirm(msg)) archiveChamber(id);
+  }
+
+  async function archiveChamber(id) {
+    if (state.lifecyclePending[id]) return;
+    setLifecyclePending(id, true);
+    try {
+      const resp = await fetchJSON(`/api/chambers/${id}/archive`, { method: 'POST' });
+      toast(resp.message || 'Archived', resp.ok ? '' : 'error');
+      await loadChambers();
+      if (state.currentId === id) {
+        clearSelection();
+        if (window.location.pathname !== '/') {
+          window.history.pushState({}, '', '/');
+        }
+      }
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setLifecyclePending(id, false);
+    }
   }
 
   async function lifecycle(id, action) {
@@ -1232,18 +1278,149 @@
   });
   evt.addEventListener('index', async () => { await loadChambers(); });
 
+  const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+
   (function () {
     const btnOpen = document.getElementById('chamber-new');
     const backdrop = document.getElementById('modal-backdrop');
     const input = document.getElementById('modal-name-input');
+    const providerDetails = document.getElementById('modal-provider-details');
+    const providerInput = document.getElementById('modal-provider-input');
+    const providerOptions = document.getElementById('modal-provider-options');
+    const modelInput = document.getElementById('modal-model-input');
+    const modelOptions = document.getElementById('modal-model-options');
+    const modelStatus = document.getElementById('modal-model-status');
+    const apiKey = document.getElementById('modal-api-key-input');
     const errBox = document.getElementById('modal-error');
     const btnCancel = document.getElementById('modal-cancel');
     const btnCreate = document.getElementById('modal-create');
+    let modelCatalog = [];
+    let modelCatalogLoaded = false;
+    let modelCatalogLoading = false;
+
+    function normalizeCatalogProvider(raw) {
+      const id = String(raw && raw.id || '').trim().toLowerCase();
+      if (!id) return null;
+      const models = Array.isArray(raw.models) ? raw.models
+        .map(m => ({
+          id: String(m && m.id || '').trim(),
+          name: String(m && m.name || m && m.id || '').trim(),
+        }))
+        .filter(m => m.id) : [];
+      return {
+        id,
+        name: String(raw.name || id).trim(),
+        models,
+      };
+    }
+
+    function providersFromModelsDev(data) {
+      const entries = Array.isArray(data)
+        ? data.map(p => [p && (p.id || p.provider), p])
+        : Object.entries(data || {});
+      return entries.map(([id, providerData]) => {
+        const modelsValue = providerData && providerData.models;
+        const modelEntries = Array.isArray(modelsValue)
+          ? modelsValue.map(m => [m && (m.id || m.model), m])
+          : Object.entries(modelsValue || {});
+        return normalizeCatalogProvider({
+          id,
+          name: providerData && providerData.name,
+          models: modelEntries.map(([modelId, modelData]) => ({
+            id: modelId,
+            name: modelData && modelData.name,
+          })),
+        });
+      }).filter(Boolean);
+    }
+
+    function mergeCatalog(base, incoming) {
+      const providers = new Map();
+      const addProvider = item => {
+        const p = normalizeCatalogProvider(item);
+        if (!p) return;
+        const existing = providers.get(p.id);
+        if (!existing) {
+          providers.set(p.id, { ...p, models: [...p.models] });
+          return;
+        }
+        existing.name = existing.name || p.name;
+        const modelIds = new Set(existing.models.map(m => m.id));
+        for (const m of p.models) {
+          if (!modelIds.has(m.id)) {
+            existing.models.push(m);
+            modelIds.add(m.id);
+          }
+        }
+      };
+      base.forEach(addProvider);
+      incoming.forEach(addProvider);
+      const preferred = new Map(base.map((p, i) => [p.id, i]));
+      return Array.from(providers.values()).sort((a, b) => {
+        const ai = preferred.has(a.id) ? preferred.get(a.id) : 999;
+        const bi = preferred.has(b.id) ? preferred.get(b.id) : 999;
+        if (ai !== bi) return ai - bi;
+        return a.name.localeCompare(b.name);
+      });
+    }
+
+    function renderProviderOptions() {
+      providerOptions.innerHTML = '';
+      for (const p of modelCatalog) {
+        const option = document.createElement('option');
+        option.value = p.id;
+        option.label = p.name;
+        providerOptions.appendChild(option);
+      }
+    }
+
+    function selectedProviderId() {
+      return providerInput.value.trim();
+    }
+
+    function renderModelOptions() {
+      const providerId = selectedProviderId().toLowerCase();
+      const found = modelCatalog.find(p => p.id === providerId);
+      modelOptions.innerHTML = '';
+      for (const m of (found && found.models || [])) {
+        const option = document.createElement('option');
+        option.value = m.id;
+        if (m.name && m.name !== m.id) option.label = m.name;
+        modelOptions.appendChild(option);
+      }
+    }
+
+    async function loadModelsDevCatalog() {
+      if (modelCatalogLoaded || modelCatalogLoading) return;
+      modelCatalogLoading = true;
+      modelStatus.textContent = 'Loading models...';
+      try {
+        const res = await fetch(MODELS_DEV_API_URL, { cache: 'force-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        modelCatalog = mergeCatalog([], providersFromModelsDev(data));
+        modelCatalogLoaded = true;
+        modelStatus.textContent = '';
+        renderProviderOptions();
+        renderModelOptions();
+      } catch (e) {
+        modelStatus.textContent = 'Model list unavailable';
+      } finally {
+        modelCatalogLoading = false;
+      }
+    }
 
     function showModal() {
       errBox.hidden = true;
       errBox.textContent = '';
       input.value = '';
+      providerDetails.open = false;
+      providerInput.value = '';
+      modelInput.value = '';
+      apiKey.value = '';
+      modelStatus.textContent = '';
+      renderProviderOptions();
+      renderModelOptions();
       backdrop.hidden = false;
       setTimeout(() => input.focus(), 0);
     }
@@ -1268,12 +1445,48 @@
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter') btnCreate.click();
     });
+    providerDetails.addEventListener('toggle', () => {
+      if (providerDetails.open) loadModelsDevCatalog();
+    });
+    providerInput.addEventListener('input', renderModelOptions);
+    providerInput.addEventListener('change', renderModelOptions);
+    providerInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+    modelInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+    apiKey.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
 
     btnCreate.addEventListener('click', async () => {
       const name = input.value.trim();
+      const key = apiKey.value.trim();
+      const providerId = selectedProviderId();
+      const selectedModel = modelInput.value.trim();
+      const configureProvider = providerDetails.open
+        || providerInput.value.trim()
+        || key
+        || selectedModel;
       if (!name) {
         showErr('name is empty');
         return;
+      }
+      if (configureProvider && !providerId) {
+        showErr('api key provider is empty');
+        return;
+      }
+      if (configureProvider && !key) {
+        showErr('api key is empty');
+        return;
+      }
+
+      const payload = { name };
+      if (configureProvider) {
+        payload.api_key_provider = providerId;
+        payload.api_key = key;
+        if (selectedModel) payload.model = selectedModel;
       }
 
       btnCreate.disabled = true;
@@ -1281,7 +1494,7 @@
         const r = await fetch('/api/chambers/new', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
+          body: JSON.stringify(payload),
         });
         const body = await r.json().catch(() => ({}));
         if (r.status === 201) {

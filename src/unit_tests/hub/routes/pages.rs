@@ -101,6 +101,86 @@ fn shell_only_renders_reset_for_stopped_chambers() {
 }
 
 #[test]
+fn shell_renders_archive_button_for_stopped_chambers() {
+    assert!(
+        SHELL_HTML.contains("confirmArchive(entry.id, entry.name)"),
+        "stopped chambers should expose an archive action instead of true deletion"
+    );
+    assert!(
+        SHELL_HTML.contains("/api/chambers/${id}/archive"),
+        "archive action should call the archive endpoint"
+    );
+}
+
+#[test]
+fn shell_new_chamber_modal_collects_provider_and_api_key() {
+    assert!(
+        SHELL_HTML.contains("id=\"modal-provider-details\""),
+        "new chamber modal should keep API key provider config in a folded section"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-provider-input\""),
+        "new chamber modal should render a provider combobox input"
+    );
+    assert!(
+        SHELL_HTML.contains("list=\"modal-provider-options\""),
+        "provider input should use a datalist so selecting an option fills the input"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-provider-options\""),
+        "new chamber modal should render provider datalist options"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-model-input\""),
+        "new chamber modal should render a model combobox input"
+    );
+    assert!(
+        SHELL_HTML.contains("list=\"modal-model-options\""),
+        "model input should use a datalist so selecting an option fills the input"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-model-options\""),
+        "new chamber modal should render model datalist options"
+    );
+    assert!(
+        !SHELL_HTML.contains("id=\"modal-provider-select\""),
+        "provider dropdown should not be a separate control from custom provider input"
+    );
+    assert!(
+        !SHELL_HTML.contains("id=\"modal-model-select\""),
+        "model dropdown should not be a separate control from custom model input"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-api-key-input\""),
+        "new chamber modal should request an API key"
+    );
+    assert!(
+        SHELL_HTML.contains("api_key_provider"),
+        "new chamber request should include the selected API key provider"
+    );
+    assert!(
+        SHELL_HTML.contains("api_key"),
+        "new chamber request should include the API key"
+    );
+    assert!(
+        SHELL_HTML.contains("model"),
+        "new chamber request should include the selected or custom model"
+    );
+    assert!(
+        SHELL_HTML.contains("https://models.dev/api.json"),
+        "new chamber modal should fetch the curl-friendly models.dev API"
+    );
+    assert!(
+        SHELL_HTML.contains("providersFromModelsDev"),
+        "new chamber modal should derive provider/model options from the browser-fetched response"
+    );
+    assert!(
+        !SHELL_HTML.contains("POPULAR_MODEL_CATALOG"),
+        "provider/model dropdown should not be backed by a hardcoded catalog"
+    );
+}
+
+#[test]
 fn shell_hides_start_button_on_completed_plan() {
     // A plan that's already flagged complete has nothing to resume — the
     // Start button would be a dead end. Reset stays available so the
@@ -281,6 +361,10 @@ fn shell_css_styles_new_chamber_modal() {
     assert!(
         WEB_CSS.contains(".modal-btn-primary"),
         "web CSS should style the modal primary action"
+    );
+    assert!(
+        WEB_CSS.contains(".modal-provider-details"),
+        "web CSS should style the folded provider section"
     );
 }
 

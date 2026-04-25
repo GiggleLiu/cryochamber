@@ -264,15 +264,10 @@ fn cmd_status() -> Result<()> {
             if st.agent_override.is_some() {
                 println!("  (override; cryo.toml has \"{}\")", cfg.agent);
             }
-            if !cfg.providers.is_empty() {
-                let idx = st.provider_index.unwrap_or(0);
-                if let Some(provider) = cfg.providers.get(idx) {
-                    println!(
-                        "Provider: {} ({}/{})",
-                        provider.name,
-                        idx + 1,
-                        cfg.providers.len()
-                    );
+            if let Some(provider) = cfg.active_provider() {
+                println!("Provider: {}", provider.name);
+                if cfg.uses_legacy_providers() {
+                    println!("  (legacy [[providers]]; use [provider])");
                 }
             }
             let effective_timeout = st

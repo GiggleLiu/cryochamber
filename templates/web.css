@@ -246,10 +246,7 @@ body {
   display:flex; align-items: flex-start; justify-content: space-between;
   gap: 24px;
 }
-/* `.left` must grow to fill the row so the lifecycle buttons inside its
-   `.task-row` can be pushed to the right edge by `margin-left: auto`. Without
-   `flex: 1`, the column is sized to content and there's no extra space for
-   the auto margin to absorb. */
+/* `.left` grows while `.thread-actions` stays pinned to the right edge. */
 .thread-head .left { flex: 1; min-width: 0; }
 .thread-head .title {
   font-family: var(--serif);
@@ -272,10 +269,6 @@ body {
   margin-top: 6px;
 }
 .thread-head .task {
-  /* Don't `flex: 1` — that would grow the task to 64ch and bunch the
-     lifecycle buttons against the text. Keep .task at content width
-     (capped at 64ch by `max-width`); .lifecycle's `margin-left: auto`
-     then floats the buttons to the right edge of the row. */
   flex: 0 1 auto;
   min-width: 0;
   font-family: var(--sans);
@@ -293,6 +286,14 @@ body {
   text-transform: uppercase;
   color: var(--ink-faint);
   margin-right: 6px;
+}
+
+.thread-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .wake-chip {
@@ -319,8 +320,9 @@ body {
 
 .lifecycle {
   display:flex; gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   flex-shrink: 0;
-  margin-left: auto;
 }
 .lifecycle button {
   font-family: var(--mono);
@@ -1069,7 +1071,32 @@ body {
   color: var(--ink-faint);
   margin-bottom: 6px;
 }
-.modal input {
+.modal-field + .modal-field {
+  margin-top: 12px;
+}
+.modal-provider-details {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.modal-provider-details summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  list-style-position: inside;
+}
+.modal-provider-details[open] {
+  padding: 0 12px 12px;
+}
+.modal-provider-details[open] summary {
+  margin: 0 -12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.modal input,
+.modal select {
   width: 100%;
   padding: 10px 12px;
   background: var(--panel-2);
@@ -1080,13 +1107,21 @@ body {
   font-size: 13px;
   outline: none;
 }
-.modal input:focus {
+.modal input:focus,
+.modal select:focus {
   border-color: rgba(244,198,120,0.4);
 }
 .modal-error {
   margin-top: 10px;
   color: var(--warn);
   font-size: 13px;
+}
+.modal-model-status {
+  min-height: 17px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
 }
 .modal-actions {
   display: flex;

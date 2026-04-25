@@ -49,7 +49,6 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
-            provider_index: None,
             instance_id: None,
             session_active: false,
             previous_session_crashed: false,
@@ -178,6 +177,9 @@ mod post_new {
             State(app.clone()),
             Json(NewChamberPayload {
                 name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
             }),
         )
         .await;
@@ -200,11 +202,115 @@ mod post_new {
     }
 
     #[tokio::test]
+    async fn creates_new_chamber_without_api_key_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha").join("cryo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.agent, "opencode");
+        assert!(
+            cfg.provider.is_none(),
+            "folded provider section should be optional unless filled in"
+        );
+        assert!(cfg.providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn creates_new_chamber_with_selected_api_key_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("openai".into()),
+                api_key: Some("sk-openai-test".into()),
+                model: Some("gpt-5".into()),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha").join("cryo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.agent, "opencode");
+        let provider = cfg
+            .provider
+            .as_ref()
+            .expect("provider should be configured");
+        assert_eq!(provider.name, "openai");
+        assert!(cfg.providers.is_empty());
+        assert_eq!(provider.env.get("OPENCODE_PROVIDER").unwrap(), "openai");
+        assert_eq!(provider.env.get("OPENCODE_MODEL").unwrap(), "gpt-5");
+        assert_eq!(
+            provider.env.get("OPENAI_API_KEY").unwrap(),
+            "sk-openai-test"
+        );
+    }
+
+    #[tokio::test]
+    async fn creates_new_chamber_with_custom_api_key_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("my-provider".into()),
+                api_key: Some("sk-custom-test".into()),
+                model: Some("my-model".into()),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha").join("cryo.toml"))
+            .unwrap()
+            .unwrap();
+        let provider = cfg.provider.as_ref().expect("provider");
+        assert_eq!(provider.name, "my-provider");
+        assert_eq!(
+            provider.env.get("OPENCODE_PROVIDER").unwrap(),
+            "my-provider"
+        );
+        assert_eq!(provider.env.get("OPENCODE_MODEL").unwrap(), "my-model");
+        assert_eq!(
+            provider.env.get("MY_PROVIDER_API_KEY").unwrap(),
+            "sk-custom-test"
+        );
+    }
+
+    #[tokio::test]
     async fn empty_name_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        let (status, Json(body)) =
-            post_new(State(app), Json(NewChamberPayload { name: "".into() })).await;
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+            }),
+        )
+        .await;
         assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "name is empty");
     }
@@ -213,10 +319,57 @@ mod post_new {
     async fn name_with_slash_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::new(dir.path().to_path_buf()));
-        let (status, Json(body)) =
-            post_new(State(app), Json(NewChamberPayload { name: "a/b".into() })).await;
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "a/b".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+            }),
+        )
+        .await;
         assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "name contains illegal characters");
+    }
+
+    #[tokio::test]
+    async fn empty_api_key_rejected_400() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("anthropic".into()),
+                api_key: Some("   ".into()),
+                model: None,
+            }),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "api key is empty");
+    }
+
+    #[tokio::test]
+    async fn invalid_api_key_provider_rejected_400() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("../escape".into()),
+                api_key: Some("sk-test".into()),
+                model: None,
+            }),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["error"],
+            "api key provider contains illegal characters"
+        );
     }
 
     #[tokio::test]
@@ -232,6 +385,9 @@ mod post_new {
             State(app),
             Json(NewChamberPayload {
                 name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
             }),
         )
         .await;
@@ -246,9 +402,18 @@ mod post_new {
 
         let hub_dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::new(hub_dir.path().to_path_buf()));
-        let _ = post_new(State(app), Json(NewChamberPayload { name: "x".into() })).await;
+        let _ = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "x".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+            }),
+        )
+        .await;
 
-        for file in ["cryo.toml", "AGENTS.md", "plan.md", "README.md", "NOTES.md"] {
+        for file in ["AGENTS.md", "plan.md", "README.md", "NOTES.md"] {
             let cli_bytes = std::fs::read(cli_dir.path().join(file)).unwrap();
             let hub_bytes = std::fs::read(hub_dir.path().join("x").join(file)).unwrap();
             if file == "README.md" {
@@ -275,6 +440,9 @@ mod post_new {
             State(app),
             Json(NewChamberPayload {
                 name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
             }),
         )
         .await;

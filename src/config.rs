@@ -6,18 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::state::CryoState;
 
-/// Controls when the daemon rotates to the next provider on failure.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RotateOn {
-    /// Rotate only on quick-exit (<5s, likely bad API key)
-    QuickExit,
-    /// Rotate on any agent failure
-    AnyFailure,
-    /// Never rotate (default, backward compatible)
-    #[default]
-    Never,
-}
+pub const LEGACY_PROVIDERS_DEPRECATION_WARNING: &str = "Warning: [[providers]] is deprecated; use [provider] instead. Provider rotation has been removed; only one provider is used.";
 
 /// A named provider profile with environment variables to inject.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,12 +40,13 @@ pub struct CryoConfig {
     #[serde(default)]
     pub report_interval: u64,
 
-    /// When to rotate to the next provider on failure
-    #[serde(default)]
-    pub rotate_on: RotateOn,
+    /// Provider environment profile injected when spawning the agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderConfig>,
 
-    /// Ordered list of provider profiles (env var sets to try)
-    #[serde(default)]
+    /// Legacy provider environment profiles. `[[providers]]` is accepted for
+    /// backwards compatibility but is not written by new configs.
+    #[serde(default, skip_serializing)]
     pub providers: Vec<ProviderConfig>,
 
     /// Zulip sync polling interval in seconds (default: 5)
@@ -92,7 +82,7 @@ impl Default for CryoConfig {
             watch_inbox: default_watch_inbox(),
             report_time: default_report_time(),
             report_interval: 0,
-            rotate_on: RotateOn::default(),
+            provider: None,
             providers: Vec::new(),
             zulip_poll_interval: default_poll_interval(),
             gh_poll_interval: default_poll_interval(),
@@ -101,6 +91,22 @@ impl Default for CryoConfig {
 }
 
 impl CryoConfig {
+    /// Return the single provider profile used for all agent sessions.
+    pub fn active_provider(&self) -> Option<&ProviderConfig> {
+        self.provider.as_ref().or_else(|| self.providers.first())
+    }
+
+    /// True when the config used the deprecated `[[providers]]` array.
+    pub fn uses_legacy_providers(&self) -> bool {
+        !self.providers.is_empty()
+    }
+
+    fn normalize_legacy_provider(&mut self) {
+        if self.provider.is_none() {
+            self.provider = self.providers.first().cloned();
+        }
+    }
+
     /// Merge CLI overrides from timer.json into this config.
     /// Only overrides fields that were explicitly set (Some).
     pub fn apply_overrides(&mut self, state: &CryoState) {
@@ -127,12 +133,18 @@ pub fn load_config(path: &Path) -> Result<Option<CryoConfig>> {
         return Ok(None);
     }
     let contents = std::fs::read_to_string(path)?;
-    let config: CryoConfig = toml::from_str(&contents)?;
+    let mut config: CryoConfig = toml::from_str(&contents)?;
+    if config.uses_legacy_providers() {
+        eprintln!("{LEGACY_PROVIDERS_DEPRECATION_WARNING}");
+        config.normalize_legacy_provider();
+    }
     Ok(Some(config))
 }
 
 pub fn save_config(path: &Path, config: &CryoConfig) -> Result<()> {
-    let toml = toml::to_string_pretty(config)?;
+    let mut config = config.clone();
+    config.normalize_legacy_provider();
+    let toml = toml::to_string_pretty(&config)?;
     std::fs::write(path, toml)?;
     Ok(())
 }

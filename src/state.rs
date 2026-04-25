@@ -19,12 +19,6 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_report_time: Option<String>,
 
-    /// Current provider index for rotation (persisted for status display;
-    /// may reflect the last provider used from a previous run until the next
-    /// session updates it).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_index: Option<usize>,
-
     /// Identity token for the currently running daemon instance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,

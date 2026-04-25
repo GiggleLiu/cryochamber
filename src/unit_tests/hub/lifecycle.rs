@@ -39,7 +39,6 @@ fn wait_for_live_daemon_times_out_with_unlocked_state() {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,

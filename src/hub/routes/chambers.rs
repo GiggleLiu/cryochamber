@@ -1,5 +1,6 @@
 //! `/api/chambers` routes: list + refresh.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, response::Json};
@@ -35,6 +36,9 @@ pub fn validate_chamber_name(name: &str) -> Result<(), String> {
 #[derive(Debug, Deserialize)]
 pub struct NewChamberPayload {
     pub name: String,
+    pub api_key_provider: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
 }
 
 pub async fn get_chambers(State(app): State<Arc<AppState>>) -> Json<Value> {
@@ -81,6 +85,15 @@ pub async fn post_new(
             Json(serde_json::json!({ "error": e })),
         );
     }
+    let provider_config = match ProviderConfigInput::from_payload(&payload) {
+        Ok(provider_config) => provider_config,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e })),
+            )
+        }
+    };
 
     let workspace = app.workspace_dir.clone();
     let target = workspace.join(&payload.name);
@@ -118,6 +131,16 @@ pub async fn post_new(
             })),
         );
     }
+    if let Some(provider_config) = provider_config {
+        if let Err(e) = write_opencode_provider_config(&target, &provider_config) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("config failed: {e}")
+                })),
+            );
+        }
+    }
 
     app.refresh();
     let id = app
@@ -132,6 +155,107 @@ pub async fn post_new(
         .unwrap_or_default();
 
     (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProviderConfigInput {
+    provider: String,
+    api_key: String,
+    model: Option<String>,
+}
+
+impl ProviderConfigInput {
+    fn from_payload(payload: &NewChamberPayload) -> Result<Option<Self>, String> {
+        let provider = trim_option(&payload.api_key_provider);
+        let api_key = trim_option(&payload.api_key);
+        let model = trim_option(&payload.model);
+        if provider.is_none() && api_key.is_none() && model.is_none() {
+            return Ok(None);
+        }
+        let provider = provider.ok_or_else(|| "api key provider is empty".to_string())?;
+        if !is_valid_provider_id(&provider) {
+            return Err("api key provider contains illegal characters".to_string());
+        }
+        let api_key = api_key.ok_or_else(|| "api key is empty".to_string())?;
+        Ok(Some(Self {
+            provider: provider.to_ascii_lowercase(),
+            api_key,
+            model,
+        }))
+    }
+}
+
+fn trim_option(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn is_valid_provider_id(value: &str) -> bool {
+    value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn api_key_env_for_provider(provider: &str) -> String {
+    match provider {
+        "anthropic" => "ANTHROPIC_API_KEY".to_string(),
+        "openai" => "OPENAI_API_KEY".to_string(),
+        "openrouter" => "OPENROUTER_API_KEY".to_string(),
+        "google" | "gemini" => "GOOGLE_GENERATIVE_AI_API_KEY".to_string(),
+        "xai" => "XAI_API_KEY".to_string(),
+        "deepseek" => "DEEPSEEK_API_KEY".to_string(),
+        "alibaba" | "qwen" => "DASHSCOPE_API_KEY".to_string(),
+        "kimi" | "moonshot" => "MOONSHOT_API_KEY".to_string(),
+        "glm" | "zhipu" | "zhipuai" => "ZHIPUAI_API_KEY".to_string(),
+        "minmax" | "minimax" => "MINIMAX_API_KEY".to_string(),
+        "groq" => "GROQ_API_KEY".to_string(),
+        "mistral" => "MISTRAL_API_KEY".to_string(),
+        "cohere" => "COHERE_API_KEY".to_string(),
+        "together" => "TOGETHER_API_KEY".to_string(),
+        "perplexity" => "PERPLEXITY_API_KEY".to_string(),
+        "fireworks" => "FIREWORKS_API_KEY".to_string(),
+        _ => {
+            let key = provider
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        c.to_ascii_uppercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect::<String>();
+            format!("{key}_API_KEY")
+        }
+    }
+}
+
+fn write_opencode_provider_config(
+    target: &std::path::Path,
+    provider: &ProviderConfigInput,
+) -> anyhow::Result<()> {
+    let config_path = crate::config::config_path(target);
+    let mut config = crate::config::load_config(&config_path)?.unwrap_or_default();
+    config.agent = "opencode".to_string();
+    let mut env = HashMap::new();
+    env.insert("OPENCODE_PROVIDER".to_string(), provider.provider.clone());
+    if let Some(model) = &provider.model {
+        env.insert("OPENCODE_MODEL".to_string(), model.clone());
+    }
+    env.insert(
+        api_key_env_for_provider(&provider.provider),
+        provider.api_key.clone(),
+    );
+    config.provider = Some(crate::config::ProviderConfig {
+        name: provider.provider.clone(),
+        env,
+    });
+    config.providers.clear();
+    crate::config::save_config(&config_path, &config)?;
+    Ok(())
 }
 
 /// Lexical containment check: `target` must be under `parent`. Used as

@@ -272,6 +272,74 @@ fn messages_json_includes_outbox_archive() {
     assert!(id.starts_with("outbox/archive/"), "id was {id}");
 }
 
+#[tokio::test]
+async fn post_archive_moves_chamber_out_of_workspace_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+    std::fs::write(chamber.join("plan.md"), "plan").unwrap();
+
+    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    app.refresh();
+    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
+
+    let Json(body) = post_archive(State(app.clone()), AxumPath(id))
+        .await
+        .unwrap();
+
+    assert_eq!(body["ok"], true);
+    assert!(!chamber.exists());
+    let archive = std::path::PathBuf::from(body["archive"].as_str().unwrap());
+    assert!(archive.join("cryo.toml").exists());
+    assert!(archive.join("plan.md").exists());
+    assert!(app.chambers.read().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn post_archive_rejects_chambers_outside_workspace() {
+    let workspace = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    crate::config::save_config(
+        &external.path().join("cryo.toml"),
+        &crate::config::CryoConfig::default(),
+    )
+    .unwrap();
+
+    let app = Arc::new(AppState::new(workspace.path().to_path_buf()));
+    let id = crate::hub::discovery::encode_id(external.path());
+    app.chambers.write().unwrap().insert(
+        id.clone(),
+        crate::hub::discovery::ChamberEntry {
+            id: id.clone(),
+            name: "external".into(),
+            path: external.path().to_path_buf(),
+            config_error: None,
+            running: false,
+            agent_running: false,
+            session: None,
+            next_wake: None,
+            next_wake_display: None,
+            wake_imminent: false,
+            unread: 0,
+            task: None,
+            last_message_preview: None,
+            completed: false,
+            sync: vec![],
+        },
+    );
+
+    let Json(body) = post_archive(State(app), AxumPath(id)).await.unwrap();
+
+    assert_eq!(body["ok"], false);
+    assert_eq!(
+        body["message"],
+        "Cannot archive chambers outside this workspace"
+    );
+    assert!(external.path().join("cryo.toml").exists());
+}
+
 #[test]
 fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
     let dir = tempfile::tempdir().unwrap();
