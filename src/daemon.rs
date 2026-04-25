@@ -165,6 +165,7 @@ impl SessionLoopOutcome {
 
 mod effects;
 mod inbox;
+pub(super) mod dialog;
 mod request;
 mod schedule;
 mod session;
@@ -1439,6 +1440,10 @@ impl Daemon {
 #[cfg(test)]
 #[path = "unit_tests/daemon.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "unit_tests/daemon/dialog.rs"]
+mod dialog_tests;
 
 #[cfg(test)]
 #[path = "unit_tests/daemon_properties.rs"]
