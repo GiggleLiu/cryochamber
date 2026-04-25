@@ -66,6 +66,17 @@ enum Action {
     },
     /// Call `cryo-agent send <message>`.
     Send { message: String },
+    /// Call `cryo-agent dialog` and assert its stdout contains the requested text.
+    DialogAssert {
+        #[serde(default)]
+        last: Option<u32>,
+        #[serde(default)]
+        all: bool,
+        #[serde(default)]
+        since: Option<String>,
+        #[serde(default)]
+        contains: Vec<String>,
+    },
     /// Write `content` to `path` (relative to cwd); used by env-injection tests.
     WriteFile { path: String, content: String },
     /// Spawn a detached orphan subprocess that outlives the mock agent.
@@ -200,6 +211,49 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
             call_cryo_agent(&["send".into(), expand(message)])?;
             Ok(None)
         }
+        Action::DialogAssert {
+            last,
+            all,
+            since,
+            contains,
+        } => {
+            let mut args = vec!["dialog".to_string()];
+            if let Some(count) = last {
+                args.push("--last".into());
+                args.push(count.to_string());
+            }
+            if *all {
+                args.push("--all".into());
+            }
+            if let Some(iso) = since {
+                args.push("--since".into());
+                args.push(expand(iso));
+            }
+
+            let output = call_cryo_agent_output(&args)?;
+            if !output.status.success() {
+                anyhow::bail!(
+                    "cryo-agent {:?} exited with {}: {}",
+                    args,
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                );
+            }
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for needle in contains {
+                let needle = expand(needle);
+                if !stdout.contains(&needle) {
+                    anyhow::bail!(
+                        "cryo-agent {:?} output missing {:?}: {}",
+                        args,
+                        needle,
+                        stdout.trim(),
+                    );
+                }
+            }
+            Ok(None)
+        }
         Action::WriteFile { path, content } => {
             fs::write(Path::new(path), expand(content))
                 .with_context(|| format!("writing {path}"))?;
@@ -295,14 +349,22 @@ fn expand(input: &str) -> String {
 /// example) never stopped the rest of the script. Tests assert on daemon log
 /// output, not on the mock agent's own exit status, so we match that contract.
 fn call_cryo_agent(args: &[String]) -> Result<()> {
-    let status = Command::new("cryo-agent")
-        .args(args)
-        .status()
-        .with_context(|| format!("invoking cryo-agent {args:?}"))?;
-    if !status.success() {
-        eprintln!("cryo-mock: cryo-agent {args:?} exited with {status}");
+    let output = call_cryo_agent_output(args)?;
+    if !output.status.success() {
+        eprintln!(
+            "cryo-mock: cryo-agent {args:?} exited with {}",
+            output.status
+        );
     }
     Ok(())
+}
+
+fn call_cryo_agent_output(args: &[String]) -> Result<std::process::Output> {
+    let output = Command::new("cryo-agent")
+        .args(args)
+        .output()
+        .with_context(|| format!("invoking cryo-agent {args:?}"))?;
+    Ok(output)
 }
 
 #[cfg(test)]

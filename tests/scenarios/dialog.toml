@@ -1,0 +1,19 @@
+description = "Exercises cryo-agent dialog before replying to a pending inbox message."
+
+[[actions]]
+kind = "dialog_assert"
+all = true
+contains = ["hello from human"]
+
+[[actions]]
+kind = "send"
+message = "ack: hello from human"
+
+[[actions]]
+kind = "todo_add"
+text = "next"
+at = "+1h"
+
+[[actions]]
+kind = "hibernate"
+summary = "tested dialog"

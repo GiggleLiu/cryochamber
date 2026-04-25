@@ -239,6 +239,50 @@ fn test_mock_ipc_all_commands() {
 }
 
 #[test]
+fn test_mock_dialog_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "dialog.toml");
+    write_inbox_message(dir.path(), "dialog.md", "hello from human");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_log_content(dir.path(), "dialog: claimed 1 message", Duration::from_secs(15)),
+        "Log should show dialog claiming the inbox batch"
+    );
+
+    let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(outbox.len(), 1, "dialog scenario should send one agent reply");
+    assert_eq!(outbox[0].1.from, "agent");
+    assert!(
+        outbox[0].1.body.contains("ack: hello from human"),
+        "agent reply should acknowledge the dialog content: {:?}",
+        outbox[0].1.body
+    );
+
+    let archived = cryochamber::message::read_inbox_archive(dir.path()).unwrap();
+    assert_eq!(archived.len(), 1, "dialog should archive the claimed inbox batch");
+    assert!(
+        archived[0].1.body.contains("hello from human"),
+        "archived inbox should contain the original human message: {:?}",
+        archived[0].1.body
+    );
+    assert!(
+        cryochamber::message::read_inbox(dir.path())
+            .unwrap()
+            .is_empty(),
+        "dialog should consume the pending inbox batch"
+    );
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
 fn test_mock_crash_then_succeed() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "crash-then-succeed.sh");
