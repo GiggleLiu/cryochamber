@@ -111,3 +111,52 @@ async fn get_chambers_includes_agent_running_from_disk() {
     assert_eq!(arr[0]["running"], true);
     assert_eq!(arr[0]["agent_running"], true);
 }
+
+mod validate_name {
+    use crate::hub::routes::chambers::validate_chamber_name as v;
+
+    #[test]
+    fn accepts_simple_name() {
+        assert!(v("alpha").is_ok());
+        assert!(v("interstellar-traveler").is_ok());
+        assert!(v("a_b_c-1").is_ok());
+    }
+
+    #[test]
+    fn rejects_empty() {
+        let err = v("").unwrap_err();
+        assert!(err.contains("empty"));
+    }
+
+    #[test]
+    fn rejects_too_long() {
+        let n = "x".repeat(65);
+        let err = v(&n).unwrap_err();
+        assert!(err.contains("too long"));
+    }
+
+    #[test]
+    fn rejects_slash_or_backslash() {
+        assert!(v("a/b").is_err());
+        assert!(v("a\\b").is_err());
+    }
+
+    #[test]
+    fn rejects_dotdot_and_leading_dot() {
+        assert!(v("..").is_err());
+        assert!(v(".alpha").is_err());
+    }
+
+    #[test]
+    fn rejects_whitespace() {
+        assert!(v(" alpha").is_err());
+        assert!(v("alpha beta").is_err());
+        assert!(v("alpha\t").is_err());
+    }
+
+    #[test]
+    fn rejects_control_chars() {
+        assert!(v("alpha\nbeta").is_err());
+        assert!(v("alpha\u{0007}").is_err());
+    }
+}

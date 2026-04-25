@@ -7,6 +7,30 @@ use serde_json::Value;
 
 use crate::hub::state::AppState;
 
+/// Validate a user-supplied chamber name. Returns `Ok(())` if safe to use as
+/// a directory name under the workspace, otherwise a one-line reason string
+/// suitable for the `error` field of a 400 response.
+pub fn validate_chamber_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("name is empty".to_string());
+    }
+    if name.len() > 64 {
+        return Err("name too long (max 64 chars)".to_string());
+    }
+    if name.starts_with('.') {
+        return Err("name contains illegal characters".to_string());
+    }
+    if name == ".." {
+        return Err("name contains illegal characters".to_string());
+    }
+    for c in name.chars() {
+        if c == '/' || c == '\\' || c.is_whitespace() || c.is_control() {
+            return Err("name contains illegal characters".to_string());
+        }
+    }
+    Ok(())
+}
+
 pub async fn get_chambers(State(app): State<Arc<AppState>>) -> Json<Value> {
     // Snapshot the index under a short-lived reader, then run blocking
     // per-chamber I/O (state/todos/inbox reads + libc::kill probes) off the
