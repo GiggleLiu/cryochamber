@@ -1,7 +1,133 @@
 use crate::channel::store::MessageStore;
 use crate::message::Message;
+use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::path::Path;
+
+/// Parse `cryo.toml` text into a flat list of display rows for the Settings
+/// drawer. Top-level scalars become single rows; the `provider` table and
+/// legacy `providers` array are expanded to provider rows (name + the *keys*
+/// of env maps, never the values, since they may hold API secrets). Unknown
+/// sections collapse to a placeholder row. Returns an empty vector for empty
+/// or unparseable input so the frontend can fall back to the raw text view.
+pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
+    if src.is_empty() {
+        return Vec::new();
+    }
+    // The toml v1 crate's `s.parse::<Value>()` parses a single value, not a
+    // document. For a TOML document we need `from_str::<Table>`.
+    let table: toml::Table = match toml::from_str(src) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut rows = Vec::new();
+    for (key, val) in &table {
+        match val {
+            toml::Value::String(s) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: format!("\"{s}\""),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Integer(i) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: i.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Float(f) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: f.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Boolean(b) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: b.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Datetime(d) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: d.to_string(),
+                kind: "scalar".into(),
+            }),
+            toml::Value::Array(arr) if key == "providers" => {
+                for (i, prov) in arr.iter().enumerate() {
+                    rows.push(provider_row(i, prov));
+                }
+            }
+            toml::Value::Array(arr) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: format!("[{} items]", arr.len()),
+                kind: "section".into(),
+            }),
+            toml::Value::Table(table) if key == "provider" => {
+                rows.push(provider_table_row("provider".to_string(), table));
+            }
+            toml::Value::Table(_) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: "[table]".into(),
+                kind: "section".into(),
+            }),
+        }
+    }
+    rows
+}
+
+fn provider_row(index: usize, value: &toml::Value) -> SettingsRow {
+    let table = match value.as_table() {
+        Some(t) => t,
+        None => {
+            return SettingsRow {
+                key: format!("providers[{index}]"),
+                value: "(invalid)".into(),
+                kind: "section".into(),
+            }
+        }
+    };
+    provider_table_row(format!("providers[{index}]"), table)
+}
+
+fn provider_table_row(key: String, table: &toml::Table) -> SettingsRow {
+    let name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unnamed)");
+    let env_keys: Vec<&str> = table
+        .get("env")
+        .and_then(|v| v.as_table())
+        .map(|env| env.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let env_summary = if env_keys.is_empty() {
+        String::new()
+    } else {
+        format!(" · env: {}", env_keys.join(", "))
+    };
+    SettingsRow {
+        key,
+        value: format!("{name}{env_summary}"),
+        kind: "section".into(),
+    }
+}
+
+/// Render markdown to HTML, escaping any embedded raw HTML so plan.md can't
+/// inject script tags into the hub UI. Output is empty when input is empty.
+pub fn render_markdown_safe(src: &str) -> String {
+    if src.is_empty() {
+        return String::new();
+    }
+    let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let parser = Parser::new_ext(src, opts).map(|event| match event {
+        Event::Html(s) | Event::InlineHtml(s) => Event::Text(s),
+        // Drop raw images — they're a side-channel for fetching arbitrary URLs
+        // from the operator's browser, and plan.md is reference text, not a
+        // gallery. Keeps the rendered output minimal and predictable.
+        Event::Start(Tag::Image { .. }) => Event::Start(Tag::Emphasis),
+        Event::End(TagEnd::Image) => Event::End(TagEnd::Emphasis),
+        other => other,
+    });
+    let mut out = String::with_capacity(src.len() + src.len() / 4);
+    html::push_html(&mut out, parser);
+    out
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChamberStatus {
@@ -12,9 +138,21 @@ pub struct ChamberStatus {
     pub log_tail: String,
     pub next_wake: Option<String>,
     pub notes_content: String,
+    pub notes_html: String,
+    pub plan_content: String,
+    pub plan_html: String,
+    pub config_content: String,
+    pub settings_rows: Vec<SettingsRow>,
     pub task: Option<String>,
     pub completed: bool,
     pub completion_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingsRow {
+    pub key: String,
+    pub value: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +164,7 @@ pub struct ChamberMessage {
     pub body: String,
     pub timestamp: String,
     pub session: Option<u32>,
+    pub is_question: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,7 +181,7 @@ pub struct ChamberOverview {
     pub next_wake: Option<String>,
     pub next_wake_display: Option<String>,
     pub wake_imminent: bool,
-    pub unread: usize,
+    pub has_open_question: bool,
     pub task: Option<String>,
     pub last_message_preview: Option<String>,
     pub completed: bool,
@@ -72,6 +211,13 @@ pub fn status(dir: &Path) -> ChamberStatus {
         .flatten();
     let completed = completion_summary.is_some();
 
+    let plan_content = std::fs::read_to_string(dir.join("plan.md")).unwrap_or_default();
+    let plan_html = render_markdown_safe(&plan_content);
+    let notes_content = std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default();
+    let notes_html = render_markdown_safe(&notes_content);
+    let config_content = std::fs::read_to_string(dir.join("cryo.toml")).unwrap_or_default();
+    let settings_rows = parse_settings_rows(&config_content);
+
     ChamberStatus {
         running,
         agent_running,
@@ -82,7 +228,12 @@ pub fn status(dir: &Path) -> ChamberStatus {
             .flatten()
             .unwrap_or_default(),
         next_wake: next_wake(dir),
-        notes_content: std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default(),
+        notes_content,
+        notes_html,
+        plan_content,
+        plan_html,
+        config_content,
+        settings_rows,
         task: crate::log::parse_latest_session_task(&log_file)
             .ok()
             .flatten(),
@@ -126,10 +277,7 @@ pub fn overview(dir: &Path) -> ChamberOverview {
         next_wake_display: next_wake.clone(),
         wake_imminent: wake_imminent(next_wake.as_deref()),
         next_wake,
-        unread: store
-            .read_inbox_named()
-            .map(|messages| messages.len())
-            .unwrap_or(0),
+        has_open_question: has_open_question_for(&store),
         task: crate::log::parse_latest_session_task(&log_file)
             .ok()
             .flatten(),
@@ -146,6 +294,69 @@ pub fn overview(dir: &Path) -> ChamberOverview {
             })
             .collect(),
     }
+}
+
+/// True iff the chamber has an open agent-asked question — that is, the
+/// most recent outbox message marked `is_question` is newer than the most
+/// recent human inbox reply (across `inbox/` and `inbox/archive/`).
+///
+/// `operator` and `cryochamber` inbox messages are *not* counted as
+/// replies; they represent system actions (wake signals, fallback notices)
+/// rather than answers from the user.
+pub fn has_open_question(dir: &Path) -> bool {
+    has_open_question_for(&MessageStore::new(dir.to_path_buf()))
+}
+
+fn has_open_question_for(store: &MessageStore) -> bool {
+    let last_human_reply_ts = latest_human_inbox_timestamp(store);
+    let mut outbox: Vec<(String, Message)> = Vec::new();
+    if let Ok(messages) = store.read_outbox_named() {
+        outbox.extend(messages);
+    }
+    if let Ok(messages) = store.read_outbox_archive_named() {
+        outbox.extend(messages);
+    }
+    // Reverse-chrono walk: stop at the first message strictly older than the
+    // last human reply, and return true on the first question seen above that.
+    // Message timestamps only persist second precision, so equality is not
+    // enough to prove a human reply happened after an agent question.
+    outbox.sort_by(|left, right| {
+        right
+            .1
+            .timestamp
+            .cmp(&left.1.timestamp)
+            .then_with(|| right.0.cmp(&left.0))
+    });
+    for (_, msg) in outbox {
+        if let Some(reply_ts) = last_human_reply_ts {
+            if msg.timestamp < reply_ts {
+                return false;
+            }
+        }
+        if msg.is_question {
+            return true;
+        }
+    }
+    false
+}
+
+fn latest_human_inbox_timestamp(store: &MessageStore) -> Option<chrono::NaiveDateTime> {
+    let mut messages = Vec::new();
+    if let Ok(inbox) = store.read_inbox_named() {
+        messages.extend(inbox);
+    }
+    if let Ok(archive) = store.read_inbox_archive_named() {
+        messages.extend(archive);
+    }
+    messages
+        .into_iter()
+        .filter(|(_, msg)| is_human_reply_sender(&msg.from))
+        .map(|(_, msg)| msg.timestamp)
+        .max()
+}
+
+fn is_human_reply_sender(from: &str) -> bool {
+    !matches!(from, "operator" | "cryochamber" | "agent")
 }
 
 fn next_wake(dir: &Path) -> Option<String> {
@@ -233,6 +444,7 @@ fn message_model(
         body: msg.body.clone(),
         timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
         session: session_for_message(sessions, msg.timestamp),
+        is_question: msg.is_question,
     }
 }
 

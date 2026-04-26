@@ -64,7 +64,7 @@ body {
 }
 .rail-head {
   padding: 16px 18px 8px;
-  display:flex; align-items:baseline; justify-content:space-between;
+  display:flex; align-items:center; gap: 8px; justify-content:flex-start;
 }
 .rail-head .title {
   font-family: var(--mono);
@@ -77,6 +77,23 @@ body {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--ink-dim);
+}
+.rail-add {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.rail-add:hover {
+  border-color: rgba(244,198,120,0.32);
+  background: rgba(244,198,120,0.08);
 }
 .rail-search {
   margin: 0 14px 8px;
@@ -155,15 +172,16 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chamber .unread {
+.chamber .question-badge {
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
-  background: var(--accent);
+  background: #f0a03a;
   color: #2a1d07;
   padding: 1px 6px;
   border-radius: 8px;
   line-height: 14px;
+  cursor: default;
 }
 .chamber-preview {
   font-family: var(--sans);
@@ -187,7 +205,14 @@ body {
 .chamber-meta .when {
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.chamber-meta .when.soon { color: var(--accent); }
+/* Wake time in the chamber rail always reads as a cued, actionable signal.
+   The previous variant rendered non-imminent wakes in the same gray as
+   surrounding meta text, which made one chamber's wake "stand out" and
+   another's "blend in" depending purely on how soon it was due — visually
+   inconsistent for what is the same kind of information. The Todos-panel
+   `.when` keeps its imminence colouring; that's a list of items where
+   relative urgency is the point. */
+.chamber-meta .when { color: var(--accent); }
 
 .rail-foot {
   padding: 10px 14px;
@@ -222,7 +247,8 @@ body {
   display:flex; align-items: flex-start; justify-content: space-between;
   gap: 24px;
 }
-.thread-head .left { min-width: 0; }
+/* `.left` grows while `.thread-actions` stays pinned to the right edge. */
+.thread-head .left { flex: 1; min-width: 0; }
 .thread-head .title {
   font-family: var(--serif);
   font-weight: 400;
@@ -237,12 +263,22 @@ body {
   color: var(--ink-faint);
   letter-spacing: 0.06em;
 }
+.thread-head .task-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+}
 .thread-head .task {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--sans);
   font-size: 13px;
   color: var(--ink-dim);
-  margin-top: 6px;
   max-width: 64ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .thread-head .task .label {
   font-family: var(--mono);
@@ -251,6 +287,14 @@ body {
   text-transform: uppercase;
   color: var(--ink-faint);
   margin-right: 6px;
+}
+
+.thread-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .wake-chip {
@@ -277,7 +321,9 @@ body {
 
 .lifecycle {
   display:flex; gap: 6px;
-  margin-top: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .lifecycle button {
   font-family: var(--mono);
@@ -299,6 +345,188 @@ body {
   opacity: 0.55;
   cursor: wait;
   pointer-events: none;
+}
+
+/* Center-pane tab strip — Messages / Plan / Notes. Same visual language as
+   the drawer tabs (border-bottom under active tab) so the two tab strips
+   read as one consistent system. */
+.center-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  padding: 0 28px;
+}
+.center-tab {
+  padding: 12px 14px 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  user-select: none;
+  margin-right: 8px;
+}
+.center-tab:hover { color: var(--ink-dim); }
+.center-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.center-tab .tab-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-faint);
+  background: var(--panel-2);
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  vertical-align: 1px;
+  text-transform: none;
+}
+.center-tab.active .tab-count {
+  background: rgba(244,198,120,0.14);
+  color: var(--accent);
+}
+
+.center-tab-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.center-tab-body.hidden { display: none; }
+.center-tab-body.file-body-panel {
+  overflow-y: auto;
+  padding: 24px 32px 28px;
+}
+
+/* Rendered plan.md — server-rendered by pulldown-cmark and dropped into
+   <article class="plan-md"> via innerHTML. Raw HTML in the source is
+   already escaped to text on the server, so this is safe by construction. */
+.plan-md {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink);
+  max-width: 76ch;
+}
+.plan-md.empty { color: var(--ink-faint); font-style: italic; }
+.plan-md h1, .plan-md h2, .plan-md h3, .plan-md h4 {
+  font-family: var(--serif);
+  font-weight: 500;
+  color: var(--ink);
+  margin: 1.4em 0 0.4em;
+  letter-spacing: -0.01em;
+}
+.plan-md h1 { font-size: 24px; margin-top: 0; }
+.plan-md h2 { font-size: 18px; }
+.plan-md h3 { font-size: 15px; }
+.plan-md h4 { font-size: 13px; }
+.plan-md p { margin: 0.6em 0; }
+.plan-md ul, .plan-md ol { margin: 0.5em 0; padding-left: 1.6em; }
+.plan-md li { margin: 0.2em 0; }
+.plan-md code {
+  font-family: var(--mono);
+  font-size: 90%;
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.plan-md pre {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.plan-md pre code { background: none; padding: 0; font-size: 100%; }
+.plan-md a { color: var(--accent); text-decoration: underline; }
+.plan-md blockquote {
+  margin: 0.6em 0;
+  padding: 0 12px;
+  border-left: 3px solid var(--line);
+  color: var(--ink-dim);
+}
+.plan-md hr { border: 0; border-top: 1px solid var(--line-soft); margin: 1.2em 0; }
+.plan-md table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 12.5px;
+}
+.plan-md th, .plan-md td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+}
+.plan-md th { background: var(--panel-2); }
+
+/* Drawer Settings panel — structured key/value display parsed from
+   cryo.toml. Falls back to raw monospace text if parsing fails. */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) 1fr;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-row .k {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+.settings-row .v {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.settings-row.section .k { color: var(--accent); }
+.settings-row.section .v { color: var(--ink-dim); }
+.settings-empty {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-style: italic;
+  margin-top: 4px;
+}
+.settings-pre {
+  margin: 8px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* Messages tab body needs to wrap thread + compose like the original
+   center pane did (flex column, thread fills remaining space, compose at
+   the bottom). */
+.messages-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Thread body */
@@ -355,6 +583,9 @@ body {
   align-self: flex-end;
   background: rgba(244,198,120,0.07);
   border: 1px solid rgba(244,198,120,0.18);
+}
+.msg.question {
+  border-left: 2px solid #f0a03a;
 }
 .msg-meta {
   font-family: var(--mono);
@@ -803,6 +1034,129 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7, 10, 14, 0.72);
+  z-index: 100;
+  padding: 24px;
+}
+.modal-backdrop[hidden] {
+  display: none;
+}
+.modal {
+  width: min(420px, 100%);
+  background:
+    linear-gradient(180deg, rgba(244,198,120,0.06), rgba(244,198,120,0.01)),
+    var(--panel);
+  border: 1px solid rgba(244,198,120,0.18);
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  padding: 22px 22px 18px;
+}
+.modal h3 {
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+}
+.modal label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 6px;
+}
+.modal-field + .modal-field {
+  margin-top: 12px;
+}
+.modal-provider-details {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.modal-provider-details summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  list-style-position: inside;
+}
+.modal-provider-details[open] {
+  padding: 0 12px 12px;
+}
+.modal-provider-details[open] summary {
+  margin: 0 -12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.modal input,
+.modal select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  outline: none;
+}
+.modal input:focus,
+.modal select:focus {
+  border-color: rgba(244,198,120,0.4);
+}
+.modal-error {
+  margin-top: 10px;
+  color: var(--warn);
+  font-size: 13px;
+}
+.modal-model-status {
+  min-height: 17px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+.modal-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.modal-btn:hover {
+  border-color: var(--ink-faint);
+}
+.modal-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #2a1d07;
+}
+.modal-btn-primary:hover {
+  filter: brightness(1.05);
+}
+.modal-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 /* Utility */
 .divider {

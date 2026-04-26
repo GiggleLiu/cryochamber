@@ -76,6 +76,48 @@ fn status_json_notes_content_empty_when_file_missing() {
 }
 
 #[test]
+fn status_json_includes_plan_and_config_content() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("plan.md"), "# Plan\n- step one\n").unwrap();
+    std::fs::write(
+        dir.path().join("cryo.toml"),
+        "agent = \"opencode\"\nmax_session_duration = 600\n",
+    )
+    .unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["plan_content"], "# Plan\n- step one\n");
+    assert_eq!(
+        v["config_content"],
+        "agent = \"opencode\"\nmax_session_duration = 600\n"
+    );
+    let plan_html = v["plan_html"].as_str().expect("plan_html");
+    assert!(plan_html.contains("<h1>Plan</h1>"), "got {plan_html}");
+    assert!(plan_html.contains("<li>step one</li>"), "got {plan_html}");
+}
+
+#[test]
+fn status_json_plan_and_config_empty_when_files_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["plan_content"], "");
+    assert_eq!(v["plan_html"], "");
+    assert_eq!(v["notes_content"], "");
+    assert_eq!(v["notes_html"], "");
+    assert_eq!(v["config_content"], "");
+}
+
+#[test]
+fn status_json_renders_notes_markdown() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("NOTES.md"), "## Notes\n\n- alpha\n- beta\n").unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["notes_content"], "## Notes\n\n- alpha\n- beta\n");
+    let html = v["notes_html"].as_str().expect("notes_html");
+    assert!(html.contains("<h2>Notes</h2>"), "got {html}");
+    assert!(html.contains("<li>alpha</li>"), "got {html}");
+}
+
+#[test]
 fn todos_json_is_empty_array_when_missing() {
     let dir = tempfile::tempdir().unwrap();
     let v = todos_json(dir.path());
@@ -117,6 +159,7 @@ fn messages_json_sorted_by_timestamp() {
             .and_hms_opt(0, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     let late = crate::message::Message {
         from: "b".into(),
@@ -127,6 +170,7 @@ fn messages_json_sorted_by_timestamp() {
             .and_hms_opt(0, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &late).unwrap();
     crate::message::write_message(dir.path(), "outbox", &early).unwrap();
@@ -165,6 +209,7 @@ fn messages_json_tags_each_message_with_the_session_that_owns_it() {
             .and_hms_opt(9, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     // Inside session 1.
     let s1 = crate::message::Message {
@@ -176,6 +221,7 @@ fn messages_json_tags_each_message_with_the_session_that_owns_it() {
             .and_hms_opt(10, 30, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     // Inside session 2.
     let s2 = crate::message::Message {
@@ -187,6 +233,7 @@ fn messages_json_tags_each_message_with_the_session_that_owns_it() {
             .and_hms_opt(13, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &pre).unwrap();
     crate::message::write_message(dir.path(), "inbox", &s1).unwrap();
@@ -214,6 +261,7 @@ fn messages_json_includes_outbox_archive() {
             .and_hms_opt(9, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     let path = crate::message::write_message(dir.path(), "outbox", &msg).unwrap();
     // Simulate sync daemon archiving the delivered outbox message.
@@ -230,6 +278,74 @@ fn messages_json_includes_outbox_archive() {
     assert!(id.starts_with("outbox/archive/"), "id was {id}");
 }
 
+#[tokio::test]
+async fn post_archive_moves_chamber_out_of_workspace_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+    std::fs::write(chamber.join("plan.md"), "plan").unwrap();
+
+    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    app.refresh();
+    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
+
+    let Json(body) = post_archive(State(app.clone()), AxumPath(id))
+        .await
+        .unwrap();
+
+    assert_eq!(body["ok"], true);
+    assert!(!chamber.exists());
+    let archive = std::path::PathBuf::from(body["archive"].as_str().unwrap());
+    assert!(archive.join("cryo.toml").exists());
+    assert!(archive.join("plan.md").exists());
+    assert!(app.chambers.read().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn post_archive_rejects_chambers_outside_workspace() {
+    let workspace = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    crate::config::save_config(
+        &external.path().join("cryo.toml"),
+        &crate::config::CryoConfig::default(),
+    )
+    .unwrap();
+
+    let app = Arc::new(AppState::new(workspace.path().to_path_buf()));
+    let id = crate::hub::discovery::encode_id(external.path());
+    app.chambers.write().unwrap().insert(
+        id.clone(),
+        crate::hub::discovery::ChamberEntry {
+            id: id.clone(),
+            name: "external".into(),
+            path: external.path().to_path_buf(),
+            config_error: None,
+            running: false,
+            agent_running: false,
+            session: None,
+            next_wake: None,
+            next_wake_display: None,
+            wake_imminent: false,
+            has_open_question: false,
+            task: None,
+            last_message_preview: None,
+            completed: false,
+            sync: vec![],
+        },
+    );
+
+    let Json(body) = post_archive(State(app), AxumPath(id)).await.unwrap();
+
+    assert_eq!(body["ok"], false);
+    assert_eq!(
+        body["message"],
+        "Cannot archive chambers outside this workspace"
+    );
+    assert!(external.path().join("cryo.toml").exists());
+}
+
 #[test]
 fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
     let dir = tempfile::tempdir().unwrap();
@@ -244,6 +360,7 @@ fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
         body: "same body".into(),
         timestamp,
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
     crate::message::write_message(dir.path(), "inbox", &msg).unwrap();

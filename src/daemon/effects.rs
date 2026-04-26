@@ -4,11 +4,15 @@ use std::path::Path;
 
 pub(super) trait SessionEffects {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>>;
+    fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>>;
+    fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>>;
+    fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>>;
     fn write_reply(
         &mut self,
         author: ReplyAuthor,
         text: &str,
         timestamp: NaiveDateTime,
+        is_question: bool,
     ) -> Result<()>;
     fn todo_add(&mut self, text: &str, at: &str) -> Result<u32>;
     fn todo_done(&mut self, id: u32) -> Result<()>;
@@ -65,11 +69,24 @@ impl SessionEffects for FsSessionEffects<'_> {
         self.message_store().read_and_archive_inbox()
     }
 
+    fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        self.message_store().read_inbox_archive_named()
+    }
+
+    fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        self.message_store().read_outbox_named()
+    }
+
+    fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        self.message_store().read_outbox_archive_named()
+    }
+
     fn write_reply(
         &mut self,
         author: ReplyAuthor,
         text: &str,
         timestamp: NaiveDateTime,
+        is_question: bool,
     ) -> Result<()> {
         let msg = crate::message::Message {
             from: author.from().to_string(),
@@ -77,6 +94,7 @@ impl SessionEffects for FsSessionEffects<'_> {
             body: text.to_string(),
             timestamp,
             metadata: std::collections::BTreeMap::new(),
+            is_question,
         };
         self.message_store().send_out(&msg)?;
         Ok(())

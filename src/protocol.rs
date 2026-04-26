@@ -22,6 +22,18 @@ pub const README_TEMPLATE: &str = include_str!("../templates/README.md");
 /// Source: templates/notes.md
 pub const NOTES_TEMPLATE: &str = include_str!("../templates/notes.md");
 
+/// Outcome of `scaffold_chamber`. Each `*_created` field is true if the file
+/// was newly created, false if it already existed and was kept untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScaffoldReport {
+    pub cryo_toml_created: bool,
+    pub protocol_created: bool,
+    pub protocol_filename: &'static str,
+    pub plan_created: bool,
+    pub readme_created: bool,
+    pub notes_created: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolFile {
     Claude,
@@ -72,6 +84,30 @@ pub fn protocol_file_for_agent(agent_cmd: &str) -> ProtocolFile {
 /// Only inspects the first token (executable), so flags like `--model claude-3.7` are ignored.
 pub fn protocol_filename(agent_cmd: &str) -> &'static str {
     protocol_file_for_agent(agent_cmd).filename()
+}
+
+/// Scaffold a fresh chamber under `dir` for the given `agent_cmd`. Creates
+/// `cryo.toml`, the protocol file (CLAUDE.md or AGENTS.md), `plan.md`,
+/// `README.md`, `NOTES.md`, and ensures the `messages/` directory tree.
+/// Each file is no-clobber: existing files are kept and reported as
+/// `*_created: false`. Used by both `cryo init` and the hub's
+/// `POST /api/chambers/new` route so the two paths stay in lockstep.
+pub fn scaffold_chamber(dir: &Path, agent_cmd: &str) -> Result<ScaffoldReport> {
+    let cryo_toml_created = write_config_file(dir, agent_cmd)?;
+    let protocol_filename = protocol_filename(agent_cmd);
+    let protocol_created = write_protocol_file(dir, protocol_filename)?;
+    let plan_created = write_template_plan(dir)?;
+    let readme_created = write_readme(dir)?;
+    let notes_created = write_notes_file(dir)?;
+    crate::channel::store::MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
+    Ok(ScaffoldReport {
+        cryo_toml_created,
+        protocol_created,
+        protocol_filename,
+        plan_created,
+        readme_created,
+        notes_created,
+    })
 }
 
 /// Write the protocol file to the given directory.

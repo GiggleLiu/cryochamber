@@ -24,6 +24,7 @@
     <div class="rail-head">
       <span class="title">Chambers</span>
       <span class="count" id="rail-count">0</span>
+      <button class="rail-add" id="chamber-new" title="New chamber">+</button>
     </div>
     <input class="rail-search" id="rail-search" placeholder="Filter chambers…">
     <div class="rail-list" id="chamber-list"></div>
@@ -43,18 +44,51 @@
     <div class="drawer-tabs">
       <div class="drawer-tab active" data-tab="todos">Todos<span class="tab-count" id="todos-count">0</span></div>
       <div class="drawer-tab" data-tab="sync">Sync</div>
-      <div class="drawer-tab" data-tab="notes">Notes</div>
+      <div class="drawer-tab" data-tab="settings">Settings</div>
       <div class="drawer-tab" data-tab="log">Log</div>
     </div>
     <div class="drawer-body" data-panel="todos" id="panel-todos"></div>
     <div class="drawer-body hidden" data-panel="sync" id="panel-sync"></div>
-    <div class="drawer-body hidden" data-panel="notes" id="panel-notes"></div>
+    <div class="drawer-body hidden" data-panel="settings" id="panel-settings"></div>
     <div class="drawer-body hidden" data-panel="log" id="panel-log"></div>
   </aside>
 
 </div>
 
 <div id="toast" class="toast"></div>
+
+<div class="modal-backdrop" id="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title">New chamber</h3>
+    <div class="modal-field">
+      <label for="modal-name-input">Name</label>
+      <input id="modal-name-input" type="text" placeholder="my-chamber" autocomplete="off">
+    </div>
+    <details class="modal-provider-details" id="modal-provider-details">
+      <summary>API key provider</summary>
+      <div class="modal-field">
+        <label for="modal-provider-input">Provider</label>
+        <input id="modal-provider-input" list="modal-provider-options" type="text" placeholder="provider-id" autocomplete="off">
+        <datalist id="modal-provider-options"></datalist>
+      </div>
+      <div class="modal-field">
+        <label for="modal-model-input">Model</label>
+        <input id="modal-model-input" list="modal-model-options" type="text" placeholder="model-id" autocomplete="off">
+        <datalist id="modal-model-options"></datalist>
+      </div>
+      <div class="modal-field">
+        <label for="modal-api-key-input">API key</label>
+        <input id="modal-api-key-input" type="password" placeholder="sk-..." autocomplete="off">
+      </div>
+      <div class="modal-model-status" id="modal-model-status"></div>
+    </details>
+    <div class="modal-error" id="modal-error" hidden></div>
+    <div class="modal-actions">
+      <button id="modal-cancel" class="modal-btn">Cancel</button>
+      <button id="modal-create" class="modal-btn modal-btn-primary">Create</button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function() {
@@ -113,6 +147,63 @@
     return 'stopped';
   }
 
+  // Server emits wake/scheduled times as 'YYYY-MM-DDTHH:MM' in local time.
+  // Browsers parse date-time strings without an offset as local time, so
+  // `new Date(iso)` matches the daemon's `chrono::Local` clock.
+  function formatWakeRelative(iso, nowMs) {
+    if (!iso) return null;
+    const target = new Date(iso);
+    const t = target.getTime();
+    if (!Number.isFinite(t)) return null;
+    const diffMin = Math.round((t - (nowMs ?? Date.now())) / 60000);
+    let text;
+    if (diffMin <= -60 * 24) text = `${Math.round(-diffMin / (60 * 24))}d ago`;
+    else if (diffMin <= -60)  text = `${Math.round(-diffMin / 60)}h ago`;
+    else if (diffMin < 0)     text = `${-diffMin}m ago`;
+    else if (diffMin < 1)     text = 'now';
+    else if (diffMin < 60)    text = `in ${diffMin}m`;
+    else if (diffMin < 60 * 24) {
+      const h = Math.floor(diffMin / 60);
+      const m = diffMin % 60;
+      text = m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
+    } else text = `in ${Math.floor(diffMin / (60 * 24))}d`;
+    return { text, soon: diffMin >= 0 && diffMin <= 60 };
+  }
+
+  // Renders a wake-time element with a live-updating relative label
+  // (`in 5m`). The absolute ISO is stashed on the element so the 30s
+  // ticker can re-render in place without re-fetching, and exposed via
+  // `title` so operators can still see the exact time on hover.
+  function applyWake(el, iso, prefix) {
+    prefix = prefix || '';
+    if (!iso) {
+      delete el.dataset.wakeIso;
+      delete el.dataset.wakePrefix;
+      el.removeAttribute('title');
+      el.classList.remove('soon');
+      el.textContent = '';
+      return;
+    }
+    el.dataset.wakeIso = iso;
+    if (prefix) el.dataset.wakePrefix = prefix;
+    else delete el.dataset.wakePrefix;
+    el.title = iso;
+    const rel = formatWakeRelative(iso);
+    el.textContent = prefix + (rel ? rel.text : iso);
+    el.classList.toggle('soon', !!(rel && rel.soon));
+  }
+
+  function refreshWakeRelatives() {
+    document.querySelectorAll('[data-wake-iso]').forEach(el => {
+      const iso = el.dataset.wakeIso;
+      const prefix = el.dataset.wakePrefix || '';
+      const rel = formatWakeRelative(iso);
+      if (!rel) return;
+      el.textContent = prefix + rel.text;
+      el.classList.toggle('soon', rel.soon);
+    });
+  }
+
   function buildChamberRow(c) {
     const row = document.createElement('div');
     row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
@@ -127,10 +218,11 @@
     name.textContent = c.name;
     row1.appendChild(dot);
     row1.appendChild(name);
-    if (c.unread > 0) {
+    if (c.has_open_question) {
       const badge = document.createElement('span');
-      badge.className = 'unread';
-      badge.textContent = c.unread;
+      badge.className = 'question-badge';
+      badge.textContent = '?';
+      badge.title = 'Open question — agent is waiting on you';
       row1.appendChild(badge);
     }
     row.appendChild(row1);
@@ -148,8 +240,8 @@
     task.className = 'task';
     task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
     const when = document.createElement('span');
-    when.className = 'when' + (c.wake_imminent ? ' soon' : '');
-    when.textContent = c.next_wake_display || '';
+    when.className = 'when';
+    applyWake(when, c.next_wake_display);
     meta.appendChild(task);
     meta.appendChild(when);
     row.appendChild(meta);
@@ -250,10 +342,19 @@
       headerTaskLine: null,
       planCompleteBox: null,
       lifecycleBtns: null,
-      panels: { todos: null, sync: null, notes: null, log: null },
+      panels: { todos: null, sync: null, settings: null, log: null },
       syncEl: null,
       notesEl: null,
+      notesLastHtml: null,
+      planEl: null,
+      planLastHtml: null,
+      settingsEl: null,
+      settingsLastSig: null,
       logEl: null,
+      messagesBodyEl: null,
+      planBodyEl: null,
+      notesBodyEl: null,
+      messagesUnreadEl: null,
       lastMsgKey: null,
       lastTodoSig: null,
       lastSyncSig: null,
@@ -296,23 +397,26 @@
     title.appendChild(name);
     title.appendChild(session);
 
+    const taskRow = document.createElement('div');
+    taskRow.className = 'task-row';
     const task = document.createElement('div');
     task.className = 'task';
-    left.appendChild(task);
+    taskRow.appendChild(task);
+    left.appendChild(taskRow);
 
     const plan = document.createElement('div');
     plan.className = 'plan-complete';
     plan.style.display = 'none';
     left.appendChild(plan);
 
-    const lifecycle = document.createElement('div');
-    lifecycle.className = 'lifecycle';
-    left.appendChild(lifecycle);
-
     const right = document.createElement('div');
+    right.className = 'thread-actions';
     const wake = document.createElement('span');
     wake.className = 'wake-chip';
+    const lifecycle = document.createElement('div');
+    lifecycle.className = 'lifecycle';
     right.appendChild(wake);
+    right.appendChild(lifecycle);
 
     head.appendChild(left);
     head.appendChild(right);
@@ -348,8 +452,13 @@
       }
     }
     if (status.next_wake) {
-      view.wakeChip.innerHTML = '<span class="pulse"></span>next wake · ' +
-        escapeHtml(status.next_wake);
+      view.wakeChip.innerHTML = '';
+      const pulse = document.createElement('span');
+      pulse.className = 'pulse';
+      const txt = document.createElement('span');
+      view.wakeChip.appendChild(pulse);
+      view.wakeChip.appendChild(txt);
+      applyWake(txt, status.next_wake, 'next wake · ');
       view.wakeChip.style.display = '';
     } else {
       view.wakeChip.style.display = 'none';
@@ -373,6 +482,9 @@
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
     }
+    if (!entry.running) {
+      btns.appendChild(btn('archive', () => confirmArchive(entry.id, entry.name), 'danger', pending));
+    }
   }
 
   function setLifecyclePending(id, pending) {
@@ -390,6 +502,31 @@
   function confirmReset(id, name) {
     const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
     if (window.confirm(msg)) lifecycle(id, 'reset');
+  }
+
+  function confirmArchive(id, name) {
+    const msg = `Archive "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • move the chamber directory to .cryo-archive/\n  • remove it from this workspace rail\n\nThe files remain recoverable from the archive folder.`;
+    if (window.confirm(msg)) archiveChamber(id);
+  }
+
+  async function archiveChamber(id) {
+    if (state.lifecyclePending[id]) return;
+    setLifecyclePending(id, true);
+    try {
+      const resp = await fetchJSON(`/api/chambers/${id}/archive`, { method: 'POST' });
+      toast(resp.message || 'Archived', resp.ok ? '' : 'error');
+      await loadChambers();
+      if (state.currentId === id) {
+        clearSelection();
+        if (window.location.pathname !== '/') {
+          window.history.pushState({}, '', '/');
+        }
+      }
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setLifecyclePending(id, false);
+    }
   }
 
   async function lifecycle(id, action) {
@@ -445,6 +582,7 @@
     const row = document.createElement('div');
     // outbox = agent (left), inbox = human (right)
     row.className = 'msg ' + (m.direction === 'outbox' ? 'agent' : 'human');
+    if (m.is_question) row.classList.add('question');
     row.dataset.key = messageKey(m);
     row.dataset.day = dayKey(m.timestamp);
     if (m.session != null) row.dataset.session = String(m.session);
@@ -638,24 +776,32 @@
     });
   }
 
-  function initDrawerTabs() {
-    const tabs   = document.querySelectorAll('.drawer-tab');
+  function activateDrawerTab(name) {
+    const tabs = document.querySelectorAll('.drawer-tab');
     const panels = document.querySelectorAll('.drawer-body');
-    tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        const name = tab.getAttribute('data-tab');
-        tabs.forEach(t => t.classList.toggle('active', t === tab));
-        panels.forEach(p => {
-          p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
-        });
-        if (name === 'log' && view && view.logEl) {
-          view.logEl.scrollTop = view.logEl.scrollHeight;
-        }
-        if (name === 'notes' && view && view.notesEl) {
-          view.notesEl.scrollTop = 0;
-        }
-      });
+    let matched = false;
+    tabs.forEach(t => {
+      const isMatch = t.getAttribute('data-tab') === name;
+      t.classList.toggle('active', isMatch);
+      if (isMatch) matched = true;
     });
+    if (!matched) return;
+    panels.forEach(p => {
+      p.classList.toggle('hidden', p.getAttribute('data-panel') !== name);
+    });
+    if (name === 'log' && view && view.logEl) {
+      view.logEl.scrollTop = view.logEl.scrollHeight;
+    }
+  }
+
+  function initDrawerTabs() {
+    document.querySelectorAll('.drawer-tab').forEach(tab => {
+      tab.addEventListener('click', () => activateDrawerTab(tab.getAttribute('data-tab')));
+    });
+    // ?drawer=todos|sync|settings|log opens that drawer panel on load.
+    // Useful for direct links and scripted screenshots.
+    const initial = new URLSearchParams(window.location.search).get('drawer');
+    if (initial) activateDrawerTab(initial);
   }
 
   const TODO_PENDING_CAP = 20;
@@ -677,8 +823,8 @@
     row.appendChild(text);
     if (t.at) {
       const when = document.createElement('span');
-      when.className = 'when' + (t.at_soon ? ' soon' : '');
-      when.textContent = t.at;
+      when.className = 'when';
+      applyWake(when, t.at);
       row.appendChild(when);
     }
     return row;
@@ -835,34 +981,233 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  // Center-pane tab strip: Messages / Plan / Notes. Tab bodies are siblings
+  // hidden via `.hidden`; we never tear down a body when switching tabs so
+  // each panel's scrollTop and textarea drafts survive tab changes.
+  function centerTabStorageKey(chamberId) { return `hub:tab:${chamberId}`; }
+
+  function buildCenterTabs(pane, chamberId, entry) {
+    const bar = document.createElement('div');
+    bar.className = 'center-tabs';
+
+    const messagesTab = document.createElement('div');
+    messagesTab.className = 'center-tab';
+    messagesTab.dataset.tab = 'messages';
+    messagesTab.textContent = 'Messages';
+    const unread = document.createElement('span');
+    unread.className = 'tab-count';
+    unread.hidden = true;
+    messagesTab.appendChild(unread);
+    view.messagesUnreadEl = unread;
+
+    const planTab = document.createElement('div');
+    planTab.className = 'center-tab';
+    planTab.dataset.tab = 'plan';
+    planTab.textContent = 'Plan';
+
+    const notesTab = document.createElement('div');
+    notesTab.className = 'center-tab';
+    notesTab.dataset.tab = 'notes';
+    notesTab.textContent = "Agent's Notes";
+
+    bar.appendChild(messagesTab);
+    bar.appendChild(planTab);
+    bar.appendChild(notesTab);
+    pane.appendChild(bar);
+
+    const messagesBody = document.createElement('div');
+    messagesBody.className = 'center-tab-body messages-body';
+    messagesBody.dataset.panel = 'messages';
+    pane.appendChild(messagesBody);
+
+    const planBody = document.createElement('div');
+    planBody.className = 'center-tab-body file-body-panel hidden';
+    planBody.dataset.panel = 'plan';
+    pane.appendChild(planBody);
+
+    const notesBody = document.createElement('div');
+    notesBody.className = 'center-tab-body file-body-panel hidden';
+    notesBody.dataset.panel = 'notes';
+    pane.appendChild(notesBody);
+
+    view.messagesBodyEl = messagesBody;
+    view.planBodyEl = planBody;
+    view.notesBodyEl = notesBody;
+
+    const tabs = [messagesTab, planTab, notesTab];
+    const bodies = [messagesBody, planBody, notesBody];
+    function activate(name) {
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+      bodies.forEach(b => b.classList.toggle('hidden', b.dataset.panel !== name));
+      try { localStorage.setItem(centerTabStorageKey(chamberId), name); } catch (e) {}
+    }
+    tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
+
+    let initial = 'messages';
+    // ?tab=plan|notes wins for shareable / scriptable links; falls back to
+    // the per-chamber localStorage value, then to messages.
+    const queryTab = new URLSearchParams(window.location.search).get('tab');
+    if (queryTab && tabs.some(t => t.dataset.tab === queryTab)) {
+      initial = queryTab;
+    } else {
+      try {
+        const saved = localStorage.getItem(centerTabStorageKey(chamberId));
+        if (saved && tabs.some(t => t.dataset.tab === saved)) initial = saved;
+      } catch (e) {}
+    }
+    activate(initial);
+
+    updateMessagesUnreadBadge(entry);
+  }
+
+  function updateMessagesUnreadBadge(entry) {
+    if (!view || !view.messagesUnreadEl) return;
+    const n = entry && entry.unread ? entry.unread : 0;
+    view.messagesUnreadEl.textContent = n > 0 ? n : '';
+    view.messagesUnreadEl.hidden = n === 0;
+  }
+
+  function buildPlanBody(box) {
+    box.innerHTML = '';
+    const article = document.createElement('article');
+    article.className = 'plan-md';
+    box.appendChild(article);
+    view.planEl = article;
+    view.planLastHtml = null;
+  }
+
+  function buildNotesBody(box) {
+    box.innerHTML = '';
+    const article = document.createElement('article');
+    article.className = 'plan-md';
+    box.appendChild(article);
+    view.notesEl = article;
+    view.notesLastHtml = null;
+  }
+
   function renderNotes(status) {
-    const box = document.getElementById('panel-notes');
-    const nextContent = status.notes_content || '';
-    // Every SSE status tick re-renders the whole panel — rebuilding the DOM
-    // would reset scrollTop to 0 and yank the reader back to the top. Reuse
-    // the existing `<pre>` and preserve its scroll position when the content
-    // didn't meaningfully change.
-    if (view.notesEl && box.contains(view.notesEl)) {
-      if (view.notesEl.textContent === nextContent) return;
-      const prevScroll = view.notesEl.scrollTop;
-      view.notesEl.textContent = nextContent;
-      view.notesEl.scrollTop = prevScroll;
+    if (!view || !view.notesEl) return;
+    setRenderedMarkdown(
+      view.notesEl,
+      status.notes_html || '',
+      'notesLastHtml',
+      "No NOTES.md in this chamber.",
+      { stickToBottom: true }
+    );
+  }
+
+  function renderPlan(status) {
+    if (!view || !view.planEl) return;
+    setRenderedMarkdown(
+      view.planEl,
+      status.plan_html || '',
+      'planLastHtml',
+      'No plan.md in this chamber.'
+    );
+  }
+
+  // Shared renderer for tab bodies whose content is server-rendered HTML
+  // (currently Plan and Notes). Uses innerHTML directly because the source
+  // markdown was rendered through `render_markdown_safe`, which already
+  // escapes raw HTML and drops image tags.
+  //
+  // `opts.stickToBottom` makes the renderer "follow the tail": on first
+  // render and on any update where the operator was already scrolled to the
+  // bottom, the scroller jumps to the new bottom. Otherwise scrollTop is
+  // preserved so the operator's reading position survives SSE refreshes.
+  // The empty-on-init case naturally counts as "at bottom" so the first
+  // non-empty render lands at the bottom.
+  function setRenderedMarkdown(el, html, lastKey, emptyLabel, opts) {
+    const stickToBottom = !!(opts && opts.stickToBottom);
+    if (html === '') {
+      if (!el.classList.contains('empty') || view[lastKey] !== '') {
+        el.classList.add('empty');
+        el.textContent = emptyLabel;
+        view[lastKey] = '';
+      }
       return;
     }
+    if (view[lastKey] === html && !el.classList.contains('empty')) return;
+    const scroller = el.parentNode;
+    let prev = 0;
+    let wasAtBottom = false;
+    if (scroller) {
+      prev = scroller.scrollTop;
+      wasAtBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 30;
+    }
+    el.classList.remove('empty');
+    el.innerHTML = html;
+    view[lastKey] = html;
+    if (scroller) {
+      if (stickToBottom && wasAtBottom) {
+        scroller.scrollTop = scroller.scrollHeight;
+      } else {
+        scroller.scrollTop = prev;
+      }
+    }
+  }
+
+  function settingsSignature(rows, raw) {
+    if (!rows || rows.length === 0) return raw === '' ? 'empty' : 'raw:' + raw;
+    return 'rows:' + rows.map(r => `${r.kind}|${r.key}|${r.value}`).join('\n');
+  }
+
+  function renderSettings(status) {
+    const box = document.getElementById('panel-settings');
+    if (!box) return;
+    const rows = Array.isArray(status.settings_rows) ? status.settings_rows : [];
+    const raw = status.config_content || '';
+    const sig = settingsSignature(rows, raw);
+    if (sig === view.settingsLastSig) return;
+    view.settingsLastSig = sig;
+
     box.innerHTML = '';
     const title = document.createElement('div');
     title.className = 'section-title';
-    title.textContent = 'NOTES.md';
+    title.textContent = 'cryo.toml';
     box.appendChild(title);
-    const wrap = document.createElement('div');
-    wrap.className = 'notes-wrap';
-    const pre = document.createElement('pre');
-    pre.className = 'notes';
-    pre.id = 'notes';
-    pre.textContent = nextContent;
-    wrap.appendChild(pre);
-    box.appendChild(wrap);
-    view.notesEl = pre;
+
+    if (raw === '') {
+      const empty = document.createElement('div');
+      empty.className = 'settings-empty';
+      empty.textContent = 'No cryo.toml in this chamber.';
+      box.appendChild(empty);
+      view.settingsEl = empty;
+      return;
+    }
+
+    if (rows.length === 0) {
+      // Couldn't parse — fall back to the raw text so the user can still
+      // see what's there and fix it.
+      const note = document.createElement('div');
+      note.className = 'settings-empty';
+      note.textContent = '(could not parse — showing raw text)';
+      box.appendChild(note);
+      const pre = document.createElement('pre');
+      pre.className = 'settings-pre';
+      pre.textContent = raw;
+      box.appendChild(pre);
+      view.settingsEl = pre;
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'settings-list';
+    for (const row of rows) {
+      const item = document.createElement('div');
+      item.className = 'settings-row' + (row.kind === 'section' ? ' section' : '');
+      const key = document.createElement('span');
+      key.className = 'k';
+      key.textContent = row.key;
+      const val = document.createElement('span');
+      val.className = 'v';
+      val.textContent = row.value;
+      item.appendChild(key);
+      item.appendChild(val);
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+    view.settingsEl = list;
   }
 
   function appendLogLine(line) {
@@ -888,13 +1233,18 @@
     view = newView();
     view.chamberId = id;
     buildHead(pane, entry, status);
-    buildThread(pane, messages);
+    buildCenterTabs(pane, id, entry);
+    buildThread(view.messagesBodyEl, messages);
+    buildCompose(view.messagesBodyEl, id);
+    buildPlanBody(view.planBodyEl);
+    buildNotesBody(view.notesBodyEl);
     view.syncEl = document.getElementById('panel-sync');
-    buildCompose(pane, id);
     renderTodos(todos);
     renderSync(id, sync);
     renderLog(status);
     renderNotes(status);
+    renderPlan(status);
+    renderSettings(status);
     document.getElementById('drawer').hidden = false;
   }
 
@@ -918,6 +1268,9 @@
       updateLifecycleButtons(entry);
       renderLog(data.status); // refreshes log_tail baseline
       renderNotes(data.status);
+      renderPlan(data.status);
+      renderSettings(data.status);
+      updateMessagesUnreadBadge(entry);
     }
     if (data.sync)     renderSync(id, data.sync);
     if (data.todos)    renderTodos(data.todos);
@@ -988,6 +1341,248 @@
     scheduleRailRefresh(d.chamber_id);
   });
   evt.addEventListener('index', async () => { await loadChambers(); });
+
+  // Server returns absolute datetimes; tick once a wall-clock minute (with a
+  // little extra so we don't drift past the boundary) to repaint relative
+  // labels in place. SSE-driven re-renders also call `applyWake`, so the
+  // ticker only matters when nothing is changing on the daemon.
+  setInterval(refreshWakeRelatives, 30_000);
+
+  const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+
+  (function () {
+    const btnOpen = document.getElementById('chamber-new');
+    const backdrop = document.getElementById('modal-backdrop');
+    const input = document.getElementById('modal-name-input');
+    const providerDetails = document.getElementById('modal-provider-details');
+    const providerInput = document.getElementById('modal-provider-input');
+    const providerOptions = document.getElementById('modal-provider-options');
+    const modelInput = document.getElementById('modal-model-input');
+    const modelOptions = document.getElementById('modal-model-options');
+    const modelStatus = document.getElementById('modal-model-status');
+    const apiKey = document.getElementById('modal-api-key-input');
+    const errBox = document.getElementById('modal-error');
+    const btnCancel = document.getElementById('modal-cancel');
+    const btnCreate = document.getElementById('modal-create');
+    let modelCatalog = [];
+    let modelCatalogLoaded = false;
+    let modelCatalogLoading = false;
+
+    function normalizeCatalogProvider(raw) {
+      const id = String(raw && raw.id || '').trim().toLowerCase();
+      if (!id) return null;
+      const models = Array.isArray(raw.models) ? raw.models
+        .map(m => ({
+          id: String(m && m.id || '').trim(),
+          name: String(m && m.name || m && m.id || '').trim(),
+        }))
+        .filter(m => m.id) : [];
+      return {
+        id,
+        name: String(raw.name || id).trim(),
+        models,
+      };
+    }
+
+    function providersFromModelsDev(data) {
+      const entries = Array.isArray(data)
+        ? data.map(p => [p && (p.id || p.provider), p])
+        : Object.entries(data || {});
+      return entries.map(([id, providerData]) => {
+        const modelsValue = providerData && providerData.models;
+        const modelEntries = Array.isArray(modelsValue)
+          ? modelsValue.map(m => [m && (m.id || m.model), m])
+          : Object.entries(modelsValue || {});
+        return normalizeCatalogProvider({
+          id,
+          name: providerData && providerData.name,
+          models: modelEntries.map(([modelId, modelData]) => ({
+            id: modelId,
+            name: modelData && modelData.name,
+          })),
+        });
+      }).filter(Boolean);
+    }
+
+    function mergeCatalog(base, incoming) {
+      const providers = new Map();
+      const addProvider = item => {
+        const p = normalizeCatalogProvider(item);
+        if (!p) return;
+        const existing = providers.get(p.id);
+        if (!existing) {
+          providers.set(p.id, { ...p, models: [...p.models] });
+          return;
+        }
+        existing.name = existing.name || p.name;
+        const modelIds = new Set(existing.models.map(m => m.id));
+        for (const m of p.models) {
+          if (!modelIds.has(m.id)) {
+            existing.models.push(m);
+            modelIds.add(m.id);
+          }
+        }
+      };
+      base.forEach(addProvider);
+      incoming.forEach(addProvider);
+      const preferred = new Map(base.map((p, i) => [p.id, i]));
+      return Array.from(providers.values()).sort((a, b) => {
+        const ai = preferred.has(a.id) ? preferred.get(a.id) : 999;
+        const bi = preferred.has(b.id) ? preferred.get(b.id) : 999;
+        if (ai !== bi) return ai - bi;
+        return a.name.localeCompare(b.name);
+      });
+    }
+
+    function renderProviderOptions() {
+      providerOptions.innerHTML = '';
+      for (const p of modelCatalog) {
+        const option = document.createElement('option');
+        option.value = p.id;
+        option.label = p.name;
+        providerOptions.appendChild(option);
+      }
+    }
+
+    function selectedProviderId() {
+      return providerInput.value.trim();
+    }
+
+    function renderModelOptions() {
+      const providerId = selectedProviderId().toLowerCase();
+      const found = modelCatalog.find(p => p.id === providerId);
+      modelOptions.innerHTML = '';
+      for (const m of (found && found.models || [])) {
+        const option = document.createElement('option');
+        option.value = m.id;
+        if (m.name && m.name !== m.id) option.label = m.name;
+        modelOptions.appendChild(option);
+      }
+    }
+
+    async function loadModelsDevCatalog() {
+      if (modelCatalogLoaded || modelCatalogLoading) return;
+      modelCatalogLoading = true;
+      modelStatus.textContent = 'Loading models...';
+      try {
+        const res = await fetch(MODELS_DEV_API_URL, { cache: 'force-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        modelCatalog = mergeCatalog([], providersFromModelsDev(data));
+        modelCatalogLoaded = true;
+        modelStatus.textContent = '';
+        renderProviderOptions();
+        renderModelOptions();
+      } catch (e) {
+        modelStatus.textContent = 'Model list unavailable';
+      } finally {
+        modelCatalogLoading = false;
+      }
+    }
+
+    function showModal() {
+      errBox.hidden = true;
+      errBox.textContent = '';
+      input.value = '';
+      providerDetails.open = false;
+      providerInput.value = '';
+      modelInput.value = '';
+      apiKey.value = '';
+      modelStatus.textContent = '';
+      renderProviderOptions();
+      renderModelOptions();
+      backdrop.hidden = false;
+      setTimeout(() => input.focus(), 0);
+    }
+
+    function hideModal() {
+      backdrop.hidden = true;
+    }
+
+    function showErr(msg) {
+      errBox.textContent = msg;
+      errBox.hidden = false;
+    }
+
+    btnOpen.addEventListener('click', showModal);
+    btnCancel.addEventListener('click', hideModal);
+    backdrop.addEventListener('click', e => {
+      if (e.target === backdrop) hideModal();
+    });
+    document.addEventListener('keydown', e => {
+      if (!backdrop.hidden && e.key === 'Escape') hideModal();
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+    providerDetails.addEventListener('toggle', () => {
+      if (providerDetails.open) loadModelsDevCatalog();
+    });
+    providerInput.addEventListener('input', renderModelOptions);
+    providerInput.addEventListener('change', renderModelOptions);
+    providerInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+    modelInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+    apiKey.addEventListener('keydown', e => {
+      if (e.key === 'Enter') btnCreate.click();
+    });
+
+    btnCreate.addEventListener('click', async () => {
+      const name = input.value.trim();
+      const key = apiKey.value.trim();
+      const providerId = selectedProviderId();
+      const selectedModel = modelInput.value.trim();
+      const configureProvider = providerDetails.open
+        || providerInput.value.trim()
+        || key
+        || selectedModel;
+      if (!name) {
+        showErr('name is empty');
+        return;
+      }
+      if (configureProvider && !providerId) {
+        showErr('api key provider is empty');
+        return;
+      }
+      if (configureProvider && !key) {
+        showErr('api key is empty');
+        return;
+      }
+
+      const payload = { name };
+      if (configureProvider) {
+        payload.api_key_provider = providerId;
+        payload.api_key = key;
+        if (selectedModel) payload.model = selectedModel;
+      }
+
+      btnCreate.disabled = true;
+      try {
+        const r = await fetch('/api/chambers/new', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (r.status === 201) {
+          hideModal();
+          await loadChambers();
+          if (body.id) {
+            await selectChamber(body.id);
+          }
+        } else {
+          showErr((body && body.error) || `error: HTTP ${r.status}`);
+        }
+      } catch (e) {
+        showErr(`error: ${e}`);
+      } finally {
+        btnCreate.disabled = false;
+      }
+    });
+  })();
 
   // Expose for subsequent task wiring.
   window.__hub = { state, fetchJSON, toast, escapeHtml, hash32, renderRail, loadChambers, selectChamber };

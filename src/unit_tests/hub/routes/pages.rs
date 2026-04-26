@@ -101,6 +101,86 @@ fn shell_only_renders_reset_for_stopped_chambers() {
 }
 
 #[test]
+fn shell_renders_archive_button_for_stopped_chambers() {
+    assert!(
+        SHELL_HTML.contains("confirmArchive(entry.id, entry.name)"),
+        "stopped chambers should expose an archive action instead of true deletion"
+    );
+    assert!(
+        SHELL_HTML.contains("/api/chambers/${id}/archive"),
+        "archive action should call the archive endpoint"
+    );
+}
+
+#[test]
+fn shell_new_chamber_modal_collects_provider_and_api_key() {
+    assert!(
+        SHELL_HTML.contains("id=\"modal-provider-details\""),
+        "new chamber modal should keep API key provider config in a folded section"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-provider-input\""),
+        "new chamber modal should render a provider combobox input"
+    );
+    assert!(
+        SHELL_HTML.contains("list=\"modal-provider-options\""),
+        "provider input should use a datalist so selecting an option fills the input"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-provider-options\""),
+        "new chamber modal should render provider datalist options"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-model-input\""),
+        "new chamber modal should render a model combobox input"
+    );
+    assert!(
+        SHELL_HTML.contains("list=\"modal-model-options\""),
+        "model input should use a datalist so selecting an option fills the input"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-model-options\""),
+        "new chamber modal should render model datalist options"
+    );
+    assert!(
+        !SHELL_HTML.contains("id=\"modal-provider-select\""),
+        "provider dropdown should not be a separate control from custom provider input"
+    );
+    assert!(
+        !SHELL_HTML.contains("id=\"modal-model-select\""),
+        "model dropdown should not be a separate control from custom model input"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-api-key-input\""),
+        "new chamber modal should request an API key"
+    );
+    assert!(
+        SHELL_HTML.contains("api_key_provider"),
+        "new chamber request should include the selected API key provider"
+    );
+    assert!(
+        SHELL_HTML.contains("api_key"),
+        "new chamber request should include the API key"
+    );
+    assert!(
+        SHELL_HTML.contains("model"),
+        "new chamber request should include the selected or custom model"
+    );
+    assert!(
+        SHELL_HTML.contains("https://models.dev/api.json"),
+        "new chamber modal should fetch the curl-friendly models.dev API"
+    );
+    assert!(
+        SHELL_HTML.contains("providersFromModelsDev"),
+        "new chamber modal should derive provider/model options from the browser-fetched response"
+    );
+    assert!(
+        !SHELL_HTML.contains("POPULAR_MODEL_CATALOG"),
+        "provider/model dropdown should not be backed by a hardcoded catalog"
+    );
+}
+
+#[test]
 fn shell_hides_start_button_on_completed_plan() {
     // A plan that's already flagged complete has nothing to resume — the
     // Start button would be a dead end. Reset stays available so the
@@ -233,6 +313,62 @@ fn shell_css_does_not_keep_orphan_event_log_selectors() {
 }
 
 #[test]
+fn shell_renders_new_chamber_button_and_modal() {
+    assert!(
+        SHELL_HTML.contains("id=\"chamber-new\""),
+        "rail head should expose a new-chamber button"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-backdrop\""),
+        "shell should include the new-chamber modal backdrop"
+    );
+    assert!(
+        SHELL_HTML.contains("id=\"modal-create\""),
+        "shell should include a create action inside the modal"
+    );
+}
+
+#[test]
+fn shell_wires_new_chamber_modal_to_api_and_selection() {
+    assert!(
+        SHELL_HTML.contains("fetch('/api/chambers/new'"),
+        "modal create action should POST to the new chamber API"
+    );
+    assert!(
+        SHELL_HTML.contains("await loadChambers();"),
+        "successful chamber creation should refresh the rail from the server"
+    );
+    assert!(
+        SHELL_HTML.contains("await selectChamber(body.id"),
+        "successful chamber creation should select the new chamber"
+    );
+    assert!(
+        SHELL_HTML.contains("showErr('name is empty')"),
+        "empty chamber names should be rejected inline before hitting the network"
+    );
+}
+
+#[test]
+fn shell_css_styles_new_chamber_modal() {
+    assert!(
+        WEB_CSS.contains(".rail-add"),
+        "web CSS should style the rail add button"
+    );
+    assert!(
+        WEB_CSS.contains(".modal-backdrop"),
+        "web CSS should style the modal backdrop"
+    );
+    assert!(
+        WEB_CSS.contains(".modal-btn-primary"),
+        "web CSS should style the modal primary action"
+    );
+    assert!(
+        WEB_CSS.contains(".modal-provider-details"),
+        "web CSS should style the folded provider section"
+    );
+}
+
+#[test]
 fn shell_emits_session_markers_between_messages_of_different_sessions() {
     // Operators asked to see which wake/session produced each message.
     // The server now tags every message with `session: N` and the thread
@@ -272,22 +408,53 @@ fn shell_gives_thread_min_height_so_overflow_can_scroll() {
 }
 
 #[test]
-fn shell_preserves_notes_scroll_across_sse_refreshes() {
-    // Every status SSE tick calls renderNotes. Blowing away the DOM each
-    // time resets the `<pre>`'s scrollTop to 0, so a reader mid-way down
-    // the notes keeps getting yanked back to the top. The update path
-    // must reuse the existing node and preserve scrollTop.
+fn shell_preserves_rendered_markdown_scroll_across_sse_refreshes() {
+    // Every status SSE tick re-renders Plan and Notes tab bodies. Both go
+    // through `setRenderedMarkdown`, which must skip when content is
+    // unchanged and save + restore the scroll container's scrollTop when
+    // it does write. Otherwise a reader mid-way down the document gets
+    // yanked back to the top on every refresh.
     assert!(
-        SHELL_HTML.contains("if (view.notesEl && box.contains(view.notesEl))"),
-        "renderNotes should reuse the existing notes <pre> on update"
+        SHELL_HTML.contains("function setRenderedMarkdown"),
+        "Plan/Notes rendering should funnel through setRenderedMarkdown"
     );
     assert!(
-        SHELL_HTML.contains("view.notesEl.scrollTop = prevScroll"),
-        "renderNotes must restore scrollTop after updating text"
+        SHELL_HTML
+            .contains("if (view[lastKey] === html && !el.classList.contains('empty')) return"),
+        "setRenderedMarkdown should skip rewrite when html unchanged"
     );
     assert!(
-        SHELL_HTML.contains("if (view.notesEl.textContent === nextContent) return"),
-        "renderNotes should skip when content is unchanged"
+        SHELL_HTML.contains("prev = scroller.scrollTop;"),
+        "setRenderedMarkdown should snapshot the scroller's scrollTop"
+    );
+    assert!(
+        SHELL_HTML.contains("scroller.scrollTop = prev;"),
+        "setRenderedMarkdown must restore scrollTop after writing"
+    );
+    assert!(
+        SHELL_HTML.contains("if (stickToBottom && wasAtBottom)"),
+        "setRenderedMarkdown should follow the tail when caller asks for stickToBottom"
+    );
+    assert!(
+        SHELL_HTML.contains("scroller.scrollTop = scroller.scrollHeight;"),
+        "stickToBottom branch must scroll to the new bottom after writing"
+    );
+}
+
+#[test]
+fn shell_opens_notes_at_bottom_by_default() {
+    // Agent's Notes is appended to over time; opening at the top would
+    // bury the latest entry beneath an SSE-refreshed wall of history.
+    // renderNotes must call setRenderedMarkdown with stickToBottom set
+    // so the first render lands at the bottom and subsequent updates
+    // follow the tail when the operator is already there.
+    assert!(
+        SHELL_HTML.contains("function renderNotes")
+            && SHELL_HTML[SHELL_HTML.find("function renderNotes").unwrap()..]
+                .lines()
+                .take(12)
+                .any(|l| l.contains("stickToBottom: true")),
+        "renderNotes must opt into the stickToBottom behaviour of setRenderedMarkdown"
     );
 }
 

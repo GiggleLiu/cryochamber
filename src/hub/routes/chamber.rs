@@ -36,6 +36,11 @@ pub fn status_json(dir: &Path) -> Value {
         "log_tail": status.log_tail,
         "next_wake": next_wake_rel,
         "notes_content": status.notes_content,
+        "notes_html": status.notes_html,
+        "plan_content": status.plan_content,
+        "plan_html": status.plan_html,
+        "config_content": status.config_content,
+        "settings_rows": status.settings_rows,
         "task": status.task,
         "completed": status.completed,
         "completion_summary": status.completion_summary,
@@ -99,6 +104,7 @@ pub async fn post_send(
         body: req.body,
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
+        is_question: false,
     };
     match store.send_in(&msg) {
         Ok(_) => {
@@ -109,6 +115,7 @@ pub async fn post_send(
                 subject: msg.subject.clone(),
                 body: msg.body.clone(),
                 timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                is_question: msg.is_question,
             });
             Ok(Json(json!({"ok": true, "message": "Message sent"})))
         }
@@ -139,6 +146,7 @@ pub async fn post_wake(
         body,
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
+        is_question: false,
     };
     if let Err(e) = store.send_in(&msg) {
         return Ok(Json(
@@ -193,6 +201,27 @@ pub async fn post_reset(
         Ok(archive) => Ok(Json(json!({
             "ok": true,
             "message": format!("Reset: logs archived to {}", archive.display()),
+            "archive": archive.display().to_string(),
+        }))),
+        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
+    }
+}
+
+pub async fn post_archive(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    app.watchers.drop_watcher(&path);
+    let workspace = app.workspace_dir.clone();
+    let result = run_blocking_lifecycle(app, path, move |path| {
+        crate::hub::lifecycle::archive_chamber(&workspace, path)
+    })
+    .await;
+    match result {
+        Ok(archive) => Ok(Json(json!({
+            "ok": true,
+            "message": format!("Archived to {}", archive.display()),
             "archive": archive.display().to_string(),
         }))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),

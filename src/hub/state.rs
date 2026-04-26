@@ -18,6 +18,7 @@ pub enum SseEvent {
         subject: String,
         body: String,
         timestamp: String,
+        is_question: bool,
     },
     StatusChange {
         chamber_id: String,

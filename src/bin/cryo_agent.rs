@@ -1,6 +1,6 @@
 // src/bin/cryo_agent.rs
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::Path;
 
 use cryochamber::socket::Request;
@@ -30,9 +30,15 @@ enum Commands {
     Send {
         /// Message text
         text: String,
+        /// Mark this message as a question awaiting a human reply.
+        /// The hub rail shows a `?` badge until any human inbox message arrives.
+        #[arg(long)]
+        question: bool,
     },
     /// Read inbox messages from human
     Receive,
+    /// Read the conversation transcript and claim any pending inbox batch
+    Dialog(DialogArgs),
     /// Print current time, compute a future time, or validate an ISO8601 timestamp
     Time {
         /// Input: "+N minutes|hours|days|weeks" (relative offset)
@@ -44,6 +50,19 @@ enum Commands {
         #[command(subcommand)]
         action: TodoAction,
     },
+}
+
+#[derive(Args, Clone)]
+struct DialogArgs {
+    /// Show the last N messages (default: 20)
+    #[arg(long)]
+    last: Option<u32>,
+    /// Show every archived message
+    #[arg(long)]
+    all: bool,
+    /// Show messages with `at >= <iso-time>`
+    #[arg(long)]
+    since: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -98,11 +117,36 @@ fn main() -> Result<()> {
                 summary,
             },
         ),
-        Commands::Send { text } => send(&dir, &Request::Send { text }),
+        Commands::Send { text, question } => send(&dir, &Request::Send { text, question }),
         Commands::Receive => send(&dir, &Request::Receive),
+        Commands::Dialog(args) => {
+            let filter = dialog_filter_from_args(args)?;
+            send(&dir, &Request::Dialog { filter })
+        }
         Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),
     }
+}
+
+fn dialog_filter_from_args(args: DialogArgs) -> Result<cryochamber::socket::DialogFilter> {
+    use cryochamber::socket::DialogFilter;
+
+    let selected = args.last.is_some() as u8 + args.all as u8 + args.since.is_some() as u8;
+    if selected > 1 {
+        anyhow::bail!("--last, --all, and --since are mutually exclusive");
+    }
+    if args.all {
+        return Ok(DialogFilter::All);
+    }
+    if let Some(iso) = args.since {
+        return Ok(DialogFilter::Since { iso });
+    }
+
+    let count = args.last.unwrap_or(20);
+    if count == 0 {
+        anyhow::bail!("--last must be at least 1");
+    }
+    Ok(DialogFilter::LastN { count })
 }
 
 fn cmd_time(offset: Option<&str>) -> Result<()> {

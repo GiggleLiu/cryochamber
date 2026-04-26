@@ -62,25 +62,6 @@ fn cancel_and_wait(dir: &std::path::Path) {
     wait_for_daemon_exit(dir, Duration::from_secs(5));
 }
 
-/// Overwrite cryo.toml with a custom config containing providers and rotate_on policy.
-fn write_provider_config(dir: &std::path::Path, rotate_on: &str, provider_count: usize) {
-    let mut providers = String::new();
-    for i in 0..provider_count {
-        providers.push_str(&format!(
-            "\n[[providers]]\nname = \"provider-{i}\"\n[providers.env]\nMOCK_PROVIDER = \"provider-{i}\"\n"
-        ));
-    }
-    let config = format!(
-        r#"agent = "mock"
-max_retries = 3
-max_session_duration = 30
-watch_inbox = false
-rotate_on = "{rotate_on}"
-{providers}"#
-    );
-    fs::write(dir.join("cryo.toml"), config).unwrap();
-}
-
 /// Wait for specific text to appear in cryo.log.
 fn wait_for_log_content(dir: &std::path::Path, text: &str, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
@@ -93,6 +74,26 @@ fn wait_for_log_content(dir: &std::path::Path, text: &str, timeout: Duration) ->
         std::thread::sleep(Duration::from_millis(500));
     }
     false
+}
+
+fn wait_for_outbox_message(
+    dir: &std::path::Path,
+    body_fragment: &str,
+    timeout: Duration,
+) -> Option<Vec<(String, cryochamber::message::Message)>> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if let Ok(outbox) = cryochamber::message::read_outbox(dir) {
+            if outbox
+                .iter()
+                .any(|(_, msg)| msg.body.contains(body_fragment))
+            {
+                return Some(outbox);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    None
 }
 
 #[test]
@@ -236,6 +237,58 @@ fn test_mock_ipc_all_commands() {
         .filter_map(|e| e.ok())
         .collect();
     assert!(!files.is_empty(), "Outbox should have a reply message");
+}
+
+#[test]
+fn test_mock_dialog_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "dialog.toml");
+    write_inbox_message(dir.path(), "dialog.md", "hello from human");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let outbox =
+        wait_for_outbox_message(dir.path(), "ack: hello from human", Duration::from_secs(15))
+            .unwrap_or_else(|| {
+                let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap_or_default();
+                panic!("dialog scenario should write an outbox reply; log:\n{log}");
+            });
+    assert_eq!(
+        outbox.len(),
+        1,
+        "dialog scenario should send one agent reply"
+    );
+    assert_eq!(outbox[0].1.from, "agent");
+    assert!(
+        outbox[0].1.body.contains("ack: hello from human"),
+        "agent reply should acknowledge the dialog content: {:?}",
+        outbox[0].1.body
+    );
+
+    let archived = cryochamber::message::read_inbox_archive(dir.path()).unwrap();
+    assert_eq!(
+        archived.len(),
+        1,
+        "dialog should archive the claimed inbox batch"
+    );
+    assert!(
+        archived[0].1.body.contains("hello from human"),
+        "archived inbox should contain the original human message: {:?}",
+        archived[0].1.body
+    );
+    assert!(
+        cryochamber::message::read_inbox(dir.path())
+            .unwrap()
+            .is_empty(),
+        "dialog should consume the pending inbox batch"
+    );
+
+    cancel_and_wait(dir.path());
 }
 
 #[test]
@@ -427,109 +480,6 @@ fn test_mock_hibernate_exit_code_retries() {
     );
 }
 
-// --- Provider rotation tests ---
-//
-// The `rotate_on=quick-exit` and `rotate_on=any-failure` positive cases, plus
-// the 2-provider wrap-around, are covered by in-process tests in
-// `src/unit_tests/daemon.rs` (`test_rotate_on_quick_exit_rotates_in_process`,
-// `test_rotate_on_any_failure_rotates_on_crash_in_process`,
-// `test_provider_wrap_all_exhausted_in_process`) — those versions run in
-// milliseconds via `ScriptedSessionLauncher` + `TestClock`.
-//
-// The tests kept here are "rotation should NOT fire" cases: they're cheap
-// enough to run against a real daemon and still serve as smoke that the
-// real spawn path honors the rotate_on configuration.
-
-#[test]
-fn test_rotate_on_quick_exit_no_rotate_on_slow_crash() {
-    let dir = tempfile::tempdir().unwrap();
-    // slow-exit-no-hibernate.sh runs >5s then exits without hibernate.
-    // This is a slow crash — quick_exit will be false, so rotate_on=quick-exit
-    // should NOT trigger rotation.
-    setup_scenario(dir.path(), "slow-exit-no-hibernate.sh");
-    write_provider_config(dir.path(), "quick-exit", 2);
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Wait for the slow exit to be detected (takes >5s)
-    assert!(
-        wait_for_log_content(
-            dir.path(),
-            "agent exited without hibernate",
-            Duration::from_secs(20)
-        ),
-        "Should detect exit without hibernate"
-    );
-
-    // Wait for retry session to start (with backoff)
-    std::thread::sleep(Duration::from_secs(8));
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-
-    // With rotate_on=quick-exit, slow crashes (>5s) should NOT trigger rotation.
-    assert!(
-        !log.contains("provider: provider-1"),
-        "Should NOT rotate on slow crash with rotate_on=quick-exit: {log}"
-    );
-    // Verify provider-0 is being used
-    assert!(
-        log.contains("provider: provider-0"),
-        "Should be using provider-0: {log}"
-    );
-
-    cancel_and_wait(dir.path());
-}
-
-#[test]
-fn test_rotate_on_never_no_rotation() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "crash.sh");
-    write_provider_config(dir.path(), "never", 2);
-
-    // Set max_retries=1 so daemon sends alert quickly but keeps retrying
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = config.replace("max_retries = 3", "max_retries = 1");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // Wait for at least two sessions to run (crash + retry)
-    assert!(
-        wait_for_log_content(
-            dir.path(),
-            "agent exited without hibernate",
-            Duration::from_secs(15)
-        ),
-        "Should detect crash"
-    );
-
-    // Wait for second session to start (retry with backoff)
-    std::thread::sleep(Duration::from_secs(8));
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-
-    // With rotate_on=never, all sessions should use provider-0 (no rotation)
-    assert!(
-        !log.contains("provider: provider-1"),
-        "Should NOT rotate with rotate_on=never, but found provider-1 in log: {log}"
-    );
-    // Verify provider-0 is being used
-    assert!(
-        log.contains("provider: provider-0"),
-        "Should be using provider-0: {log}"
-    );
-
-    cancel_and_wait(dir.path());
-}
-
 #[test]
 fn test_provider_env_injected() {
     let dir = tempfile::tempdir().unwrap();
@@ -540,9 +490,9 @@ max_retries = 1
 max_session_duration = 30
 watch_inbox = false
 
-[[providers]]
+[provider]
 name = "test-provider"
-[providers.env]
+[provider.env]
 MOCK_VAR = "hello"
 "#;
     fs::write(dir.path().join("cryo.toml"), config).unwrap();

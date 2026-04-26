@@ -77,6 +77,16 @@ Then:
 ### Step 3: Record
 
 - Update `NOTES.md` with what you did and what's next. It is your memory across sessions — read it at Step 1, append at Step 3, trim when it grows.
+- **Style:** append a new section per session, headed by an ISO timestamp (`## 2026-04-26T03:35:28`), then a short bullet list of facts future-you will need: session number, what you did, last question asked, whether you're waiting for an answer, and the next planned check. Keep each bullet a single line.
+
+  ```
+  ## 2026-04-26T03:35:28
+
+  - Session 3: father answered that the moon follows Earth.
+  - Last question asked: "Daddy, why doesn't the moon fall down?"
+  - Waiting for answer: yes.
+  - Next planned check: +2 hours after this reply.
+  ```
 - Send a concise outbox message for this session, even if it is only a status update that nothing changed.
 
 ### Step 4: Declare the next wake (TODO)
@@ -124,6 +134,7 @@ cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 
 ```
 cryo-agent send "message"                     # Send message to human (outbox)
+cryo-agent send --question "what should I do?"# Send a question (rail shows ? until human replies)
 cryo-agent receive                            # Claim current inbox batch from human
 cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required) — ONLY way to set next wake
 cryo-agent todo list                          # List all TODO items

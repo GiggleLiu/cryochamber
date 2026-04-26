@@ -55,7 +55,6 @@ fn test_state_roundtrip() {
         max_session_duration_override: Some(1800),
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -83,6 +82,7 @@ fn test_message_store_roundtrip() {
         )
         .unwrap(),
         metadata: std::collections::BTreeMap::new(),
+        is_question: false,
     };
     cryochamber::message::write_message(dir.path(), "inbox", &msg).unwrap();
 

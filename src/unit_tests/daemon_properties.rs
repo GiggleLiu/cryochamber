@@ -4,8 +4,8 @@
 //! tests cover the same functions from a different angle: they assert
 //! *invariants* that should hold for all reachable inputs, not specific
 //! input→output rows. The goal is to catch corner cases at the edges of the
-//! state machine (backoff overflow, deadline-in-past, unusual provider counts,
-//! etc.) that example tables miss.
+//! state machine (deadline-in-past, hibernate edge cases, unusual event
+//! ordering, etc.) that example tables miss.
 
 use super::*;
 use proptest::prelude::*;
@@ -29,40 +29,6 @@ fn offset_from_origin(origin: NaiveDateTime, secs: i64) -> NaiveDateTime {
 
 fn origin() -> NaiveDateTime {
     NaiveDateTime::parse_from_str("2026-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S").unwrap()
-}
-
-// ---------- RetryState ----------
-
-proptest! {
-    /// `rotate_provider` cycles indices 0..count and reports `true` exactly on
-    /// the wrap-around step.
-    #[test]
-    fn prop_retry_rotate_cycles(count in 2usize..10, rotations in 1u32..40) {
-        let mut state = RetryState::new(count);
-        let mut wrapped_count = 0;
-        for step in 1..=rotations {
-            let wrapped = state.rotate_provider();
-            let expected_index = (step as usize) % count;
-            prop_assert_eq!(state.provider_index, expected_index);
-            if wrapped {
-                wrapped_count += 1;
-                prop_assert_eq!(expected_index, 0, "wrap reported off a non-zero index");
-            }
-        }
-        // Over `rotations` steps with `count` providers, we wrap exactly
-        // `rotations / count` times.
-        prop_assert_eq!(wrapped_count, rotations / count as u32);
-    }
-
-    /// With 0 or 1 provider, rotation always reports a wrap (no meaningful
-    /// rotation is possible). The caller uses this to back off after trying
-    /// everything once.
-    #[test]
-    fn prop_retry_rotate_single_provider_always_wraps(count in 0usize..=1) {
-        let mut state = RetryState::new(count);
-        prop_assert!(state.rotate_provider());
-        prop_assert!(state.rotate_provider());
-    }
 }
 
 // ---------- compute_sleep_timeout ----------

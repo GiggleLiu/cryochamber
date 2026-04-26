@@ -174,6 +174,7 @@ fn spawn_watcher(
                             subject: msg.subject,
                             body: msg.body,
                             timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                            is_question: msg.is_question,
                         });
                     }
                 }

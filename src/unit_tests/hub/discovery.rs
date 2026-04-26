@@ -82,29 +82,29 @@ fn populate_reads_session_and_unread() {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
     };
     crate::state::save_state(&crate::state::state_path(&alpha), &st).unwrap();
 
-    // Fake inbox with one message
+    // Outbox carries an open question; inbox is empty so the question is unanswered.
     crate::message::ensure_dirs(&alpha).unwrap();
     let msg = crate::message::Message {
-        from: "tester".into(),
+        from: "agent".into(),
         subject: "hi".into(),
-        body: "yo".into(),
+        body: "yo?".into(),
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
+        is_question: true,
     };
-    crate::message::write_message(&alpha, "inbox", &msg).unwrap();
+    crate::message::write_message(&alpha, "outbox", &msg).unwrap();
 
     let mut idx = scan_workspace(dir.path());
     populate_runtime(&mut idx);
     let entry = idx.values().next().unwrap();
     assert_eq!(entry.session, Some(7));
-    assert_eq!(entry.unread, 1);
+    assert!(entry.has_open_question);
     assert!(!entry.running, "no live pid -> not running");
 }
 
@@ -162,6 +162,7 @@ fn populate_runtime_exposes_rail_display_fields() {
             .and_hms_opt(12, 0, 0)
             .unwrap(),
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(&alpha, "inbox", &msg).unwrap();
 
@@ -190,7 +191,6 @@ fn populate_runtime_reports_agent_running_when_session_active() {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
         session_active: true,
@@ -220,7 +220,6 @@ fn populate_runtime_reports_agent_running_false_when_idle() {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         previous_session_crashed: false,
         session_active: false,

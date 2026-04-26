@@ -74,8 +74,6 @@ fn daemon_scheduling_and_bootstrap_live_in_schedule_module() {
     let daemon_src = std::fs::read_to_string(root.join("src/daemon.rs")).unwrap();
 
     for item in [
-        "struct RetryState",
-        "fn should_rotate_provider",
         "fn compute_sleep_timeout",
         "fn next_wake_from_todos",
         "fn detect_delayed_wake",
@@ -120,7 +118,6 @@ fn watcher_startup_notice_is_silent_without_warning_or_watcher() {
 struct TestClockState {
     now: NaiveDateTime,
     elapsed: Duration,
-    sleeps: Vec<Duration>,
 }
 
 struct TestClock {
@@ -135,13 +132,8 @@ impl TestClock {
             state: Mutex::new(TestClockState {
                 now,
                 elapsed: Duration::ZERO,
-                sleeps: Vec::new(),
             }),
         }
-    }
-
-    fn sleeps(&self) -> Vec<Duration> {
-        self.state.lock().unwrap().sleeps.clone()
     }
 }
 
@@ -157,7 +149,6 @@ impl Clock for TestClock {
 
     fn sleep(&self, duration: Duration) {
         let mut state = self.state.lock().unwrap();
-        state.sleeps.push(duration);
         state.now += chrono::Duration::from_std(duration).unwrap();
         state.elapsed += duration;
     }
@@ -258,8 +249,10 @@ impl SessionRuntime for FakeSessionRuntime {
 
 struct FakeSessionEffects {
     reply_failure: Option<String>,
-    replies: Vec<(ReplyAuthor, String, NaiveDateTime)>,
+    replies: Vec<(ReplyAuthor, String, NaiveDateTime, bool)>,
     inbox_messages: Vec<(String, crate::message::Message)>,
+    archived_inbox: Vec<(String, crate::message::Message)>,
+    archived_outbox: Vec<(String, crate::message::Message)>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
 }
@@ -270,6 +263,8 @@ impl FakeSessionEffects {
             reply_failure: None,
             replies: Vec::new(),
             inbox_messages: Vec::new(),
+            archived_inbox: Vec::new(),
+            archived_outbox: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
         }
@@ -321,6 +316,7 @@ impl FakeSessionEffects {
                     .and_hms_opt(12, 0, 0)
                     .unwrap(),
                 metadata: Default::default(),
+                is_question: false,
             },
         ));
     }
@@ -328,7 +324,21 @@ impl FakeSessionEffects {
 
 impl SessionEffects for FakeSessionEffects {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
-        Ok(std::mem::take(&mut self.inbox_messages))
+        let claimed = std::mem::take(&mut self.inbox_messages);
+        self.archived_inbox.extend(claimed.iter().cloned());
+        Ok(claimed)
+    }
+
+    fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(self.archived_inbox.clone())
+    }
+
+    fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(Vec::new())
+    }
+
+    fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(self.archived_outbox.clone())
     }
 
     fn write_reply(
@@ -336,11 +346,13 @@ impl SessionEffects for FakeSessionEffects {
         author: ReplyAuthor,
         text: &str,
         timestamp: NaiveDateTime,
+        is_question: bool,
     ) -> Result<()> {
         if let Some(message) = &self.reply_failure {
             anyhow::bail!("{message}");
         }
-        self.replies.push((author, text.to_string(), timestamp));
+        self.replies
+            .push((author, text.to_string(), timestamp, is_question));
         Ok(())
     }
 
@@ -521,7 +533,6 @@ fn test_cryo_state() -> CryoState {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: Some("test-instance".into()),
         session_active: false,
         previous_session_crashed: false,
@@ -570,45 +581,6 @@ impl EventSource for FakeEventSource {
             *self.drained_inbox.lock().unwrap() += 1;
         }
     }
-}
-
-#[test]
-fn test_rotate_provider_single_provider() {
-    let mut retry = RetryState::new(1);
-    // With only 1 provider, rotate always returns true (can't rotate)
-    assert!(
-        retry.rotate_provider(),
-        "Single provider should always wrap"
-    );
-    assert_eq!(retry.provider_index, 0);
-}
-
-#[test]
-fn test_rotate_provider_advances_and_wraps() {
-    let mut retry = RetryState::new(3);
-    assert_eq!(retry.provider_index, 0);
-
-    assert!(!retry.rotate_provider(), "Should not wrap: 0->1");
-    assert_eq!(retry.provider_index, 1);
-
-    assert!(!retry.rotate_provider(), "Should not wrap: 1->2");
-    assert_eq!(retry.provider_index, 2);
-
-    assert!(retry.rotate_provider(), "Should wrap: 2->0");
-    assert_eq!(retry.provider_index, 0);
-}
-
-#[test]
-fn test_reset_clears_provider_index() {
-    let mut retry = RetryState::new(3);
-    retry.rotate_provider();
-    assert_eq!(retry.provider_index, 1);
-
-    retry.reset();
-    assert_eq!(
-        retry.provider_index, 0,
-        "Provider index should be reset to 0"
-    );
 }
 
 #[test]
@@ -952,28 +924,6 @@ fn test_next_wake_from_todos_all_invalid_returns_none() {
 }
 
 #[test]
-fn test_sleep_or_shutdown_uses_injected_clock() {
-    let dir = tempfile::tempdir().unwrap();
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
-
-    assert!(!daemon.sleep_or_shutdown(Duration::from_millis(600)));
-    assert_eq!(
-        clock.sleeps(),
-        vec![
-            Duration::from_millis(250),
-            Duration::from_millis(250),
-            Duration::from_millis(100),
-        ]
-    );
-    assert_eq!(clock.local_now(), now + chrono::Duration::milliseconds(600));
-}
-
-#[test]
 fn test_resolve_hibernate_request_failure_retries() {
     // Failure path does not require a pending TODO — daemon will retry.
     let decision = resolve_hibernate_request(false, 7, Some("provider failed"), false);
@@ -1113,59 +1063,27 @@ fn test_handle_receive_request_returns_formatted_messages_and_claimed_filenames(
 }
 
 #[test]
-fn test_should_rotate_provider() {
-    use crate::config::RotateOn;
-    // <2 providers: never rotate, regardless of policy.
-    assert!(!should_rotate_provider(&RotateOn::AnyFailure, true, 0));
-    assert!(!should_rotate_provider(&RotateOn::AnyFailure, true, 1));
-    // Never: always false.
-    assert!(!should_rotate_provider(&RotateOn::Never, true, 3));
-    assert!(!should_rotate_provider(&RotateOn::Never, false, 3));
-    // AnyFailure: always true when >=2 providers.
-    assert!(should_rotate_provider(&RotateOn::AnyFailure, false, 2));
-    assert!(should_rotate_provider(&RotateOn::AnyFailure, true, 2));
-    // QuickExit: only when quick_exit is true.
-    assert!(!should_rotate_provider(&RotateOn::QuickExit, false, 2));
-    assert!(should_rotate_provider(&RotateOn::QuickExit, true, 2));
-}
-
-#[test]
 fn test_decide_next_step_maps_plan_complete_to_shutdown() {
-    let config = CryoConfig::default();
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let outcome = SessionLoopOutcome::PlanComplete;
 
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
+    let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
 
     assert_eq!(step, NextStep::PlanComplete);
 }
 
 #[test]
 fn test_decide_next_step_hibernate_uses_refreshed_wake() {
-    let config = CryoConfig::default();
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let outcome = SessionLoopOutcome::Hibernate;
 
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
-
+    let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
     assert_eq!(
         step,
         NextStep::Hibernate {
@@ -1175,53 +1093,16 @@ fn test_decide_next_step_hibernate_uses_refreshed_wake() {
 }
 
 #[test]
-fn test_decide_next_step_rotates_provider_without_mutating_retry_state() {
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::AnyFailure,
-        providers: provider_config(3),
-        ..CryoConfig::default()
-    };
-    let mut retry = RetryState::new(config.providers.len());
-    retry.provider_index = 1;
-    let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
-
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
-
-    assert_eq!(
-        step,
-        NextStep::RotateProvider {
-            next_wake: Some(next_wake),
-            next_provider_index: 2,
-            wrapped: false,
-            reason: ProviderRotationReason::Failure,
-        }
-    );
-    assert_eq!(retry.provider_index, 1, "decision must be pure");
-}
-
-#[test]
 fn test_decide_next_step_error_hibernates_without_retry() {
     // Agent startup/driver errors no longer auto-retry. The daemon records
     // the crash (via `previous_session_crashed`) and waits for the next
     // TODO or inbox event instead of hammering a backoff loop.
-    let config = CryoConfig::default();
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
 
-    let step = decide_next_step(SessionRunResult::Error, &config, &retry, Some(next_wake));
-
+    let step = decide_next_step(SessionRunResult::Error, Some(next_wake));
     assert_eq!(
         step,
         NextStep::Hibernate {
@@ -1235,29 +1116,81 @@ fn test_decide_next_step_validation_failed_hibernates_without_retry() {
     // With provider rotation disabled, a ValidationFailed outcome (agent
     // crashed or returned --exit N) no longer triggers a retry plan. It
     // falls through to Hibernate so the daemon waits for the next TODO.
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::Never,
-        ..CryoConfig::default()
-    };
-    let retry = RetryState::new(config.providers.len());
     let next_wake = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
 
-    let step = decide_next_step(
-        SessionRunResult::Outcome(&outcome),
-        &config,
-        &retry,
-        Some(next_wake),
-    );
-
+    let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
     assert_eq!(
         step,
         NextStep::Hibernate {
             next_wake: Some(next_wake),
         }
+    );
+}
+
+#[test]
+fn test_legacy_rotate_on_does_not_rotate_provider_in_event_loop() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+    ]));
+
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: true,
+        watch_inbox_path: None,
+    };
+
+    let config: CryoConfig = toml::from_str(
+        r#"
+agent = "opencode"
+rotate_on = "any-failure"
+
+[[providers]]
+name = "provider-0"
+
+[[providers]]
+name = "provider-1"
+"#,
+    )
+    .unwrap();
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+
+    let providers = launcher.providers();
+    assert_eq!(
+        providers,
+        vec![Some("provider-0".into())],
+        "legacy rotate_on must be ignored; provider rotation is removed: {providers:?}"
     );
 }
 
@@ -1466,6 +1399,7 @@ fn test_drive_active_session_reply_failure_still_finishes_session_log() {
         vec![
             Ok(Some(crate::socket::Request::Receive)),
             Ok(Some(crate::socket::Request::Send {
+                question: false,
                 text: "Need approval".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1579,6 +1513,7 @@ fn test_drive_active_session_send_after_receive_satisfies_queued_inbox_message()
         vec![
             Ok(Some(crate::socket::Request::Receive)),
             Ok(Some(crate::socket::Request::Send {
+                question: false,
                 text: "Got it".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1630,6 +1565,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
     let mut runtime = FakeSessionRuntime::new(
         vec![
             Ok(Some(crate::socket::Request::Send {
+                question: false,
                 text: "Still investigating".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
@@ -1673,7 +1609,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
         effects
             .replies
             .iter()
-            .any(|(author, text, _)| *author == ReplyAuthor::Agent
+            .any(|(author, text, _, _)| *author == ReplyAuthor::Agent
                 && text == "Still investigating"),
         "plain send should still post a status message: {:?}",
         effects.replies
@@ -1682,7 +1618,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
         effects
             .replies
             .iter()
-            .filter(|(author, _, _)| *author == ReplyAuthor::Daemon)
+            .filter(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
             .count(),
         0,
         "unreceived inbox should remain silent until the agent explicitly reads it"
@@ -1961,6 +1897,142 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
 }
 
 #[test]
+fn test_drive_active_session_dialog_request_returns_transcript_and_preserves_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Dialog {
+                filter: crate::socket::DialogFilter::All,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.archived_outbox.push((
+        "agent-0.md".into(),
+        crate::message::Message {
+            from: "agent".into(),
+            subject: "Reply".into(),
+            body: "Previous update".into(),
+            timestamp: chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+                .unwrap()
+                .and_hms_opt(18, 0, 0)
+                .unwrap(),
+            metadata: Default::default(),
+            is_question: false,
+        },
+    ));
+    effects.push_inbox_message("msg-1.md", "Archive me");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    assert_eq!(runtime.responses().len(), 2);
+    assert!(runtime.responses()[0].0);
+    assert!(runtime.responses()[0].1.contains("Previous update"));
+    assert!(runtime.responses()[0].1.contains("Archive me"));
+    assert!(runtime.responses()[0].1.contains("new since last session"));
+    assert_eq!(runtime.responses()[1], (true, "Hibernating.".into()));
+    assert!(effects.inbox_messages.is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("the agent did not send a reply"),
+        "dialog should preserve the fallback reply obligation: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
+fn test_drive_active_session_dialog_failure_after_claim_still_triggers_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Dialog {
+                filter: crate::socket::DialogFilter::Since {
+                    iso: "yesterday".into(),
+                },
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.push_inbox_message("msg-1.md", "Archive me");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    assert_eq!(runtime.responses().len(), 2);
+    assert!(!runtime.responses()[0].0);
+    assert!(runtime.responses()[0]
+        .1
+        .contains("not a recognized timestamp"));
+    assert_eq!(runtime.responses()[1], (true, "Hibernating.".into()));
+    assert!(effects.inbox_messages.is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("the agent did not send a reply"),
+        "a failed dialog after claim must still preserve fallback reply behavior: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
 fn test_build_bootstrap_state_runs_immediately_for_first_session_and_overdue_wake() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
@@ -2157,7 +2229,6 @@ fn test_run_clears_stranded_session_active_on_startup_save() {
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
-            provider_index: None,
             instance_id: None,
             session_active: true,
             previous_session_crashed: false,
@@ -2208,7 +2279,6 @@ fn test_run_recovers_stale_claimed_todo_on_startup() {
             agent_override: None,
             max_session_duration_override: None,
             last_report_time: None,
-            provider_index: None,
             instance_id: None,
             session_active: true,
             previous_session_crashed: false,
@@ -2375,15 +2445,6 @@ impl SessionLauncher for ErrorSessionLauncher {
     ) -> Result<SessionLoopOutcome> {
         anyhow::bail!("injected launcher failure");
     }
-}
-
-fn provider_config(n: usize) -> Vec<crate::config::ProviderConfig> {
-    (0..n)
-        .map(|i| crate::config::ProviderConfig {
-            name: format!("provider-{i}"),
-            env: std::collections::HashMap::new(),
-        })
-        .collect()
 }
 
 /// Seed a single pending TODO so the daemon always has a "next wake" it can
@@ -2881,206 +2942,73 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
     );
 }
 
-// ---------- Provider rotation (ported from mock_agent_tests.rs) ----------
-//
-// These tests previously drove real `cryo start` subprocesses and wall-clock
-// sleeps; `test_provider_wrap_all_exhausted` alone could run 60-90s because
-// of the real 60s post-wrap backoff. The in-process versions below exercise
-// the same `RetryState` + `cryo_state.provider_index` transitions in
-// milliseconds by scripting `ValidationFailed` outcomes and letting the
-// virtual clock absorb the backoff sleeps.
-
 #[test]
-fn test_rotate_on_quick_exit_rotates_in_process() {
+fn fs_session_effects_write_reply_with_question_writes_frontmatter_and_prefix() {
     let dir = tempfile::tempdir().unwrap();
-    seed_past_todo(dir.path());
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+    let mut effects = crate::daemon::effects::FsSessionEffects::new(dir.path());
+    let ts = chrono::NaiveDate::from_ymd_opt(2026, 4, 25)
         .unwrap()
-        .and_hms_opt(12, 0, 0)
+        .and_hms_opt(15, 30, 0)
         .unwrap();
-    let clock = Arc::new(TestClock::new(now));
 
-    // Session 1 quick-exits; launcher queue empties → session 2 PlanComplete.
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-    ]));
+    effects
+        .write_reply(
+            crate::daemon::effects::ReplyAuthor::Agent,
+            "What is ice?",
+            ts,
+            true,
+        )
+        .unwrap();
 
-    let daemon = Daemon::new_with_clock_and_launcher(
-        dir.path().to_path_buf(),
-        clock.clone(),
-        launcher.clone(),
+    let outbox = dir.path().join("messages").join("outbox");
+    let mut entries: Vec<_> = std::fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1, "expected exactly one outbox file");
+    let content = std::fs::read_to_string(entries.remove(0).path()).unwrap();
+
+    assert!(
+        content.contains("question: true"),
+        "expected frontmatter `question: true`; got:\n{content}"
     );
-
-    let sock_path = dir.path().join("test.sock");
-    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
-    server.set_nonblocking(true).unwrap();
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.session_number = 0;
-    cryo_state.pid = Some(std::process::id());
-
-    let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
-        next_wake: None,
-        run_now: true,
-        watch_inbox_path: None,
-    };
-
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::QuickExit,
-        providers: provider_config(2),
-        ..CryoConfig::default()
-    };
-
-    let (_tx, rx) = mpsc::channel();
-    daemon
-        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
-        .unwrap();
-
-    // Session 1 used provider-0, then rotated. Session 2 used provider-1.
-    let providers = launcher.providers();
-    assert_eq!(
-        providers,
-        vec![Some("provider-0".into()), Some("provider-1".into())],
-        "quick-exit with rotate_on=quick-exit should rotate: {providers:?}"
+    assert!(
+        content.contains("\nWhat is ice?"),
+        "expected body to be the raw text without prefix; got:\n{content}"
     );
 }
 
 #[test]
-fn test_rotate_on_any_failure_rotates_on_crash_in_process() {
+fn fs_session_effects_write_reply_without_question_omits_frontmatter_and_prefix() {
     let dir = tempfile::tempdir().unwrap();
-    seed_past_todo(dir.path());
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+    let mut effects = crate::daemon::effects::FsSessionEffects::new(dir.path());
+    let ts = chrono::NaiveDate::from_ymd_opt(2026, 4, 25)
         .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
-
-    // Slow crash (quick_exit=false) — would NOT rotate under rotate_on=quick-exit,
-    // but SHOULD rotate under rotate_on=any-failure. This is the contrast the
-    // original integration test verified end-to-end.
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: false },
-    ]));
-
-    let daemon = Daemon::new_with_clock_and_launcher(
-        dir.path().to_path_buf(),
-        clock.clone(),
-        launcher.clone(),
-    );
-
-    let sock_path = dir.path().join("test.sock");
-    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
-    server.set_nonblocking(true).unwrap();
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.session_number = 0;
-    cryo_state.pid = Some(std::process::id());
-
-    let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
-        next_wake: None,
-        run_now: true,
-        watch_inbox_path: None,
-    };
-
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::AnyFailure,
-        providers: provider_config(2),
-        ..CryoConfig::default()
-    };
-
-    let (_tx, rx) = mpsc::channel();
-    daemon
-        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .and_hms_opt(15, 30, 0)
         .unwrap();
 
-    let providers = launcher.providers();
-    assert_eq!(
-        providers,
-        vec![Some("provider-0".into()), Some("provider-1".into())],
-        "any-failure rotation should fire on a slow crash: {providers:?}"
-    );
-}
+    effects
+        .write_reply(
+            crate::daemon::effects::ReplyAuthor::Agent,
+            "Status update",
+            ts,
+            false,
+        )
+        .unwrap();
 
-#[test]
-fn test_provider_wrap_all_exhausted_in_process() {
-    // With 2 providers and rotate_on=any-failure, every failure rotates. After
-    // p0 → p1 → p0 (wrap), the daemon applies a 60s backoff before the next
-    // cycle. The real integration test paid that 60s in wall-clock time; here
-    // the virtual clock absorbs it instantly.
-    let dir = tempfile::tempdir().unwrap();
-    seed_past_todo(dir.path());
-
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+    let outbox = dir.path().join("messages").join("outbox");
+    let mut entries: Vec<_> = std::fs::read_dir(&outbox)
         .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let clock = Arc::new(TestClock::new(now));
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+    let content = std::fs::read_to_string(entries.remove(0).path()).unwrap();
 
-    // Three failures drive the full wrap cycle: p0 → p1 → p0 (wrap) → next
-    // session uses p0 again. Fourth outcome is PlanComplete (fallthrough).
-    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-        SessionLoopOutcome::ValidationFailed { quick_exit: true },
-    ]));
-
-    let daemon = Daemon::new_with_clock_and_launcher(
-        dir.path().to_path_buf(),
-        clock.clone(),
-        launcher.clone(),
-    );
-
-    let sock_path = dir.path().join("test.sock");
-    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
-    server.set_nonblocking(true).unwrap();
-
-    let mut cryo_state = test_cryo_state();
-    cryo_state.session_number = 0;
-    cryo_state.pid = Some(std::process::id());
-
-    let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
-        next_wake: None,
-        run_now: true,
-        watch_inbox_path: None,
-    };
-
-    let config = CryoConfig {
-        rotate_on: crate::config::RotateOn::AnyFailure,
-        providers: provider_config(2),
-        ..CryoConfig::default()
-    };
-
-    let (_tx, rx) = mpsc::channel();
-
-    let start = std::time::Instant::now();
-    daemon
-        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
-        .unwrap();
-    let elapsed = start.elapsed();
-
-    // Expected provider sequence: p0, p1, p0 (after wrap), p0 (fallthrough).
-    let providers = launcher.providers();
+    assert!(!content.contains("question: true"), "got:\n{content}");
     assert!(
-        providers.len() >= 3,
-        "expected at least 3 invocations to drive the wrap, got {providers:?}"
-    );
-    assert_eq!(providers[0], Some("provider-0".into()));
-    assert_eq!(providers[1], Some("provider-1".into()));
-    assert_eq!(
-        providers[2],
-        Some("provider-0".into()),
-        "after wrap the sequence restarts at provider-0"
-    );
-
-    // The old integration test was >60s because of the real 60s backoff.
-    // The virtual clock absorbs that — this whole thing should be <1s.
-    assert!(
-        elapsed < Duration::from_secs(1),
-        "provider wrap with virtual clock should be sub-second; took {elapsed:?}"
+        !content.contains("Question: Status update"),
+        "got:\n{content}"
     );
 }

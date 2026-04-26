@@ -13,7 +13,6 @@ fn test_save_and_load_state() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -46,7 +45,6 @@ fn test_lock_mechanism() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -69,7 +67,6 @@ fn test_is_locked_dead_process() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -87,7 +84,6 @@ fn test_is_locked_no_pid() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -128,7 +124,6 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -151,7 +146,6 @@ fn test_previous_session_crashed_true_roundtrip() {
         agent_override: None,
         max_session_duration_override: None,
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: true,
@@ -211,7 +205,6 @@ fn test_override_fields_roundtrip() {
         max_session_duration_override: Some(1800),
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -234,7 +227,6 @@ fn test_none_overrides_not_serialized() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -244,7 +236,6 @@ fn test_none_overrides_not_serialized() {
     assert!(!json.contains("agent_override"));
     assert!(!json.contains("max_session_duration_override"));
     assert!(!json.contains("last_report_time"));
-    assert!(!json.contains("provider_index"));
 }
 
 #[test]
@@ -258,7 +249,6 @@ fn test_last_report_time_roundtrip() {
         max_session_duration_override: None,
 
         last_report_time: Some("2026-02-28T09:00:00".to_string()),
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -276,26 +266,21 @@ fn test_last_report_time_roundtrip() {
 }
 
 #[test]
-fn test_provider_index_roundtrip() {
+fn test_legacy_provider_index_is_not_reserialized() {
     let dir = tempfile::tempdir().unwrap();
     let state_path = dir.path().join("timer.json");
-    let state = CryoState {
-        session_number: 1,
-        pid: None,
-        agent_override: None,
-        max_session_duration_override: None,
+    std::fs::write(
+        &state_path,
+        r#"{"session_number": 1, "pid": null, "provider_index": 2}"#,
+    )
+    .unwrap();
 
-        last_report_time: None,
-        provider_index: Some(2),
-        instance_id: None,
-        session_active: false,
-        previous_session_crashed: false,
-    };
-    save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
-    assert_eq!(loaded.provider_index, Some(2));
+    save_state(&state_path, &loaded).unwrap();
 
-    // Verify it appears in JSON
     let json = std::fs::read_to_string(&state_path).unwrap();
-    assert!(json.contains("provider_index"));
+    assert!(
+        !json.contains("provider_index"),
+        "provider_index is legacy rotation state and should not be reserialized: {json}"
+    );
 }

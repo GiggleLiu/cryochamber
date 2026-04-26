@@ -4,7 +4,17 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 5;
+pub const IPC_PROTOCOL_VERSION: u32 = 7;
+
+/// Filter for `cryo-agent dialog`. Matches the CLI flags
+/// `--last N` (default 20), `--all`, `--since <iso>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DialogFilter {
+    LastN { count: u32 },
+    All,
+    Since { iso: String },
+}
 
 /// Request from CLI to daemon via Unix socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,8 +31,13 @@ pub enum Request {
     },
     Send {
         text: String,
+        #[serde(default)]
+        question: bool,
     },
     Receive,
+    Dialog {
+        filter: DialogFilter,
+    },
     TodoAdd {
         text: String,
         at: String,

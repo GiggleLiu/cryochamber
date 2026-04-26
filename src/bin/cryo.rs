@@ -7,7 +7,6 @@ use cryochamber::channel::store::MessageStore;
 use cryochamber::config;
 use cryochamber::lifecycle::{self, DaemonLaunchMode, StartOptions};
 use cryochamber::message::Message;
-use cryochamber::protocol;
 use cryochamber::state::{self, CryoState};
 
 #[derive(Parser)]
@@ -119,40 +118,20 @@ fn main() -> Result<()> {
 
 fn cmd_init(agent_cmd: &str) -> Result<()> {
     let dir = cryochamber::work_dir()?;
+    let report = cryochamber::protocol::scaffold_chamber(&dir, agent_cmd)?;
 
-    // Write cryo.toml first (project config)
-    if protocol::write_config_file(&dir, agent_cmd)? {
-        println!("  cryo.toml (created)");
-    } else {
-        println!("  cryo.toml (exists, kept)");
-    }
-
-    let filename = protocol::protocol_filename(agent_cmd);
-    if protocol::write_protocol_file(&dir, filename)? {
-        println!("  {filename} (created)");
-    } else {
-        println!("  {filename} (exists, kept)");
-    }
-
-    if protocol::write_template_plan(&dir)? {
-        println!("  plan.md (created)");
-    } else {
-        println!("  plan.md (exists, kept)");
-    }
-
-    if protocol::write_readme(&dir)? {
-        println!("  README.md (created)");
-    } else {
-        println!("  README.md (exists, kept)");
-    }
-
-    if protocol::write_notes_file(&dir)? {
-        println!("  NOTES.md (created)");
-    } else {
-        println!("  NOTES.md (exists, kept)");
-    }
-
-    MessageStore::new(dir.clone()).ensure_dirs()?;
+    let line = |label: &str, created: bool| {
+        if created {
+            println!("  {label} (created)");
+        } else {
+            println!("  {label} (exists, kept)");
+        }
+    };
+    line("cryo.toml", report.cryo_toml_created);
+    line(report.protocol_filename, report.protocol_created);
+    line("plan.md", report.plan_created);
+    line("README.md", report.readme_created);
+    line("NOTES.md", report.notes_created);
 
     println!("\nCryochamber initialized. Next steps:");
     println!("  1. Edit plan.md with your task plan");
@@ -285,15 +264,10 @@ fn cmd_status() -> Result<()> {
             if st.agent_override.is_some() {
                 println!("  (override; cryo.toml has \"{}\")", cfg.agent);
             }
-            if !cfg.providers.is_empty() {
-                let idx = st.provider_index.unwrap_or(0);
-                if let Some(provider) = cfg.providers.get(idx) {
-                    println!(
-                        "Provider: {} ({}/{})",
-                        provider.name,
-                        idx + 1,
-                        cfg.providers.len()
-                    );
+            if let Some(provider) = cfg.active_provider() {
+                println!("Provider: {}", provider.name);
+                if cfg.uses_legacy_providers() {
+                    println!("  (legacy [[providers]]; use [provider])");
                 }
             }
             let effective_timeout = st
@@ -489,6 +463,7 @@ fn build_inbox_message(from: &str, subject: &str, body: &str) -> Message {
         body: body.to_string(),
         timestamp: chrono::Local::now().naive_local(),
         metadata: std::collections::BTreeMap::new(),
+        is_question: false,
     }
 }
 

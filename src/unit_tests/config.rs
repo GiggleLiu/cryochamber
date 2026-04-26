@@ -48,7 +48,6 @@ fn test_apply_overrides_all_fields() {
         max_session_duration_override: Some(300),
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -69,7 +68,6 @@ fn test_apply_overrides_none_fields() {
         max_session_duration_override: None,
 
         last_report_time: None,
-        provider_index: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,

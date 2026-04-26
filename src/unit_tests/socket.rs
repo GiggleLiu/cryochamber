@@ -52,6 +52,37 @@ fn test_serialize_receive_request() {
 }
 
 #[test]
+fn dialog_request_round_trip_last_n() {
+    use crate::socket::{DialogFilter, Request};
+
+    let req = Request::Dialog {
+        filter: DialogFilter::LastN { count: 20 },
+    };
+    let s = serde_json::to_string(&req).unwrap();
+    let back: Request = serde_json::from_str(&s).unwrap();
+    assert_eq!(format!("{back:?}"), format!("{req:?}"));
+    assert!(s.contains("\"cmd\":\"dialog\""));
+    assert!(s.contains("\"filter\""));
+}
+
+#[test]
+fn dialog_filter_round_trip_variants() {
+    use crate::socket::DialogFilter;
+
+    for f in [
+        DialogFilter::LastN { count: 5 },
+        DialogFilter::All,
+        DialogFilter::Since {
+            iso: "2026-04-25T09:00".to_string(),
+        },
+    ] {
+        let s = serde_json::to_string(&f).unwrap();
+        let back: DialogFilter = serde_json::from_str(&s).unwrap();
+        assert_eq!(format!("{back:?}"), format!("{f:?}"));
+    }
+}
+
+#[test]
 fn test_socket_path() {
     let dir = std::path::Path::new("/tmp/test-cryo");
     let path = socket_path(dir);
@@ -129,6 +160,7 @@ fn test_socket_server_roundtrip() {
         dir.path(),
         &Request::Send {
             text: "hello".into(),
+            question: false,
         },
     )
     .unwrap();
@@ -137,7 +169,7 @@ fn test_socket_server_roundtrip() {
 
     // Server received the request
     let received = rx.recv().unwrap();
-    assert!(matches!(received, Request::Send { text } if text == "hello"));
+    assert!(matches!(received, Request::Send { text, .. } if text == "hello"));
 
     handle.join().unwrap();
 }
@@ -214,7 +246,7 @@ fn test_accept_unknown_fields_ignored() {
     // serde ignores unknown fields by default (no deny_unknown_fields set)
     match result {
         Ok(Some((req, responder))) => {
-            assert!(matches!(req, Request::Send { text } if text == "hello"));
+            assert!(matches!(req, Request::Send { text, .. } if text == "hello"));
             responder
                 .respond(&Response {
                     ok: true,

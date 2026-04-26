@@ -39,6 +39,10 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             post(crate::hub::routes::chambers::post_refresh),
         )
         .route(
+            "/api/chambers/new",
+            post(crate::hub::routes::chambers::post_new),
+        )
+        .route(
             "/api/chambers/{id}/status",
             get(crate::hub::routes::chamber::get_status),
         )
@@ -73,6 +77,10 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .route(
             "/api/chambers/{id}/reset",
             post(crate::hub::routes::chamber::post_reset),
+        )
+        .route(
+            "/api/chambers/{id}/archive",
+            post(crate::hub::routes::chamber::post_archive),
         )
         .route(
             "/api/chambers/{id}/sync",

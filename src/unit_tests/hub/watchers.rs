@@ -71,6 +71,7 @@ async fn watcher_emits_new_message_event_with_chamber_id() {
         body: "yo".into(),
         timestamp: chrono::Local::now().naive_local(),
         metadata: Default::default(),
+        is_question: false,
     };
     crate::message::write_message(dir.path(), "inbox", &msg).unwrap();
 

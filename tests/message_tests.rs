@@ -13,6 +13,7 @@ fn make_message(from: &str, subject: &str, body: &str, ts: &str) -> Message {
         body: body.to_string(),
         timestamp: NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").unwrap(),
         metadata: BTreeMap::new(),
+        is_question: false,
     }
 }
 
@@ -114,6 +115,7 @@ fn test_message_roundtrip() {
         timestamp: NaiveDateTime::parse_from_str("2026-02-23T15:30:00", "%Y-%m-%dT%H:%M:%S")
             .unwrap(),
         metadata,
+        is_question: false,
     };
 
     let markdown = message_to_markdown(&msg);
@@ -142,6 +144,7 @@ fn test_write_outbox() {
         timestamp: NaiveDateTime::parse_from_str("2026-02-23T12:00:00", "%Y-%m-%dT%H:%M:%S")
             .unwrap(),
         metadata,
+        is_question: false,
     };
 
     let path = write_message(dir.path(), "outbox", &msg).unwrap();

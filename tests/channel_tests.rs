@@ -11,6 +11,7 @@ fn make_message(from: &str, subject: &str, body: &str, ts: &str) -> Message {
         body: body.to_string(),
         timestamp: NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").unwrap(),
         metadata: BTreeMap::new(),
+        is_question: false,
     }
 }
 

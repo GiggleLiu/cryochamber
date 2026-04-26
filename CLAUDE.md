@@ -42,6 +42,13 @@ make copilot-review # request Copilot code review on current PR
 make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
 ```
 
+## Codex CLI (for `make run-plan`)
+
+`make run-plan` invokes `codex exec` on the latest plan in `docs/plans/` (default `RUNNER=codex`).
+Auth: `codex login` (ChatGPT) or `printenv OPENAI_API_KEY | codex login --with-api-key`.
+Verify with `codex login status`. Override model via `CODEX_MODEL=gpt-5.5 make run-plan`,
+switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-output.log`.
+
 ## Architecture
 
 ### Core Loop
@@ -132,7 +139,8 @@ and needs an explicit justification.
 - **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `send`, `receive`, `todo`), which send JSON messages over a Unix domain socket. Only `time` is purely local.
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
-- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider rotation) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **Provider config**: Cryochamber supports a single active provider profile. The canonical TOML shape is `[provider]` with an `env = { ... }` map, injected into every spawned agent session. Legacy `[[providers]]` arrays are accepted only for backward compatibility: loading them emits a deprecation warning, the first entry is used, and saving canonicalizes back to `[provider]`. Provider rotation has been removed; do not reintroduce `provider_index`, `rotate_on`, or multi-provider retry behavior.
 - **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender — both per-session fallback replies (when the agent never sends a human-visible message after claiming inbox, or crashes) and periodic reports. Agent-authored human-visible messages use `from: agent`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Crash handling via TODO re-injection**: If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it claimed for that wake with a `(attempt k)` suffix and an exponential delay (`2^k` min, capped at 1 day). There is no in-daemon backoff-retry loop; rescheduling lives entirely in `todo.json`, surviving daemon restarts and visible to both agent and operator. EventLogger is always finalized.
@@ -141,6 +149,7 @@ and needs an explicit justification.
 - **Agent notes via `NOTES.md`**: The agent's persistent memory across sessions is a plain markdown file (`NOTES.md`) the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes drawer tab, and updated by the agent on its own. The removed `cryo-agent note` subcommand and `Request::Note` IPC variant are historical.
 - **`cryo-agent time` input grammar**: Accepts three forms only — empty (current time), `+N minutes|hours|days|weeks` (relative offset), and ISO8601 (`2026-04-25T10:00` or date-only) as validated pass-through. Natural-language parsing is deliberately **not** supported: the agent is an LLM that can reason about "tomorrow 9am" itself, so the tool stays small and documentable. Unknown input prints the accepted forms.
 - **`cryohub` is cwd-scoped**: The `cryohub` binary (not `cryo`) runs the web dashboard and always operates on the current directory — there is no `--dir` flag. The cwd must not itself be a chamber (no `cryo.toml` directly inside). Discovery scans `<cwd>/*` for chamber subdirectories. Host and port are CLI flags (`--host`, `--port`, defaults `127.0.0.1:8765`), not `cryo.toml` fields. The service label is `"hub"` (plist/unit `com.cryo.hub.<hash>`), and the log file is `cryohub.log`. `cryohub status`/`stop` operate on the cwd's service and additionally list every other `com.cryo.hub.*` service installed on the machine (via `service::list_installed`) so users can find services started from a different cwd. Per-chamber `web_host`/`web_port` fields are not part of `CryoConfig`.
+- **Hub chamber creation**: The New Chamber modal scaffolds opencode chambers. The optional API key provider section is folded and writes only `cryo.toml`; do not create per-chamber `opencode.json`. Provider and model controls are combobox inputs backed by browser-populated `<datalist>` elements. The browser fetches the provider/model catalog dynamically from `https://models.dev/api.json`, but both fields must continue to allow manual input for custom providers/models and network failures. Server-side code should validate provider ids and map provider ids to API-key environment variable names, but should not carry a hardcoded model catalog.
 
 ### Primary APIs and Ownership
 
