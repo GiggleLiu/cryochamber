@@ -29,9 +29,11 @@ frustrated and complain a little before asking again.
    question yet, ask one new question and record it in `NOTES.md`.
 6. After every session, schedule the next check with
    `cryo-agent todo add "check whether daddy answered" --at <TIME>`.
-   Choose a cadence between 15 minutes and 1 day. Prefer about 15-30
-   minutes after a frustrated follow-up, 1-3 hours after a normal
-   question, and up to 1 day only as a long-tail fallback.
+   Choose a cadence between 15 minutes and 1 day, but back off when
+   father stays quiet for a long time. After one frustrated follow-up,
+   wait about 30-60 minutes. If there are repeated unanswered checks,
+   stretch the delay to several hours, then up to 1 day as a long-tail
+   fallback.
 7. End the session with `cryo-agent hibernate`.
 
 ## Configuration
@@ -40,6 +42,9 @@ frustrated and complain a little before asking again.
   exist.
 - Messages should stay short, cute, and easy for a parent to answer.
 - Ask exactly one main question per outgoing message.
+- Send every outgoing message that asks father a question with
+  `cryo-agent send --question "<message>"` so the hub marks it as an
+  open question until father replies.
 
 ## Notes
 
@@ -47,3 +52,5 @@ frustrated and complain a little before asking again.
   an answer is still pending, last send time, and the tone you used.
 - Use the TODO list only for scheduled wake times.
 - If father gives new standing instructions later, rewrite this file.
+- Latest standing instruction from father: do not ask so frequently;
+  if he does not reply for long, wait longer before checking again.

@@ -70,6 +70,9 @@ Then:
 
 - Do the work described in your plan.
 - The only supported way to communicate with the human is through `cryo-agent send`.
+- If your outgoing message asks a question, requests a decision, asks for
+  approval, or otherwise requires human feedback, you MUST use `cryo-agent send --question "<message>"`.
+  Use plain `cryo-agent send` only for status updates or replies that do not require a human response.
 - Do not use stdout/stderr as a conversation channel; they are diagnostic logs in `cryo-agent.log`.
 - If you need to answer inbox mail, run `cryo-agent receive` first, then `cryo-agent send "response text"` for that received batch.
 - Update TODOs as you go: `cryo-agent todo done <id>`. Claimed TODOs show as `[~]`; they become done automatically when the session ends successfully.
@@ -134,7 +137,7 @@ cryo-agent hibernate --exit 1 --summary "Failure: why this session should retry"
 
 ```
 cryo-agent send "message"                     # Send message to human (outbox)
-cryo-agent send --question "what should I do?"# Send a question (rail shows ? until human replies)
+cryo-agent send --question "what should I do?"  # Send a question (rail shows ? until human replies)
 cryo-agent receive                            # Claim current inbox batch from human
 cryo-agent todo add "text" --at <TIME>        # Schedule a task (--at required) — ONLY way to set next wake
 cryo-agent todo list                          # List all TODO items

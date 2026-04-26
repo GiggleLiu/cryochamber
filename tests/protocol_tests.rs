@@ -34,6 +34,13 @@ fn test_protocol_user_channel_is_cryo_agent_only() {
 }
 
 #[test]
+fn test_protocol_requires_question_flag_for_feedback_requests() {
+    let content = protocol::PROTOCOL_CONTENT;
+    assert!(content.contains("MUST use `cryo-agent send --question \"<message>\"`"));
+    assert!(content.contains("cryo-agent send --question \"what should I do?\"  #"));
+}
+
+#[test]
 fn test_protocol_no_blocked_hibernate_mode() {
     let content = protocol::PROTOCOL_CONTENT;
     assert!(!content.contains("Blocked or failed"));
