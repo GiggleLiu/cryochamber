@@ -41,6 +41,14 @@ fn test_protocol_requires_question_flag_for_feedback_requests() {
 }
 
 #[test]
+fn test_protocol_requires_final_todo_hygiene_check() {
+    let content = protocol::PROTOCOL_CONTENT;
+    assert!(content.contains("Before hibernating, confirm the TODO list is proper"));
+    assert!(content.contains("at least one pending TODO with a valid `--at` time"));
+    assert!(content.contains("Stale, duplicate, or superseded pending TODOs"));
+}
+
+#[test]
 fn test_protocol_no_blocked_hibernate_mode() {
     let content = protocol::PROTOCOL_CONTENT;
     assert!(!content.contains("Blocked or failed"));

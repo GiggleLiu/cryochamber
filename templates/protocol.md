@@ -92,9 +92,17 @@ Then:
   ```
 - Send a concise outbox message for this session, even if it is only a status update that nothing changed.
 
-### Step 4: Declare the next wake (TODO)
+### Step 4: Confirm the next wake (TODO)
 
-Decide when the daemon should wake you next and register it as a TODO. The daemon's next wake is always the earliest pending TODO's `at` time — no TODO means no wake.
+Decide when the daemon should wake you next. The daemon's next wake is always the earliest pending TODO's `at` time — no TODO means no wake.
+
+Before hibernating, confirm the TODO list is proper:
+
+- If this is not the last session, there must be at least one pending TODO with a valid `--at` time.
+- Stale, duplicate, or superseded pending TODOs must be fixed with `cryo-agent todo done <id>` or `cryo-agent todo remove <id>` before hibernating.
+- If an existing pending TODO already represents the correct next wake, keep it instead of adding another one.
+
+Only add a TODO when no existing pending TODO represents the correct next wake:
 
 ```
 cryo-agent todo add "<what to do next>" --at <TIME>
@@ -102,13 +110,13 @@ cryo-agent todo add "<what to do next>" --at <TIME>
 
 Use `cryo-agent time "+30 minutes"` (or `"+1 day"`, etc.) to compute `<TIME>`.
 
-Always do this in Step 4, even if the next wake is "just in case the human messages." The only session that skips Step 4 is the one that ends with `hibernate --complete`.
+Always perform this TODO-list check in Step 4, even if the next wake is "just in case the human messages." The only session that skips Step 4 is the one that ends with `hibernate --complete`.
 
 ### Step 5: Hibernate (LAST action — nothing after this)
 
 Pick ONE of the following. **This must be your final tool call. Do not run any commands after it.** The daemon cannot archive messages, save state, or start the next session until your process exits.
 
-**More work to do (a TODO was declared in Step 4):**
+**More work to do (Step 4 confirmed a pending TODO):**
 ```
 cryo-agent hibernate --summary "what I did, what's next"
 ```
@@ -151,11 +159,11 @@ cryo-agent hibernate [--complete|--exit N] [--summary "..."]   # End the session
 ## Key Facts
 
 - **TODO list drives your schedule.** The daemon's next wake is always the earliest pending TODO's `at` time. `hibernate` does not take a wake time.
-- **Every session sends a human-visible outbox message before hibernating.** For non-complete sessions, also add a pending TODO before `hibernate`.
+- **Every session sends a human-visible outbox message before hibernating.** For non-complete sessions, also ensure there is a proper pending TODO before `hibernate`.
 - **Inbox messages wake you early.** Humans can send messages. The prompt tells you when inbox mail is waiting; call `cryo-agent receive` to read and archive the current batch.
 - **Human communication goes through `cryo-agent`.** Use `send`; stdout/stderr are logs only.
 - **NOTES.md is your memory.** Persists across sessions. Read it each wake, append/edit as you work, trim when it grows.
-- **TODOs that triggered this wake are claimed.** The daemon marks every past-due pending TODO as `[~]` before spawning you so the prompt shows the trigger but the scheduler ignores it. Add a new pending TODO for any follow-up work.
+- **TODOs that triggered this wake are claimed.** The daemon marks every past-due pending TODO as `[~]` before spawning you so the prompt shows the trigger but the scheduler ignores it. Ensure there is a pending TODO for any follow-up work.
 - **Session end makes claimed TODOs terminal.** Successful sessions mark claimed TODOs `[x]`. If you exit without calling `cryo-agent hibernate`, the daemon marks each claimed TODO done and creates a fresh retry TODO with a `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day).
 - **Inbox messages are consumed only by `receive`.** When you call `cryo-agent receive`, the daemon reads and archives that batch immediately; the next successful `cryo-agent send` resolves the reply obligation for that received batch, or the daemon falls back at session end. There is no file-backed pending inbox state.
 - **No TODO = chamber goes silent.** Without a pending TODO, the daemon has nothing to wake for.
