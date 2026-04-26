@@ -316,8 +316,10 @@ fn has_open_question_for(store: &MessageStore) -> bool {
     if let Ok(messages) = store.read_outbox_archive_named() {
         outbox.extend(messages);
     }
-    // Reverse-chrono walk: stop at the first message older than the last
-    // human reply, and return true on the first question seen above that.
+    // Reverse-chrono walk: stop at the first message strictly older than the
+    // last human reply, and return true on the first question seen above that.
+    // Message timestamps only persist second precision, so equality is not
+    // enough to prove a human reply happened after an agent question.
     outbox.sort_by(|left, right| {
         right
             .1
@@ -327,7 +329,7 @@ fn has_open_question_for(store: &MessageStore) -> bool {
     });
     for (_, msg) in outbox {
         if let Some(reply_ts) = last_human_reply_ts {
-            if msg.timestamp <= reply_ts {
+            if msg.timestamp < reply_ts {
                 return false;
             }
         }

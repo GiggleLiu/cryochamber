@@ -414,6 +414,14 @@ fn has_open_question_true_when_question_is_newer_than_last_reply() {
 }
 
 #[test]
+fn has_open_question_keeps_same_second_prior_reply_open() {
+    let dir = tempfile::tempdir().unwrap();
+    write_inbox_msg(dir.path(), "human", "trigger", "2026-04-25T10:00:00");
+    write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);
+    assert!(has_open_question(dir.path()));
+}
+
+#[test]
 fn has_open_question_ignores_operator_inbox_messages() {
     let dir = tempfile::tempdir().unwrap();
     write_outbox_msg(dir.path(), "agent", "Q", "2026-04-25T10:00:00", true);

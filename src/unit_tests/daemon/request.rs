@@ -1,4 +1,6 @@
-use crate::daemon::request::{handle_dialog_request, MessageEffects, TodoOperationError};
+use crate::daemon::request::{
+    handle_dialog_request, FileMessageEffects, MessageEffects, TodoOperationError,
+};
 use crate::message::Message;
 use crate::socket::DialogFilter;
 use chrono::NaiveDate;
@@ -22,6 +24,7 @@ fn msg(from: &str, body: &str, day: u32, hour: u32) -> Message {
 struct FakeMessages {
     pending: Vec<(String, Message)>,
     archived_inbox: Vec<(String, Message)>,
+    pending_outbox: Vec<(String, Message)>,
     archived_outbox: Vec<(String, Message)>,
 }
 
@@ -42,6 +45,10 @@ impl MessageEffects for FakeMessages {
         Ok(self.archived_inbox.clone())
     }
 
+    fn read_outbox(&self) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
+        Ok(self.pending_outbox.clone())
+    }
+
     fn read_outbox_archive(
         &self,
     ) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
@@ -54,6 +61,7 @@ fn dialog_with_pending_claims_and_marks_new() {
     let mut fake = FakeMessages {
         pending: vec![("2026-04-25T09-30-h.md".into(), msg("human", "fresh", 25, 9))],
         archived_inbox: vec![("2026-04-24T18-00-h.md".into(), msg("human", "old", 24, 18))],
+        pending_outbox: vec![],
         archived_outbox: vec![],
     };
     let out = handle_dialog_request(DialogFilter::All, &[], &mut fake);
@@ -74,6 +82,7 @@ fn dialog_with_no_pending_no_marker() {
     let mut fake = FakeMessages {
         pending: vec![],
         archived_inbox: vec![("2026-04-24T18-00-h.md".into(), msg("human", "old", 24, 18))],
+        pending_outbox: vec![],
         archived_outbox: vec![("2026-04-24T18-05-a.md".into(), msg("agent", "hi", 24, 18))],
     };
     let out = handle_dialog_request(DialogFilter::All, &[], &mut fake);
@@ -93,6 +102,7 @@ fn dialog_uses_extra_session_new_when_no_pending() {
                 msg("human", "received-earlier", 25, 9),
             ),
         ],
+        pending_outbox: vec![],
         archived_outbox: vec![],
     };
     let out = handle_dialog_request(
@@ -103,6 +113,26 @@ fn dialog_uses_extra_session_new_when_no_pending() {
     assert!(out.ok);
     assert!(out.message.contains("new since last session"));
     assert!(out.message.contains("received-earlier"));
+}
+
+#[test]
+fn dialog_includes_pending_outbox_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::channel::store::MessageStore::new(dir.path().to_path_buf());
+    store.ensure_dirs().unwrap();
+    store
+        .send_out(&msg("agent", "pending reply", 25, 9))
+        .unwrap();
+
+    let mut effects = FileMessageEffects::new(dir.path());
+    let out = handle_dialog_request(DialogFilter::All, &[], &mut effects);
+
+    assert!(out.ok);
+    assert!(
+        out.message.contains("pending reply"),
+        "pending outbox messages should be part of dialog history: {:?}",
+        out.message
+    );
 }
 
 #[test]
@@ -135,6 +165,7 @@ fn dialog_since_iso_filters() {
             ("a.md".into(), msg("human", "old", 24, 18)),
             ("b.md".into(), msg("human", "fresh", 25, 9)),
         ],
+        pending_outbox: vec![],
         archived_outbox: vec![],
     };
     let out = handle_dialog_request(

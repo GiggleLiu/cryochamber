@@ -183,6 +183,10 @@ pub(super) trait MessageEffects {
         &self,
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
 
+    fn read_outbox(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
+
     fn read_outbox_archive(
         &self,
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError>;
@@ -221,6 +225,13 @@ impl<T: SessionEffects> MessageEffects for T {
     ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
         SessionEffects::read_inbox_archive(self)
             .map_err(|e| TodoOperationError::new(format!("Failed to read inbox archive: {e}")))
+    }
+
+    fn read_outbox(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        SessionEffects::read_outbox(self)
+            .map_err(|e| TodoOperationError::new(format!("Failed to read outbox: {e}")))
     }
 
     fn read_outbox_archive(
@@ -296,6 +307,14 @@ impl MessageEffects for FileMessageEffects {
         self.store
             .read_inbox_archive_named()
             .map_err(|e| TodoOperationError::new(format!("Failed to read inbox archive: {e}")))
+    }
+
+    fn read_outbox(
+        &self,
+    ) -> std::result::Result<Vec<(String, crate::message::Message)>, TodoOperationError> {
+        self.store
+            .read_outbox_named()
+            .map_err(|e| TodoOperationError::new(format!("Failed to read outbox: {e}")))
     }
 
     fn read_outbox_archive(
@@ -468,6 +487,17 @@ pub(super) fn handle_dialog_request(
             };
         }
     };
+    let pending_outbox = match effects.read_outbox() {
+        Ok(messages) => messages,
+        Err(error) => {
+            return DialogRequestOutcome {
+                ok: false,
+                message: format!("dialog refused: {}", error.message()),
+                log_event: None,
+                claimed_filenames,
+            };
+        }
+    };
 
     let resolved_filter = match resolve_dialog_filter(filter) {
         Ok(filter) => filter,
@@ -488,10 +518,13 @@ pub(super) fn handle_dialog_request(
         }
     }
 
+    let mut outbox_messages = archived_outbox;
+    outbox_messages.extend(pending_outbox);
+
     let message = render_dialog(
         &DialogInputs {
             archived_inbox,
-            archived_outbox,
+            outbox: outbox_messages,
             new_filenames,
         },
         resolved_filter,

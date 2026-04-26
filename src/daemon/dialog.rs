@@ -1,5 +1,5 @@
 //! Pure rendering for `cryo-agent dialog`. No I/O, no claiming: the caller
-//! provides archive contents plus the filenames that count as "new this
+//! provides message history plus the filenames that count as "new this
 //! session," and this module returns the transcript string.
 
 use chrono::NaiveDateTime;
@@ -13,7 +13,7 @@ pub(super) const EMPTY_PLACEHOLDER: &str = "(no dialog history yet)";
 #[derive(Debug, Clone)]
 pub(super) struct DialogInputs {
     pub archived_inbox: Vec<(String, Message)>,
-    pub archived_outbox: Vec<(String, Message)>,
+    pub outbox: Vec<(String, Message)>,
     pub new_filenames: Vec<String>,
 }
 
@@ -25,7 +25,7 @@ pub(super) enum DialogFilterResolved {
 }
 
 pub(super) fn render_dialog(inputs: &DialogInputs, filter: DialogFilterResolved) -> String {
-    let interleaved = interleave(&inputs.archived_inbox, &inputs.archived_outbox);
+    let interleaved = interleave(&inputs.archived_inbox, &inputs.outbox);
     if interleaved.is_empty() {
         return format!("{EMPTY_PLACEHOLDER}\n");
     }

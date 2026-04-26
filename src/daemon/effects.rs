@@ -5,6 +5,7 @@ use std::path::Path;
 pub(super) trait SessionEffects {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>>;
     fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>>;
+    fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>>;
     fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>>;
     fn write_reply(
         &mut self,
@@ -70,6 +71,10 @@ impl SessionEffects for FsSessionEffects<'_> {
 
     fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
         self.message_store().read_inbox_archive_named()
+    }
+
+    fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        self.message_store().read_outbox_named()
     }
 
     fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {

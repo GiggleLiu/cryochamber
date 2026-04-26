@@ -333,6 +333,10 @@ impl SessionEffects for FakeSessionEffects {
         Ok(self.archived_inbox.clone())
     }
 
+    fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>> {
+        Ok(Vec::new())
+    }
+
     fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
         Ok(self.archived_outbox.clone())
     }

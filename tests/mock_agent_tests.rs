@@ -76,6 +76,26 @@ fn wait_for_log_content(dir: &std::path::Path, text: &str, timeout: Duration) ->
     false
 }
 
+fn wait_for_outbox_message(
+    dir: &std::path::Path,
+    body_fragment: &str,
+    timeout: Duration,
+) -> Option<Vec<(String, cryochamber::message::Message)>> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if let Ok(outbox) = cryochamber::message::read_outbox(dir) {
+            if outbox
+                .iter()
+                .any(|(_, msg)| msg.body.contains(body_fragment))
+            {
+                return Some(outbox);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    None
+}
+
 #[test]
 fn test_mock_crash_retries_then_exits() {
     let dir = tempfile::tempdir().unwrap();
@@ -232,16 +252,12 @@ fn test_mock_dialog_round_trip() {
         .assert()
         .success();
 
-    assert!(
-        wait_for_log_content(
-            dir.path(),
-            "dialog: claimed 1 message",
-            Duration::from_secs(15)
-        ),
-        "Log should show dialog claiming the inbox batch"
-    );
-
-    let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
+    let outbox =
+        wait_for_outbox_message(dir.path(), "ack: hello from human", Duration::from_secs(15))
+            .unwrap_or_else(|| {
+                let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap_or_default();
+                panic!("dialog scenario should write an outbox reply; log:\n{log}");
+            });
     assert_eq!(
         outbox.len(),
         1,

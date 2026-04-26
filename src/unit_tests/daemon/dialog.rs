@@ -25,7 +25,7 @@ fn named(name: &str, m: Message) -> (String, Message) {
 fn render_empty_returns_placeholder() {
     let inputs = DialogInputs {
         archived_inbox: vec![],
-        archived_outbox: vec![],
+        outbox: vec![],
         new_filenames: vec![],
     };
     let out = render_dialog(&inputs, DialogFilterResolved::All);
@@ -39,7 +39,7 @@ fn render_archived_only_oldest_first_no_marker() {
             "2026-04-24T18-00-human.md",
             msg("human", "Hi", 2026, 4, 24, 18, 0),
         )],
-        archived_outbox: vec![named(
+        outbox: vec![named(
             "2026-04-24T18-05-agent.md",
             msg("agent", "Hello!", 2026, 4, 24, 18, 5),
         )],
@@ -65,7 +65,7 @@ fn render_marker_before_first_new_message() {
                 msg("human", "Update plan", 2026, 4, 25, 9, 30),
             ),
         ],
-        archived_outbox: vec![named(
+        outbox: vec![named(
             "2026-04-24T18-05-agent.md",
             msg("agent", "Hello!", 2026, 4, 24, 18, 5),
         )],
@@ -97,7 +97,7 @@ fn render_last_n_trims_oldest_first() {
                 msg("human", "msg3", 2026, 4, 24, 18, 20),
             ),
         ],
-        archived_outbox: vec![],
+        outbox: vec![],
         new_filenames: vec![],
     };
     let out = render_dialog(&inputs, DialogFilterResolved::LastN(2));
@@ -119,7 +119,7 @@ fn render_since_filters_by_timestamp() {
                 msg("human", "fresh", 2026, 4, 25, 9, 0),
             ),
         ],
-        archived_outbox: vec![],
+        outbox: vec![],
         new_filenames: vec![],
     };
     let cutoff = NaiveDate::from_ymd_opt(2026, 4, 25)
@@ -144,7 +144,7 @@ fn render_filter_drops_all_new_emits_omitted_count() {
                 msg("human", "new1", 2026, 4, 24, 18, 5),
             ),
         ],
-        archived_outbox: vec![
+        outbox: vec![
             named(
                 "2026-04-24T18-10-agent.md",
                 msg("agent", "old2", 2026, 4, 24, 18, 10),
@@ -171,7 +171,7 @@ fn render_all_messages_new_marker_at_top() {
             "2026-04-25T09-30-human.md",
             msg("human", "first contact", 2026, 4, 25, 9, 30),
         )],
-        archived_outbox: vec![],
+        outbox: vec![],
         new_filenames: vec!["2026-04-25T09-30-human.md".to_string()],
     };
     let out = render_dialog(&inputs, DialogFilterResolved::All);
