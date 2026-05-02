@@ -93,6 +93,23 @@ fn shell_refreshes_rail_after_log_events() {
 }
 
 #[test]
+fn shell_periodically_refreshes_chamber_registry() {
+    assert!(
+        SHELL_HTML.contains("async function refreshChamberIndex"),
+        "shell should have a registry refresh path separate from runtime-only chamber loading"
+    );
+    assert!(
+        SHELL_HTML.contains("fetchJSON('/api/chambers/refresh', { method: 'POST' })"),
+        "registry refresh should call the discovery endpoint"
+    );
+    assert!(
+        SHELL_HTML
+            .contains("setInterval(() => { refreshChamberIndex({ silent: true }); }, 15_000);"),
+        "shell should periodically re-read registry so externally started chambers appear"
+    );
+}
+
+#[test]
 fn shell_only_renders_reset_for_stopped_chambers() {
     assert!(
         SHELL_HTML.contains("!entry.running && !entry.config_error"),

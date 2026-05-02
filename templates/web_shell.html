@@ -318,6 +318,16 @@
     renderRail();
   }
 
+  async function refreshChamberIndex(options) {
+    const silent = !!(options && options.silent);
+    try {
+      state.chambers = await fetchJSON('/api/chambers/refresh', { method: 'POST' });
+      renderRail();
+    } catch (e) {
+      if (!silent) toast(e.message, 'error');
+    }
+  }
+
   let railRefreshTimer = null;
   function scheduleRailRefresh(chamberId) {
     if (railRefreshTimer) clearTimeout(railRefreshTimer);
@@ -1300,10 +1310,7 @@
   window.addEventListener('popstate', syncRouteSelection);
 
   document.getElementById('refresh').addEventListener('click', async () => {
-    try {
-      state.chambers = await fetchJSON('/api/chambers/refresh', { method: 'POST' });
-      renderRail();
-    } catch (e) { toast(e.message, 'error'); }
+    await refreshChamberIndex();
   });
 
   initDrawerTabs();
@@ -1335,6 +1342,7 @@
   // labels in place. SSE-driven re-renders also call `applyWake`, so the
   // ticker only matters when nothing is changing on the daemon.
   setInterval(refreshWakeRelatives, 30_000);
+  setInterval(() => { refreshChamberIndex({ silent: true }); }, 15_000);
 
   const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 
