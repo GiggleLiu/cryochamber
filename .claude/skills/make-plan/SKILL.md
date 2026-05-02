@@ -7,7 +7,7 @@ description: Use when the user wants to create a new cryochamber application, se
 
 ## Overview
 
-Guide users through creating a cryochamber application via conversational Q&A. Four phases: brainstorm the plan, configure cryo.toml, validate everything works, optionally start.
+Guide users through creating a cryochamber application via conversational Q&A. Four phases: brainstorm the plan, configure cryo.toml, validate everything works, optionally launch.
 
 Assumes cryo CLI is installed and on PATH.
 
@@ -328,12 +328,12 @@ broken agent installs, and sync credential issues.
 
 On success: "Your cryo application is ready."
 
-## Phase 4: Start
+## Phase 4: Launch
 
-Ask the user if they want to start the plan immediately.
+Ask the user if they want to launch the plan immediately.
 
 - If yes: run `cryo start` from `chamber_dir` (and `cryo-zulip sync` / `cryo-gh sync` from `chamber_dir` if a sync channel was configured). Report the status with `cryo status`.
-- If no: print instructions for starting later from `chamber_dir` (`cryo start`, sync commands if applicable, `cryo watch`).
+- If no: print instructions for launching later from `chamber_dir` (`cryo start`, sync commands if applicable, `cryo watch`).
 
 If the user deferred provider setup in Q7, remind them how to configure it:
 - Edit `config_path(project_dir)` and add `rotate_on = "quick-exit"` (or `"any-failure"`)
@@ -361,7 +361,7 @@ digraph cryo_create {
     "Layer 1: Static files" [shape=box];
     "Layer 2: Tools" [shape=box];
     "Layer 3: Smoke test" [shape=box];
-    "Start now?" [shape=diamond];
+    "Launch now?" [shape=diamond];
     "Start services" [shape=box];
     "Ready" [shape=doublecircle];
 
@@ -374,9 +374,9 @@ digraph cryo_create {
     "User approves config?" -> "Layer 1: Static files" [label="yes"];
     "Layer 1: Static files" -> "Layer 2: Tools";
     "Layer 2: Tools" -> "Layer 3: Smoke test";
-    "Layer 3: Smoke test" -> "Start now?";
-    "Start now?" -> "Start services" [label="yes"];
-    "Start now?" -> "Ready" [label="no"];
+    "Layer 3: Smoke test" -> "Launch now?";
+    "Launch now?" -> "Start services" [label="yes"];
+    "Launch now?" -> "Ready" [label="no"];
     "Start services" -> "Ready";
 }
 ```

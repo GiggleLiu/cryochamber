@@ -482,9 +482,9 @@
     if (entry.running) {
       btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
     } else if (!entry.config_error && !entry.completed) {
-      // A completed plan has nothing to resume — hide Start. Reset stays
+      // A completed plan has nothing to resume — hide Launch. Reset stays
       // available so the operator can archive the run and begin a new plan.
-      btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary', pending));
+      btns.appendChild(btn('launch', () => lifecycle(entry.id, 'start'), 'primary', pending));
     }
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
@@ -504,7 +504,7 @@
   }
 
   function confirmReset(id, name) {
-    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
+    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Launch to begin a new session\n\nThis cannot be undone.`;
     if (window.confirm(msg)) lifecycle(id, 'reset');
   }
 
