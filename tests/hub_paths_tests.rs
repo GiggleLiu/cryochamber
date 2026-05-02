@@ -93,3 +93,46 @@ fn hub_config_reads_custom_chamber_root() {
 
     assert_eq!(cfg.chamber_root, custom_root.path());
 }
+
+#[test]
+fn hub_config_save_round_trips_config_file() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let custom_root = tempfile::tempdir().unwrap();
+    let cfg = cryochamber::hub::config::HubConfig {
+        host: "0.0.0.0".to_string(),
+        port: 9876,
+        chamber_root: custom_root.path().to_path_buf(),
+    };
+
+    cryochamber::hub::config::save_config(&cfg).unwrap();
+
+    let path = cryochamber::hub::paths::hub_config_path();
+    assert!(path.exists());
+    assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+#[test]
+fn hub_config_load_or_create_writes_default_config_when_missing() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+
+    let cfg = cryochamber::hub::config::load_or_create_config().unwrap();
+
+    let path = cryochamber::hub::paths::hub_config_path();
+    assert!(path.exists());
+    assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+#[test]
+fn hub_effective_config_persists_host_and_port_overrides() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+
+    let cfg = cryochamber::hub::config::effective_config(Some("0.0.0.0".to_string()), Some(9900))
+        .unwrap();
+
+    assert_eq!(cfg.host, "0.0.0.0");
+    assert_eq!(cfg.port, 9900);
+    assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
