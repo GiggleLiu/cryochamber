@@ -26,6 +26,7 @@ make coverage       # generate coverage report (auto-installs cargo-llvm-cov)
 make cli            # cargo install --path .
 make logo           # compile logo with typst
 make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)
+make example-start-all # start all example chambers (AGENT=opencode|claude)
 make example-cancel # stop a running example (DIR=examples/chambers/...)
 make example-hub    # start global cryohub in foreground (PORT=8765)
 make example-clean  # remove auto-generated files from all examples
