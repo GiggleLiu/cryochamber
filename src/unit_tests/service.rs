@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn launchd_stdio_log_path_lives_under_user_logs() {
+    let home = Path::new("/Users/alice");
+    let path = launchd_stdio_log_path(home, "com.cryo.daemon.abc123");
+
+    assert_eq!(
+        path,
+        home.join("Library")
+            .join("Logs")
+            .join("cryo")
+            .join("com.cryo.daemon.abc123.log")
+    );
+}
+
+#[test]
 fn launchctl_install_action_rewrites_changed_plist_without_unload_when_label_absent() {
     assert_eq!(
         launchctl_install_action(true, false),
