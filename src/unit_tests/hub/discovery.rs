@@ -118,6 +118,28 @@ fn discover_reads_registry_without_scanning_workspace() {
 }
 
 #[test]
+fn discover_names_project_local_dot_cryo_chamber_after_parent_project() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let hub_root = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let project_dir = project.path().join("qec");
+    let chamber = project_dir.join(".cryo");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+    let chamber = chamber.canonicalize().unwrap();
+    crate::registry::remember_chamber(&chamber).unwrap();
+
+    let idx = discover(hub_root.path());
+    let entry = idx.values().next().unwrap();
+
+    assert_eq!(idx.len(), 1);
+    assert_eq!(entry.name, "qec");
+    assert_eq!(entry.path, chamber);
+}
+
+#[test]
 fn discover_local_only_skips_registered_chambers() {
     let state_home = tempfile::tempdir().unwrap();
     let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());

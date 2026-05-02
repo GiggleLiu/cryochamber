@@ -103,10 +103,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
         if !cryo_toml.exists() {
             continue;
         }
-        let name = canonical
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "(unknown)".into());
+        let name = chamber_display_name(&canonical);
         let config_error = crate::config::load_config(&cryo_toml)
             .err()
             .map(|e| e.to_string());
@@ -136,16 +133,28 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
     out
 }
 
+fn chamber_display_name(path: &Path) -> String {
+    if path.file_name().is_some_and(|name| name == ".cryo") {
+        if let Some(parent_name) = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+        {
+            return parent_name;
+        }
+    }
+    path.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(unknown)".into())
+}
+
 fn registry_entry_for_path(workspace: &Path, path: PathBuf) -> Option<ChamberEntry> {
     let canonical = path.canonicalize().unwrap_or(path);
     let cryo_toml = crate::config::config_path(&canonical);
     if !cryo_toml.exists() {
         return None;
     }
-    let name = canonical
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "(unknown)".into());
+    let name = chamber_display_name(&canonical);
     let config_error = crate::config::load_config(&cryo_toml)
         .err()
         .map(|e| e.to_string());

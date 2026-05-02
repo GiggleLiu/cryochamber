@@ -208,6 +208,7 @@
     const row = document.createElement('div');
     row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
     row.dataset.id = c.id;
+    row.title = c.path || c.path_hint || c.name;
 
     const row1 = document.createElement('div');
     row1.className = 'chamber-row1';
@@ -216,15 +217,9 @@
     const name = document.createElement('span');
     name.className = 'chamber-name';
     name.textContent = c.name;
+    name.title = c.path || c.path_hint || c.name;
     row1.appendChild(dot);
     row1.appendChild(name);
-    if (c.path_hint) {
-      const pathHint = document.createElement('span');
-      pathHint.className = 'chamber-path';
-      pathHint.textContent = c.path_hint;
-      pathHint.title = c.path || c.path_hint;
-      row1.appendChild(pathHint);
-    }
     if (c.has_open_question) {
       const badge = document.createElement('span');
       badge.className = 'question-badge';

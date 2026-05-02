@@ -172,15 +172,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chamber-path {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--ink-faint);
-  max-width: 46%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .chamber .question-badge {
   font-family: var(--mono);
   font-size: 10px;

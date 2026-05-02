@@ -527,26 +527,6 @@ fn shell_stacks_task_and_wake_time_on_separate_rail_lines() {
 }
 
 #[test]
-fn shell_renders_path_hint_only_when_entry_provides_one() {
-    assert!(
-        SHELL_HTML.contains("if (c.path_hint)"),
-        "rail rows should show a location hint only for non-local registered chambers"
-    );
-    assert!(
-        SHELL_HTML.contains("pathHint.className = 'chamber-path'"),
-        "path hints should use a dedicated CSS class"
-    );
-    assert!(
-        WEB_CSS.contains(".chamber-path"),
-        "web CSS should style the compact registered-chamber location hint"
-    );
-    assert!(
-        !SHELL_HTML.contains("System-wide") && !SHELL_HTML.contains("Global"),
-        "registered chambers should be distinguished implicitly, not with an explicit sidebar section label"
-    );
-}
-
-#[test]
 fn shell_places_sync_controls_in_right_drawer() {
     assert!(
         SHELL_HTML.contains("data-tab=\"sync\""),
