@@ -527,18 +527,50 @@ fn shell_stacks_task_and_wake_time_on_separate_rail_lines() {
 }
 
 #[test]
+fn shell_mutes_rail_wake_time_for_stopped_chambers() {
+    assert!(
+        SHELL_HTML.contains("when.className = c.running ? 'when' : 'when muted';"),
+        "rail wake time should be muted when the chamber is stopped"
+    );
+    assert!(
+        WEB_CSS.contains(".chamber-meta .when.muted") && WEB_CSS.contains("var(--ink-faint)"),
+        "muted rail wake CSS should use subdued text color"
+    );
+}
+
+#[test]
 fn shell_uses_session_summary_in_header_with_hover_title() {
     assert!(
         SHELL_HTML.contains("status.session_summary"),
         "detail header should prefer session summary over legacy task"
     );
     assert!(
-        SHELL_HTML.contains("view.headerTaskLine.title = summary"),
+        SHELL_HTML.contains("view.headerTaskLine.title = displaySummary"),
         "truncated session summary should expose full text on hover"
     );
     assert!(
         WEB_CSS.contains("text-overflow: ellipsis"),
         "header summary should be visually truncatable"
+    );
+}
+
+#[test]
+fn shell_renders_session_summary_without_repeated_labels() {
+    assert!(
+        SHELL_HTML.contains("function formatSessionSummary(session, summary)"),
+        "header should normalize session summaries before display"
+    );
+    assert!(
+        SHELL_HTML.contains("formatSessionSummary(status.session, summary)"),
+        "header should prefix summaries once as `Session N: ...`"
+    );
+    assert!(
+        SHELL_HTML.contains("view.headerMeta.style.display = displaySummary ? 'none' : '';"),
+        "standalone session meta should be hidden when summary already carries session context"
+    );
+    assert!(
+        !SHELL_HTML.contains("Last session"),
+        "header should not repeat the `Last session` label before a session-prefixed summary"
     );
 }
 
@@ -551,6 +583,42 @@ fn shell_wake_chip_uses_relative_first_copy() {
     assert!(
         !SHELL_HTML.contains("'next wake · '"),
         "wake prefix should not use a separator before relative time"
+    );
+}
+
+#[test]
+fn shell_hides_detail_wake_chip_when_chamber_is_stopped() {
+    assert!(
+        SHELL_HTML.contains("if (entry.running && status.next_wake)"),
+        "detail wake chip should only show for running chambers"
+    );
+}
+
+#[test]
+fn shell_detail_header_truncates_title_and_gives_summary_room() {
+    assert!(
+        SHELL_HTML.contains("name.className = 'name';"),
+        "header chamber name should have a dedicated selector for truncation"
+    );
+    let head_start = WEB_CSS.find(".thread-head {").expect("thread-head rule");
+    let head = &WEB_CSS[head_start..WEB_CSS[head_start..].find('}').unwrap() + head_start];
+    assert!(
+        head.contains("display: grid") && head.contains("grid-template-areas"),
+        "thread header should use grid so the summary can span the header: {head}"
+    );
+    let name_start = WEB_CSS
+        .find(".thread-head .title .name {")
+        .expect("title name rule");
+    let name_rule = &WEB_CSS[name_start..WEB_CSS[name_start..].find('}').unwrap() + name_start];
+    assert!(
+        name_rule.contains("white-space: nowrap") && name_rule.contains("text-overflow: ellipsis"),
+        "chamber title should stay on one truncated line: {name_rule}"
+    );
+    let task_start = WEB_CSS.find(".thread-head .task {").expect("task rule");
+    let task_rule = &WEB_CSS[task_start..WEB_CSS[task_start..].find('}').unwrap() + task_start];
+    assert!(
+        task_rule.contains("width: 100%") && task_rule.contains("max-width: none"),
+        "session summary should use the available header width: {task_rule}"
     );
 }
 

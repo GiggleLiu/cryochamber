@@ -48,6 +48,29 @@ fn launchd_stdio_log_path(home: &Path, label: &str) -> PathBuf {
         .join(format!("{label}.log"))
 }
 
+/// Path where the OS service manager will actually write stdout/stderr for
+/// the service identified by `(label_prefix, dir)`. On Linux, systemd honors
+/// whatever path was passed to `install`, so this returns `fallback` verbatim.
+/// On macOS, `install` ignores its `log_file` argument and routes launchd
+/// stdio to `~/Library/Logs/cryo/<label>.log` (so xpcproxy doesn't need TCC
+/// access to protected chamber dirs); this returns that path.
+///
+/// Use this for printing/displaying the log location so what you show the
+/// operator matches what the service actually writes.
+#[cfg(target_os = "macos")]
+pub fn stdio_log_path(label_prefix: &str, dir: &Path, fallback: &Path) -> PathBuf {
+    let Some(home) = dirs::home_dir() else {
+        return fallback.to_path_buf();
+    };
+    let label = service_label(label_prefix, dir);
+    launchd_stdio_log_path(&home, &label)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn stdio_log_path(_label_prefix: &str, _dir: &Path, fallback: &Path) -> PathBuf {
+    fallback.to_path_buf()
+}
+
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LaunchctlInstallAction {

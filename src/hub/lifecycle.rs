@@ -56,51 +56,6 @@ pub fn reset_chamber(dir: &Path) -> Result<PathBuf> {
     crate::lifecycle::reset_chamber(dir)
 }
 
-/// Archive a whole chamber directory out of the workspace. This is the hub's
-/// safe replacement for deletion: the chamber disappears from discovery, but
-/// all files remain recoverable under `.cryo-archive/`.
-pub fn archive_chamber(workspace: &Path, dir: &Path) -> Result<PathBuf> {
-    let workspace = workspace
-        .canonicalize()
-        .with_context(|| format!("Failed to resolve workspace {}", workspace.display()))?;
-    let chamber = dir
-        .canonicalize()
-        .with_context(|| format!("Failed to resolve chamber {}", dir.display()))?;
-    if chamber.parent() != Some(workspace.as_path()) {
-        anyhow::bail!("Cannot archive chambers outside this workspace");
-    }
-
-    stop_chamber(&chamber)?;
-
-    let archive_root = workspace.join(".cryo-archive");
-    std::fs::create_dir_all(&archive_root)
-        .with_context(|| format!("Failed to create {}", archive_root.display()))?;
-    let name = chamber
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("chamber");
-    let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let dest = unique_archive_path(&archive_root, &format!("{name}-{ts}"));
-
-    std::fs::rename(&chamber, &dest)
-        .with_context(|| format!("Failed to move {} to {}", chamber.display(), dest.display()))?;
-    Ok(dest)
-}
-
-fn unique_archive_path(root: &Path, base_name: &str) -> PathBuf {
-    let first = root.join(base_name);
-    if !first.exists() {
-        return first;
-    }
-    for i in 2.. {
-        let candidate = root.join(format!("{base_name}-{i}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded archive suffix search should always return")
-}
-
 #[cfg(test)]
 fn wait_for_live_daemon_until(dir: &Path, deadline: std::time::Instant) -> Result<()> {
     crate::lifecycle::wait_for_live_daemon_until(dir, deadline)

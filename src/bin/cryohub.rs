@@ -73,6 +73,7 @@ fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Resul
         std::fs::create_dir_all(parent)?;
     }
     cryochamber::service::install(SERVICE_LABEL, &service_dir, &exe, &args, &log_path, true)?;
+    let actual_log = cryochamber::service::stdio_log_path(SERVICE_LABEL, &service_dir, &log_path);
     println!(
         "Cryohub service installed: http://{}:{}",
         config.host, config.port
@@ -82,7 +83,7 @@ fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Resul
         "Config: {}",
         cryochamber::hub::paths::hub_config_path().display()
     );
-    println!("Log: {}", log_path.display());
+    println!("Log: {}", actual_log.display());
     println!("Survives reboot. Stop with: cryohub stop");
     Ok(())
 }
@@ -106,7 +107,8 @@ fn cmd_status() -> Result<()> {
             "Cryohub service: installed ({})",
             cryochamber::service::service_label(SERVICE_LABEL, &service_dir)
         );
-        let log = cryochamber::hub::paths::hub_log_path();
+        let fallback = cryochamber::hub::paths::hub_log_path();
+        let log = cryochamber::service::stdio_log_path(SERVICE_LABEL, &service_dir, &fallback);
         if log.exists() {
             println!("Log: {}", log.display());
         }

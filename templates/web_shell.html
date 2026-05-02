@@ -242,7 +242,7 @@
     task.className = 'task';
     task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
     const when = document.createElement('span');
-    when.className = 'when';
+    when.className = c.running ? 'when' : 'when muted';
     applyWake(when, c.next_wake_display);
     meta.appendChild(task);
     meta.appendChild(when);
@@ -383,6 +383,14 @@
     return entry.running ? '●' : '○';
   }
 
+  function formatSessionSummary(session, summary) {
+    const text = String(summary || '').trim();
+    if (!text) return '';
+    const body = text.replace(/^Session\s+#?\d+\s*:\s*/i, '').trim();
+    const prefix = Number(session) > 0 ? `Session ${session}: ` : '';
+    return prefix + (body || text);
+  }
+
   function buildHead(pane, entry, status) {
     const head = document.createElement('div');
     head.className = 'thread-head';
@@ -392,6 +400,7 @@
     const title = document.createElement('div');
     title.className = 'title';
     const name = document.createElement('span');
+    name.className = 'name';
     name.textContent = entry.name;
     const session = document.createElement('span');
     session.className = 'session';
@@ -438,7 +447,10 @@
   function updateHead(entry, status) {
     const dot = statusDotChar(entry);
     view.headerName.textContent = entry.name;
-    view.headerMeta.textContent = `SESSION #${status.session}`;
+    const summary = status.session_summary || '';
+    const displaySummary = formatSessionSummary(status.session, summary);
+    view.headerMeta.textContent = displaySummary ? '' : `SESSION #${status.session}`;
+    view.headerMeta.style.display = displaySummary ? 'none' : '';
     if (status.completed) {
       view.planCompleteBox.style.display = '';
       view.planCompleteBox.textContent = '✓ Plan complete' +
@@ -447,17 +459,15 @@
       view.headerTaskLine.title = '';
     } else {
       view.planCompleteBox.style.display = 'none';
-      const summary = status.session_summary || '';
-      if (summary) {
-        view.headerTaskLine.innerHTML =
-          '<span class="label">Last session</span>' + escapeHtml(summary);
-        view.headerTaskLine.title = summary;
+      if (displaySummary) {
+        view.headerTaskLine.textContent = displaySummary;
+        view.headerTaskLine.title = displaySummary;
       } else {
         view.headerTaskLine.textContent = '';
         view.headerTaskLine.title = '';
       }
     }
-    if (status.next_wake) {
+    if (entry.running && status.next_wake) {
       view.wakeChip.innerHTML = '';
       const pulse = document.createElement('span');
       pulse.className = 'pulse';

@@ -86,6 +86,22 @@ fn status_json_includes_latest_session_summary() {
 }
 
 #[test]
+fn status_json_exposes_raw_next_wake_for_browser_formatting() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("todo.json"),
+        r#"[{"id":1,"text":"check disk","done":false,"claimed":false,"at":"2099-05-01T10:00","created":"unknown"}]"#,
+    )
+    .unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(v["next_wake"], "2099-05-01T10:00");
+    assert!(
+        !v["next_wake"].as_str().unwrap_or("").contains('('),
+        "status API should not pre-format relative wake text"
+    );
+}
+
+#[test]
 fn status_json_notes_content_empty_when_file_missing() {
     let dir = tempfile::tempdir().unwrap();
     let v = status_json(dir.path());
@@ -293,69 +309,6 @@ fn messages_json_includes_outbox_archive() {
     assert_eq!(arr[0]["direction"], "outbox");
     let id = arr[0]["id"].as_str().unwrap();
     assert!(id.starts_with("outbox/archive/"), "id was {id}");
-}
-
-#[tokio::test]
-async fn post_archive_is_disabled_in_global_hub() {
-    let dir = tempfile::tempdir().unwrap();
-    let chamber = dir.path().join("alpha");
-    std::fs::create_dir_all(&chamber).unwrap();
-    let cfg = crate::config::CryoConfig::default();
-    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
-    std::fs::write(chamber.join("plan.md"), "plan").unwrap();
-
-    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
-    app.refresh();
-    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
-
-    let Json(body) = post_archive(State(app.clone()), AxumPath(id))
-        .await
-        .unwrap();
-
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["message"], "Archive is disabled in the global hub");
-    assert!(chamber.exists());
-}
-
-#[tokio::test]
-async fn post_archive_is_disabled_for_external_chambers_too() {
-    let workspace = tempfile::tempdir().unwrap();
-    let external = tempfile::tempdir().unwrap();
-    crate::config::save_config(
-        &external.path().join("cryo.toml"),
-        &crate::config::CryoConfig::default(),
-    )
-    .unwrap();
-
-    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
-    let id = crate::hub::discovery::encode_id(external.path());
-    app.chambers.write().unwrap().insert(
-        id.clone(),
-        crate::hub::discovery::ChamberEntry {
-            id: id.clone(),
-            name: "external".into(),
-            path: external.path().to_path_buf(),
-            path_hint: Some(external.path().display().to_string()),
-            config_error: None,
-            running: false,
-            agent_running: false,
-            session: None,
-            next_wake: None,
-            next_wake_display: None,
-            wake_imminent: false,
-            has_open_question: false,
-            task: None,
-            last_message_preview: None,
-            completed: false,
-            sync: vec![],
-        },
-    );
-
-    let Json(body) = post_archive(State(app), AxumPath(id)).await.unwrap();
-
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["message"], "Archive is disabled in the global hub");
-    assert!(external.path().join("cryo.toml").exists());
 }
 
 #[test]
