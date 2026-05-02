@@ -18,9 +18,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a working directory with protocol file and template plan
+    /// Initialize a working directory with config and template plan
     Init {
-        /// Agent command to target (determines CLAUDE.md vs AGENTS.md)
+        /// Agent command to store in cryo.toml
         #[arg(long, default_value = "opencode")]
         agent: String,
     },
@@ -128,7 +128,6 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         }
     };
     line("cryo.toml", report.cryo_toml_created);
-    line(report.protocol_filename, report.protocol_created);
     line("plan.md", report.plan_created);
     line("README.md", report.readme_created);
     line("NOTES.md", report.notes_created);

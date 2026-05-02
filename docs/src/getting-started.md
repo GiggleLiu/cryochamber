@@ -85,7 +85,7 @@ Cryohub is **directory-scoped**: it manages every immediate subdirectory of the 
 
 ## Step 4: Create your first chamber
 
-Each chamber is a subdirectory of the workspace containing `plan.md`, `cryo.toml`, and an agent protocol file. You have two options for creating one.
+Each chamber is a subdirectory of the workspace containing `plan.md`, `cryo.toml`, and `NOTES.md`. You have two options for creating one. Cryochamber embeds the agent protocol into each runtime prompt.
 
 ### Option A: Use the `make-plan` skill (recommended)
 
@@ -101,7 +101,7 @@ If your AI coding agent supports custom skills, the bundled `make-plan` skill ge
 
    > Invoke the `make-plan` skill to create a new cryochamber project as a subdirectory of this workspace.
 
-3. Answer the agent's questions. When the skill finishes, the new chamber subdirectory contains `plan.md`, `cryo.toml`, `NOTES.md`, and the agent protocol file.
+3. Answer the agent's questions. When the skill finishes, the new chamber subdirectory contains `plan.md`, `cryo.toml`, and `NOTES.md`.
 
 ### Option B: Copy an example or scaffold by hand
 

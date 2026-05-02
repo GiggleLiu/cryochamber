@@ -14,7 +14,11 @@ fn test_build_prompt_first_session() {
     assert!(prompt.contains("Session number: 1"));
     assert!(prompt.contains("Start the PR review plan"));
     assert!(prompt.contains("plan.md"));
-    assert!(prompt.contains("CLAUDE.md"));
+    assert!(prompt.contains("cryo-agent hibernate"));
+    assert!(prompt.contains("cryo-agent send"));
+    assert!(prompt.contains("NOTES.md"));
+    assert!(!prompt.contains("CLAUDE.md"));
+    assert!(!prompt.contains("AGENTS.md"));
 }
 
 #[test]
@@ -33,7 +37,7 @@ fn test_build_prompt_renders_session_and_todos() {
 }
 
 #[test]
-fn test_build_prompt_omits_standing_orders() {
+fn test_build_prompt_includes_embedded_protocol() {
     let config = AgentConfig {
         session_number: 1,
         task: "Do the thing".to_string(),
@@ -42,11 +46,12 @@ fn test_build_prompt_omits_standing_orders() {
         inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(!prompt.contains("## Reminders"));
-    assert!(!prompt.contains("## Context"));
-    assert!(!prompt.contains("cryo-agent hibernate"));
-    assert!(!prompt.contains("cryo-agent send"));
-    assert!(!prompt.contains("NOTES.md"));
+    assert!(prompt.contains("## Cryochamber Protocol"));
+    assert!(prompt.contains("cryo-agent hibernate"));
+    assert!(prompt.contains("cryo-agent send"));
+    assert!(prompt.contains("NOTES.md"));
+    assert!(!prompt.contains("CLAUDE.md"));
+    assert!(!prompt.contains("AGENTS.md"));
 }
 
 #[test]
@@ -61,7 +66,7 @@ fn test_build_prompt_section_hints_when_complete() {
     let prompt = build_prompt(&config);
     assert!(prompt.contains("## Current Time (no need to call `cryo-agent time` again)"));
     assert!(prompt.contains("## TODO List (no need to call `cryo-agent todo list` again)"));
-    assert!(!prompt.contains("## Inbox"));
+    assert!(!prompt.contains("\n## Inbox\n\n"));
     assert!(!prompt.contains("(output of"));
 }
 
@@ -79,7 +84,6 @@ fn test_build_prompt_todo_hint_flips_on_overflow() {
     assert!(prompt.contains("## TODO List (use `cryo-agent todo list` to get full text)"));
     // Over-cap content is omitted entirely.
     assert!(!prompt.contains("1. task with a reasonable description"));
-    assert!(prompt.len() < 1200, "prompt was {} bytes", prompt.len());
 }
 
 #[test]
@@ -120,7 +124,7 @@ fn test_build_prompt_inbox_section_shows_no_messages_when_empty() {
         inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(!prompt.contains("## Inbox"));
+    assert!(!prompt.contains("\n## Inbox\n\n"));
 }
 
 #[test]
@@ -133,7 +137,7 @@ fn test_build_prompt_hides_inbox_contents_even_when_waiting() {
         inbox_waiting: true,
     };
     let prompt = build_prompt(&config);
-    assert!(prompt.contains("## Inbox"));
+    assert!(prompt.contains("\n## Inbox\n\n"));
     assert!(prompt.contains("Run `cryo-agent receive`"));
     assert!(!prompt.contains("From: alice"));
     assert!(!prompt.contains("Hello"));
@@ -149,7 +153,7 @@ fn test_build_prompt_hides_inbox_when_not_waiting() {
         inbox_waiting: false,
     };
     let prompt = build_prompt(&config);
-    assert!(!prompt.contains("## Inbox"));
+    assert!(!prompt.contains("\n## Inbox\n\n"));
 }
 
 #[test]

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod chamber_paths;
 pub mod chamber_status;
 pub mod channel;
 pub mod config;

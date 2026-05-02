@@ -14,7 +14,7 @@ Run these from inside a chamber directory unless noted otherwise.
 
 | Command                                  | What it does                                                       |
 |------------------------------------------|--------------------------------------------------------------------|
-| `cryo init [--agent <cmd>]`              | Initialize the directory: write `cryo.toml`, `plan.md`, `NOTES.md`, `README.md`, and the agent protocol file. Existing files are kept. |
+| `cryo init [--agent <cmd>]`              | Initialize the directory: write `cryo.toml`, `plan.md`, `NOTES.md`, and `README.md`. Existing files are kept. |
 | `cryo start [--agent <cmd>]`             | Start the daemon. Reads `cryo.toml` and writes overrides to `timer.json`. |
 | `cryo start --max-session-duration 3600` | Override the session timeout for this run.                         |
 | `cryo status`                            | Show whether the daemon is running, the current session number, and the next wake time. |

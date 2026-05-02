@@ -42,7 +42,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `config` | TOML project config (`cryo.toml`), with CLI overrides merged from runtime state. | `struct CryoConfig`, `struct ProviderConfig`, `fn load_config`, `fn save_config`. |
 | `state` | JSON runtime state (`timer.json`): session number, PID lock, CLI overrides. PID-based locking via `libc::kill(pid, 0)`. | `struct CryoState`, `fn load_state`, `fn save_state`, `fn is_locked`. |
 | `todo` | Per-project TODO list (`todo.json`); mutated through daemon IPC so scheduling changes serialize with the session lifecycle. Also owns the claim, completion, and retry rescheduling logic used by the daemon around session runs. | `struct TodoFile`, `struct TodoItem`, `fn add`, `fn done`, `fn remove`, `fn items`, `fn display`, `fn next_wake_time`, `fn next_valid_wake`, `fn claim_due`, `fn complete_claimed`, `fn reschedule_claimed_after_crash`. |
-| `protocol` | Loads templates from `templates/` via `include_str!` and writes them into the project. | `enum ProtocolFile`, `fn protocol_filename`, `fn find_protocol_file`, `fn write_protocol_file`, `fn write_template_plan`, `fn write_config_file`. |
+| `protocol` | Loads templates from `templates/` via `include_str!`. `PROTOCOL_CONTENT` is embedded in each runtime prompt; scaffold helpers write chamber-owned files such as `plan.md` and `cryo.toml`. | `PROTOCOL_CONTENT`, `fn scaffold_chamber`, `fn write_template_plan`, `fn write_config_file`. |
 
 ### Agent, logging, and chamber status
 

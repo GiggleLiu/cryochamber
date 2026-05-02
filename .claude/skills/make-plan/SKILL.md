@@ -11,6 +11,46 @@ Guide users through creating a cryochamber application via conversational Q&A. F
 
 Assumes cryo CLI is installed and on PATH.
 
+## Path Model
+
+Use a small path layer before writing any files. This keeps existing projects clean
+without changing `cryo init`.
+
+Conceptual helpers:
+
+- `chamber_dir(project_dir)` — where Cryochamber files live. For an existing
+  non-empty project, default to `project_dir/.cryo`. For a standalone chamber,
+  this is the selected chamber directory itself.
+- `plan_path(project_dir)` — `chamber_dir(project_dir)/plan.md`
+- `config_path(project_dir)` — `chamber_dir(project_dir)/cryo.toml`
+- `notes_path(project_dir)` — `chamber_dir(project_dir)/NOTES.md`
+- `messages_dir(project_dir)` — `chamber_dir(project_dir)/messages`
+
+Track two explicit directories:
+
+- `project_dir` — the directory whose files the agent is meant to work on.
+- `chamber_dir` — the directory passed as cwd to `cryo` commands and where
+  `plan.md`, `cryo.toml`, `NOTES.md`, and `messages/` are stored.
+
+Resolution rules:
+
+- If the current directory contains `cryo.toml`, treat it as an existing
+  standalone chamber: `project_dir = cwd`, `chamber_dir = cwd`.
+- If the current directory contains `.cryo/cryo.toml`, reuse it:
+  `project_dir = cwd`, `chamber_dir = cwd/.cryo`.
+- If the current directory is non-empty and does not already contain
+  `cryo.toml`, ask: "This looks like an existing project. Store Cryochamber
+  files in `.cryo/` here? [Y/n]". Default to yes. If accepted, set
+  `project_dir = cwd`, `chamber_dir = cwd/.cryo`.
+
+In project-local `.cryo` mode, do not write `AGENTS.md`, `CLAUDE.md`,
+`plan.md`, or `cryo.toml` into the project root.
+
+When using a project-local `.cryo` chamber, make the generated plan explicit:
+the agent should treat `..` as the project root and use `NOTES.md` in the
+chamber directory for memory. From the project root, that memory file is
+`.cryo/NOTES.md`.
+
 ## Phase 1: Brainstorm the Plan
 
 Ask questions **one at a time**. Suggest answers based on the task. Multiple choice where possible.
@@ -20,6 +60,9 @@ Ask questions **one at a time**. Suggest answers based on the task. Multiple cho
 Ask up front — this affects sync paths, workspace discovery (`cryohub`), and `.gitignore`
 patterns. Suggest a sensible default based on context:
 
+- **Inside this existing project** (default when cwd is non-empty) —
+  `./.cryo/`. Keeps Cryochamber files out of the project root. The agent should
+  work on the project through `..` from inside the chamber.
 - **In a workspace** (recommended) — `<workspace>/chambers/<name>/`, where the workspace
   is a parent directory containing multiple chambers. `cryohub` runs at the workspace
   level and lists every chamber under `chambers/`.
@@ -27,7 +70,8 @@ patterns. Suggest a sensible default based on context:
   one chamber, but `cryohub` still requires a workspace layout (a symlink in
   `<workspace>/chambers/<name>` works).
 
-Confirm the exact path before moving on. Create the directory if it doesn't exist.
+Confirm `project_dir` and `chamber_dir` before moving on. Create `chamber_dir`
+if it doesn't exist.
 
 ### Q1. What's the task?
 
@@ -110,13 +154,15 @@ Want daily/hourly health summaries written to `messages/outbox/` (delivered via 
 ### Output
 
 After all questions:
-1. Draft `plan.md` with **Goal**, **Tasks**, **Configuration**, and **Notes** sections
+1. Draft `plan_path(project_dir)` with **Goal**, **Tasks**, **Configuration**, and **Notes** sections
 2. For interactive schedule tables: embed the schedule as a markdown table in Tasks
 3. Include delayed wake handling instructions in Tasks
 4. Include persistent state strategy in Notes (map each piece of state to `todo --at` vs. `note` — see the State primitives reference in Q5)
 5. Include a `cryo-agent time` usage note: the tool accepts `(no arg)` for current time, `+N minutes|hours|days|weeks` for offsets, or an ISO8601 string like `2026-04-25T10:00` as pass-through. It does **not** parse natural-language expressions ("tomorrow 9am"). For those, the agent should fetch the current time with `cryo-agent time`, compute the absolute ISO timestamp itself, and pass that directly to `todo --at` / `hibernate --wake`.
-6. Present draft to user for approval/edits
-7. Write the file
+6. If `chamber_dir` is `project_dir/.cryo`, include a short Configuration note:
+   "Project root is `..`; keep chamber memory in `NOTES.md`."
+7. Present draft to user for approval/edits
+8. Write the file at `plan_path(project_dir)`
 
 Reference existing examples for plan.md structure:
 - `examples/chambers/mr-lazy/plan.md` — simple periodic task
@@ -124,7 +170,8 @@ Reference existing examples for plan.md structure:
 
 ## Phase 2: Configure cryo.toml
 
-Generate from Phase 1 answers. No new questions — everything maps directly.
+Generate `config_path(project_dir)` from Phase 1 answers. No new questions —
+everything maps directly.
 
 | Brainstorm answer | cryo.toml field |
 |---|---|
@@ -137,10 +184,10 @@ Generate from Phase 1 answers. No new questions — everything maps directly.
 | Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 
 Process:
-1. Generate `cryo.toml` with values filled in and commented explanations
+1. Generate `config_path(project_dir)` with values filled in and commented explanations
 2. Present to user — highlight non-default values and explain why each was chosen
 3. If Zulip or GitHub sync chosen, note that `cryo-zulip init` / `cryo-gh init` will run in Phase 3
-4. Write the file
+4. Write the file at `config_path(project_dir)`
 
 ## Phase 3: Validate
 
@@ -148,15 +195,18 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
 
 ### Layer 1: Static file + binary validation (no API calls)
 
-- Verify `plan.md` exists and contains Goal and Tasks sections
-- Verify `cryo.toml` parses correctly: run `cryo init` in the chamber directory — it's idempotent and will print "(exists, kept)" for pre-existing files. Failure here means TOML is malformed.
+- Verify `plan_path(project_dir)` exists and contains Goal and Tasks sections
+- Verify `config_path(project_dir)` parses correctly: run `cryo init` in
+  `chamber_dir` — it's idempotent and will print "(exists, kept)" for
+  pre-existing files. Failure here means TOML is malformed. Running it in
+  `chamber_dir` keeps generated chamber files out of `project_dir`.
 - Verify the agent command is on PATH (e.g. `which opencode`)
 
 These checks are free. If any fails, stop — don't proceed to the live smoke test in Layer 3, which will fail in a more confusing way.
 
 ### Layer 2: External tool validation
 
-- For each external tool referenced in `plan.md`: run a smoke test
+- For each external tool referenced in `plan_path(project_dir)`: run a smoke test
   - Scripts: verify they exist and execute (e.g. `uv run chess_engine.py board`)
   - APIs: verify endpoints are reachable (e.g. `curl -sf https://... > /dev/null`)
   - Env vars: verify required variables are set and non-empty
@@ -171,11 +221,11 @@ broken agent installs, and sync credential issues.
    - Zulip: `cryo-zulip init --config <path> --stream <name>`. Needs the bot subscribed
      to the stream (see Q9 pre-flight).
    - GitHub: `cryo-gh init --repo <repo>`.
-2. Run `CRYO_NO_SERVICE=1 cryo start` (direct-spawn mode — simpler to cancel than a
-   launchd/systemd service).
+2. Run `CRYO_NO_SERVICE=1 cryo start` from `chamber_dir` (direct-spawn mode —
+   simpler to cancel than a launchd/systemd service).
 3. Wait for the first session to complete: watch `cryo.log` for
    `agent started` → `hibernate:` → `session complete` → `--- CRYO END ---`.
-4. Run `cryo cancel` to clean up.
+4. Run `cryo cancel` from `chamber_dir` to clean up.
 5. Report: session count, exit code from `cryo.log`, any errors, and whether the
    agent sent a Zulip/GitHub test message (if applicable).
 
@@ -185,11 +235,11 @@ On success: "Your cryo application is ready."
 
 Ask the user if they want to start the plan immediately.
 
-- If yes: run `cryo start` (and `cryo-zulip sync` / `cryo-gh sync` if a sync channel was configured). Report the status with `cryo status`.
-- If no: print instructions for starting later (`cryo start`, sync commands if applicable, `cryo watch`).
+- If yes: run `cryo start` from `chamber_dir` (and `cryo-zulip sync` / `cryo-gh sync` from `chamber_dir` if a sync channel was configured). Report the status with `cryo status`.
+- If no: print instructions for starting later from `chamber_dir` (`cryo start`, sync commands if applicable, `cryo watch`).
 
 If the user deferred provider setup in Q7, remind them how to configure it:
-- Edit `cryo.toml` and add `rotate_on = "quick-exit"` (or `"any-failure"`)
+- Edit `config_path(project_dir)` and add `rotate_on = "quick-exit"` (or `"any-failure"`)
 - Add `[[providers]]` entries with `name` and `env` map, e.g.:
   ```toml
   [[providers]]
@@ -200,16 +250,16 @@ If the user deferred provider setup in Q7, remind them how to configure it:
   name = "key-2"
   env = { OPENAI_API_KEY = "sk-...", OPENAI_BASE_URL = "https://..." }
   ```
-- Warn: add `cryo.toml` to `.gitignore` if it contains API keys.
+- Warn: add `config_path(project_dir)` to `.gitignore` if it contains API keys.
 
 ## Process Flow
 
 ```dot
 digraph cryo_create {
     "Q0-Q10: Brainstorm" [shape=box];
-    "Draft plan.md" [shape=box];
+    "Draft plan_path(project_dir)" [shape=box];
     "User approves?" [shape=diamond];
-    "Generate cryo.toml" [shape=box];
+    "Generate config_path(project_dir)" [shape=box];
     "User approves config?" [shape=diamond];
     "Layer 1: Static files" [shape=box];
     "Layer 2: Tools" [shape=box];
@@ -218,12 +268,12 @@ digraph cryo_create {
     "Start services" [shape=box];
     "Ready" [shape=doublecircle];
 
-    "Q0-Q10: Brainstorm" -> "Draft plan.md";
-    "Draft plan.md" -> "User approves?";
-    "User approves?" -> "Draft plan.md" [label="revise"];
-    "User approves?" -> "Generate cryo.toml" [label="yes"];
-    "Generate cryo.toml" -> "User approves config?";
-    "User approves config?" -> "Generate cryo.toml" [label="revise"];
+    "Q0-Q10: Brainstorm" -> "Draft plan_path(project_dir)";
+    "Draft plan_path(project_dir)" -> "User approves?";
+    "User approves?" -> "Draft plan_path(project_dir)" [label="revise"];
+    "User approves?" -> "Generate config_path(project_dir)" [label="yes"];
+    "Generate config_path(project_dir)" -> "User approves config?";
+    "User approves config?" -> "Generate config_path(project_dir)" [label="revise"];
     "User approves config?" -> "Layer 1: Static files" [label="yes"];
     "Layer 1: Static files" -> "Layer 2: Tools";
     "Layer 2: Tools" -> "Layer 3: Smoke test";
@@ -238,7 +288,7 @@ digraph cryo_create {
 
 | Mistake | Fix |
 |---|---|
-| Hardcoded timestamps in plan.md | Always compute times via `cryo-agent time` (relative) or an ISO8601 string the agent constructed |
+| Hardcoded timestamps in `plan_path(project_dir)` | Always compute times via `cryo-agent time` (relative) or an ISO8601 string the agent constructed |
 | Passing natural language to `cryo-agent time` (e.g. `"tomorrow 9am"`) | Only `+N minutes\|hours\|days\|weeks` and ISO8601 (`2026-04-25T10:00`) are accepted. Agent must reason about NL expressions itself. |
 | Using `note` for time-scheduled items | Use `todo add "..." --at <ISO>` for anything with a deadline; `note` is for auxiliary state. |
 | Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |

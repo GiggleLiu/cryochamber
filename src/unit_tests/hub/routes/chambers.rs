@@ -190,7 +190,8 @@ mod post_new {
 
         let alpha = dir.path().join("alpha");
         assert!(alpha.join("cryo.toml").exists());
-        assert!(alpha.join("AGENTS.md").exists());
+        assert!(!alpha.join("AGENTS.md").exists());
+        assert!(!alpha.join("CLAUDE.md").exists());
         assert!(alpha.join("plan.md").exists());
         assert!(alpha.join("README.md").exists());
         assert!(alpha.join("NOTES.md").exists());
@@ -413,7 +414,7 @@ mod post_new {
         )
         .await;
 
-        for file in ["AGENTS.md", "plan.md", "README.md", "NOTES.md"] {
+        for file in ["plan.md", "README.md", "NOTES.md"] {
             let cli_bytes = std::fs::read(cli_dir.path().join(file)).unwrap();
             let hub_bytes = std::fs::read(hub_dir.path().join("x").join(file)).unwrap();
             if file == "README.md" {
