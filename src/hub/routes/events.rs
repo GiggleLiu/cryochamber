@@ -1,5 +1,5 @@
 //! GET /api/events — one SSE stream for the entire UI. Every event carries
-//! `chamber_id` (except `IndexChanged`, which is workspace-level).
+//! `chamber_id` (except `IndexChanged`, which applies to the whole index).
 
 use std::convert::Infallible;
 use std::sync::Arc;

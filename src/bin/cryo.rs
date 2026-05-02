@@ -207,9 +207,7 @@ fn cmd_start(
         }
     }
 
-    println!(
-        "Use `cryo watch` or `cryohub start` (from a parent of chamber dirs) to follow progress."
-    );
+    println!("Use `cryo watch` or `cryohub start` to follow progress.");
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -302,9 +300,7 @@ fn cmd_restart() -> Result<()> {
         DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),
         DaemonLaunchMode::Service => println!("Restarted (service reinstalled)."),
     }
-    println!(
-        "Use `cryo watch` or `cryohub start` (from a parent of chamber dirs) to follow progress."
-    );
+    println!("Use `cryo watch` or `cryohub start` to follow progress.");
     Ok(())
 }
 
@@ -394,10 +390,9 @@ fn cmd_clean(force: bool) -> Result<()> {
     if cryochamber::service::uninstall("zulip-sync", &dir)? {
         println!("Removed zulip-sync service.");
     }
-    // `cryohub` is workspace-scoped and stores its service log in user-level
-    // Cryo state, not in a chamber dir. `cryo clean` is chamber-scoped, so it
-    // cannot and should not touch hub state. Use `cryohub stop` from the
-    // workspace directory to remove the hub service.
+    // `cryohub` is global and stores its service log in user-level Cryo state,
+    // not in a chamber dir. `cryo clean` is chamber-scoped, so it cannot and
+    // should not touch hub state. Use `cryohub stop` to remove the hub service.
 
     // Kill daemon process if still running
     let sp = state::state_path(&dir);

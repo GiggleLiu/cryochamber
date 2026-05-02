@@ -1,8 +1,8 @@
-//! Chamber discovery: scan `<dir>/*/cryo.toml` and merge the user registry.
+//! Chamber discovery for Cryohub.
 //!
-//! Cryohub defaults to showing both chambers under its workspace and chambers
-//! remembered by `cryo start` elsewhere on the machine. Local-only mode keeps
-//! the old workspace-only behavior.
+//! Product discovery is registry-only: Cryohub shows chambers remembered by
+//! `cryo start` or created through the hub. Workspace scanning remains as a
+//! test/helper mode for route tests that need isolated chamber indexes.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -61,18 +61,21 @@ pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiscoveryOptions {
+    pub scan_workspace: bool,
     pub include_registry: bool,
 }
 
 impl DiscoveryOptions {
     pub fn all_chambers() -> Self {
         Self {
+            scan_workspace: false,
             include_registry: true,
         }
     }
 
     pub fn local_only() -> Self {
         Self {
+            scan_workspace: true,
             include_registry: false,
         }
     }
@@ -213,13 +216,17 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
     }
 }
 
-/// One-shot discovery: scan workspace and populate runtime fields.
+/// One-shot product discovery: read the registry and populate runtime fields.
 pub fn discover(workspace: &Path) -> ChamberIndex {
     discover_with_options(workspace, DiscoveryOptions::all_chambers())
 }
 
 pub fn discover_with_options(workspace: &Path, options: DiscoveryOptions) -> ChamberIndex {
-    let mut idx = scan_workspace(workspace);
+    let mut idx = if options.scan_workspace {
+        scan_workspace(workspace)
+    } else {
+        ChamberIndex::new()
+    };
     if options.include_registry {
         merge_registry(workspace, &mut idx);
     }

@@ -31,7 +31,7 @@ This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub`.
 
 ### Step 2: Try the example chambers
 
-Run the bundled examples (`mr-lazy`, `chess-by-mail`, `personal-assistant`) in the web dashboard.
+Register and run a bundled example in the web dashboard.
 
 1. Clone the repository:
 
@@ -39,19 +39,14 @@ Run the bundled examples (`mr-lazy`, `chess-by-mail`, `personal-assistant`) in t
    git clone https://github.com/GiggleLiu/cryochamber
    ```
 
-2. Change into the examples directory:
+2. Change into the repository and run one example:
 
    ```bash
-   cd cryochamber/examples/chambers
+   cd cryochamber
+   make example DIR=examples/chambers/mr-lazy
    ```
 
-3. Start the hub in the foreground:
-
-   ```bash
-   cryohub start --foreground
-   ```
-
-4. Open the `http://host:port` URL that `cryohub` prints in your browser.
+3. Open the `http://host:port` URL that `cryohub` prints in your browser.
 
 ### Step 3: Create your own chamber
 
@@ -83,27 +78,19 @@ For the full guide, see [Getting Started](https://giggleliu.github.io/cryochambe
 
 ## Cryohub (multi-chamber dashboard)
 
-Cryohub is a directory-scoped web dashboard that manages every chamber under the current directory.
+Cryohub is a global web dashboard that manages chambers remembered by `cryo start` or created in the dashboard.
 
 ![cryohub dashboard with the mr-lazy chamber selected](docs/src/images/cryohub-dashboard.png)
 
-1. Arrange your chambers as immediate subdirectories of a workspace folder:
-
-   ```text
-   ~/my-chambers/
-     chess-by-mail/
-     mr-lazy/
-     reports/
-   ```
-
-2. Start the hub from the workspace root:
+1. Start the hub:
 
    ```bash
-   cd ~/my-chambers
    cryohub start
    ```
 
-3. Open the printed URL in your browser. The UI lists workspace chambers plus chambers remembered from `cryo start` elsewhere on the machine, with status dots and controls to send messages, wake the agent, and start, stop, or restart daemons. Use `cryohub start --local-only` to show only the current workspace.
+2. Open the printed URL in your browser. The UI lists registered chambers, including stopped chambers, with status dots and controls to send messages, wake the agent, and start, stop, or restart daemons.
+
+3. New chambers created in the UI live under the configured hub root. The default is `~/.cryo/chambers`; edit `~/.config/cryo/cryohub.toml` (or `$XDG_CONFIG_HOME/cryo/cryohub.toml`) to set `chamber_root`.
 
 See [Hub](https://giggleliu.github.io/cryochamber/hub.html) for the full reference.
 

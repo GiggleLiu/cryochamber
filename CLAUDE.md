@@ -27,7 +27,7 @@ make cli            # cargo install --path .
 make logo           # compile logo with typst
 make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)
 make example-cancel # stop a running example (DIR=examples/chambers/...)
-make example-hub    # start cryohub over examples/chambers/ (PORT=8765)
+make example-hub    # start global cryohub in foreground (PORT=8765)
 make example-clean  # remove auto-generated files from all examples
 make run-plan       # execute a plan with Codex by default (RUNNER=claude for Claude)
 make check-agent    # quick agent smoke test (AGENT=opencode|claude)
@@ -63,7 +63,7 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `cryo-agent` | Agent-side IPC/utility CLI — `hibernate`, `send`, `receive`, `time`, `todo` (used by the spawned agent, not by operators; most commands send requests to the daemon via socket, while `time` is local) |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |
-| `cryohub` | Workspace-wide web dashboard — `start`, `stop`, `status`, `daemon` (installs a launchd/systemd service that serves the hub UI over HTTP). |
+| `cryohub` | Global web dashboard — `start`, `stop`, `status`, `daemon` (installs a launchd/systemd service that serves the hub UI over HTTP). |
 
 ### Modules
 
@@ -86,7 +86,7 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
 | `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoFile` structs plus retry rescheduling logic for crashed sessions. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |
 | `zulip_sync` | Zulip sync state persistence (`zulip-sync.json`). |
-| `hub` | Workspace-wide web dashboard: Axum router (`serve`, `build_router_with_state`), chamber discovery, SSE events, start/stop/restart handlers. Served by the `cryohub` binary. |
+| `hub` | Global web dashboard: Axum router (`serve`, `build_router_with_state`), registry-backed chamber discovery, SSE events, start/stop/restart handlers. Served by the `cryohub` binary. |
 
 ### Chamber Invariants
 
@@ -148,7 +148,7 @@ and needs an explicit justification.
 - **Default agent**: The CLI defaults to `opencode` as the agent command (headless mode, not the TUI).
 - **Agent notes via `NOTES.md`**: The agent's persistent memory across sessions is a plain markdown file (`NOTES.md`) the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes drawer tab, and updated by the agent on its own. The removed `cryo-agent note` subcommand and `Request::Note` IPC variant are historical.
 - **`cryo-agent time` input grammar**: Accepts three forms only — empty (current time), `+N minutes|hours|days|weeks` (relative offset), and ISO8601 (`2026-04-25T10:00` or date-only) as validated pass-through. Natural-language parsing is deliberately **not** supported: the agent is an LLM that can reason about "tomorrow 9am" itself, so the tool stays small and documentable. Unknown input prints the accepted forms.
-- **`cryohub` is cwd-scoped**: The `cryohub` binary (not `cryo`) runs the web dashboard and always operates on the current directory — there is no `--dir` flag. The cwd must not itself be a chamber (no `cryo.toml` directly inside). Discovery scans `<cwd>/*` for chamber subdirectories and, by default, merges chambers remembered in the user registry; `cryohub start --local-only` keeps discovery to the cwd scan only. Host and port are CLI flags (`--host`, `--port`, defaults `127.0.0.1:8765`), not `cryo.toml` fields. The service label is `"hub"` (plist/unit `com.cryo.hub.<hash>`), and the log file lives under the user-level Cryo state/log directory via `hub::paths::hub_log_path(workspace_dir)`, not in the workspace root. `cryohub status`/`stop` operate on the cwd's service and additionally list every other `com.cryo.hub.*` service installed on the machine (via `service::list_installed`) so users can find services started from a different cwd. Per-chamber `web_host`/`web_port` fields are not part of `CryoConfig`.
+- **`cryohub` is global and registry-backed**: The `cryohub` binary (not `cryo`) runs one global web dashboard per user and can start, stop, and report status from any directory. Product discovery reads the user chamber registry only; it does not scan the current working directory. Host, port, and the dashboard-created chamber root live in `hub::config::HubConfig` at `$XDG_CONFIG_HOME/cryo/cryohub.toml` (fallback `~/.config/cryo/cryohub.toml`); default host/port are `127.0.0.1:8765`, and the default chamber root is `~/.cryo/chambers`. `cryohub start --host/--port` updates the saved hub config. The service label is `"hub"` anchored to `hub::paths::hub_service_dir()` so `cryohub stop` works from arbitrary directories. The log file lives under the user-level Cryo state/log directory via `hub::paths::hub_log_path()`. `cryohub status` also lists legacy cwd-scoped `com.cryo.hub.*` services from older versions. Per-chamber `web_host`/`web_port` fields are not part of `CryoConfig`.
 - **Hub chamber creation**: The New Chamber modal scaffolds opencode chambers. The optional API key provider section is folded and writes only `cryo.toml`; do not create per-chamber `opencode.json`. Provider and model controls are combobox inputs backed by browser-populated `<datalist>` elements. The browser fetches the provider/model catalog dynamically from `https://models.dev/api.json`, but both fields must continue to allow manual input for custom providers/models and network failures. Server-side code should validate provider ids and map provider ids to API-key environment variable names, but should not carry a hardcoded model catalog.
 
 ### Primary APIs and Ownership
@@ -186,7 +186,6 @@ and needs an explicit justification.
 ### Files Created by `cryo init`
 
 - `cryo.toml` — project configuration (agent, max_session_duration, watch_inbox)
-- `CLAUDE.md` or `AGENTS.md` — cryochamber protocol for the agent
 - `plan.md` — template plan file
 - `NOTES.md` — agent's persistent memory across sessions (seeded from `templates/notes.md`; agent reads/writes directly)
 - `README.md` — quickstart guide for the project (service commands, messaging channels)

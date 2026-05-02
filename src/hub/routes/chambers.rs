@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::hub::state::AppState;
 
 /// Validate a user-supplied chamber name. Returns `Ok(())` if safe to use as
-/// a directory name under the workspace, otherwise a one-line reason string
+/// a directory name under the configured chamber root, otherwise a one-line reason string
 /// suitable for the `error` field of a 400 response.
 pub fn validate_chamber_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
@@ -102,7 +102,16 @@ pub async fn post_new(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "name resolves outside the workspace"
+                "error": "name resolves outside the chamber root"
+            })),
+        );
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&workspace) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": format!("failed to create chamber root: {e}")
             })),
         );
     }
@@ -139,6 +148,16 @@ pub async fn post_new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": format!("config failed: {e}")
+                })),
+            );
+        }
+    }
+    if app.discovery_options.include_registry {
+        if let Err(e) = crate::registry::remember_chamber(&target) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("registry update failed: {e}")
                 })),
             );
         }

@@ -88,20 +88,33 @@ fn discover_merges_registered_chambers_outside_workspace() {
     let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
     let workspace = tempfile::tempdir().unwrap();
     let other_workspace = tempfile::tempdir().unwrap();
-    create_chamber(workspace.path(), "local");
     let registered = create_chamber(other_workspace.path(), "external");
     crate::registry::remember_chamber(&registered).unwrap();
 
     let idx = discover(workspace.path());
-    let local = idx.values().find(|entry| entry.name == "local").unwrap();
     let external = idx.values().find(|entry| entry.name == "external").unwrap();
 
-    assert_eq!(idx.len(), 2);
-    assert_eq!(local.path_hint, None);
+    assert_eq!(idx.len(), 1);
     assert_eq!(
         external.path_hint,
         Some(registered.parent().unwrap().display().to_string())
     );
+}
+
+#[test]
+fn discover_reads_registry_without_scanning_workspace() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let other_workspace = tempfile::tempdir().unwrap();
+    create_chamber(workspace.path(), "unregistered-local");
+    let registered = create_chamber(other_workspace.path(), "registered");
+    crate::registry::remember_chamber(&registered).unwrap();
+
+    let idx = discover(workspace.path());
+
+    assert_eq!(idx.len(), 1);
+    assert_eq!(idx.values().next().unwrap().name, "registered");
 }
 
 #[test]

@@ -279,7 +279,7 @@ fn messages_json_includes_outbox_archive() {
 }
 
 #[tokio::test]
-async fn post_archive_moves_chamber_out_of_workspace_index() {
+async fn post_archive_is_disabled_in_global_hub() {
     let dir = tempfile::tempdir().unwrap();
     let chamber = dir.path().join("alpha");
     std::fs::create_dir_all(&chamber).unwrap();
@@ -295,16 +295,13 @@ async fn post_archive_moves_chamber_out_of_workspace_index() {
         .await
         .unwrap();
 
-    assert_eq!(body["ok"], true);
-    assert!(!chamber.exists());
-    let archive = std::path::PathBuf::from(body["archive"].as_str().unwrap());
-    assert!(archive.join("cryo.toml").exists());
-    assert!(archive.join("plan.md").exists());
-    assert!(app.chambers.read().unwrap().is_empty());
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["message"], "Archive is disabled in the global hub");
+    assert!(chamber.exists());
 }
 
 #[tokio::test]
-async fn post_archive_rejects_chambers_outside_workspace() {
+async fn post_archive_is_disabled_for_external_chambers_too() {
     let workspace = tempfile::tempdir().unwrap();
     let external = tempfile::tempdir().unwrap();
     crate::config::save_config(
@@ -340,10 +337,7 @@ async fn post_archive_rejects_chambers_outside_workspace() {
     let Json(body) = post_archive(State(app), AxumPath(id)).await.unwrap();
 
     assert_eq!(body["ok"], false);
-    assert_eq!(
-        body["message"],
-        "Cannot archive chambers outside this workspace"
-    );
+    assert_eq!(body["message"], "Archive is disabled in the global hub");
     assert!(external.path().join("cryo.toml").exists());
 }
 

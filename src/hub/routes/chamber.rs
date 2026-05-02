@@ -211,21 +211,11 @@ pub async fn post_archive(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    app.watchers.drop_watcher(&path);
-    let workspace = app.workspace_dir.clone();
-    let result = run_blocking_lifecycle(app, path, move |path| {
-        crate::hub::lifecycle::archive_chamber(&workspace, path)
-    })
-    .await;
-    match result {
-        Ok(archive) => Ok(Json(json!({
-            "ok": true,
-            "message": format!("Archived to {}", archive.display()),
-            "archive": archive.display().to_string(),
-        }))),
-        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
-    }
+    let _ = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(json!({
+        "ok": false,
+        "message": "Archive is disabled in the global hub"
+    })))
 }
 
 fn lifecycle_status_json(result: anyhow::Result<()>, success_message: &str) -> Value {

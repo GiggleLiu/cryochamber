@@ -27,7 +27,7 @@ pub enum SseEvent {
         chamber_id: String,
         line: String,
     },
-    /// Workspace-level refresh — chambers list changed (added/removed).
+    /// Index-level refresh — chambers list changed (added/removed).
     IndexChanged,
 }
 
@@ -40,6 +40,13 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn global() -> Self {
+        let chamber_root = crate::hub::config::load_config()
+            .map(|config| config.chamber_root)
+            .unwrap_or_else(|_| crate::hub::paths::global_chambers_dir());
+        Self::with_discovery_options(chamber_root, DiscoveryOptions::all_chambers())
+    }
+
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self::with_discovery_options(workspace_dir, DiscoveryOptions::all_chambers())
     }

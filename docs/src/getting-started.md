@@ -2,7 +2,7 @@
 
 This guide walks you through installing cryochamber, exploring the bundled example chambers in the web dashboard, creating your first chamber, and managing everything from one browser tab.
 
-The recommended workflow is **dashboard-first**: you create chambers as subdirectories of a workspace folder, point `cryohub` at the workspace, and start, watch, and message every chamber from the web UI. The `cryo` CLI is available for scripting and for chamber-manager agents — see [Optional: the `cryo` CLI](#optional-the-cryo-cli) at the end.
+The recommended workflow is **dashboard-first**: you start the global `cryohub`, create or register chambers, and then start, watch, and message every chamber from the web UI. The `cryo` CLI is available for scripting and for chamber-manager agents — see [Optional: the `cryo` CLI](#optional-the-cryo-cli) at the end.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ Before you begin, make sure you have:
 
 ## Step 2: Try the example chambers
 
-The repository ships with three example chambers — `mr-lazy`, `chess-by-mail`, and `personal-assistant` — that you can explore from the web UI without writing any code.
+The repository ships with three example chambers — `mr-lazy`, `chess-by-mail`, and `personal-assistant` — that you can register and explore from the web UI without writing any code.
 
 1. Clone the repository:
 
@@ -38,54 +38,44 @@ The repository ships with three example chambers — `mr-lazy`, `chess-by-mail`,
    git clone https://github.com/GiggleLiu/cryochamber
    ```
 
-2. Change into the examples directory. This directory's subdirectories are the chambers.
+2. Change into the repository and run one example:
 
    ```bash
-   cd cryochamber/examples/chambers
+   cd cryochamber
+   make example DIR=examples/chambers/mr-lazy
    ```
 
-3. Start the hub in the foreground:
+   The target starts the example chamber, registers it, and starts the hub in the foreground. `cryohub` prints a `http://host:port` URL.
 
-   ```bash
-   cryohub start --foreground
-   ```
+3. Open the URL in your browser.
 
-   `cryohub` prints a `http://host:port` URL.
-
-4. Open the URL in your browser.
-
-5. From the dashboard:
+4. From the dashboard:
    - Pick a chamber in the sidebar.
-   - Click **Start** to spawn its daemon.
+   - Click **Start** if the daemon is stopped.
    - Watch the live log and message history fill in.
    - Type a message in the send widget and press send.
 
-6. When you're done, press `Ctrl+C` in the terminal to stop the hub. (The chamber daemons keep running until you stop them from the UI.)
+5. When you're done, press `Ctrl+C` in the terminal to stop the hub. (The chamber daemons keep running until you stop them from the UI.)
 
-## Step 3: Create a workspace for your own chambers
+## Step 3: Start the global hub
 
-Cryohub is **directory-scoped**: it scans every immediate subdirectory of the directory you start it in. By default it also shows chambers remembered from `cryo start` elsewhere on the same machine; use `cryohub start --local-only` if you want a dashboard limited to the current workspace.
+Cryohub is global and registry-based. It can be started from any directory, and it shows chambers remembered by `cryo start` or created in the dashboard.
 
-1. Create a workspace directory:
-
-   ```bash
-   mkdir -p ~/my-chambers
-   ```
-
-2. (Recommended, if you want a single shared dashboard) Start the hub once on this workspace. From now on, every new chamber you create as a subdirectory will appear in the same UI.
+1. Start the hub:
 
    ```bash
-   cd ~/my-chambers
    cryohub start
    ```
 
    This installs an OS service that survives reboot. Open the printed URL — the dashboard is empty until you add a chamber.
 
-> **Note**: Cryohub refuses to start in a directory that itself contains a `cryo.toml`. Always start it in the parent workspace.
+2. New chambers created in the dashboard live under the configured chamber root. The default is `~/.cryo/chambers`.
+
+3. To place dashboard-created chambers somewhere else, edit `~/.config/cryo/cryohub.toml` (or `$XDG_CONFIG_HOME/cryo/cryohub.toml`) and set `chamber_root`. For a project-owned collection, a common value is `/path/to/project/.cryo/chambers`.
 
 ## Step 4: Create your first chamber
 
-Each chamber is a subdirectory of the workspace containing `plan.md`, `cryo.toml`, and `NOTES.md`. You have two options for creating one. Cryochamber embeds the agent protocol into each runtime prompt.
+Each chamber is a directory containing `plan.md`, `cryo.toml`, and `NOTES.md`. You have two options for creating one. Cryochamber embeds the agent protocol into each runtime prompt.
 
 ### Option A: Use the `make-plan` skill (recommended)
 
@@ -97,25 +87,25 @@ If your AI coding agent supports custom skills, the bundled `make-plan` skill ge
    <repo>/.claude/skills/make-plan
    ```
 
-2. Open your agent inside the workspace and prompt it:
+2. Open your agent where you want the chamber to live and prompt it:
 
-   > Invoke the `make-plan` skill to create a new cryochamber project as a subdirectory of this workspace.
+   > Invoke the `make-plan` skill to create a new cryochamber project here.
 
-3. Answer the agent's questions. When the skill finishes, the new chamber subdirectory contains `plan.md`, `cryo.toml`, and `NOTES.md`.
+3. Answer the agent's questions. When the skill finishes, the chamber directory contains `plan.md`, `cryo.toml`, and `NOTES.md`.
 
 ### Option B: Copy an example or scaffold by hand
 
 1. Either copy one of the bundled examples:
 
    ```bash
-   cp -r <repo>/examples/chambers/mr-lazy ~/my-chambers/my-chamber
+   cp -r <repo>/examples/chambers/mr-lazy ~/.cryo/chambers/my-chamber
    ```
 
    …or create a fresh chamber from a blank scaffold:
 
    ```bash
-   mkdir ~/my-chambers/my-chamber
-   cd ~/my-chambers/my-chamber
+   mkdir -p ~/.cryo/chambers/my-chamber
+   cd ~/.cryo/chambers/my-chamber
    cryo init
    ```
 
@@ -125,13 +115,13 @@ If your AI coding agent supports custom skills, the bundled `make-plan` skill ge
 
 ## Step 5: Manage the chamber from the dashboard
 
-With the chamber sitting next to the example chambers in your workspace, the hub already knows about it.
+If you created the chamber from the dashboard, the hub already knows about it. If you created it by hand, run `cryo start` once inside the chamber; startup registers the chamber so it appears in Cryohub, including after the daemon stops.
 
 ![cryohub dashboard with the mr-lazy chamber selected](./images/cryohub-dashboard.png)
 
 1. Open the cryohub URL in your browser. The new chamber appears in the sidebar.
 2. Click the chamber name.
-3. Click **Start** to spawn the daemon.
+3. Click **Start** if the daemon is stopped.
 4. Use the dashboard to:
    - Watch the live log fill in as the agent runs.
    - Send messages to the agent's inbox.
@@ -223,7 +213,8 @@ Run these from anywhere:
 | Command | What it does |
 |---------|--------------|
 | `cryo ps` | List every running daemon on this machine. |
-| `cryohub start` | Start the dashboard (run from a workspace, not a chamber). |
-| `cryohub start --local-only` | Start the dashboard without merging chambers from the user registry. |
+| `cryohub start` | Start the global dashboard. |
+| `cryohub stop` | Stop the global dashboard service. |
+| `cryohub status` | Show the global dashboard URL, chamber root, config path, and service status. |
 
 For the full command reference, including the agent-side `cryo-agent` IPC commands, see [Commands](./commands.md).

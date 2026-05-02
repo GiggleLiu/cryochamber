@@ -1,17 +1,33 @@
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 pub const HUB_LOG_FILENAME: &str = "cryohub.log";
 
-pub fn hub_log_path(workspace_dir: &Path) -> PathBuf {
-    hub_state_dir(workspace_dir).join(HUB_LOG_FILENAME)
+pub fn hub_log_path() -> PathBuf {
+    hub_state_dir().join(HUB_LOG_FILENAME)
 }
 
-pub fn hub_state_dir(workspace_dir: &Path) -> PathBuf {
-    state_root()
-        .join("cryo")
-        .join("hubs")
-        .join(path_hash(workspace_dir))
+pub fn hub_state_dir() -> PathBuf {
+    hub_service_dir_for_state_home(&state_root())
+}
+
+pub fn hub_service_dir() -> PathBuf {
+    hub_state_dir()
+}
+
+pub fn hub_service_dir_for_state_home(state_home: &Path) -> PathBuf {
+    state_home.join("cryo").join("hub")
+}
+
+pub fn hub_config_path() -> PathBuf {
+    config_root().join("cryo").join("cryohub.toml")
+}
+
+pub fn global_chambers_dir() -> PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".cryo").join("chambers");
+    }
+
+    std::env::temp_dir().join(".cryo").join("chambers")
 }
 
 fn state_root() -> PathBuf {
@@ -36,8 +52,16 @@ fn state_root() -> PathBuf {
     std::env::temp_dir()
 }
 
-fn path_hash(path: &Path) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+fn config_root() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".config");
+    }
+
+    std::env::temp_dir()
 }

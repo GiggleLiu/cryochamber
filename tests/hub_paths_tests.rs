@@ -31,26 +31,65 @@ impl Drop for EnvVarGuard<'_> {
 }
 
 #[test]
-fn hub_log_path_lives_under_xdg_state_home() {
+fn hub_log_path_lives_under_global_xdg_state_home() {
     let state = tempfile::tempdir().unwrap();
     let _guard = EnvVarGuard::set("XDG_STATE_HOME", state.path());
 
-    let workspace = std::path::Path::new("/tmp/example-workspace");
-    let path = cryochamber::hub::paths::hub_log_path(workspace);
+    let path = cryochamber::hub::paths::hub_log_path();
 
     assert!(path.starts_with(state.path()));
     assert!(path.ends_with("cryohub.log"));
-    assert!(path.to_string_lossy().contains("/cryo/hubs/"));
-    assert!(!path.starts_with(workspace));
+    assert!(path.to_string_lossy().contains("/cryo/hub/"));
 }
 
 #[test]
-fn hub_log_path_is_scoped_by_workspace() {
+fn hub_config_path_lives_under_xdg_config_home() {
+    let config = tempfile::tempdir().unwrap();
+    let _guard = EnvVarGuard::set("XDG_CONFIG_HOME", config.path());
+
+    let path = cryochamber::hub::paths::hub_config_path();
+
+    assert!(path.starts_with(config.path()));
+    assert!(path.ends_with("cryo/cryohub.toml"));
+}
+
+#[test]
+fn global_chambers_dir_defaults_to_home_dot_cryo_chambers() {
     let state = tempfile::tempdir().unwrap();
-    let _guard = EnvVarGuard::set("XDG_STATE_HOME", state.path());
+    let _guard = EnvVarGuard::set("HOME", state.path());
 
-    let first = cryochamber::hub::paths::hub_log_path(std::path::Path::new("/tmp/one"));
-    let second = cryochamber::hub::paths::hub_log_path(std::path::Path::new("/tmp/two"));
+    let path = cryochamber::hub::paths::global_chambers_dir();
 
-    assert_ne!(first, second);
+    assert_eq!(path, state.path().join(".cryo/chambers"));
+}
+
+#[test]
+fn hub_config_defaults_chamber_root_to_home_dot_cryo_chambers() {
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", home.path());
+
+    let cfg = cryochamber::hub::config::load_config().unwrap();
+
+    assert_eq!(cfg.chamber_root, home.path().join(".cryo/chambers"));
+}
+
+#[test]
+fn hub_config_reads_custom_chamber_root() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let custom_root = tempfile::tempdir().unwrap();
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            "host = \"127.0.0.1\"\nport = 8765\nchamber_root = \"{}\"\n",
+            custom_root.path().display()
+        ),
+    )
+    .unwrap();
+
+    let cfg = cryochamber::hub::config::load_config().unwrap();
+
+    assert_eq!(cfg.chamber_root, custom_root.path());
 }

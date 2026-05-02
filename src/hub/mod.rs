@@ -1,3 +1,4 @@
+pub mod config;
 pub mod discovery;
 pub mod lifecycle;
 pub mod paths;
@@ -17,8 +18,8 @@ use axum::{
 
 use crate::hub::state::AppState as WebAppState;
 
-pub fn build_router(workspace_dir: PathBuf) -> Router {
-    let app = Arc::new(WebAppState::new(workspace_dir));
+pub fn build_router() -> Router {
+    let app = Arc::new(WebAppState::global());
     app.refresh();
     build_router_with_state(app)
 }
@@ -101,36 +102,8 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .with_state(app)
 }
 
-pub async fn serve(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
-    serve_with_options(
-        workspace_dir,
-        host,
-        port,
-        crate::hub::discovery::DiscoveryOptions::all_chambers(),
-    )
-    .await
-}
-
-pub async fn serve_local_only(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
-    serve_with_options(
-        workspace_dir,
-        host,
-        port,
-        crate::hub::discovery::DiscoveryOptions::local_only(),
-    )
-    .await
-}
-
-async fn serve_with_options(
-    workspace_dir: PathBuf,
-    host: &str,
-    port: u16,
-    discovery_options: crate::hub::discovery::DiscoveryOptions,
-) -> anyhow::Result<()> {
-    let app = Arc::new(WebAppState::with_discovery_options(
-        workspace_dir,
-        discovery_options,
-    ));
+pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
+    let app = Arc::new(WebAppState::global());
     app.refresh();
     let router = build_router_with_state(app);
     let addr = format!("{host}:{port}");

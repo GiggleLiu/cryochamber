@@ -165,7 +165,37 @@ mod post_new {
     use crate::hub::state::AppState;
     use axum::{extract::State, response::Json};
     use serde_json::json;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard<'a> {
+        _lock: MutexGuard<'a, ()>,
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl<'a> EnvVarGuard<'a> {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                _lock: lock,
+                key,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard<'_> {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     #[tokio::test]
     async fn creates_new_chamber_returns_201_and_id() {
@@ -200,6 +230,42 @@ mod post_new {
 
         let idx = app.chambers.read().unwrap();
         assert!(idx.values().any(|c| c.name == "alpha"));
+    }
+
+    #[tokio::test]
+    async fn global_create_remembers_new_chamber_in_registry() {
+        let state_home = tempfile::tempdir().unwrap();
+        let _state = EnvVarGuard::set("XDG_STATE_HOME", state_home.path());
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::all_chambers(),
+        ));
+
+        let (status, Json(_body)) = post_new(
+            State(app.clone()),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let alpha = dir.path().join("alpha");
+        assert!(alpha.join("cryo.toml").exists());
+        assert!(app
+            .chambers
+            .read()
+            .unwrap()
+            .values()
+            .any(|c| { c.name == "alpha" && c.path == alpha.canonicalize().unwrap() }));
+        assert!(crate::registry::list()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.dir == alpha.display().to_string()));
     }
 
     #[tokio::test]
@@ -452,7 +518,7 @@ mod post_new {
         assert!(body["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("failed to create directory"));
+            .contains("failed to create chamber root"));
     }
 }
 

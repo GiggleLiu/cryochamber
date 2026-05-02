@@ -57,18 +57,18 @@ Ask questions **one at a time**. Suggest answers based on the task. Multiple cho
 
 ### Q0. Where should the chamber live?
 
-Ask up front — this affects sync paths, workspace discovery (`cryohub`), and `.gitignore`
+Ask up front — this affects sync paths, Cryohub registration/config, and `.gitignore`
 patterns. Suggest a sensible default based on context:
 
 - **Inside this existing project** (default when cwd is non-empty) —
   `./.cryo/`. Keeps Cryochamber files out of the project root. The agent should
   work on the project through `..` from inside the chamber.
-- **In a workspace** (recommended) — `<workspace>/chambers/<name>/`, where the workspace
-  is a parent directory containing multiple chambers. `cryohub` runs at the workspace
-  level and lists every chamber under `chambers/`.
-- **Standalone** — `~/cryo/<name>/` or any other directory. Simpler if you only ever run
-  one chamber, but `cryohub` still requires a workspace layout (a symlink in
-  `<workspace>/chambers/<name>` works).
+- **In the global Cryohub root** (recommended for dashboard-first use) —
+  `~/.cryo/chambers/<name>/` by default. Cryohub can also be configured with
+  `chamber_root = "/path/to/project/.cryo/chambers"` for project-owned chamber
+  collections.
+- **Standalone** — `~/cryo/<name>/` or any other directory. It will appear in
+  Cryohub after `cryo start` registers it.
 
 Confirm `project_dir` and `chamber_dir` before moving on. Create `chamber_dir`
 if it doesn't exist.
@@ -129,7 +129,95 @@ Then: do you have multiple API keys or providers to rotate between?
 - If the user wants to set up providers later: skip for now and in Phase 4 tell them how to configure `[[providers]]` and `rotate_on` in `cryo.toml`.
 - If no: skip, single provider is fine.
 
-### Q8. Delayed wake reaction
+### Q8. Agent permissions
+
+Ask how much filesystem/tool authority the launched agent should have. For
+OpenCode, recommend a policy and tell the user that permissions belong in
+OpenCode config (`opencode.json` or user config), not in `cryo.toml`.
+
+Recommended choices:
+- **Project edits allowed, outside edits denied** (recommended for most) —
+  agent may edit files in `project_dir` and `chamber_dir` by default. External
+  paths require an explicit allowlist and are read-only by default. For
+  OpenCode: set `external_directory` to allow `project_dir` when `chamber_dir`
+  is `project_dir/.cryo`, because the launched agent's cwd is the chamber. For
+  unattended chambers, avoid unresolved `ask` prompts.
+- **Strict sandbox** — edit only chamber files and deny other external
+  directory access. Use only when the task does not need to modify project
+  files; otherwise it is too restrictive for normal Cryochamber work.
+- **Broad project maintainer** — allow edits in a larger workspace/repo set.
+  Use only for trusted agents and explicit paths; still deny secrets and
+  destructive commands.
+
+For OpenCode, suggest this baseline unless the task needs more. Replace
+`<PROJECT_DIR>` and `<CHAMBER_DIR>` with absolute paths. If
+`project_dir == chamber_dir`, omit the `external_directory` project allowlist
+and keep only the deny/ask default for paths outside the chamber.
+Do not deny project edits by default: the point is to block writes outside the
+selected project, not to make the agent read-only.
+For interactive chambers, change catch-all `deny` rules to `ask` where human
+approval is acceptable. For unattended chambers, prefer `deny` plus explicit
+allowlists so the agent cannot hang waiting for approval.
+
+```json
+{
+  "permission": {
+    "external_directory": {
+      "*": "deny",
+      "<PROJECT_DIR>/**": "allow"
+    },
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      ".cryo/zuliprc": "deny"
+    },
+    "edit": {
+      "*": "deny",
+      "<PROJECT_DIR>/**": "allow",
+      "<CHAMBER_DIR>/**": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      ".cryo/zuliprc": "deny"
+    },
+    "bash": {
+      "*": "deny",
+      "cryo-agent *": "allow",
+      "rg *": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "cargo test*": "allow",
+      "rm *": "deny",
+      "sudo *": "deny",
+      "git reset *": "deny",
+      "git push *": "deny"
+    }
+  }
+}
+```
+
+If external reading is useful, prefer narrow allowlists plus edit denial:
+
+```json
+{
+  "permission": {
+    "external_directory": {
+      "*": "deny",
+      "~/Documents/reference/**": "allow",
+      "<PROJECT_DIR>/**": "allow"
+    },
+    "edit": {
+      "~/Documents/reference/**": "deny"
+    }
+  }
+}
+```
+
+Record the selected policy in the generated plan. If the agent is not OpenCode,
+record the intent ("workspace-only edits, read-only external references") and
+tell the user to apply the equivalent permission controls in that agent.
+
+### Q9. Delayed wake reaction
 
 If the machine was suspended and the agent wakes 5+ minutes late, how should it react? Suggest based on task:
 - **Adjust and continue** (recommended for most) — recalculate deadlines, skip missed steps, catch up
@@ -137,15 +225,15 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 - **Abort the session** — exit with error, let human decide
 - **Ignore** — treat as normal wake
 
-### Q9. Notification & sync channel
+### Q10. Notification & sync channel
 
 How should the agent communicate with the user?
 - **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval. **Before Phase 3:** the bot (whoever owns the API key in the zuliprc) must be subscribed to the target stream; otherwise `cryo-zulip init` fails when resolving the stream. Remind the user to add the bot in Zulip's stream settings.
 - **GitHub Discussions** — good for repo-centric workflows. Walk through: repo, discussion category.
-- **Hub (Web UI) only** — simplest, browser via `cryohub start`. `cryohub` always operates on the current directory and expects to be run from a directory whose immediate subdirectories are chambers (not from a chamber dir itself). Host/port are CLI flags (`cryohub start --host 0.0.0.0 --port 8765`), not `cryo.toml` fields; default is `127.0.0.1:8765`. For remote access use `--host 0.0.0.0`. If 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user.
+- **Hub (Web UI) only** — simplest, browser via `cryohub start`. Cryohub is global and registry-backed; it can be started from any directory and shows chambers created in the UI or registered by `cryo start`. Host, port, and dashboard-created chamber root are in `~/.config/cryo/cryohub.toml` (or `$XDG_CONFIG_HOME/cryo/cryohub.toml`), with defaults `127.0.0.1:8765` and `~/.cryo/chambers`. For project-owned chamber collections, set `chamber_root` to `<project>/.cryo/chambers`. For remote access use `cryohub start --host 0.0.0.0`; if 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user.
 - **None** — agent runs silently, check logs manually.
 
-### Q10. Periodic reports
+### Q11. Periodic reports
 
 Want daily/hourly health summaries written to `messages/outbox/` (delivered via any configured sync channel)?
 - If yes: set `report_time` (e.g. "09:00") and `report_interval` (hours, e.g. 24 for daily).
@@ -161,8 +249,11 @@ After all questions:
 5. Include a `cryo-agent time` usage note: the tool accepts `(no arg)` for current time, `+N minutes|hours|days|weeks` for offsets, or an ISO8601 string like `2026-04-25T10:00` as pass-through. It does **not** parse natural-language expressions ("tomorrow 9am"). For those, the agent should fetch the current time with `cryo-agent time`, compute the absolute ISO timestamp itself, and pass that directly to `todo --at` / `hibernate --wake`.
 6. If `chamber_dir` is `project_dir/.cryo`, include a short Configuration note:
    "Project root is `..`; keep chamber memory in `NOTES.md`."
-7. Present draft to user for approval/edits
-8. Write the file at `plan_path(project_dir)`
+7. Include the selected agent permission policy in Notes. For OpenCode, include
+   the exact config path/action the user should take before Phase 3 if the
+   policy differs from their current default.
+8. Present draft to user for approval/edits
+9. Write the file at `plan_path(project_dir)`
 
 Reference existing examples for plan.md structure:
 - `examples/chambers/mr-lazy/plan.md` — simple periodic task
@@ -178,16 +269,19 @@ everything maps directly.
 | AI agent (Q7) | `agent` |
 | Retry strategy (Q6) | `max_retries` |
 | Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
-| Sync channel (Q9) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
-| Sync channel (Q9) — Hub (Web UI) | Host/port are CLI flags for `cryohub start`; nothing goes in `cryo.toml`. |
-| Reports (Q10) | `report_time`, `report_interval` |
+| Agent permissions (Q8) | Not a `cryo.toml` field. Record in `plan.md`; configure in the agent's own permission config (for OpenCode, `opencode.json` or user config). |
+| Sync channel (Q10) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
+| Sync channel (Q10) — Hub (Web UI) | Host, port, and dashboard-created chamber root live in `cryohub.toml`; nothing goes in per-chamber `cryo.toml`. |
+| Reports (Q11) | `report_time`, `report_interval` |
 | Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 
 Process:
 1. Generate `config_path(project_dir)` with values filled in and commented explanations
 2. Present to user — highlight non-default values and explain why each was chosen
 3. If Zulip or GitHub sync chosen, note that `cryo-zulip init` / `cryo-gh init` will run in Phase 3
-4. Write the file at `config_path(project_dir)`
+4. If OpenCode is selected, present the recommended permission snippet separately
+   from `cryo.toml`; ask before writing or changing `opencode.json`.
+5. Write the file at `config_path(project_dir)`
 
 ## Phase 3: Validate
 
@@ -201,6 +295,9 @@ Three layers, in order. On failure: stop, report what failed, suggest fixes, let
   pre-existing files. Failure here means TOML is malformed. Running it in
   `chamber_dir` keeps generated chamber files out of `project_dir`.
 - Verify the agent command is on PATH (e.g. `which opencode`)
+- If OpenCode permissions were configured, verify the expected `permission`
+  block exists in `opencode.json` or the selected user config before live smoke
+  testing.
 
 These checks are free. If any fails, stop — don't proceed to the live smoke test in Layer 3, which will fail in a more confusing way.
 
@@ -219,7 +316,7 @@ broken agent installs, and sync credential issues.
 
 1. If a sync channel is configured, initialize it first so the smoke run can exercise it:
    - Zulip: `cryo-zulip init --config <path> --stream <name>`. Needs the bot subscribed
-     to the stream (see Q9 pre-flight).
+     to the stream (see Q10 pre-flight).
    - GitHub: `cryo-gh init --repo <repo>`.
 2. Run `CRYO_NO_SERVICE=1 cryo start` from `chamber_dir` (direct-spawn mode —
    simpler to cancel than a launchd/systemd service).
@@ -256,7 +353,7 @@ If the user deferred provider setup in Q7, remind them how to configure it:
 
 ```dot
 digraph cryo_create {
-    "Q0-Q10: Brainstorm" [shape=box];
+    "Q0-Q11: Brainstorm" [shape=box];
     "Draft plan_path(project_dir)" [shape=box];
     "User approves?" [shape=diamond];
     "Generate config_path(project_dir)" [shape=box];
@@ -268,7 +365,7 @@ digraph cryo_create {
     "Start services" [shape=box];
     "Ready" [shape=doublecircle];
 
-    "Q0-Q10: Brainstorm" -> "Draft plan_path(project_dir)";
+    "Q0-Q11: Brainstorm" -> "Draft plan_path(project_dir)";
     "Draft plan_path(project_dir)" -> "User approves?";
     "User approves?" -> "Draft plan_path(project_dir)" [label="revise"];
     "User approves?" -> "Generate config_path(project_dir)" [label="yes"];

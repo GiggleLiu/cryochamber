@@ -101,22 +101,12 @@ fn shell_only_renders_reset_for_stopped_chambers() {
 }
 
 #[test]
-fn shell_renders_archive_button_for_stopped_chambers() {
+fn shell_does_not_render_archive_button_in_global_hub() {
     assert!(
-        SHELL_HTML.contains("confirmArchive(entry.id, entry.name)"),
-        "stopped chambers should expose an archive action instead of true deletion"
-    );
-    assert!(
-        SHELL_HTML.contains("/api/chambers/${id}/archive"),
-        "archive action should call the archive endpoint"
-    );
-}
-
-#[test]
-fn shell_only_renders_archive_for_local_chambers() {
-    assert!(
-        SHELL_HTML.contains("!entry.running && !entry.path_hint"),
-        "archive is a workspace-local move and should not be offered for registered chambers outside the hub workspace"
+        !SHELL_HTML.contains("confirmArchive")
+            && !SHELL_HTML.contains("/api/chambers/${id}/archive")
+            && !SHELL_HTML.contains("btn('archive'"),
+        "archive is disabled because the hub is global, not workspace-scoped"
     );
 }
 

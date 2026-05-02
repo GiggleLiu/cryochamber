@@ -489,9 +489,6 @@
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
     }
-    if (!entry.running && !entry.path_hint) {
-      btns.appendChild(btn('archive', () => confirmArchive(entry.id, entry.name), 'danger', pending));
-    }
   }
 
   function setLifecyclePending(id, pending) {
@@ -509,31 +506,6 @@
   function confirmReset(id, name) {
     const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
     if (window.confirm(msg)) lifecycle(id, 'reset');
-  }
-
-  function confirmArchive(id, name) {
-    const msg = `Archive "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • move the chamber directory to .cryo-archive/\n  • remove it from this workspace rail\n\nThe files remain recoverable from the archive folder.`;
-    if (window.confirm(msg)) archiveChamber(id);
-  }
-
-  async function archiveChamber(id) {
-    if (state.lifecyclePending[id]) return;
-    setLifecyclePending(id, true);
-    try {
-      const resp = await fetchJSON(`/api/chambers/${id}/archive`, { method: 'POST' });
-      toast(resp.message || 'Archived', resp.ok ? '' : 'error');
-      await loadChambers();
-      if (state.currentId === id) {
-        clearSelection();
-        if (window.location.pathname !== '/') {
-          window.history.pushState({}, '', '/');
-        }
-      }
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      setLifecyclePending(id, false);
-    }
   }
 
   async function lifecycle(id, action) {
