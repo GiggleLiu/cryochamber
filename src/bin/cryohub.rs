@@ -6,7 +6,6 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 const SERVICE_LABEL: &str = "hub";
-const LOG_FILENAME: &str = "cryohub.log";
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8765;
 
@@ -89,7 +88,10 @@ fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Resul
 
     let exe = std::env::current_exe().context("Failed to resolve cryohub executable path")?;
     let port_str = port.to_string();
-    let log_path = dir.join(LOG_FILENAME);
+    let log_path = cryochamber::hub::paths::hub_log_path(&dir);
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     cryochamber::service::install(
         SERVICE_LABEL,
         &dir,
@@ -126,7 +128,7 @@ fn cmd_status() -> Result<()> {
             "Cryohub service: installed ({})",
             cryochamber::service::service_label(SERVICE_LABEL, &dir)
         );
-        let log = dir.join(LOG_FILENAME);
+        let log = cryochamber::hub::paths::hub_log_path(&dir);
         if log.exists() {
             println!("Log: {}", log.display());
         }

@@ -387,8 +387,8 @@ fn cmd_clean(force: bool) -> Result<()> {
     if cryochamber::service::uninstall("zulip-sync", &dir)? {
         println!("Removed zulip-sync service.");
     }
-    // `cryohub` is workspace-scoped — its service and log live in the workspace
-    // directory, not the chamber dir. `cryo clean` is chamber-scoped, so it
+    // `cryohub` is workspace-scoped and stores its service log in user-level
+    // Cryo state, not in a chamber dir. `cryo clean` is chamber-scoped, so it
     // cannot and should not touch hub state. Use `cryohub stop` from the
     // workspace directory to remove the hub service.
 
@@ -398,7 +398,7 @@ fn cmd_clean(force: bool) -> Result<()> {
         terminate_daemon_if_reachable(&dir, &cryo_state)?;
     }
 
-    // Remove runtime files. `cryohub.log` is workspace-scoped and therefore
+    // Remove chamber runtime files. Hub logs are user-level Cryo state and are
     // not part of a chamber clean.
     let runtime_files = [
         "timer.json",

@@ -1,5 +1,6 @@
 pub mod discovery;
 pub mod lifecycle;
+pub mod paths;
 pub mod routes;
 pub mod state;
 pub mod watchers;
