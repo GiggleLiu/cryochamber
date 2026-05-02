@@ -145,7 +145,6 @@ example-start-all: build
 			(cd "$$dir" && "$(CURDIR)"/target/debug/cryo cancel 2>/dev/null || true); \
 		fi; \
 		cd "$$dir"; \
-		rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md; \
 		"$(CURDIR)"/target/debug/cryo init --agent "$(AGENT)"; \
 		"$(CURDIR)"/target/debug/cryo start --agent "$(AGENT)"; \
 	done
