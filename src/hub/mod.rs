@@ -16,8 +16,25 @@ use axum::{
 
 use crate::hub::state::AppState as WebAppState;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ServeOptions {
+    pub local_only: bool,
+}
+
 pub fn build_router(workspace_dir: PathBuf) -> Router {
-    let app = Arc::new(WebAppState::new(workspace_dir));
+    build_router_with_options(workspace_dir, ServeOptions::default())
+}
+
+pub fn build_router_with_options(workspace_dir: PathBuf, options: ServeOptions) -> Router {
+    let discovery_options = if options.local_only {
+        crate::hub::discovery::DiscoveryOptions::workspace_only()
+    } else {
+        crate::hub::discovery::DiscoveryOptions::default()
+    };
+    let app = Arc::new(WebAppState::new_with_discovery_options(
+        workspace_dir,
+        discovery_options,
+    ));
     app.refresh();
     build_router_with_state(app)
 }
@@ -95,7 +112,24 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
 }
 
 pub async fn serve(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
-    let app = Arc::new(WebAppState::new(workspace_dir));
+    serve_with_options(workspace_dir, host, port, ServeOptions::default()).await
+}
+
+pub async fn serve_with_options(
+    workspace_dir: PathBuf,
+    host: &str,
+    port: u16,
+    options: ServeOptions,
+) -> anyhow::Result<()> {
+    let discovery_options = if options.local_only {
+        crate::hub::discovery::DiscoveryOptions::workspace_only()
+    } else {
+        crate::hub::discovery::DiscoveryOptions::default()
+    };
+    let app = Arc::new(WebAppState::new_with_discovery_options(
+        workspace_dir,
+        discovery_options,
+    ));
     app.refresh();
     let router = build_router_with_state(app);
     let addr = format!("{host}:{port}");

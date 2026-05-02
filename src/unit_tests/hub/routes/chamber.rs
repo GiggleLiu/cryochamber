@@ -333,6 +333,7 @@ async fn post_archive_rejects_chambers_outside_workspace() {
             last_message_preview: None,
             completed: false,
             sync: vec![],
+            workspace_local: false,
         },
     );
 

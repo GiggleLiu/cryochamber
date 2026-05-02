@@ -83,7 +83,7 @@ For the full guide, see [Getting Started](https://giggleliu.github.io/cryochambe
 
 ## Cryohub (multi-chamber dashboard)
 
-Cryohub is a directory-scoped web dashboard that manages every chamber under the current directory.
+Cryohub is a web dashboard that manages chambers under the current directory and, by default, known chambers previously started elsewhere under the same user account.
 
 ![cryohub dashboard with the mr-lazy chamber selected](docs/src/images/cryohub-dashboard.png)
 

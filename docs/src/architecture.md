@@ -33,6 +33,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `lifecycle` | Session startup validation and chamber lifecycle operations. | `enum DaemonLaunchMode`, `struct StartOptions`, `struct PreparedStart`, `fn require_valid_project`, `fn require_live_daemon`, `fn prepare_start`, `fn validate_agent_command`. |
 | `process` | Process management utilities. | `fn send_signal`, `fn terminate_pid`, `fn spawn_daemon`. |
 | `registry` | PID file registry under `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. | `struct DaemonEntry`, `fn register`, `fn unregister`, `fn list`. |
+| `chamber_registry` | Durable user-level registry of known chamber directories under `~/.cryo/chambers.json` by default. Lets Cryohub show stopped or running chambers outside the current workspace. | `fn record`, `fn prune_invalid`, `fn import_running_daemons`. |
 | `service` | OS service management: launchd (macOS) / systemd (Linux) user services. Used by `cryo start`, `cryo-gh sync`, `cryo-zulip sync`. `CRYO_NO_SERVICE=1` disables. | `struct InstalledService`, `fn service_label`, `fn install`, `fn uninstall`, `fn list_installed`, `fn is_installed`. |
 
 ### Config, state, and persistence
@@ -72,7 +73,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
-| `hub` | `cryohub` dashboard: Axum router, chamber discovery, SSE event stream, start/stop/restart handlers. Served by the `cryohub` binary; always operates on the current directory. | `fn build_router`, `fn build_router_with_state`, `async fn serve`. |
+| `hub` | `cryohub` dashboard: Axum router, chamber discovery, SSE event stream, start/stop/restart handlers. Served by the `cryohub` binary; starts from the current directory and can merge the known-chambers registry unless `--local-only` is used. | `fn build_router`, `fn build_router_with_state`, `async fn serve`. |
 | `hub::state` | Shared app state, chamber index, SSE broadcast. | `struct AppState`, `enum SseEvent`, `fn resolve`, `fn refresh`. |
 | `hub::discovery` | Chamber discovery + URL-safe id encoding over a workspace directory. | `struct ChamberEntry`, `type ChamberIndex`, `fn encode_id`, `fn decode_id`, `fn scan_workspace`. |
 
@@ -87,7 +88,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 - **Agent notes via `NOTES.md`.** The agent's persistent memory across sessions is a plain markdown file the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes tab.
 - **Crash handling via TODO re-injection.** If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it claimed for that wake with a ` (attempt k)` suffix and an exponential delay (`2^k` minutes, capped at 1 day). There is no in-daemon backoff-retry loop — rescheduling is expressed entirely through the TODO list so it survives daemon restarts and is visible to both the agent and operators. `EventLogger` is still finalized on every outcome.
 - **Daemon does not preview inbox, agent receives it.** Wake-time prompts do not include inbox contents. The daemon only notices that inbox files exist and surfaces that fact in the session prompt. During a session, agent-side `cryo-agent receive` goes back through daemon IPC, and the daemon immediately archives the current inbox batch to `messages/inbox/archive/`. The daemon remembers that batch only in the current session so the next successful agent `send` can count as its reply, or the daemon can fall back at session end. Operator `cryo receive` is unrelated; it reads the agent's outbox.
-- **`cryohub` is cwd-scoped.** The web dashboard binary always operates on the current directory — no `--dir` flag. The cwd must not itself be a chamber. Discovery scans `<cwd>/*` for chamber subdirectories. The service label is `com.cryo.hub.<hash>`; `cryohub status` additionally lists every other `com.cryo.hub.*` service installed on the machine.
+- **`cryohub` starts from cwd, with optional registry merge.** The web dashboard binary always starts from the current directory — no `--dir` flag. The cwd must not itself be a chamber. Discovery scans `<cwd>/*` for chamber subdirectories and, unless `--local-only` is used, merges valid paths from the durable known-chambers registry. The service label is `com.cryo.hub.<hash>`; `cryohub status` additionally lists every other `com.cryo.hub.*` service installed on the machine.
 - **Default agent.** The CLI defaults to `opencode` (headless mode, not the TUI).
 
 ## TODO and Message Flow

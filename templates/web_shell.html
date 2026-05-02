@@ -227,6 +227,13 @@
     }
     row.appendChild(row1);
 
+    if (!c.workspace_local && c.path) {
+      const path = document.createElement('div');
+      path.className = 'chamber-path';
+      path.textContent = c.path;
+      row.appendChild(path);
+    }
+
     if (c.last_message_preview) {
       const prev = document.createElement('div');
       prev.className = 'chamber-preview';
@@ -467,7 +474,7 @@
 
   function updateLifecycleButtons(entry) {
     const pending = state.lifecyclePending[entry.id];
-    const sig = `${entry.running}|${!!entry.config_error}|${!!entry.completed}|${!!pending}`;
+    const sig = `${entry.running}|${!!entry.config_error}|${!!entry.completed}|${!!entry.workspace_local}|${!!pending}`;
     if (sig === view.lastLifecycleSig) return;
     view.lastLifecycleSig = sig;
     const btns = view.lifecycleBtns;
@@ -482,7 +489,7 @@
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
     }
-    if (!entry.running) {
+    if (!entry.running && entry.workspace_local) {
       btns.appendChild(btn('archive', () => confirmArchive(entry.id, entry.name), 'danger', pending));
     }
   }

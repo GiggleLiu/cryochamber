@@ -15,7 +15,7 @@ Run these from inside a chamber directory unless noted otherwise.
 | Command                                  | What it does                                                       |
 |------------------------------------------|--------------------------------------------------------------------|
 | `cryo init [--agent <cmd>]`              | Initialize the directory: write `cryo.toml`, `plan.md`, `NOTES.md`, `README.md`, and the agent protocol file. Existing files are kept. |
-| `cryo start [--agent <cmd>]`             | Start the daemon. Reads `cryo.toml` and writes overrides to `timer.json`. |
+| `cryo start [--agent <cmd>]`             | Start the daemon, record the chamber as known, read `cryo.toml`, and write overrides to `timer.json`. |
 | `cryo start --max-session-duration 3600` | Override the session timeout for this run.                         |
 | `cryo status`                            | Show whether the daemon is running, the current session number, and the next wake time. |
 | `cryo restart`                           | Stop the running daemon and start a fresh one.                     |
@@ -36,6 +36,7 @@ Cryohub is a browser dashboard for managing chambers. It always operates on the 
 |--------------------------------------------|-----------------------------------------------------------|
 | `cryohub start [--host <ip>] [--port <n>]` | Install a service that survives reboot.                   |
 | `cryohub start --foreground`               | Run the hub in the current terminal instead.              |
+| `cryohub start --local-only`               | Show only chambers under the current workspace.           |
 | `cryohub stop`                             | Uninstall the service for this directory.                 |
 | `cryohub status`                           | Show this directory's service plus any others on the host. |
 

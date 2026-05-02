@@ -43,6 +43,88 @@ fn scan_finds_chambers_with_valid_config() {
 }
 
 #[test]
+fn discover_with_options_merges_registered_chambers() {
+    let workspace = tempfile::tempdir().unwrap();
+    let registry_root = tempfile::tempdir().unwrap();
+    let local = workspace.path().join("local");
+    let registered = registry_root.path().join("registered");
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::create_dir_all(&registered).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&local.join("cryo.toml"), &cfg).unwrap();
+    crate::config::save_config(&registered.join("cryo.toml"), &cfg).unwrap();
+
+    let registry_path = workspace.path().join("known-chambers.json");
+    crate::chamber_registry::record_at(&registry_path, &registered).unwrap();
+
+    let idx = discover_with_options(
+        workspace.path(),
+        DiscoveryOptions {
+            include_chamber_registry: true,
+            chamber_registry_path: Some(registry_path),
+        },
+    );
+
+    assert_eq!(idx.len(), 2);
+    let local_entry = idx.values().find(|e| e.name == "local").unwrap();
+    let registered_entry = idx.values().find(|e| e.name == "registered").unwrap();
+    assert!(local_entry.workspace_local);
+    assert!(!registered_entry.workspace_local);
+}
+
+#[test]
+fn discover_with_options_deduplicates_registered_workspace_chambers() {
+    let workspace = tempfile::tempdir().unwrap();
+    let local = workspace.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&local.join("cryo.toml"), &cfg).unwrap();
+
+    let registry_path = workspace.path().join("known-chambers.json");
+    crate::chamber_registry::record_at(&registry_path, &local).unwrap();
+
+    let idx = discover_with_options(
+        workspace.path(),
+        DiscoveryOptions {
+            include_chamber_registry: true,
+            chamber_registry_path: Some(registry_path),
+        },
+    );
+
+    assert_eq!(idx.len(), 1);
+    let entry = idx.values().next().unwrap();
+    assert_eq!(entry.name, "local");
+    assert!(entry.workspace_local);
+}
+
+#[test]
+fn discover_with_options_local_only_ignores_registered_chambers() {
+    let workspace = tempfile::tempdir().unwrap();
+    let registry_root = tempfile::tempdir().unwrap();
+    let local = workspace.path().join("local");
+    let registered = registry_root.path().join("registered");
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::create_dir_all(&registered).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&local.join("cryo.toml"), &cfg).unwrap();
+    crate::config::save_config(&registered.join("cryo.toml"), &cfg).unwrap();
+
+    let registry_path = workspace.path().join("known-chambers.json");
+    crate::chamber_registry::record_at(&registry_path, &registered).unwrap();
+
+    let idx = discover_with_options(
+        workspace.path(),
+        DiscoveryOptions {
+            include_chamber_registry: false,
+            chamber_registry_path: Some(registry_path),
+        },
+    );
+
+    assert_eq!(idx.len(), 1);
+    assert_eq!(idx.values().next().unwrap().name, "local");
+}
+
+#[test]
 fn scan_skips_subdirs_without_cryo_toml() {
     // Stray non-chamber directories (e.g. an accidental `messages/` from a
     // mis-targeted `cryo init`) must not pollute the chamber rail.

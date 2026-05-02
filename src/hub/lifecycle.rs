@@ -15,6 +15,8 @@ pub fn start_chamber(dir: &Path) -> Result<()> {
 
     MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
 
+    let _ = crate::chamber_registry::record(dir);
+
     crate::state::save_state(&crate::state::state_path(dir), &prepared.state)?;
 
     crate::lifecycle::launch_daemon(dir, &exe)?;

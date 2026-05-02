@@ -64,7 +64,7 @@ The repository ships with three example chambers — `mr-lazy`, `chess-by-mail`,
 
 ## Step 3: Create a workspace for your own chambers
 
-Cryohub is **directory-scoped**: it manages every immediate subdirectory of the directory you start it in. Pick a folder to hold all your chambers as siblings.
+Cryohub starts from a workspace directory: it manages every immediate subdirectory of the directory you start it in, and can also show known chambers started elsewhere. Pick a folder to hold your main chambers as siblings.
 
 1. Create a workspace directory:
 

@@ -4,15 +4,28 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn cmd() -> Command {
     #[allow(deprecated)]
-    Command::cargo_bin("cryo").unwrap()
+    let mut cmd = Command::cargo_bin("cryo").unwrap();
+    cmd.env("CRYO_CHAMBER_REGISTRY", test_registry_path());
+    cmd
 }
 
 fn agent_cmd() -> Command {
     #[allow(deprecated)]
     Command::cargo_bin("cryo-agent").unwrap()
+}
+
+fn test_registry_path() -> std::path::PathBuf {
+    let n = REGISTRY_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "cryochamber-cli-tests-{}-{n}-chambers.json",
+        std::process::id(),
+    ))
 }
 
 /// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
@@ -553,6 +566,27 @@ fn test_daemon_plan_complete() {
     // Check log contains session event (EventLogger writes events, not agent stdout)
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert!(log.contains("plan complete"));
+}
+
+#[test]
+fn test_start_records_chamber_in_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry_dir = tempfile::tempdir().unwrap();
+    let registry_path = registry_dir.path().join("chambers.json");
+    fs::write(dir.path().join("plan.md"), "# Plan\nDo stuff").unwrap();
+    init_dir(dir.path());
+
+    cmd()
+        .args(["start", "--agent", &mock_agent_cmd()])
+        .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("CRYO_NO_SERVICE", "1")
+        .env("CRYO_CHAMBER_REGISTRY", &registry_path)
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let entries = cryochamber::chamber_registry::list_at(&registry_path).unwrap();
+    assert_eq!(entries, vec![dir.path().canonicalize().unwrap()]);
 }
 
 #[test]

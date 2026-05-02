@@ -194,6 +194,10 @@ fn cmd_start(
     // Ensure message dirs exist (needed for inbox watching)
     MessageStore::new(dir.clone()).ensure_dirs()?;
 
+    if let Err(e) = cryochamber::chamber_registry::record(&dir) {
+        eprintln!("Warning: failed to update chamber registry: {e}");
+    }
+
     state::save_state(&state::state_path(&dir), &prepared.state)?;
 
     let launch_mode = lifecycle::launch_daemon(&dir, &exe)?;

@@ -1,10 +1,5 @@
-//! Chamber discovery: scan `<dir>/*/cryo.toml`.
-//!
-//! Hub only surfaces chambers that live under the directory `cryohub` was
-//! started in (the server's cwd). Daemons running elsewhere on the machine
-//! (e.g. test leftovers under `/tmp/`) are intentionally not merged in —
-//! they would clutter the rail and can't be managed from this hub instance
-//! anyway.
+//! Chamber discovery: scan `<dir>/*/cryo.toml`, optionally merged with the
+//! durable user-level chamber registry.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -55,10 +50,35 @@ pub struct ChamberEntry {
     pub last_message_preview: Option<String>,
     pub completed: bool,
     pub sync: Vec<SyncBadge>,
+    pub workspace_local: bool,
 }
 
 /// A map from chamber id → entry.
 pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
+
+#[derive(Debug, Clone)]
+pub struct DiscoveryOptions {
+    pub include_chamber_registry: bool,
+    pub chamber_registry_path: Option<PathBuf>,
+}
+
+impl Default for DiscoveryOptions {
+    fn default() -> Self {
+        Self {
+            include_chamber_registry: true,
+            chamber_registry_path: None,
+        }
+    }
+}
+
+impl DiscoveryOptions {
+    pub fn workspace_only() -> Self {
+        Self {
+            include_chamber_registry: false,
+            chamber_registry_path: None,
+        }
+    }
+}
 
 /// Scan `<dir>/*` for chambers. A subdirectory is treated as a chamber
 /// only if it contains a `cryo.toml`; chambers with a malformed
@@ -82,34 +102,8 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
         if !cryo_toml.exists() {
             continue;
         }
-        let name = canonical
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "(unknown)".into());
-        let config_error = crate::config::load_config(&cryo_toml)
-            .err()
-            .map(|e| e.to_string());
         let id = encode_id(&canonical);
-        out.insert(
-            id.clone(),
-            ChamberEntry {
-                id,
-                name,
-                path: canonical,
-                config_error,
-                running: false,
-                agent_running: false,
-                session: None,
-                next_wake: None,
-                next_wake_display: None,
-                wake_imminent: false,
-                has_open_question: false,
-                task: None,
-                last_message_preview: None,
-                completed: false,
-                sync: vec![],
-            },
-        );
+        out.insert(id, chamber_entry(canonical, true));
     }
     out
 }
@@ -141,9 +135,62 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
 
 /// One-shot discovery: scan workspace and populate runtime fields.
 pub fn discover(workspace: &Path) -> ChamberIndex {
+    discover_with_options(workspace, DiscoveryOptions::default())
+}
+
+pub fn discover_with_options(workspace: &Path, options: DiscoveryOptions) -> ChamberIndex {
     let mut idx = scan_workspace(workspace);
+    if options.include_chamber_registry {
+        merge_registered_chambers(&mut idx, options.chamber_registry_path.as_deref());
+    }
     populate_runtime(&mut idx);
     idx
+}
+
+fn merge_registered_chambers(idx: &mut ChamberIndex, registry_path: Option<&Path>) {
+    let paths = match registry_path {
+        Some(path) => crate::chamber_registry::prune_invalid_at(path).unwrap_or_default(),
+        None => {
+            let _ = crate::chamber_registry::import_running_daemons();
+            crate::chamber_registry::prune_invalid().unwrap_or_default()
+        }
+    };
+    for path in paths {
+        let canonical = path.canonicalize().unwrap_or(path);
+        let id = encode_id(&canonical);
+        idx.entry(id)
+            .or_insert_with(|| chamber_entry(canonical, false));
+    }
+}
+
+fn chamber_entry(canonical: PathBuf, workspace_local: bool) -> ChamberEntry {
+    let cryo_toml = canonical.join("cryo.toml");
+    let name = canonical
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(unknown)".into());
+    let config_error = crate::config::load_config(&cryo_toml)
+        .err()
+        .map(|e| e.to_string());
+    let id = encode_id(&canonical);
+    ChamberEntry {
+        id,
+        name,
+        path: canonical,
+        config_error,
+        running: false,
+        agent_running: false,
+        session: None,
+        next_wake: None,
+        next_wake_display: None,
+        wake_imminent: false,
+        has_open_question: false,
+        task: None,
+        last_message_preview: None,
+        completed: false,
+        sync: vec![],
+        workspace_local,
+    }
 }
 
 #[cfg(test)]

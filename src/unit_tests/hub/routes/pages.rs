@@ -113,6 +113,26 @@ fn shell_renders_archive_button_for_stopped_chambers() {
 }
 
 #[test]
+fn shell_shows_path_only_for_non_local_chambers() {
+    assert!(
+        SHELL_HTML.contains("!c.workspace_local"),
+        "non-local registry chambers should be the only rail rows with a path hint"
+    );
+    assert!(
+        SHELL_HTML.contains("chamber-path"),
+        "non-local path hints should use a dedicated muted row class"
+    );
+}
+
+#[test]
+fn shell_hides_archive_for_non_local_chambers() {
+    assert!(
+        SHELL_HTML.contains("entry.workspace_local"),
+        "archive should stay workspace-owned rather than applying to registered chambers elsewhere"
+    );
+}
+
+#[test]
 fn shell_new_chamber_modal_collects_provider_and_api_key() {
     assert!(
         SHELL_HTML.contains("id=\"modal-provider-details\""),

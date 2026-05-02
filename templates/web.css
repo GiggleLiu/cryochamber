@@ -194,6 +194,17 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chamber-path {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  margin-top: 3px;
+  margin-left: 15px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chamber-meta {
   display:flex; flex-direction: column; gap: 2px;
   margin-top: 5px; margin-left: 15px;
