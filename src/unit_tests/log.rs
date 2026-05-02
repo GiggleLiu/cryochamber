@@ -351,6 +351,38 @@ fn test_parse_plan_complete_present() {
 }
 
 #[test]
+fn test_parse_latest_session_summary_from_hibernate_wake() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cryo.log");
+    let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+                   [12:05:00] hibernate: wake=2026-03-01T14:00, exit=0, summary=\"old\"\n\
+                   --- CRYO END ---\n\
+                   --- CRYO SESSION 2 | 2026-03-01T14:00:00Z ---\n\
+                   [14:05:00] hibernate: wake=2026-03-01T15:00, exit=0, summary=\"Checked disk usage and scheduled the next warning check\"\n\
+                   --- CRYO END ---\n";
+    std::fs::write(&path, content).unwrap();
+    let summary = parse_latest_session_summary(&path).unwrap();
+    assert_eq!(
+        summary,
+        Some("Checked disk usage and scheduled the next warning check".into())
+    );
+}
+
+#[test]
+fn test_parse_latest_session_summary_ignores_old_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cryo.log");
+    let content = "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+                   [12:05:00] hibernate: wake=2026-03-01T14:00, exit=0, summary=\"old\"\n\
+                   --- CRYO END ---\n\
+                   --- CRYO SESSION 2 | 2026-03-01T14:00:00Z ---\n\
+                   [14:05:00] agent started\n\
+                   --- CRYO END ---\n";
+    std::fs::write(&path, content).unwrap();
+    assert!(parse_latest_session_summary(&path).unwrap().is_none());
+}
+
+#[test]
 fn test_parse_plan_complete_absent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cryo.log");

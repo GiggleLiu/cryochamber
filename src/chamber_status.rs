@@ -144,6 +144,7 @@ pub struct ChamberStatus {
     pub config_content: String,
     pub settings_rows: Vec<SettingsRow>,
     pub task: Option<String>,
+    pub session_summary: Option<String>,
     pub completed: bool,
     pub completion_summary: Option<String>,
 }
@@ -235,6 +236,9 @@ pub fn status(dir: &Path) -> ChamberStatus {
         config_content,
         settings_rows,
         task: crate::log::parse_latest_session_task(&log_file)
+            .ok()
+            .flatten(),
+        session_summary: crate::log::parse_latest_session_summary(&log_file)
             .ok()
             .flatten(),
         completed,

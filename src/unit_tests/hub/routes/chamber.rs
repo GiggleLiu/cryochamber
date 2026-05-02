@@ -69,6 +69,23 @@ fn status_json_log_tail_spans_last_five_sessions() {
 }
 
 #[test]
+fn status_json_includes_latest_session_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        crate::log::log_path(dir.path()),
+        "--- CRYO SESSION 1 | 2026-03-01T12:00:00Z ---\n\
+         [12:05:00] hibernate: wake=2026-03-01T14:00, exit=0, summary=\"Checked disk usage and scheduled the next warning check\"\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+    let v = status_json(dir.path());
+    assert_eq!(
+        v["session_summary"],
+        "Checked disk usage and scheduled the next warning check"
+    );
+}
+
+#[test]
 fn status_json_notes_content_empty_when_file_missing() {
     let dir = tempfile::tempdir().unwrap();
     let v = status_json(dir.path());

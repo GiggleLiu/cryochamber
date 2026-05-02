@@ -444,13 +444,17 @@
       view.planCompleteBox.textContent = '✓ Plan complete' +
         (status.completion_summary ? ': ' + status.completion_summary : '');
       view.headerTaskLine.textContent = '';
+      view.headerTaskLine.title = '';
     } else {
       view.planCompleteBox.style.display = 'none';
-      if (status.task) {
+      const summary = status.session_summary || '';
+      if (summary) {
         view.headerTaskLine.innerHTML =
-          '<span class="label">Task</span>' + escapeHtml(status.task);
+          '<span class="label">Last session</span>' + escapeHtml(summary);
+        view.headerTaskLine.title = summary;
       } else {
         view.headerTaskLine.textContent = '';
+        view.headerTaskLine.title = '';
       }
     }
     if (status.next_wake) {
@@ -460,7 +464,7 @@
       const txt = document.createElement('span');
       view.wakeChip.appendChild(pulse);
       view.wakeChip.appendChild(txt);
-      applyWake(txt, status.next_wake, 'next wake · ');
+      applyWake(txt, status.next_wake, 'next wake ');
       view.wakeChip.style.display = '';
     } else {
       view.wakeChip.style.display = 'none';

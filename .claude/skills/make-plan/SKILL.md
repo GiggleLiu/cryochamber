@@ -109,8 +109,12 @@ What if the agent crashes or hangs? Suggest based on task:
 
 ### Q7. AI agent & providers
 
-Which agent command?
-- **opencode** (default) — headless coding agent
+Which agent command? **Default to `opencode` unless the user explicitly asks for
+something else** — it is the supported headless agent for Cryochamber and the
+rest of this skill (permission snippet in Q8, smoke test in Phase 3) assumes it.
+Only switch when the user names a different agent.
+
+- **opencode** (default, recommended) — headless coding agent
 - **claude** — Anthropic's Claude CLI
 - **codex** — OpenAI's Codex CLI
 - **custom** — any command

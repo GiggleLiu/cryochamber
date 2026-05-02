@@ -42,6 +42,7 @@ pub fn status_json(dir: &Path) -> Value {
         "config_content": status.config_content,
         "settings_rows": status.settings_rows,
         "task": status.task,
+        "session_summary": status.session_summary,
         "completed": status.completed,
         "completion_summary": status.completion_summary,
     })

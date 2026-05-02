@@ -527,6 +527,34 @@ fn shell_stacks_task_and_wake_time_on_separate_rail_lines() {
 }
 
 #[test]
+fn shell_uses_session_summary_in_header_with_hover_title() {
+    assert!(
+        SHELL_HTML.contains("status.session_summary"),
+        "detail header should prefer session summary over legacy task"
+    );
+    assert!(
+        SHELL_HTML.contains("view.headerTaskLine.title = summary"),
+        "truncated session summary should expose full text on hover"
+    );
+    assert!(
+        WEB_CSS.contains("text-overflow: ellipsis"),
+        "header summary should be visually truncatable"
+    );
+}
+
+#[test]
+fn shell_wake_chip_uses_relative_first_copy() {
+    assert!(
+        SHELL_HTML.contains("applyWake(txt, status.next_wake, 'next wake ');"),
+        "detail wake chip should read like `next wake in 23h 11m`, not `next wake · ...`"
+    );
+    assert!(
+        !SHELL_HTML.contains("'next wake · '"),
+        "wake prefix should not use a separator before relative time"
+    );
+}
+
+#[test]
 fn shell_places_sync_controls_in_right_drawer() {
     assert!(
         SHELL_HTML.contains("data-tab=\"sync\""),
