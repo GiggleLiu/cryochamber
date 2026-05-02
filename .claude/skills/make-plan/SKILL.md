@@ -89,13 +89,6 @@ Suggest based on Q1, then ask:
 
 Analyze the task and suggest likely tools (e.g. "this sounds like it needs a web scraper — would curl or a Python script work?"). **Skip if the task clearly needs no external tools.**
 
-### Q4. Human interaction
-
-Recommend based on task:
-- **No interaction** (autonomous) — monitoring, automation
-- **One-way** (agent sends reports) — scraping, summarization (Recommended for most tasks)
-- **Two-way** (human sends commands/data) — games, collaborative planning
-
 ### Q5. Persistent state
 
 What does the agent need to remember across sessions? Suggest based on task (counters, progress markers, data snapshots, timestamps, scheduled reminders). Two cross-session primitives are available — see the **State primitives** reference below.
@@ -268,7 +261,6 @@ everything maps directly.
 |---|---|
 | AI agent (Q7) | `agent` |
 | Retry strategy (Q6) | `max_retries` |
-| Human interaction (Q4) | `watch_inbox` (two-way → true, autonomous → false) |
 | Agent permissions (Q8) | Not a `cryo.toml` field. Record in `plan.md`; configure in the agent's own permission config (for OpenCode, `opencode.json` or user config). |
 | Sync channel (Q10) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
 | Sync channel (Q10) — Hub (Web UI) | Host, port, and dashboard-created chamber root live in `cryohub.toml`; nothing goes in per-chamber `cryo.toml`. |
@@ -389,6 +381,5 @@ digraph cryo_create {
 | Passing natural language to `cryo-agent time` (e.g. `"tomorrow 9am"`) | Only `+N minutes\|hours\|days\|weeks` and ISO8601 (`2026-04-25T10:00`) are accepted. Agent must reason about NL expressions itself. |
 | Using `note` for time-scheduled items | Use `todo add "..." --at <ISO>` for anything with a deadline; `note` is for auxiliary state. |
 | Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |
-| `watch_inbox = false` with two-way interaction | Set `watch_inbox = true` for event-driven tasks |
 | Zulip bot not subscribed to target stream | `cryo-zulip init` fails to resolve — add the bot in Zulip's stream settings first |
 | Provider env vars not set | Validate in Phase 3 before starting |
