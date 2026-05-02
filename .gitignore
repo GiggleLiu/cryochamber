@@ -21,6 +21,7 @@ docs/logo/logo.png
 zuliprc
 
 messages/
+examples/chambers/.cryo-archive/
 examples/chambers/*/messages
 examples/chambers/*/*.log
 examples/chambers/*/*.json

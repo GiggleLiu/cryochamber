@@ -103,7 +103,7 @@ Cryohub is a directory-scoped web dashboard that manages every chamber under the
    cryohub start
    ```
 
-3. Open the printed URL in your browser. The UI lists every chamber with a status dot and lets you send messages, wake the agent, and start, stop, or restart daemons.
+3. Open the printed URL in your browser. The UI lists workspace chambers plus chambers remembered from `cryo start` elsewhere on the machine, with status dots and controls to send messages, wake the agent, and start, stop, or restart daemons. Use `cryohub start --local-only` to show only the current workspace.
 
 See [Hub](https://giggleliu.github.io/cryochamber/hub.html) for the full reference.
 

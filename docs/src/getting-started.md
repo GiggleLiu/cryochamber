@@ -64,7 +64,7 @@ The repository ships with three example chambers — `mr-lazy`, `chess-by-mail`,
 
 ## Step 3: Create a workspace for your own chambers
 
-Cryohub is **directory-scoped**: it manages every immediate subdirectory of the directory you start it in. Pick a folder to hold all your chambers as siblings.
+Cryohub is **directory-scoped**: it scans every immediate subdirectory of the directory you start it in. By default it also shows chambers remembered from `cryo start` elsewhere on the same machine; use `cryohub start --local-only` if you want a dashboard limited to the current workspace.
 
 1. Create a workspace directory:
 
@@ -224,5 +224,6 @@ Run these from anywhere:
 |---------|--------------|
 | `cryo ps` | List every running daemon on this machine. |
 | `cryohub start` | Start the dashboard (run from a workspace, not a chamber). |
+| `cryohub start --local-only` | Start the dashboard without merging chambers from the user registry. |
 
 For the full command reference, including the agent-side `cryo-agent` IPC commands, see [Commands](./commands.md).

@@ -309,8 +309,12 @@ fn cmd_restart() -> Result<()> {
 }
 
 fn cmd_ps(kill_all: bool) -> Result<()> {
-    // list() auto-cleans dead PIDs from the registry
-    let entries = cryochamber::registry::list()?;
+    // list() auto-cleans dead PIDs from the registry; `cryo ps` only reports
+    // the entries that are still running.
+    let entries: Vec<_> = cryochamber::registry::list()?
+        .into_iter()
+        .filter(|entry| entry.pid.is_some())
+        .collect();
 
     if entries.is_empty() {
         println!("No cryo daemons running.");
@@ -318,11 +322,14 @@ fn cmd_ps(kill_all: bool) -> Result<()> {
     }
 
     for entry in &entries {
+        let Some(pid) = entry.pid else {
+            continue;
+        };
         if kill_all {
-            cryochamber::process::terminate_pid(entry.pid)?;
-            println!("Killed PID {:>6}  {}", entry.pid, entry.dir);
+            cryochamber::process::terminate_pid(pid)?;
+            println!("Killed PID {pid:>6}  {}", entry.dir);
         } else {
-            println!("PID {:>6}  {}", entry.pid, entry.dir);
+            println!("PID {pid:>6}  {}", entry.dir);
         }
     }
 

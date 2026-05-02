@@ -218,6 +218,13 @@
     name.textContent = c.name;
     row1.appendChild(dot);
     row1.appendChild(name);
+    if (c.path_hint) {
+      const pathHint = document.createElement('span');
+      pathHint.className = 'chamber-path';
+      pathHint.textContent = c.path_hint;
+      pathHint.title = c.path || c.path_hint;
+      row1.appendChild(pathHint);
+    }
     if (c.has_open_question) {
       const badge = document.createElement('span');
       badge.className = 'question-badge';
@@ -256,7 +263,7 @@
     const filter = document.getElementById('rail-search').value.trim().toLowerCase();
     const matchesFilter = c => {
       if (!filter) return true;
-      return [c.name, c.task, c.last_message_preview, c.path]
+      return [c.name, c.path_hint, c.task, c.last_message_preview, c.path]
         .filter(Boolean)
         .some(v => String(v).toLowerCase().includes(filter));
     };
@@ -482,7 +489,7 @@
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
     }
-    if (!entry.running) {
+    if (!entry.running && !entry.path_hint) {
       btns.appendChild(btn('archive', () => confirmArchive(entry.id, entry.name), 'danger', pending));
     }
   }

@@ -23,6 +23,12 @@ pub fn build_router(workspace_dir: PathBuf) -> Router {
     build_router_with_state(app)
 }
 
+pub fn build_router_local_only(workspace_dir: PathBuf) -> Router {
+    let app = Arc::new(WebAppState::local_only(workspace_dir));
+    app.refresh();
+    build_router_with_state(app)
+}
+
 /// Separate entry point so integration tests can inject their own `AppState`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
     Router::new()
@@ -96,7 +102,35 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
 }
 
 pub async fn serve(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
-    let app = Arc::new(WebAppState::new(workspace_dir));
+    serve_with_options(
+        workspace_dir,
+        host,
+        port,
+        crate::hub::discovery::DiscoveryOptions::all_chambers(),
+    )
+    .await
+}
+
+pub async fn serve_local_only(workspace_dir: PathBuf, host: &str, port: u16) -> anyhow::Result<()> {
+    serve_with_options(
+        workspace_dir,
+        host,
+        port,
+        crate::hub::discovery::DiscoveryOptions::local_only(),
+    )
+    .await
+}
+
+async fn serve_with_options(
+    workspace_dir: PathBuf,
+    host: &str,
+    port: u16,
+    discovery_options: crate::hub::discovery::DiscoveryOptions,
+) -> anyhow::Result<()> {
+    let app = Arc::new(WebAppState::with_discovery_options(
+        workspace_dir,
+        discovery_options,
+    ));
     app.refresh();
     let router = build_router_with_state(app);
     let addr = format!("{host}:{port}");

@@ -745,7 +745,7 @@ impl Daemon {
         let server = startup.server;
         eprintln!("Daemon: socket listening at {}", sock_path.display());
         if let Some(warning) = startup.diagnostics.registry_warning {
-            eprintln!("Daemon: failed to register in ~/.cryo/daemons: {warning}");
+            eprintln!("Daemon: failed to update chamber registry: {warning}");
         }
 
         let watcher_started = startup.watcher.is_some();

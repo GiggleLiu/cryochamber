@@ -1,10 +1,8 @@
-//! Chamber discovery: scan `<dir>/*/cryo.toml`.
+//! Chamber discovery: scan `<dir>/*/cryo.toml` and merge the user registry.
 //!
-//! Hub only surfaces chambers that live under the directory `cryohub` was
-//! started in (the server's cwd). Daemons running elsewhere on the machine
-//! (e.g. test leftovers under `/tmp/`) are intentionally not merged in —
-//! they would clutter the rail and can't be managed from this hub instance
-//! anyway.
+//! Cryohub defaults to showing both chambers under its workspace and chambers
+//! remembered by `cryo start` elsewhere on the machine. Local-only mode keeps
+//! the old workspace-only behavior.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +41,7 @@ pub struct ChamberEntry {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    pub path_hint: Option<String>,
     pub config_error: Option<String>,
     pub running: bool,
     pub agent_running: bool,
@@ -59,6 +58,25 @@ pub struct ChamberEntry {
 
 /// A map from chamber id → entry.
 pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryOptions {
+    pub include_registry: bool,
+}
+
+impl DiscoveryOptions {
+    pub fn all_chambers() -> Self {
+        Self {
+            include_registry: true,
+        }
+    }
+
+    pub fn local_only() -> Self {
+        Self {
+            include_registry: false,
+        }
+    }
+}
 
 /// Scan `<dir>/*` for chambers. A subdirectory is treated as a chamber
 /// only if it contains a `cryo.toml`; chambers with a malformed
@@ -96,6 +114,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
                 id,
                 name,
                 path: canonical,
+                path_hint: None,
                 config_error,
                 running: false,
                 agent_running: false,
@@ -112,6 +131,61 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
         );
     }
     out
+}
+
+fn registry_entry_for_path(workspace: &Path, path: PathBuf) -> Option<ChamberEntry> {
+    let canonical = path.canonicalize().unwrap_or(path);
+    let cryo_toml = crate::config::config_path(&canonical);
+    if !cryo_toml.exists() {
+        return None;
+    }
+    let name = canonical
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(unknown)".into());
+    let config_error = crate::config::load_config(&cryo_toml)
+        .err()
+        .map(|e| e.to_string());
+    let id = encode_id(&canonical);
+    let path_hint = if canonical.starts_with(workspace) {
+        None
+    } else {
+        canonical.parent().map(|p| p.display().to_string())
+    };
+    Some(ChamberEntry {
+        id,
+        name,
+        path: canonical,
+        path_hint,
+        config_error,
+        running: false,
+        agent_running: false,
+        session: None,
+        next_wake: None,
+        next_wake_display: None,
+        wake_imminent: false,
+        has_open_question: false,
+        task: None,
+        last_message_preview: None,
+        completed: false,
+        sync: vec![],
+    })
+}
+
+fn merge_registry(workspace: &Path, idx: &mut ChamberIndex) {
+    let Ok(entries) = crate::registry::list() else {
+        return;
+    };
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
+    for registered in entries {
+        let path = PathBuf::from(registered.dir);
+        let Some(entry) = registry_entry_for_path(&workspace, path) else {
+            continue;
+        };
+        idx.entry(entry.id.clone()).or_insert(entry);
+    }
 }
 
 /// Fill in runtime fields on each entry from its on-disk state.
@@ -141,7 +215,14 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
 
 /// One-shot discovery: scan workspace and populate runtime fields.
 pub fn discover(workspace: &Path) -> ChamberIndex {
+    discover_with_options(workspace, DiscoveryOptions::all_chambers())
+}
+
+pub fn discover_with_options(workspace: &Path, options: DiscoveryOptions) -> ChamberIndex {
     let mut idx = scan_workspace(workspace);
+    if options.include_registry {
+        merge_registry(workspace, &mut idx);
+    }
     populate_runtime(&mut idx);
     idx
 }

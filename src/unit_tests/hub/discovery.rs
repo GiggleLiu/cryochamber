@@ -1,4 +1,43 @@
 use super::*;
+use std::sync::{Mutex, MutexGuard};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct RegistryEnvGuard<'a> {
+    _lock: MutexGuard<'a, ()>,
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl<'a> RegistryEnvGuard<'a> {
+    fn set(key: &'static str, value: &std::path::Path) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self {
+            _lock: lock,
+            key,
+            previous,
+        }
+    }
+}
+
+impl Drop for RegistryEnvGuard<'_> {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+fn create_chamber(parent: &Path, name: &str) -> PathBuf {
+    let chamber = parent.join(name);
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+    chamber.canonicalize().unwrap()
+}
 
 #[test]
 fn encode_decode_round_trip() {
@@ -39,7 +78,46 @@ fn scan_finds_chambers_with_valid_config() {
     assert!(names.contains(&"beta".to_string()));
     for entry in idx.values() {
         assert!(entry.config_error.is_none());
+        assert_eq!(entry.path_hint, None);
     }
+}
+
+#[test]
+fn discover_merges_registered_chambers_outside_workspace() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let other_workspace = tempfile::tempdir().unwrap();
+    create_chamber(workspace.path(), "local");
+    let registered = create_chamber(other_workspace.path(), "external");
+    crate::registry::remember_chamber(&registered).unwrap();
+
+    let idx = discover(workspace.path());
+    let local = idx.values().find(|entry| entry.name == "local").unwrap();
+    let external = idx.values().find(|entry| entry.name == "external").unwrap();
+
+    assert_eq!(idx.len(), 2);
+    assert_eq!(local.path_hint, None);
+    assert_eq!(
+        external.path_hint,
+        Some(registered.parent().unwrap().display().to_string())
+    );
+}
+
+#[test]
+fn discover_local_only_skips_registered_chambers() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let other_workspace = tempfile::tempdir().unwrap();
+    create_chamber(workspace.path(), "local");
+    let registered = create_chamber(other_workspace.path(), "external");
+    crate::registry::remember_chamber(&registered).unwrap();
+
+    let idx = discover_with_options(workspace.path(), DiscoveryOptions::local_only());
+
+    assert_eq!(idx.len(), 1);
+    assert_eq!(idx.values().next().unwrap().name, "local");
 }
 
 #[test]

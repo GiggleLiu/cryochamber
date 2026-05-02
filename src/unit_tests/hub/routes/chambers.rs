@@ -7,7 +7,7 @@ async fn get_chambers_lists_workspace_scans() {
     let cfg = crate::config::CryoConfig::default();
     crate::config::save_config(&dir.path().join("alpha").join("cryo.toml"), &cfg).unwrap();
 
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
 
     let Json(v) = get_chambers(State(app)).await;
@@ -19,7 +19,7 @@ async fn get_chambers_lists_workspace_scans() {
 #[tokio::test]
 async fn refresh_picks_up_new_chamber() {
     let dir = tempfile::tempdir().unwrap();
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     let Json(initial) = get_chambers(State(app.clone())).await;
     assert_eq!(initial.as_array().unwrap().len(), 0);
 
@@ -65,7 +65,7 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
     )
     .unwrap();
 
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     let mut stale = crate::hub::discovery::scan_workspace(dir.path());
     for entry in stale.values_mut() {
         entry.running = true;
@@ -101,7 +101,7 @@ async fn get_chambers_includes_agent_running_from_disk() {
     )
     .unwrap();
 
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
 
     let Json(v) = get_chambers(State(app)).await;
@@ -170,7 +170,7 @@ mod post_new {
     #[tokio::test]
     async fn creates_new_chamber_returns_201_and_id() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         app.refresh();
 
         let resp = post_new(
@@ -205,7 +205,7 @@ mod post_new {
     #[tokio::test]
     async fn creates_new_chamber_without_api_key_provider() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
 
         let (status, Json(_body)) = post_new(
             State(app),
@@ -233,7 +233,7 @@ mod post_new {
     #[tokio::test]
     async fn creates_new_chamber_with_selected_api_key_provider() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
 
         let (status, Json(_body)) = post_new(
             State(app),
@@ -268,7 +268,7 @@ mod post_new {
     #[tokio::test]
     async fn creates_new_chamber_with_custom_api_key_provider() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
 
         let (status, Json(_body)) = post_new(
             State(app),
@@ -301,7 +301,7 @@ mod post_new {
     #[tokio::test]
     async fn empty_name_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         let (status, Json(body)) = post_new(
             State(app),
             Json(NewChamberPayload {
@@ -319,7 +319,7 @@ mod post_new {
     #[tokio::test]
     async fn name_with_slash_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         let (status, Json(body)) = post_new(
             State(app),
             Json(NewChamberPayload {
@@ -337,7 +337,7 @@ mod post_new {
     #[tokio::test]
     async fn empty_api_key_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         let (status, Json(body)) = post_new(
             State(app),
             Json(NewChamberPayload {
@@ -355,7 +355,7 @@ mod post_new {
     #[tokio::test]
     async fn invalid_api_key_provider_rejected_400() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         let (status, Json(body)) = post_new(
             State(app),
             Json(NewChamberPayload {
@@ -380,7 +380,7 @@ mod post_new {
         let cfg = crate::config::CryoConfig::default();
         crate::config::save_config(&dir.path().join("alpha").join("cryo.toml"), &cfg).unwrap();
 
-        let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         app.refresh();
         let (status, Json(body)) = post_new(
             State(app),
@@ -402,7 +402,7 @@ mod post_new {
         crate::protocol::scaffold_chamber(cli_dir.path(), "opencode").unwrap();
 
         let hub_dir = tempfile::tempdir().unwrap();
-        let app = Arc::new(AppState::new(hub_dir.path().to_path_buf()));
+        let app = Arc::new(AppState::local_only(hub_dir.path().to_path_buf()));
         let _ = post_new(
             State(app),
             Json(NewChamberPayload {
@@ -436,7 +436,7 @@ mod post_new {
         let workspace_file = dir.path().join("workspace-file");
         std::fs::write(&workspace_file, "not a directory").unwrap();
 
-        let app = Arc::new(AppState::new(workspace_file));
+        let app = Arc::new(AppState::local_only(workspace_file));
         let (status, Json(body)) = post_new(
             State(app),
             Json(NewChamberPayload {

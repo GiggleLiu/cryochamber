@@ -287,7 +287,7 @@ async fn post_archive_moves_chamber_out_of_workspace_index() {
     crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
     std::fs::write(chamber.join("plan.md"), "plan").unwrap();
 
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
     let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
 
@@ -313,7 +313,7 @@ async fn post_archive_rejects_chambers_outside_workspace() {
     )
     .unwrap();
 
-    let app = Arc::new(AppState::new(workspace.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
     let id = crate::hub::discovery::encode_id(external.path());
     app.chambers.write().unwrap().insert(
         id.clone(),
@@ -321,6 +321,7 @@ async fn post_archive_rejects_chambers_outside_workspace() {
             id: id.clone(),
             name: "external".into(),
             path: external.path().to_path_buf(),
+            path_hint: Some(external.path().display().to_string()),
             config_error: None,
             running: false,
             agent_running: false,

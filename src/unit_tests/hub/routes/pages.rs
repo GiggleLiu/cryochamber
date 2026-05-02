@@ -113,6 +113,14 @@ fn shell_renders_archive_button_for_stopped_chambers() {
 }
 
 #[test]
+fn shell_only_renders_archive_for_local_chambers() {
+    assert!(
+        SHELL_HTML.contains("!entry.running && !entry.path_hint"),
+        "archive is a workspace-local move and should not be offered for registered chambers outside the hub workspace"
+    );
+}
+
+#[test]
 fn shell_new_chamber_modal_collects_provider_and_api_key() {
     assert!(
         SHELL_HTML.contains("id=\"modal-provider-details\""),
@@ -525,6 +533,26 @@ fn shell_stacks_task_and_wake_time_on_separate_rail_lines() {
     assert!(
         !rule.contains("space-between"),
         "`.chamber-meta` should no longer use space-between: {rule}"
+    );
+}
+
+#[test]
+fn shell_renders_path_hint_only_when_entry_provides_one() {
+    assert!(
+        SHELL_HTML.contains("if (c.path_hint)"),
+        "rail rows should show a location hint only for non-local registered chambers"
+    );
+    assert!(
+        SHELL_HTML.contains("pathHint.className = 'chamber-path'"),
+        "path hints should use a dedicated CSS class"
+    );
+    assert!(
+        WEB_CSS.contains(".chamber-path"),
+        "web CSS should style the compact registered-chamber location hint"
+    );
+    assert!(
+        !SHELL_HTML.contains("System-wide") && !SHELL_HTML.contains("Global"),
+        "registered chambers should be distinguished implicitly, not with an explicit sidebar section label"
     );
 }
 

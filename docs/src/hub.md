@@ -6,7 +6,7 @@ Cryohub is a directory-scoped web dashboard for managing multiple cryochamber ch
 
 ## How cryohub discovers chambers
 
-Cryohub always operates on the current working directory. It scans every immediate subdirectory and treats any subdirectory containing a `cryo.toml` as a chamber.
+Cryohub always operates on the current working directory. It scans every immediate subdirectory and treats any subdirectory containing a `cryo.toml` as a chamber. By default it also merges chambers remembered by the user registry, so chambers started elsewhere on the same machine remain visible after they stop.
 
 A typical workspace layout:
 
@@ -32,8 +32,9 @@ You start the hub from the workspace root (`~/my-chambers`), not from a chamber 
 2. Start the hub. Choose one of:
 
    ```bash
-   cryohub start              # install as a service (survives reboot)
-   cryohub start --foreground # run in the current terminal (no service)
+   cryohub start               # install as a service (survives reboot)
+   cryohub start --foreground  # run in the current terminal (no service)
+   cryohub start --local-only  # ignore the user registry
    ```
 
 3. Open the URL printed by `cryohub` in your browser.
@@ -67,14 +68,14 @@ This makes it easy to find a hub you started from a different working directory.
 
 The web UI has two main areas:
 
-- **Sidebar** — every discovered chamber, sorted by *running → stopped → external*. Each row shows a status dot, the chamber name, and an unread-message badge.
+- **Sidebar** — every discovered chamber, sorted by running state and name. Each row shows a status dot, the chamber name, and an unread-message badge. Chambers outside the current workspace show a compact parent-path hint; local workspace chambers show only their folder name.
 - **Main pane** — full detail for the selected chamber: status, current task, next wake time, notes, message history, log tail, and a send widget.
 
-Lifecycle buttons (**Start**, **Stop**, **Restart**) are available for chambers that live under the hub's working directory.
+Lifecycle buttons are available for discovered chambers. Archive is workspace-local, so it is only offered for chambers under the hub's working directory.
 
-## External chambers
+## Registry chambers
 
-If a daemon is running from a directory outside the hub's working directory, the hub still detects it via the machine-wide registry and lists it as an **external** chamber. External chambers are read-only — you can monitor status and read logs, but lifecycle buttons are hidden.
+When `cryo start` runs, the daemon records the chamber in the user registry under `$XDG_STATE_HOME/cryo/chambers/` (or `~/.cryo/chambers/` if `XDG_STATE_HOME` is unset). Clean daemon shutdown clears the PID but keeps the entry, so Cryohub can show stopped chambers too. Each hub refresh checks registered paths and prunes entries whose chamber directory or `cryo.toml` disappeared.
 
 ## Run the hub for a single chamber
 

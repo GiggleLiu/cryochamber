@@ -30,6 +30,9 @@ enum Commands {
         /// Port to listen on (default: 8765)
         #[arg(long)]
         port: Option<u16>,
+        /// Show only chambers under the current directory, ignoring the user registry
+        #[arg(long)]
+        local_only: bool,
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
@@ -46,6 +49,8 @@ enum Commands {
         host: String,
         #[arg(long)]
         port: u16,
+        #[arg(long)]
+        local_only: bool,
     },
 }
 
@@ -55,11 +60,16 @@ fn main() -> Result<()> {
         Commands::Start {
             host,
             port,
+            local_only,
             foreground,
-        } => cmd_start(host, port, foreground),
+        } => cmd_start(host, port, local_only, foreground),
         Commands::Stop => cmd_stop(),
         Commands::Status => cmd_status(),
-        Commands::Daemon { host, port } => cmd_daemon(host, port),
+        Commands::Daemon {
+            host,
+            port,
+            local_only,
+        } => cmd_daemon(host, port, local_only),
     }
 }
 
@@ -76,30 +86,42 @@ fn require_chambers_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Result<()> {
+fn cmd_start(
+    host: Option<String>,
+    port: Option<u16>,
+    local_only: bool,
+    foreground: bool,
+) -> Result<()> {
     let dir = require_chambers_dir()?;
     let host = host.unwrap_or_else(|| DEFAULT_HOST.to_string());
     let port = port.unwrap_or(DEFAULT_PORT);
 
     if foreground {
         let rt = tokio::runtime::Runtime::new()?;
+        if local_only {
+            return rt.block_on(cryochamber::hub::serve_local_only(dir, &host, port));
+        }
         return rt.block_on(cryochamber::hub::serve(dir, &host, port));
     }
 
     let exe = std::env::current_exe().context("Failed to resolve cryohub executable path")?;
     let port_str = port.to_string();
+    let mut args = vec![
+        "daemon".to_string(),
+        "--host".to_string(),
+        host.clone(),
+        "--port".to_string(),
+        port_str,
+    ];
+    if local_only {
+        args.push("--local-only".to_string());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let log_path = cryochamber::hub::paths::hub_log_path(&dir);
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    cryochamber::service::install(
-        SERVICE_LABEL,
-        &dir,
-        &exe,
-        &["daemon", "--host", &host, "--port", &port_str],
-        &log_path,
-        true,
-    )?;
+    cryochamber::service::install(SERVICE_LABEL, &dir, &exe, &arg_refs, &log_path, true)?;
     println!("Cryohub service installed: http://{host}:{port}");
     println!("Serving chambers from: {}", dir.display());
     println!("Log: {}", log_path.display());
@@ -161,8 +183,12 @@ fn print_other_installed(dir: &Path) {
     println!("(cd into the listed directory and run `cryohub stop` to remove one.)");
 }
 
-fn cmd_daemon(host: String, port: u16) -> Result<()> {
+fn cmd_daemon(host: String, port: u16, local_only: bool) -> Result<()> {
     let dir = require_chambers_dir()?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::hub::serve(dir, &host, port))
+    if local_only {
+        rt.block_on(cryochamber::hub::serve_local_only(dir, &host, port))
+    } else {
+        rt.block_on(cryochamber::hub::serve(dir, &host, port))
+    }
 }

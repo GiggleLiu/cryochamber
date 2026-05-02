@@ -9,7 +9,7 @@ async fn get_sync_returns_empty_for_unconfigured_chamber() {
     let cfg = crate::config::CryoConfig::default();
     crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
 
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
     let id = encode_id(&alpha.canonicalize().unwrap());
     let res = get_sync(State(app), AxumPath(id)).await.unwrap();
@@ -33,7 +33,7 @@ async fn get_sync_reports_configured_gh_backend() {
     };
     crate::gh_sync::save_sync_state(&alpha.join("gh-sync.json"), &state).unwrap();
 
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
     let id = encode_id(&alpha.canonicalize().unwrap());
     let res = get_sync(State(app), AxumPath(id)).await.unwrap();
@@ -50,7 +50,7 @@ async fn post_sync_action_rejects_unknown_backend() {
     std::fs::create_dir_all(&alpha).unwrap();
     let cfg = crate::config::CryoConfig::default();
     crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
     let id = encode_id(&alpha.canonicalize().unwrap());
     let err = post_sync_action(State(app), AxumPath((id, "bogus".into(), "start".into())))
@@ -66,7 +66,7 @@ async fn post_sync_action_rejects_unknown_verb() {
     std::fs::create_dir_all(&alpha).unwrap();
     let cfg = crate::config::CryoConfig::default();
     crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
-    let app = Arc::new(AppState::new(dir.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
     let id = encode_id(&alpha.canonicalize().unwrap());
     let err = post_sync_action(State(app), AxumPath((id, "gh".into(), "dance".into())))
