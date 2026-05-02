@@ -1,20 +1,13 @@
 // src/bin/cryohub.rs
-//! Cryohub — directory-scoped web dashboard for managing cryochambers.
+//! Cryohub — global web dashboard for managing cryochambers.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
 
 const SERVICE_LABEL: &str = "hub";
-const LOG_FILENAME: &str = "cryohub.log";
-const DEFAULT_HOST: &str = "127.0.0.1";
-const DEFAULT_PORT: u16 = 8765;
 
 #[derive(Parser)]
-#[command(
-    name = "cryohub",
-    about = "Cryochamber hub: directory-scoped web dashboard"
-)]
+#[command(name = "cryohub", about = "Cryochamber hub: global web dashboard")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -22,31 +15,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the hub from the current directory (installs an OS service that
-    /// survives reboot unless --foreground)
+    /// Start the global hub (installs an OS service that survives reboot unless --foreground)
     Start {
-        /// Host to listen on (default: 127.0.0.1)
+        /// Host to listen on (overrides cryohub.toml)
         #[arg(long)]
         host: Option<String>,
-        /// Port to listen on (default: 8765)
+        /// Port to listen on (overrides cryohub.toml)
         #[arg(long)]
         port: Option<u16>,
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
     },
-    /// Stop and remove the hub service for the current directory
+    /// Stop and remove the global hub service
     Stop,
-    /// Show whether a hub service is installed for the current directory.
-    /// Always also lists every other cryohub service installed on the machine.
+    /// Show whether the global hub service is installed.
     Status,
-    /// Run the server in the current process (internal — used by the service)
+    /// Run the server in the current process (internal - used by the service)
     #[command(hide = true)]
     Daemon {
         #[arg(long)]
-        host: String,
+        host: Option<String>,
         #[arg(long)]
-        port: u16,
+        port: Option<u16>,
     },
 }
 
@@ -64,103 +55,100 @@ fn main() -> Result<()> {
     }
 }
 
-fn require_chambers_dir() -> Result<PathBuf> {
-    let dir = cryochamber::work_dir()?;
-    if cryochamber::config::config_path(&dir).exists() {
-        anyhow::bail!(
-            "{} is a chamber (contains cryo.toml), not a directory of chambers.\n\
-             cd to the parent directory that holds your chamber subdirectories\n\
-             and run cryohub from there.",
-            dir.display()
-        );
-    }
-    Ok(dir)
-}
-
 fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Result<()> {
-    let dir = require_chambers_dir()?;
-    let host = host.unwrap_or_else(|| DEFAULT_HOST.to_string());
-    let port = port.unwrap_or(DEFAULT_PORT);
+    let config = cryochamber::hub::config::effective_config(host, port)?;
+    std::fs::create_dir_all(&config.chamber_root)?;
 
     if foreground {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(cryochamber::hub::serve(dir, &host, port));
+        return rt.block_on(cryochamber::hub::serve(&config.host, config.port));
     }
 
     let exe = std::env::current_exe().context("Failed to resolve cryohub executable path")?;
-    let port_str = port.to_string();
-    let log_path = dir.join(LOG_FILENAME);
-    cryochamber::service::install(
-        SERVICE_LABEL,
-        &dir,
-        &exe,
-        &["daemon", "--host", &host, "--port", &port_str],
-        &log_path,
-        true,
-    )?;
-    println!("Cryohub service installed: http://{host}:{port}");
-    println!("Serving chambers from: {}", dir.display());
-    println!("Log: {}", log_path.display());
+    let service_dir = cryochamber::hub::paths::hub_service_dir();
+    std::fs::create_dir_all(&service_dir)?;
+    let args = ["daemon"];
+    let log_path = cryochamber::hub::paths::hub_log_path();
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    cryochamber::service::install(SERVICE_LABEL, &service_dir, &exe, &args, &log_path, true)?;
+    let actual_log = cryochamber::service::stdio_log_path(SERVICE_LABEL, &service_dir, &log_path);
     println!(
-        "Survives reboot. Stop with: cd {} && cryohub stop",
-        dir.display()
+        "Cryohub service installed: http://{}:{}",
+        config.host, config.port
     );
+    println!("Chamber root: {}", config.chamber_root.display());
+    println!(
+        "Config: {}",
+        cryochamber::hub::paths::hub_config_path().display()
+    );
+    println!("Log: {}", actual_log.display());
+    println!("Survives reboot. Stop with: cryohub stop");
     Ok(())
 }
 
 fn cmd_stop() -> Result<()> {
-    let dir = cryochamber::work_dir()?;
-    if cryochamber::service::uninstall(SERVICE_LABEL, &dir)? {
+    let service_dir = cryochamber::hub::paths::hub_service_dir();
+    if cryochamber::service::uninstall(SERVICE_LABEL, &service_dir)? {
         println!("Cryohub service stopped and removed.");
         return Ok(());
     }
-    println!("No cryohub service installed for {}.", dir.display());
-    print_other_installed(&dir);
+    println!("No global cryohub service installed.");
+    print_legacy_installed();
     Ok(())
 }
 
 fn cmd_status() -> Result<()> {
-    let dir = cryochamber::work_dir()?;
-    if cryochamber::service::is_installed(SERVICE_LABEL, &dir) {
+    let service_dir = cryochamber::hub::paths::hub_service_dir();
+    let config = cryochamber::hub::config::load_config()?;
+    if cryochamber::service::is_installed(SERVICE_LABEL, &service_dir) {
         println!(
             "Cryohub service: installed ({})",
-            cryochamber::service::service_label(SERVICE_LABEL, &dir)
+            cryochamber::service::service_label(SERVICE_LABEL, &service_dir)
         );
-        let log = dir.join(LOG_FILENAME);
+        let fallback = cryochamber::hub::paths::hub_log_path();
+        let log = cryochamber::service::stdio_log_path(SERVICE_LABEL, &service_dir, &fallback);
         if log.exists() {
             println!("Log: {}", log.display());
         }
     } else {
-        println!("Cryohub service: not installed for {}", dir.display());
+        println!("Cryohub service: not installed");
     }
-    print_other_installed(&dir);
+    println!("URL: http://{}:{}", config.host, config.port);
+    println!("Chamber root: {}", config.chamber_root.display());
+    println!(
+        "Config: {}",
+        cryochamber::hub::paths::hub_config_path().display()
+    );
+    print_legacy_installed();
     Ok(())
 }
 
-/// List every cryohub service on the machine *except* the one anchored at
-/// `dir` (which the caller has already reported on). Helps users find services
-/// they started from a different cwd.
-fn print_other_installed(dir: &Path) {
+/// List older cwd-scoped hub services, if any, so users can clean them up
+/// after upgrading to the single global hub service.
+fn print_legacy_installed() {
+    let service_dir = cryochamber::hub::paths::hub_service_dir();
     let installed = cryochamber::service::list_installed(SERVICE_LABEL);
     let others: Vec<_> = installed
         .into_iter()
-        .filter(|s| s.dir.as_deref() != Some(dir))
+        .filter(|s| s.dir.as_deref() != Some(service_dir.as_path()))
         .collect();
     if others.is_empty() {
         return;
     }
-    println!("\nOther cryohub services installed on this machine:");
+    println!("\nLegacy cwd-scoped cryohub services installed on this machine:");
     for s in others {
         match s.dir {
             Some(d) => println!("  {} → {}", s.label, d.display()),
             None => println!("  {} → (working directory not parseable)", s.label),
         }
     }
-    println!("(cd into the listed directory and run `cryohub stop` to remove one.)");
+    println!("(These are from older Cryohub versions; remove them from their listed directories.)");
 }
 
-fn cmd_daemon(host: String, port: u16) -> Result<()> {
-    let dir = require_chambers_dir()?;
+fn cmd_daemon(host: Option<String>, port: Option<u16>) -> Result<()> {
+    let config = cryochamber::hub::config::effective_config(host, port)?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::hub::serve(dir, &host, port))
+    rt.block_on(cryochamber::hub::serve(&config.host, config.port))
 }

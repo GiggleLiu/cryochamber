@@ -8,7 +8,7 @@ fn resolve_finds_known_chamber() {
     let cfg = crate::config::CryoConfig::default();
     crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
 
-    let state = AppState::new(dir.path().to_path_buf());
+    let state = AppState::local_only(dir.path().to_path_buf());
     state.refresh();
     let id = crate::hub::discovery::encode_id(&alpha.canonicalize().unwrap());
     let resolved = state.resolve(&id);
@@ -21,6 +21,6 @@ fn resolve_finds_known_chamber() {
 #[test]
 fn resolve_returns_none_for_unknown_id() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AppState::new(dir.path().to_path_buf());
+    let state = AppState::local_only(dir.path().to_path_buf());
     assert!(state.resolve("nonexistent").is_none());
 }

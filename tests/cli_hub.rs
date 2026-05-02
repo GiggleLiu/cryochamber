@@ -2,22 +2,18 @@ use assert_cmd::Command;
 use predicates::str::contains;
 
 #[test]
-fn cryohub_start_rejects_chamber_cwd() {
+fn cryohub_start_help_describes_global_hub() {
     let tmp = tempfile::tempdir().unwrap();
-    // Simulate a chamber: a cryo.toml directly in the dir.
-    let cfg = cryochamber::config::CryoConfig::default();
-    cryochamber::config::save_config(&tmp.path().join("cryo.toml"), &cfg).unwrap();
 
     #[allow(deprecated)]
     Command::cargo_bin("cryohub")
         .unwrap()
         .current_dir(tmp.path())
         .arg("start")
-        .arg("--foreground")
-        .timeout(std::time::Duration::from_secs(3))
+        .arg("--help")
         .assert()
-        .failure()
-        .stderr(contains("is a chamber"));
+        .success()
+        .stdout(contains("global"));
 }
 
 #[test]
@@ -80,6 +76,49 @@ fn cryohub_status_reports_installed_when_unit_exists() {
 }
 
 #[test]
+fn cryohub_status_reports_global_service_from_any_directory() {
+    let cwd = tempfile::tempdir().unwrap();
+    let other_cwd = tempfile::tempdir().unwrap();
+    let fake_home = tempfile::tempdir().unwrap();
+    let fake_state = tempfile::tempdir().unwrap();
+    let hub_dir = cryochamber::hub::paths::hub_service_dir_for_state_home(fake_state.path());
+    let label = cryochamber::service::service_label("hub", &hub_dir);
+
+    #[cfg(target_os = "macos")]
+    let unit_path = {
+        let agents = fake_home.path().join("Library/LaunchAgents");
+        std::fs::create_dir_all(&agents).unwrap();
+        agents.join(format!("{label}.plist"))
+    };
+    #[cfg(target_os = "linux")]
+    let unit_path = {
+        let units = fake_home.path().join(".config/systemd/user");
+        std::fs::create_dir_all(&units).unwrap();
+        units.join(format!("{label}.service"))
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let unit_path: std::path::PathBuf = {
+        return;
+    };
+
+    std::fs::write(&unit_path, "stub").unwrap();
+
+    for dir in [cwd.path(), other_cwd.path()] {
+        #[allow(deprecated)]
+        Command::cargo_bin("cryohub")
+            .unwrap()
+            .current_dir(dir)
+            .env("HOME", fake_home.path())
+            .env("XDG_STATE_HOME", fake_state.path())
+            .arg("status")
+            .assert()
+            .success()
+            .stdout(contains("installed"))
+            .stdout(contains(&label));
+    }
+}
+
+#[test]
 fn cryohub_stop_reports_nothing_when_no_service() {
     let tmp = tempfile::tempdir().unwrap();
     let fake_home = tempfile::tempdir().unwrap();
@@ -92,7 +131,7 @@ fn cryohub_stop_reports_nothing_when_no_service() {
         .arg("stop")
         .assert()
         .success()
-        .stdout(contains("No cryohub service installed"));
+        .stdout(contains("No global cryohub service installed"));
 }
 
 #[test]
@@ -142,7 +181,7 @@ fn cryohub_status_lists_other_installed_services_anchored_elsewhere() {
         .arg("status")
         .assert()
         .success()
-        .stdout(contains("Other cryohub services installed"))
+        .stdout(contains("Legacy cwd-scoped cryohub services installed"))
         .stdout(contains(&other_label))
         .stdout(contains(other_dir.to_str().unwrap()));
 }

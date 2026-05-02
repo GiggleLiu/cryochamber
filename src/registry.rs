@@ -1,9 +1,11 @@
 // src/registry.rs
-//! PID file registry for tracking running cryo daemons.
+//! User registry for tracking cryochamber directories and their daemon PIDs.
 //!
-//! Each daemon registers itself in `$XDG_RUNTIME_DIR/cryo/` (or `~/.cryo/daemons/`)
-//! on startup and removes the file on clean exit. `cryo ps` reads the directory
-//! to list all known daemons. Stale entries (dead PIDs) are auto-cleaned on read.
+//! Each chamber gets a persistent entry in the user state directory. Daemon
+//! startup fills in `pid`/`socket_path`; clean shutdown clears those runtime
+//! fields but keeps the chamber entry so Cryohub can still surface stopped
+//! chambers. Stale PIDs and entries whose chamber directory disappeared are
+//! repaired when the registry is read.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -11,7 +13,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonEntry {
-    pub pid: u32,
+    #[serde(default)]
+    pub pid: Option<u32>,
     pub dir: String,
     #[serde(default)]
     pub socket_path: Option<String>,
@@ -19,14 +22,14 @@ pub struct DaemonEntry {
 
 /// Return the registry directory, creating it if needed.
 ///
-/// Prefers `$XDG_RUNTIME_DIR/cryo/` (auto-cleaned on reboot by the OS),
-/// falls back to `~/.cryo/daemons/`.
+/// Prefers `$XDG_STATE_HOME/cryo/chambers/` so stopped chambers survive
+/// daemon exit and reboot, falls back to `~/.cryo/chambers/`.
 fn registry_dir() -> Result<PathBuf> {
-    let dir = if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(runtime).join("cryo")
+    let dir = if let Ok(state_home) = std::env::var("XDG_STATE_HOME") {
+        PathBuf::from(state_home).join("cryo").join("chambers")
     } else {
         let home = std::env::var("HOME").context("HOME not set")?;
-        PathBuf::from(home).join(".cryo").join("daemons")
+        PathBuf::from(home).join(".cryo").join("chambers")
     };
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -40,35 +43,56 @@ fn entry_filename(dir: &Path) -> String {
     format!("{:016x}.json", hasher.finish())
 }
 
-/// Register this daemon in the global registry.
+/// Remember a chamber in the user registry without marking it running.
+pub fn remember_chamber(dir: &Path) -> Result<()> {
+    write_entry(
+        dir,
+        DaemonEntry {
+            pid: None,
+            dir: dir.to_string_lossy().to_string(),
+            socket_path: None,
+        },
+    )
+}
+
+/// Register this daemon in the user registry.
 pub fn register(dir: &Path, socket_path: Option<&Path>) -> Result<()> {
+    write_entry(
+        dir,
+        DaemonEntry {
+            pid: Some(std::process::id()),
+            dir: dir.to_string_lossy().to_string(),
+            socket_path: socket_path.map(|p| p.to_string_lossy().to_string()),
+        },
+    )
+}
+
+fn write_entry(dir: &Path, entry: DaemonEntry) -> Result<()> {
     let reg = registry_dir()?;
-    let entry = DaemonEntry {
-        pid: std::process::id(),
-        dir: dir.to_string_lossy().to_string(),
-        socket_path: socket_path.map(|p| p.to_string_lossy().to_string()),
-    };
     let path = reg.join(entry_filename(dir));
     std::fs::write(&path, serde_json::to_string(&entry)?)?;
     Ok(())
 }
 
-/// Remove this daemon from the global registry.
+/// Mark this daemon as stopped while preserving the chamber entry.
 pub fn unregister(dir: &Path) {
-    if let Ok(reg) = registry_dir() {
-        let path = reg.join(entry_filename(dir));
-        let _ = std::fs::remove_file(path);
-    }
+    let entry = DaemonEntry {
+        pid: None,
+        dir: dir.to_string_lossy().to_string(),
+        socket_path: None,
+    };
+    let _ = write_entry(dir, entry);
 }
 
-/// List all registered daemons. Dead entries are auto-cleaned.
+/// List all remembered chambers. Missing chamber directories are pruned;
+/// dead PIDs are cleared so the entry remains visible as stopped.
 pub fn list() -> Result<Vec<DaemonEntry>> {
     let reg = registry_dir()?;
-    let mut alive = Vec::new();
+    let mut entries = Vec::new();
 
     let dir = match std::fs::read_dir(&reg) {
         Ok(d) => d,
-        Err(_) => return Ok(alive),
+        Err(_) => return Ok(entries),
     };
 
     for file in dir {
@@ -80,7 +104,7 @@ pub fn list() -> Result<Vec<DaemonEntry>> {
             Ok(c) => c,
             Err(_) => continue,
         };
-        let entry: DaemonEntry = match serde_json::from_str(&content) {
+        let mut entry: DaemonEntry = match serde_json::from_str(&content) {
             Ok(e) => e,
             Err(_) => {
                 let _ = std::fs::remove_file(file.path());
@@ -88,15 +112,24 @@ pub fn list() -> Result<Vec<DaemonEntry>> {
             }
         };
 
-        if is_pid_alive(entry.pid) {
-            alive.push(entry);
-        } else {
-            // Auto-clean stale entry
+        let chamber_dir = PathBuf::from(&entry.dir);
+        if !crate::config::config_path(&chamber_dir).exists() {
             let _ = std::fs::remove_file(file.path());
+            continue;
         }
+
+        if let Some(pid) = entry.pid {
+            if !is_pid_alive(pid) {
+                entry.pid = None;
+                entry.socket_path = None;
+                let _ = std::fs::write(file.path(), serde_json::to_string(&entry)?);
+            }
+        }
+
+        entries.push(entry);
     }
 
-    Ok(alive)
+    Ok(entries)
 }
 
 fn is_pid_alive(pid: u32) -> bool {

@@ -132,6 +132,29 @@ pub fn parse_latest_session_plan_complete(log_path: &Path) -> Result<Option<Stri
     Ok(None)
 }
 
+/// Extract the hibernate summary from the current session, if any.
+/// Matches both scheduled and plan-complete hibernate lines with
+/// `summary="..."`.
+pub fn parse_latest_session_summary(log_path: &Path) -> Result<Option<String>> {
+    let session = match read_current_session(log_path)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    for line in session.lines().rev() {
+        if !line.contains("hibernate:") {
+            continue;
+        }
+        let summary = line
+            .find("summary=\"")
+            .and_then(|pos| line.get(pos + "summary=\"".len()..))
+            .and_then(|rest| rest.rfind('"').map(|end| rest[..end].to_string()));
+        if summary.is_some() {
+            return Ok(summary);
+        }
+    }
+    Ok(None)
+}
+
 /// Extract the task line from the current session in cryo.log.
 pub fn parse_latest_session_task(log_path: &Path) -> Result<Option<String>> {
     let session = match read_current_session(log_path)? {

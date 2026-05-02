@@ -18,15 +18,6 @@ use crate::hub::state::{AppState, SseEvent};
 /// Build the JSON status payload for a single chamber.
 pub fn status_json(dir: &Path) -> Value {
     let status = crate::chamber_status::status(dir);
-    let next_wake_rel = status.next_wake.as_deref().and_then(|w| {
-        let wake = chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok()?;
-        let now = chrono::Local::now().naive_local();
-        let diff_ms = (wake - now).num_milliseconds();
-        Some(format!(
-            "{w} ({})",
-            crate::hub::format_relative_time(diff_ms)
-        ))
-    });
 
     json!({
         "running": status.running,
@@ -34,7 +25,7 @@ pub fn status_json(dir: &Path) -> Value {
         "session": status.session,
         "agent": status.agent,
         "log_tail": status.log_tail,
-        "next_wake": next_wake_rel,
+        "next_wake": status.next_wake,
         "notes_content": status.notes_content,
         "notes_html": status.notes_html,
         "plan_content": status.plan_content,
@@ -42,6 +33,7 @@ pub fn status_json(dir: &Path) -> Value {
         "config_content": status.config_content,
         "settings_rows": status.settings_rows,
         "task": status.task,
+        "session_summary": status.session_summary,
         "completed": status.completed,
         "completion_summary": status.completion_summary,
     })
@@ -201,27 +193,6 @@ pub async fn post_reset(
         Ok(archive) => Ok(Json(json!({
             "ok": true,
             "message": format!("Reset: logs archived to {}", archive.display()),
-            "archive": archive.display().to_string(),
-        }))),
-        Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),
-    }
-}
-
-pub async fn post_archive(
-    State(app): State<Arc<AppState>>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Json<Value>, StatusCode> {
-    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    app.watchers.drop_watcher(&path);
-    let workspace = app.workspace_dir.clone();
-    let result = run_blocking_lifecycle(app, path, move |path| {
-        crate::hub::lifecycle::archive_chamber(&workspace, path)
-    })
-    .await;
-    match result {
-        Ok(archive) => Ok(Json(json!({
-            "ok": true,
-            "message": format!("Archived to {}", archive.display()),
             "archive": archive.display().to_string(),
         }))),
         Err(e) => Ok(Json(json!({"ok": false, "message": e.to_string()}))),

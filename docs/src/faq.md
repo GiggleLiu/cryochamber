@@ -76,7 +76,7 @@ Common causes:
 
 - The agent is hitting rate limits — set `max_session_duration` to throttle.
 - A required dependency is missing in the chamber directory.
-- The agent doesn't understand the `cryo-agent` protocol — check the generated `AGENTS.md` or `CLAUDE.md`.
+- The agent doesn't understand the `cryo-agent` protocol — check the session prompt in `cryo-agent.log`; Cryochamber embeds the protocol in every prompt.
 
 **Break the cycle.** Remove the `(attempt k)` TODO with `cryo-agent todo remove <id>` (or edit `todo.json`), fix the underlying issue, then add a fresh TODO.
 

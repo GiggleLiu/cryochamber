@@ -45,7 +45,7 @@ fn setup_app(tmp: &tempfile::TempDir) -> Arc<AppState> {
         let cfg = config::CryoConfig::default();
         config::save_config(&d.join("cryo.toml"), &cfg).unwrap();
     }
-    let app = Arc::new(AppState::new(tmp.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     let mut idx = discovery::scan_workspace(tmp.path());
     discovery::populate_runtime(&mut idx);
     *app.chambers.write().unwrap() = idx;
@@ -179,7 +179,7 @@ async fn start_chamber_via_api_creates_background_daemon() {
     config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
     std::fs::write(alpha.join("plan.md"), "test plan").unwrap();
 
-    let app = Arc::new(AppState::new(tmp.path().to_path_buf()));
+    let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     let mut idx = discovery::scan_workspace(tmp.path());
     discovery::populate_runtime(&mut idx);
     *app.chambers.write().unwrap() = idx;

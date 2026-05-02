@@ -25,7 +25,17 @@ watch_inbox = true        # Wake immediately when a new inbox file appears
 | `report_time`          | `"09:00"`    | Local wall-clock time for periodic reports, formatted `HH:MM`.                                                                                             |
 | `report_interval`      | `0`          | Hours between periodic reports. `0` disables reports; common values are `24` (daily) and `168` (weekly). Reports are written to `messages/outbox/`.        |
 
-> **Note**: Cryohub settings are not in `cryo.toml`. Pass `--host` and `--port` on the command line (defaults: `127.0.0.1:8765`). Cryohub always operates on the current directory and refuses to start in a directory that itself contains a `cryo.toml`.
+> **Note**: Cryohub settings are not in `cryo.toml`. They live in `$XDG_CONFIG_HOME/cryo/cryohub.toml` (or `~/.config/cryo/cryohub.toml`) with defaults `host = "127.0.0.1"`, `port = 8765`, and chamber root `~/.cryo/chambers`. `cryohub start --host` and `--port` update the saved hub config.
+
+## Sample `cryohub.toml`
+
+```toml
+host = "127.0.0.1"
+port = 8765
+chamber_root = "/Users/alice/.cryo/chambers"
+```
+
+Set `chamber_root` to choose where dashboard-created chambers are placed. For a project-owned collection, use a path such as `/path/to/project/.cryo/chambers`.
 
 ## Override config from the command line
 

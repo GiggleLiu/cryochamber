@@ -1,52 +1,60 @@
 # Cryohub
 
-Cryohub is a directory-scoped web dashboard for managing multiple cryochamber chambers from one browser tab. By default it serves the dashboard on `http://127.0.0.1:8765`.
+Cryohub is a global web dashboard for managing multiple cryochamber chambers from one browser tab. By default it serves the dashboard on `http://127.0.0.1:8765`.
 
 ![cryohub dashboard with the mr-lazy chamber selected](./images/cryohub-dashboard.png)
 
 ## How cryohub discovers chambers
 
-Cryohub always operates on the current working directory. It scans every immediate subdirectory and treats any subdirectory containing a `cryo.toml` as a chamber.
+Cryohub reads the user registry. It does not scan the directory where you start it. Chambers enter the registry when:
 
-A typical workspace layout:
+- `cryo start` runs inside a chamber.
+- You create a chamber from the dashboard.
+
+Clean daemon shutdown clears the PID but keeps the registry entry, so Cryohub shows stopped chambers too. Each refresh checks registered paths and prunes entries whose chamber directory or `cryo.toml` disappeared.
+
+The registry lives under `$XDG_STATE_HOME/cryo/chambers/`, or `~/.cryo/chambers/` if `XDG_STATE_HOME` is unset.
+
+## Chamber root and config
+
+The dashboard's **New Chamber** button creates chambers under the configured chamber root. The default is:
 
 ```text
-~/my-chambers/
-  chess-by-mail/     # cryo.toml + plan.md here
-  mr-lazy/
-  reports/
+~/.cryo/chambers
 ```
 
-You start the hub from the workspace root (`~/my-chambers`), not from a chamber directory.
+Cryohub settings live in `$XDG_CONFIG_HOME/cryo/cryohub.toml`, or `~/.config/cryo/cryohub.toml` if `XDG_CONFIG_HOME` is unset:
 
-> **Note**: Cryohub refuses to start in a directory that itself contains a `cryo.toml`. Move up one level first.
+```toml
+host = "127.0.0.1"
+port = 8765
+chamber_root = "/Users/alice/.cryo/chambers"
+```
+
+For project-owned chamber collections, set `chamber_root` to a project path such as `/path/to/project/.cryo/chambers`.
 
 ## Start the hub
 
-1. Change into the directory that holds your chambers as subdirectories:
+1. Start the hub from any directory. Choose one of:
 
    ```bash
-   cd ~/my-chambers
+   cryohub start               # install as a service (survives reboot)
+   cryohub start --foreground  # run in the current terminal (no service)
    ```
 
-2. Start the hub. Choose one of:
+2. Open the URL printed by `cryohub` in your browser.
 
-   ```bash
-   cryohub start              # install as a service (survives reboot)
-   cryohub start --foreground # run in the current terminal (no service)
-   ```
-
-3. Open the URL printed by `cryohub` in your browser.
+`--host` and `--port` override the config file and update the saved hub config.
 
 ## Stop the hub
 
-1. From the same directory you started it in, run:
+1. From any directory, run:
 
    ```bash
    cryohub stop
    ```
 
-   This uninstalls the service for that directory.
+   This uninstalls the global hub service.
 
 2. (Optional) Confirm the service is gone:
 
@@ -54,49 +62,18 @@ You start the hub from the workspace root (`~/my-chambers`), not from a chamber 
    cryohub status
    ```
 
-## Check status across the machine
+## Check status
 
-`cryohub status` prints two sections:
-
-- The status of the hub for the current directory.
-- A list of every other `cryohub` service installed elsewhere on the machine.
-
-This makes it easy to find a hub you started from a different working directory.
+`cryohub status` prints the global service status, URL, chamber root, config path, and log path if a log exists. It also lists legacy cwd-scoped services from older Cryohub versions so you can remove them.
 
 ## Use the dashboard
 
 The web UI has two main areas:
 
-- **Sidebar** — every discovered chamber, sorted by *running → stopped → external*. Each row shows a status dot, the chamber name, and an unread-message badge.
+- **Sidebar** — every registered chamber, sorted by running state and name. Each row shows a status dot, the chamber name, and an unread-message badge. Chambers under the configured chamber root show only their folder name; chambers elsewhere show a compact parent-path hint.
 - **Main pane** — full detail for the selected chamber: status, current task, next wake time, notes, message history, log tail, and a send widget.
 
-Lifecycle buttons (**Start**, **Stop**, **Restart**) are available for chambers that live under the hub's working directory.
-
-## External chambers
-
-If a daemon is running from a directory outside the hub's working directory, the hub still detects it via the machine-wide registry and lists it as an **external** chamber. External chambers are read-only — you can monitor status and read logs, but lifecycle buttons are hidden.
-
-## Run the hub for a single chamber
-
-If you only have one chamber and still want the hub UI, create a parent directory and symlink your chamber into it:
-
-1. Create a parent directory:
-
-   ```bash
-   mkdir -p ~/cryo-chambers
-   ```
-
-2. Symlink your chamber into it:
-
-   ```bash
-   ln -s "$(pwd)" ~/cryo-chambers/my-chamber
-   ```
-
-3. Start the hub from the parent directory:
-
-   ```bash
-   cd ~/cryo-chambers && cryohub start
-   ```
+Lifecycle buttons are available for registered chambers. Archive is disabled in the global hub because there is no directory-scoped workspace to archive from.
 
 ## Security
 

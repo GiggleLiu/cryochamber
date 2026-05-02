@@ -208,6 +208,7 @@
     const row = document.createElement('div');
     row.className = 'chamber' + (c.id === state.currentId ? ' active' : '');
     row.dataset.id = c.id;
+    row.title = c.path || c.path_hint || c.name;
 
     const row1 = document.createElement('div');
     row1.className = 'chamber-row1';
@@ -216,6 +217,7 @@
     const name = document.createElement('span');
     name.className = 'chamber-name';
     name.textContent = c.name;
+    name.title = c.path || c.path_hint || c.name;
     row1.appendChild(dot);
     row1.appendChild(name);
     if (c.has_open_question) {
@@ -240,7 +242,7 @@
     task.className = 'task';
     task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
     const when = document.createElement('span');
-    when.className = 'when';
+    when.className = c.running ? 'when' : 'when muted';
     applyWake(when, c.next_wake_display);
     meta.appendChild(task);
     meta.appendChild(when);
@@ -256,7 +258,7 @@
     const filter = document.getElementById('rail-search').value.trim().toLowerCase();
     const matchesFilter = c => {
       if (!filter) return true;
-      return [c.name, c.task, c.last_message_preview, c.path]
+      return [c.name, c.path_hint, c.task, c.last_message_preview, c.path]
         .filter(Boolean)
         .some(v => String(v).toLowerCase().includes(filter));
     };
@@ -314,6 +316,16 @@
   async function loadChambers() {
     state.chambers = await fetchJSON('/api/chambers');
     renderRail();
+  }
+
+  async function refreshChamberIndex(options) {
+    const silent = !!(options && options.silent);
+    try {
+      state.chambers = await fetchJSON('/api/chambers/refresh', { method: 'POST' });
+      renderRail();
+    } catch (e) {
+      if (!silent) toast(e.message, 'error');
+    }
   }
 
   let railRefreshTimer = null;
@@ -381,6 +393,14 @@
     return entry.running ? '●' : '○';
   }
 
+  function formatSessionSummary(session, summary) {
+    const text = String(summary || '').trim();
+    if (!text) return '';
+    const body = text.replace(/^Session\s+#?\d+\s*:\s*/i, '').trim();
+    const prefix = Number(session) > 0 ? `Session ${session}: ` : '';
+    return prefix + (body || text);
+  }
+
   function buildHead(pane, entry, status) {
     const head = document.createElement('div');
     head.className = 'thread-head';
@@ -390,6 +410,7 @@
     const title = document.createElement('div');
     title.className = 'title';
     const name = document.createElement('span');
+    name.className = 'name';
     name.textContent = entry.name;
     const session = document.createElement('span');
     session.className = 'session';
@@ -436,29 +457,34 @@
   function updateHead(entry, status) {
     const dot = statusDotChar(entry);
     view.headerName.textContent = entry.name;
-    view.headerMeta.textContent = `SESSION #${status.session}`;
+    const summary = status.session_summary || '';
+    const displaySummary = formatSessionSummary(status.session, summary);
+    view.headerMeta.textContent = displaySummary ? '' : `SESSION #${status.session}`;
+    view.headerMeta.style.display = displaySummary ? 'none' : '';
     if (status.completed) {
       view.planCompleteBox.style.display = '';
       view.planCompleteBox.textContent = '✓ Plan complete' +
         (status.completion_summary ? ': ' + status.completion_summary : '');
       view.headerTaskLine.textContent = '';
+      view.headerTaskLine.title = '';
     } else {
       view.planCompleteBox.style.display = 'none';
-      if (status.task) {
-        view.headerTaskLine.innerHTML =
-          '<span class="label">Task</span>' + escapeHtml(status.task);
+      if (displaySummary) {
+        view.headerTaskLine.textContent = displaySummary;
+        view.headerTaskLine.title = displaySummary;
       } else {
         view.headerTaskLine.textContent = '';
+        view.headerTaskLine.title = '';
       }
     }
-    if (status.next_wake) {
+    if (entry.running && status.next_wake) {
       view.wakeChip.innerHTML = '';
       const pulse = document.createElement('span');
       pulse.className = 'pulse';
       const txt = document.createElement('span');
       view.wakeChip.appendChild(pulse);
       view.wakeChip.appendChild(txt);
-      applyWake(txt, status.next_wake, 'next wake · ');
+      applyWake(txt, status.next_wake, 'next wake ');
       view.wakeChip.style.display = '';
     } else {
       view.wakeChip.style.display = 'none';
@@ -475,15 +501,12 @@
     if (entry.running) {
       btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
     } else if (!entry.config_error && !entry.completed) {
-      // A completed plan has nothing to resume — hide Start. Reset stays
+      // A completed plan has nothing to resume — hide Launch. Reset stays
       // available so the operator can archive the run and begin a new plan.
-      btns.appendChild(btn('start', () => lifecycle(entry.id, 'start'), 'primary', pending));
+      btns.appendChild(btn('launch', () => lifecycle(entry.id, 'start'), 'primary', pending));
     }
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
-    }
-    if (!entry.running) {
-      btns.appendChild(btn('archive', () => confirmArchive(entry.id, entry.name), 'danger', pending));
     }
   }
 
@@ -500,33 +523,8 @@
   }
 
   function confirmReset(id, name) {
-    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Start to begin a new session\n\nThis cannot be undone.`;
+    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Launch to begin a new session\n\nThis cannot be undone.`;
     if (window.confirm(msg)) lifecycle(id, 'reset');
-  }
-
-  function confirmArchive(id, name) {
-    const msg = `Archive "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • move the chamber directory to .cryo-archive/\n  • remove it from this workspace rail\n\nThe files remain recoverable from the archive folder.`;
-    if (window.confirm(msg)) archiveChamber(id);
-  }
-
-  async function archiveChamber(id) {
-    if (state.lifecyclePending[id]) return;
-    setLifecyclePending(id, true);
-    try {
-      const resp = await fetchJSON(`/api/chambers/${id}/archive`, { method: 'POST' });
-      toast(resp.message || 'Archived', resp.ok ? '' : 'error');
-      await loadChambers();
-      if (state.currentId === id) {
-        clearSelection();
-        if (window.location.pathname !== '/') {
-          window.history.pushState({}, '', '/');
-        }
-      }
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      setLifecyclePending(id, false);
-    }
   }
 
   async function lifecycle(id, action) {
@@ -1312,10 +1310,7 @@
   window.addEventListener('popstate', syncRouteSelection);
 
   document.getElementById('refresh').addEventListener('click', async () => {
-    try {
-      state.chambers = await fetchJSON('/api/chambers/refresh', { method: 'POST' });
-      renderRail();
-    } catch (e) { toast(e.message, 'error'); }
+    await refreshChamberIndex();
   });
 
   initDrawerTabs();
@@ -1347,6 +1342,7 @@
   // labels in place. SSE-driven re-renders also call `applyWake`, so the
   // ticker only matters when nothing is changing on the daemon.
   setInterval(refreshWakeRelatives, 30_000);
+  setInterval(() => { refreshChamberIndex({ silent: true }); }, 15_000);
 
   const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 

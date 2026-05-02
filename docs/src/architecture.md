@@ -12,7 +12,7 @@
 | `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `receive`, `time`, `todo`. Most commands send requests to the daemon via socket; only `time` is local. |
 | `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Discussion-based messaging via an OS service. |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Zulip stream messaging via an OS service. |
-| `cryohub` | Workspace-wide web dashboard — `start`, `stop`, `status`, `daemon`. Installs a launchd/systemd service that serves the hub UI over HTTP. |
+| `cryohub` | Global web dashboard — `start`, `stop`, `status`, `daemon`. Installs a launchd/systemd service that serves the hub UI over HTTP. |
 | `cryo-mock` | Test-only mock agent for integration tests (`make check-mock`). |
 
 ## Modules
@@ -32,7 +32,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `daemon::session` | Session runtime: process spawn, request/response loop, wait/terminate. | `trait SessionRuntime`, `struct ChildExitStatus`. |
 | `lifecycle` | Session startup validation and chamber lifecycle operations. | `enum DaemonLaunchMode`, `struct StartOptions`, `struct PreparedStart`, `fn require_valid_project`, `fn require_live_daemon`, `fn prepare_start`, `fn validate_agent_command`. |
 | `process` | Process management utilities. | `fn send_signal`, `fn terminate_pid`, `fn spawn_daemon`. |
-| `registry` | PID file registry under `$XDG_RUNTIME_DIR/cryo/` (fallback `~/.cryo/daemons/`). Auto-cleans stale entries. | `struct DaemonEntry`, `fn register`, `fn unregister`, `fn list`. |
+| `registry` | User chamber registry under `$XDG_STATE_HOME/cryo/chambers/` (fallback `~/.cryo/chambers/`). Keeps stopped chambers, clears stale PIDs, and prunes entries whose chamber disappeared. | `struct DaemonEntry`, `fn remember_chamber`, `fn register`, `fn unregister`, `fn list`. |
 | `service` | OS service management: launchd (macOS) / systemd (Linux) user services. Used by `cryo start`, `cryo-gh sync`, `cryo-zulip sync`. `CRYO_NO_SERVICE=1` disables. | `struct InstalledService`, `fn service_label`, `fn install`, `fn uninstall`, `fn list_installed`, `fn is_installed`. |
 
 ### Config, state, and persistence
@@ -42,7 +42,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `config` | TOML project config (`cryo.toml`), with CLI overrides merged from runtime state. | `struct CryoConfig`, `struct ProviderConfig`, `fn load_config`, `fn save_config`. |
 | `state` | JSON runtime state (`timer.json`): session number, PID lock, CLI overrides. PID-based locking via `libc::kill(pid, 0)`. | `struct CryoState`, `fn load_state`, `fn save_state`, `fn is_locked`. |
 | `todo` | Per-project TODO list (`todo.json`); mutated through daemon IPC so scheduling changes serialize with the session lifecycle. Also owns the claim, completion, and retry rescheduling logic used by the daemon around session runs. | `struct TodoFile`, `struct TodoItem`, `fn add`, `fn done`, `fn remove`, `fn items`, `fn display`, `fn next_wake_time`, `fn next_valid_wake`, `fn claim_due`, `fn complete_claimed`, `fn reschedule_claimed_after_crash`. |
-| `protocol` | Loads templates from `templates/` via `include_str!` and writes them into the project. | `enum ProtocolFile`, `fn protocol_filename`, `fn find_protocol_file`, `fn write_protocol_file`, `fn write_template_plan`, `fn write_config_file`. |
+| `protocol` | Loads templates from `templates/` via `include_str!`. `PROTOCOL_CONTENT` is embedded in each runtime prompt; scaffold helpers write chamber-owned files such as `plan.md` and `cryo.toml`. | `PROTOCOL_CONTENT`, `fn scaffold_chamber`, `fn write_template_plan`, `fn write_config_file`. |
 
 ### Agent, logging, and chamber status
 
@@ -72,9 +72,10 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
-| `hub` | `cryohub` dashboard: Axum router, chamber discovery, SSE event stream, start/stop/restart handlers. Served by the `cryohub` binary; always operates on the current directory. | `fn build_router`, `fn build_router_with_state`, `async fn serve`. |
+| `hub` | `cryohub` dashboard: Axum router, registry-backed chamber discovery, SSE event stream, start/stop/restart handlers. Served by the `cryohub` binary. | `fn build_router`, `fn build_router_with_state`, `async fn serve`. |
+| `hub::config` | Global hub config (`cryohub.toml`) for host, port, and dashboard-created chamber root. | `struct HubConfig`, `fn load_config`, `fn save_config`, `fn effective_config`. |
 | `hub::state` | Shared app state, chamber index, SSE broadcast. | `struct AppState`, `enum SseEvent`, `fn resolve`, `fn refresh`. |
-| `hub::discovery` | Chamber discovery + URL-safe id encoding over a workspace directory. | `struct ChamberEntry`, `type ChamberIndex`, `fn encode_id`, `fn decode_id`, `fn scan_workspace`. |
+| `hub::discovery` | Registry-backed chamber discovery + URL-safe id encoding. Workspace scanning remains as a local test/helper mode. | `struct ChamberEntry`, `struct DiscoveryOptions`, `type ChamberIndex`, `fn encode_id`, `fn decode_id`, `fn discover_with_options`. |
 
 ## Key Design Decisions
 
@@ -87,7 +88,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 - **Agent notes via `NOTES.md`.** The agent's persistent memory across sessions is a plain markdown file the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes tab.
 - **Crash handling via TODO re-injection.** If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it claimed for that wake with a ` (attempt k)` suffix and an exponential delay (`2^k` minutes, capped at 1 day). There is no in-daemon backoff-retry loop — rescheduling is expressed entirely through the TODO list so it survives daemon restarts and is visible to both the agent and operators. `EventLogger` is still finalized on every outcome.
 - **Daemon does not preview inbox, agent receives it.** Wake-time prompts do not include inbox contents. The daemon only notices that inbox files exist and surfaces that fact in the session prompt. During a session, agent-side `cryo-agent receive` goes back through daemon IPC, and the daemon immediately archives the current inbox batch to `messages/inbox/archive/`. The daemon remembers that batch only in the current session so the next successful agent `send` can count as its reply, or the daemon can fall back at session end. Operator `cryo receive` is unrelated; it reads the agent's outbox.
-- **`cryohub` is cwd-scoped.** The web dashboard binary always operates on the current directory — no `--dir` flag. The cwd must not itself be a chamber. Discovery scans `<cwd>/*` for chamber subdirectories. The service label is `com.cryo.hub.<hash>`; `cryohub status` additionally lists every other `com.cryo.hub.*` service installed on the machine.
+- **`cryohub` is global and registry-backed.** The web dashboard can start, stop, and report status from any directory. Product discovery reads the user chamber registry only; it does not scan the current working directory. The hub config lives in `$XDG_CONFIG_HOME/cryo/cryohub.toml` (fallback `~/.config/cryo/cryohub.toml`) and stores host, port, and the root for dashboard-created chambers. The default chamber root is `~/.cryo/chambers`. `cryohub status` also lists legacy cwd-scoped services from older versions so users can remove them.
 - **Default agent.** The CLI defaults to `opencode` (headless mode, not the TUI).
 
 ## TODO and Message Flow

@@ -1,10 +1,8 @@
-//! Chamber discovery: scan `<dir>/*/cryo.toml`.
+//! Chamber discovery for Cryohub.
 //!
-//! Hub only surfaces chambers that live under the directory `cryohub` was
-//! started in (the server's cwd). Daemons running elsewhere on the machine
-//! (e.g. test leftovers under `/tmp/`) are intentionally not merged in —
-//! they would clutter the rail and can't be managed from this hub instance
-//! anyway.
+//! Product discovery is registry-only: Cryohub shows chambers remembered by
+//! `cryo start` or created through the hub. Workspace scanning remains as a
+//! test/helper mode for route tests that need isolated chamber indexes.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +41,7 @@ pub struct ChamberEntry {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    pub path_hint: Option<String>,
     pub config_error: Option<String>,
     pub running: bool,
     pub agent_running: bool,
@@ -59,6 +58,28 @@ pub struct ChamberEntry {
 
 /// A map from chamber id → entry.
 pub type ChamberIndex = BTreeMap<String, ChamberEntry>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryOptions {
+    pub scan_workspace: bool,
+    pub include_registry: bool,
+}
+
+impl DiscoveryOptions {
+    pub fn all_chambers() -> Self {
+        Self {
+            scan_workspace: false,
+            include_registry: true,
+        }
+    }
+
+    pub fn local_only() -> Self {
+        Self {
+            scan_workspace: true,
+            include_registry: false,
+        }
+    }
+}
 
 /// Scan `<dir>/*` for chambers. A subdirectory is treated as a chamber
 /// only if it contains a `cryo.toml`; chambers with a malformed
@@ -82,10 +103,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
         if !cryo_toml.exists() {
             continue;
         }
-        let name = canonical
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "(unknown)".into());
+        let name = chamber_display_name(&canonical);
         let config_error = crate::config::load_config(&cryo_toml)
             .err()
             .map(|e| e.to_string());
@@ -96,6 +114,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
                 id,
                 name,
                 path: canonical,
+                path_hint: None,
                 config_error,
                 running: false,
                 agent_running: false,
@@ -112,6 +131,73 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
         );
     }
     out
+}
+
+fn chamber_display_name(path: &Path) -> String {
+    if path.file_name().is_some_and(|name| name == ".cryo") {
+        if let Some(parent_name) = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+        {
+            return parent_name;
+        }
+    }
+    path.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(unknown)".into())
+}
+
+fn registry_entry_for_path(workspace: &Path, path: PathBuf) -> Option<ChamberEntry> {
+    let canonical = path.canonicalize().unwrap_or(path);
+    let cryo_toml = crate::config::config_path(&canonical);
+    if !cryo_toml.exists() {
+        return None;
+    }
+    let name = chamber_display_name(&canonical);
+    let config_error = crate::config::load_config(&cryo_toml)
+        .err()
+        .map(|e| e.to_string());
+    let id = encode_id(&canonical);
+    let path_hint = if canonical.starts_with(workspace) {
+        None
+    } else {
+        canonical.parent().map(|p| p.display().to_string())
+    };
+    Some(ChamberEntry {
+        id,
+        name,
+        path: canonical,
+        path_hint,
+        config_error,
+        running: false,
+        agent_running: false,
+        session: None,
+        next_wake: None,
+        next_wake_display: None,
+        wake_imminent: false,
+        has_open_question: false,
+        task: None,
+        last_message_preview: None,
+        completed: false,
+        sync: vec![],
+    })
+}
+
+fn merge_registry(workspace: &Path, idx: &mut ChamberIndex) {
+    let Ok(entries) = crate::registry::list() else {
+        return;
+    };
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
+    for registered in entries {
+        let path = PathBuf::from(registered.dir);
+        let Some(entry) = registry_entry_for_path(&workspace, path) else {
+            continue;
+        };
+        idx.entry(entry.id.clone()).or_insert(entry);
+    }
 }
 
 /// Fill in runtime fields on each entry from its on-disk state.
@@ -139,9 +225,20 @@ pub fn populate_runtime(idx: &mut ChamberIndex) {
     }
 }
 
-/// One-shot discovery: scan workspace and populate runtime fields.
+/// One-shot product discovery: read the registry and populate runtime fields.
 pub fn discover(workspace: &Path) -> ChamberIndex {
-    let mut idx = scan_workspace(workspace);
+    discover_with_options(workspace, DiscoveryOptions::all_chambers())
+}
+
+pub fn discover_with_options(workspace: &Path, options: DiscoveryOptions) -> ChamberIndex {
+    let mut idx = if options.scan_workspace {
+        scan_workspace(workspace)
+    } else {
+        ChamberIndex::new()
+    };
+    if options.include_registry {
+        merge_registry(workspace, &mut idx);
+    }
     populate_runtime(&mut idx);
     idx
 }

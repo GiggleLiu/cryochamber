@@ -41,6 +41,37 @@ fn xml_escape(s: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+fn launchd_stdio_log_path(home: &Path, label: &str) -> PathBuf {
+    home.join("Library")
+        .join("Logs")
+        .join("cryo")
+        .join(format!("{label}.log"))
+}
+
+/// Path where the OS service manager will actually write stdout/stderr for
+/// the service identified by `(label_prefix, dir)`. On Linux, systemd honors
+/// whatever path was passed to `install`, so this returns `fallback` verbatim.
+/// On macOS, `install` ignores its `log_file` argument and routes launchd
+/// stdio to `~/Library/Logs/cryo/<label>.log` (so xpcproxy doesn't need TCC
+/// access to protected chamber dirs); this returns that path.
+///
+/// Use this for printing/displaying the log location so what you show the
+/// operator matches what the service actually writes.
+#[cfg(target_os = "macos")]
+pub fn stdio_log_path(label_prefix: &str, dir: &Path, fallback: &Path) -> PathBuf {
+    let Some(home) = dirs::home_dir() else {
+        return fallback.to_path_buf();
+    };
+    let label = service_label(label_prefix, dir);
+    launchd_stdio_log_path(&home, &label)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn stdio_log_path(_label_prefix: &str, _dir: &Path, fallback: &Path) -> PathBuf {
+    fallback.to_path_buf()
+}
+
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LaunchctlInstallAction {
     WritePlistAndLoad { unload_first: bool },
@@ -65,7 +96,9 @@ fn launchctl_install_action(plist_changed: bool, label_loaded: bool) -> Launchct
 /// - `dir`: working directory for the service
 /// - `exe`: path to the executable
 /// - `args`: arguments to pass
-/// - `log_file`: path to log file for stdout/stderr
+/// - `log_file`: path to log file for stdout/stderr where the OS can open it directly.
+///   macOS launchd uses `~/Library/Logs/cryo/<label>.log` instead so xpcproxy
+///   does not need access to protected chamber directories such as ~/Documents.
 /// - `keep_alive`: if true, restart on any exit; if false, only restart on crash
 #[cfg(target_os = "macos")]
 pub fn install(
@@ -73,15 +106,18 @@ pub fn install(
     dir: &Path,
     exe: &Path,
     args: &[&str],
-    log_file: &Path,
+    _log_file: &Path,
     keep_alive: bool,
 ) -> Result<()> {
     let label = service_label(label_prefix, dir);
-    let agents_dir = dirs::home_dir()
-        .context("Cannot determine home directory")?
-        .join("Library/LaunchAgents");
+    let home = dirs::home_dir().context("Cannot determine home directory")?;
+    let agents_dir = home.join("Library/LaunchAgents");
     std::fs::create_dir_all(&agents_dir)?;
     let plist_path = agents_dir.join(format!("{label}.plist"));
+    let launchd_log_file = launchd_stdio_log_path(&home, &label);
+    if let Some(parent) = launchd_log_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     let args_xml: String = std::iter::once(format!(
         "    <string>{}</string>",
@@ -107,6 +143,9 @@ pub fn install(
     // launchd services get a minimal PATH by default.
     let path_env = std::env::var("PATH").unwrap_or_default();
 
+    // Keep launchd-owned stdio outside chamber directories. On macOS, xpcproxy
+    // opens StandardOutPath/StandardErrorPath before spawning the service, and
+    // TCC can deny protected locations such as ~/Documents with EX_CONFIG.
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -140,7 +179,7 @@ pub fn install(
         dir = xml_escape(&dir.display().to_string()),
         path = xml_escape(&path_env),
         keep_alive_xml = keep_alive_xml,
-        log = xml_escape(&log_file.display().to_string()),
+        log = xml_escape(&launchd_log_file.display().to_string()),
     );
 
     // Every touch of `~/Library/LaunchAgents/` can fire a macOS 13+

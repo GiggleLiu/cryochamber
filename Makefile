@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-cancel example-hub time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -21,8 +21,9 @@ help:
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Codex or Claude"
 	@echo "  example      - Run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)"
+	@echo "  example-start-all - Start all example chambers (AGENT=opencode|claude)"
 	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
-	@echo "  example-hub  - Start cryohub workspace over examples/ (PORT=8765)"
+	@echo "  example-hub  - Start global cryohub in foreground (PORT=8765)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
@@ -130,21 +131,37 @@ example: build
 	@if [ -f "$(DIR)/timer.json" ]; then (cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel 2>/dev/null); fi; \
 	cd "$(DIR)" && rm -rf .cryo timer.json cryo.log cryo-agent.log messages AGENTS.md CLAUDE.md && \
 	$(CURDIR)/target/debug/cryo init --agent "$(AGENT)" && $(CURDIR)/target/debug/cryo start --agent "$(AGENT)" && \
-	cd "$(CURDIR)/$(dir $(DIR))" && $(CURDIR)/target/debug/cryohub start --foreground
+	cd "$(CURDIR)" && $(CURDIR)/target/debug/cryohub start --foreground
+
+# Start all bundled examples and register them for global Cryohub.
+# Usage: make example-start-all
+#        make example-start-all AGENT=claude
+example-start-all: build
+	@set -e; \
+	for dir in "$(CURDIR)"/examples/chambers/*/; do \
+		name=$$(basename "$$dir"); \
+		echo "=== Starting example: $$name ==="; \
+		if [ -f "$$dir/timer.json" ]; then \
+			(cd "$$dir" && "$(CURDIR)"/target/debug/cryo cancel 2>/dev/null || true); \
+		fi; \
+		cd "$$dir"; \
+		"$(CURDIR)"/target/debug/cryo init --agent "$(AGENT)"; \
+		"$(CURDIR)"/target/debug/cryo start --agent "$(AGENT)"; \
+	done
 
 # Stop a running example
 # Usage: make example-cancel DIR=examples/chambers/chess-by-mail
 example-cancel:
 	cd "$(DIR)" && $(CURDIR)/target/debug/cryo cancel
 
-# Start cryohub against examples/ as a multi-chamber workspace.
-# Each examples/chambers/<name>/ is a chamber; the server runs in the foreground.
+# Start global cryohub in the foreground. Examples appear after they have been
+# registered with `cryo start`, for example by running `make example DIR=...`.
 # Usage: make example-hub
 #        make example-hub PORT=8080
 PORT ?= 8765
 
 example-hub: build
-	cd examples/chambers && $(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
+	$(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
 
 # Quick smoke test: force one agent wakeup cycle
 # Usage: make check-agent                 # check default (opencode)

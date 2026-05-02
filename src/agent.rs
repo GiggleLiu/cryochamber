@@ -117,6 +117,9 @@ fn section_hint(complete: bool, refetch_cmd: &str) -> String {
 
 pub fn build_prompt(config: &AgentConfig) -> String {
     let current_time = Local::now().format("%Y-%m-%dT%H:%M:%S");
+    let protocol = crate::protocol::PROTOCOL_CONTENT
+        .strip_prefix("# Cryochamber Protocol\n\n")
+        .unwrap_or(crate::protocol::PROTOCOL_CONTENT);
 
     let delayed_section = match &config.delayed_wake {
         Some(notice) => format!("\n## System Notice\n\n{notice}\n"),
@@ -138,7 +141,12 @@ pub fn build_prompt(config: &AgentConfig) -> String {
 
 Session number: {session_number}
 {delayed}
-Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md before starting.
+Read plan.md before starting. Follow this embedded cryochamber protocol; it is
+the source of truth for tool usage.
+
+## Cryochamber Protocol
+
+{protocol}
 
 ## Current Time (no need to call `cryo-agent time` again)
 
@@ -156,6 +164,7 @@ Follow the cryochamber protocol in CLAUDE.md or AGENTS.md. Read plan.md before s
 "#,
         session_number = config.session_number,
         delayed = delayed_section,
+        protocol = protocol,
         task = config.task,
         todo_content = todo.content,
         inbox_notice = inbox_notice,

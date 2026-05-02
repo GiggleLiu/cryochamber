@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use crate::hub::discovery::{ChamberEntry, ChamberIndex};
+use crate::hub::discovery::{ChamberEntry, ChamberIndex, DiscoveryOptions};
 
 /// SSE event broadcast to all connected clients. Every event carries
 /// `chamber_id` so the sidebar (which listens to all events) and the detail
@@ -27,22 +27,42 @@ pub enum SseEvent {
         chamber_id: String,
         line: String,
     },
-    /// Workspace-level refresh — chambers list changed (added/removed).
+    /// Index-level refresh — chambers list changed (added/removed).
     IndexChanged,
 }
 
 pub struct AppState {
     pub workspace_dir: PathBuf,
+    pub discovery_options: DiscoveryOptions,
     pub chambers: Arc<RwLock<ChamberIndex>>,
     pub tx: tokio::sync::broadcast::Sender<SseEvent>,
     pub watchers: crate::hub::watchers::WatcherRegistry,
 }
 
 impl AppState {
+    pub fn global() -> Self {
+        let chamber_root = crate::hub::config::load_config()
+            .map(|config| config.chamber_root)
+            .unwrap_or_else(|_| crate::hub::paths::global_chambers_dir());
+        Self::with_discovery_options(chamber_root, DiscoveryOptions::all_chambers())
+    }
+
     pub fn new(workspace_dir: PathBuf) -> Self {
+        Self::with_discovery_options(workspace_dir, DiscoveryOptions::all_chambers())
+    }
+
+    pub fn local_only(workspace_dir: PathBuf) -> Self {
+        Self::with_discovery_options(workspace_dir, DiscoveryOptions::local_only())
+    }
+
+    pub fn with_discovery_options(
+        workspace_dir: PathBuf,
+        discovery_options: DiscoveryOptions,
+    ) -> Self {
         let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(256);
         Self {
             workspace_dir,
+            discovery_options,
             chambers: Arc::new(RwLock::new(ChamberIndex::new())),
             tx,
             watchers: crate::hub::watchers::WatcherRegistry::new(),
@@ -69,7 +89,10 @@ impl AppState {
 
     /// Overwrite the chamber index with a fresh discovery pass.
     pub fn refresh(&self) {
-        let fresh = crate::hub::discovery::discover(&self.workspace_dir);
+        let fresh = crate::hub::discovery::discover_with_options(
+            &self.workspace_dir,
+            self.discovery_options,
+        );
         if let Ok(mut idx) = self.chambers.write() {
             *idx = fresh;
         }

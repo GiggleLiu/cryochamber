@@ -80,7 +80,8 @@ Then:
 ### Step 3: Record
 
 - Update `NOTES.md` with what you did and what's next. It is your memory across sessions — read it at Step 1, append at Step 3, trim when it grows.
-- **Style:** append a new section per session, headed by an ISO timestamp (`## 2026-04-26T03:35:28`), then a short bullet list of facts future-you will need: session number, what you did, last question asked, whether you're waiting for an answer, and the next planned check. Keep each bullet a single line.
+- **Style:** append a new section per session, headed by an ISO timestamp (`## 2026-04-26T03:35:28`), then a short bullet list of facts future-you will need: session number, what you did, last question asked, whether you're waiting for an answer, the next planned check, and any friction encountered. Keep each bullet a single line.
+- **Friction bullet:** record anything about the cryochamber tools or this protocol that surprised you, didn't work as expected, or made the right action unclear (e.g. a `cryo-agent` flag that rejected your input, a prompt section whose hint was ambiguous, a step where you almost took a wrong shortcut). Omit the bullet if there was none. This is how the protocol gets fixed — silent friction is lost.
 
   ```
   ## 2026-04-26T03:35:28
@@ -89,6 +90,7 @@ Then:
   - Last question asked: "Daddy, why doesn't the moon fall down?"
   - Waiting for answer: yes.
   - Next planned check: +2 hours after this reply.
+  - Friction: `cryo-agent time "tomorrow 9am"` rejected — had to use ISO8601.
   ```
 - Send a concise outbox message for this session, even if it is only a status update that nothing changed.
 

@@ -205,14 +205,10 @@ body {
 .chamber-meta .when {
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-/* Wake time in the chamber rail always reads as a cued, actionable signal.
-   The previous variant rendered non-imminent wakes in the same gray as
-   surrounding meta text, which made one chamber's wake "stand out" and
-   another's "blend in" depending purely on how soon it was due — visually
-   inconsistent for what is the same kind of information. The Todos-panel
-   `.when` keeps its imminence colouring; that's a list of items where
-   relative urgency is the point. */
+/* Running chambers get an amber wake cue. Stopped chambers keep the schedule
+   visible for scanning, but muted because nothing will wake until launched. */
 .chamber-meta .when { color: var(--accent); }
+.chamber-meta .when.muted { color: var(--ink-faint); }
 
 .rail-foot {
   padding: 10px 14px;
@@ -244,18 +240,33 @@ body {
 .thread-head {
   padding: 18px 28px 14px;
   border-bottom: 1px solid var(--line);
-  display:flex; align-items: flex-start; justify-content: space-between;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-areas:
+    "title actions"
+    "summary summary";
+  align-items: start;
+  gap: 8px 24px;
 }
-/* `.left` grows while `.thread-actions` stays pinned to the right edge. */
-.thread-head .left { flex: 1; min-width: 0; }
+.thread-head .left { display: contents; }
 .thread-head .title {
+  grid-area: title;
+  min-width: 0;
   font-family: var(--serif);
   font-weight: 400;
   font-size: 26px;
   letter-spacing: -0.015em;
   color: var(--ink);
-  display:flex; align-items:baseline; gap: 10px;
+  display:flex;
+  flex-direction: column;
+  align-items:flex-start;
+  gap: 2px;
+}
+.thread-head .title .name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .thread-head .title .session {
   font-family: var(--mono);
@@ -264,18 +275,21 @@ body {
   letter-spacing: 0.06em;
 }
 .thread-head .task-row {
+  grid-area: summary;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 .thread-head .task {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   font-family: var(--sans);
   font-size: 13px;
   color: var(--ink-dim);
-  max-width: 64ch;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -290,10 +304,12 @@ body {
 }
 
 .thread-actions {
+  grid-area: actions;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 
@@ -306,6 +322,7 @@ body {
   border: 1px solid rgba(244,198,120,0.18);
   padding: 4px 10px;
   border-radius: 999px;
+  white-space: nowrap;
 }
 .wake-chip .pulse {
   width: 6px; height: 6px; border-radius: 50%;

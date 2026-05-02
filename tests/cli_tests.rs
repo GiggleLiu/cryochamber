@@ -15,7 +15,7 @@ fn agent_cmd() -> Command {
     Command::cargo_bin("cryo-agent").unwrap()
 }
 
-/// Run `cryo init` in a temp dir so tests that need `cryo start` have protocol files.
+/// Run `cryo init` in a temp dir so tests that need `cryo start` have chamber files.
 fn init_dir(dir: &std::path::Path) {
     cmd().arg("init").current_dir(dir).assert().success();
 }
@@ -23,7 +23,7 @@ fn init_dir(dir: &std::path::Path) {
 // --- Init ---
 
 #[test]
-fn test_init_creates_protocol_and_plan() {
+fn test_init_creates_chamber_files_without_agent_protocol_files() {
     let dir = tempfile::tempdir().unwrap();
     cmd()
         .arg("init")
@@ -31,11 +31,13 @@ fn test_init_creates_protocol_and_plan() {
         .assert()
         .success()
         .stdout(predicate::str::contains("cryo.toml"))
-        .stdout(predicate::str::contains("AGENTS.md"))
+        .stdout(predicate::str::contains("AGENTS.md").not())
+        .stdout(predicate::str::contains("CLAUDE.md").not())
         .stdout(predicate::str::contains("plan.md"));
 
     assert!(dir.path().join("cryo.toml").exists());
-    assert!(dir.path().join("AGENTS.md").exists());
+    assert!(!dir.path().join("AGENTS.md").exists());
+    assert!(!dir.path().join("CLAUDE.md").exists());
     assert!(dir.path().join("plan.md").exists());
     assert!(dir.path().join("messages/inbox").is_dir());
     assert!(dir.path().join("messages/outbox").is_dir());
@@ -89,9 +91,11 @@ fn test_init_claude_agent() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("CLAUDE.md"));
+        .stdout(predicate::str::contains("CLAUDE.md").not())
+        .stdout(predicate::str::contains("AGENTS.md").not());
 
-    assert!(dir.path().join("CLAUDE.md").exists());
+    assert!(!dir.path().join("CLAUDE.md").exists());
+    assert!(!dir.path().join("AGENTS.md").exists());
 
     // Verify cryo.toml has claude as agent
     let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();

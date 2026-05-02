@@ -18,9 +18,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a working directory with protocol file and template plan
+    /// Initialize a working directory with config and template plan
     Init {
-        /// Agent command to target (determines CLAUDE.md vs AGENTS.md)
+        /// Agent command to store in cryo.toml
         #[arg(long, default_value = "opencode")]
         agent: String,
     },
@@ -128,7 +128,6 @@ fn cmd_init(agent_cmd: &str) -> Result<()> {
         }
     };
     line("cryo.toml", report.cryo_toml_created);
-    line(report.protocol_filename, report.protocol_created);
     line("plan.md", report.plan_created);
     line("README.md", report.readme_created);
     line("NOTES.md", report.notes_created);
@@ -208,9 +207,7 @@ fn cmd_start(
         }
     }
 
-    println!(
-        "Use `cryo watch` or `cryohub start` (from a parent of chamber dirs) to follow progress."
-    );
+    println!("Use `cryo watch` or `cryohub start` to follow progress.");
     println!("Use `cryo status` to check state.");
 
     Ok(())
@@ -303,15 +300,17 @@ fn cmd_restart() -> Result<()> {
         DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),
         DaemonLaunchMode::Service => println!("Restarted (service reinstalled)."),
     }
-    println!(
-        "Use `cryo watch` or `cryohub start` (from a parent of chamber dirs) to follow progress."
-    );
+    println!("Use `cryo watch` or `cryohub start` to follow progress.");
     Ok(())
 }
 
 fn cmd_ps(kill_all: bool) -> Result<()> {
-    // list() auto-cleans dead PIDs from the registry
-    let entries = cryochamber::registry::list()?;
+    // list() auto-cleans dead PIDs from the registry; `cryo ps` only reports
+    // the entries that are still running.
+    let entries: Vec<_> = cryochamber::registry::list()?
+        .into_iter()
+        .filter(|entry| entry.pid.is_some())
+        .collect();
 
     if entries.is_empty() {
         println!("No cryo daemons running.");
@@ -319,11 +318,14 @@ fn cmd_ps(kill_all: bool) -> Result<()> {
     }
 
     for entry in &entries {
+        let Some(pid) = entry.pid else {
+            continue;
+        };
         if kill_all {
-            cryochamber::process::terminate_pid(entry.pid)?;
-            println!("Killed PID {:>6}  {}", entry.pid, entry.dir);
+            cryochamber::process::terminate_pid(pid)?;
+            println!("Killed PID {pid:>6}  {}", entry.dir);
         } else {
-            println!("PID {:>6}  {}", entry.pid, entry.dir);
+            println!("PID {pid:>6}  {}", entry.dir);
         }
     }
 
@@ -388,10 +390,9 @@ fn cmd_clean(force: bool) -> Result<()> {
     if cryochamber::service::uninstall("zulip-sync", &dir)? {
         println!("Removed zulip-sync service.");
     }
-    // `cryohub` is workspace-scoped — its service and log live in the workspace
-    // directory, not the chamber dir. `cryo clean` is chamber-scoped, so it
-    // cannot and should not touch hub state. Use `cryohub stop` from the
-    // workspace directory to remove the hub service.
+    // `cryohub` is global and stores its service log in user-level Cryo state,
+    // not in a chamber dir. `cryo clean` is chamber-scoped, so it cannot and
+    // should not touch hub state. Use `cryohub stop` to remove the hub service.
 
     // Kill daemon process if still running
     let sp = state::state_path(&dir);
@@ -399,7 +400,7 @@ fn cmd_clean(force: bool) -> Result<()> {
         terminate_daemon_if_reachable(&dir, &cryo_state)?;
     }
 
-    // Remove runtime files. `cryohub.log` is workspace-scoped and therefore
+    // Remove chamber runtime files. Hub logs are user-level Cryo state and are
     // not part of a chamber clean.
     let runtime_files = [
         "timer.json",
