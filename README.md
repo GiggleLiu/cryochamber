@@ -17,23 +17,37 @@ The goal is to automate long-running activities that are too irregular for cron.
 
 ## Quick start
 
+Install Cryochamber:
 ```bash
 cargo install cryochamber
-mkdir mr-lazy && cd mr-lazy && cryo init
-# follow the tutorial from here
+```
+
+Create a chamber directory:
+```bash
+mkdir my-chamber && cd my-chamber
+```
+
+Then start Claude Code, Codex, or OpenCode in that directory and ask:
+
+```text
+Follow the make-plan skill at https://github.com/GiggleLiu/cryochamber/blob/main/.claude/skills/make-plan/SKILL.md to create a new cryochamber project here.
+```
+
+The skill walks you through setup and can launch the chamber when ready.
+Start Cryohub to monitor it in your browser:
+```bash
+cryohub start
 ```
 
 → **Full tutorial:** <https://giggleliu.github.io/cryochamber/tutorial.html>
 
 ## Cryohub
 
-Cryohub is a global web dashboard for managing every chamber on this machine.
+Cryohub is the local web dashboard for Cryochamber. It runs once per user,
+discovers chambers on this machine, and gives you a browser UI for status,
+logs, messages, TODOs, notes, and start/stop controls.
 
 ![cryohub dashboard with the mr-lazy chamber selected](docs/src/images/cryohub-dashboard.png)
-
-```bash
-cryohub start
-```
 
 See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
 
