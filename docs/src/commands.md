@@ -49,10 +49,15 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 |----------------------------------------|---------------------------------------------------------------------------------------------------------|
 | `cryo-agent hibernate --summary "..."` | End the session; more work to do.                                                                       |
 | `cryo-agent hibernate --complete`      | End the session; plan is done.                                                                          |
-| `cryo-agent hibernate --exit 1`        | Report a failed session. The daemon re-injects the consumed TODO with an `(attempt k)` suffix.          |
+| `cryo-agent hibernate --exit 1`        | Report a failed session. The daemon marks the consumed TODO done and adds a fresh retry TODO with an `(attempt k)` suffix. |
 | `cryo-agent todo add "text" --at <TIME>` | Schedule the next wake via a TODO.                                                                    |
+| `cryo-agent todo list`                 | List all TODO items.                                                                                    |
+| `cryo-agent todo done <id>`            | Mark a TODO item as done.                                                                               |
+| `cryo-agent todo remove <id>`          | Remove a TODO item.                                                                                     |
 | `cryo-agent send "message"`            | Write a message to the outbox (visible to the human).                                                   |
+| `cryo-agent send --question "msg"`     | Mark the message as a question awaiting a human reply (rail shows a `?` badge until any inbox arrives). |
 | `cryo-agent receive`                   | Claim the current inbox batch from the human.                                                           |
+| `cryo-agent dialog [--last N \| --all]` | Render the full conversation transcript (sent + received). Also archives any pending inbox batch as a side effect, so it satisfies the same reply obligation as `receive`. Default: last 20 messages. |
 | `cryo-agent time`                      | Print current local time (ISO 8601).                                                                    |
 | `cryo-agent time "+30 minutes"`        | Relative offset. Units: `minutes`, `hours`, `days`, `weeks`.                                            |
 | `cryo-agent time "2026-04-25T10:00"`   | ISO 8601 pass-through (validates and normalizes).                                                       |

@@ -20,6 +20,7 @@ Then read `plan.md` for objectives and `NOTES.md` for context from previous sess
 
 - Communicate with the human only via `cryo-agent send` (stdout/stderr are diagnostic logs, not a channel). Use `--question` if you need a reply. Send at least once per session, even if it's only a status update that nothing changed.
 - To answer inbox mail: `cryo-agent receive` first (the daemon archives the batch immediately), then `cryo-agent send "response"`. The next successful `send` after `receive` is the reply for that batch by definition; if you exit without sending one, the daemon writes a fallback reply.
+- For full conversation history (e.g. picking up after a long gap, deciding tone, or recalling what the human said weeks ago), use `cryo-agent dialog [--last N | --all]` — one call returns sent + received messages interleaved, and it archives any pending inbox batch as a side effect (so it satisfies the same reply obligation `receive` would).
 - `cryo-agent todo done <id>` as you complete items. Claimed (`[~]`) TODOs auto-complete on successful session end.
 
 ### Step 3: Record
@@ -82,6 +83,7 @@ If you exit without calling `cryo-agent hibernate`, the daemon marks each claime
 cryo-agent send "message"                                        # Send message to human (outbox)
 cryo-agent send --question "what should I do?"                   # Send a question (rail shows ? until human replies)
 cryo-agent receive                                               # Claim current inbox batch from human
+cryo-agent dialog [--last N | --all]                             # Render full sent+received transcript; also claims any pending inbox batch
 cryo-agent todo add "text" --at <TIME>                           # Schedule a task (--at required) — ONLY way to set next wake
 cryo-agent todo list                                             # List all TODO items
 cryo-agent todo done <id>                                        # Mark item as done

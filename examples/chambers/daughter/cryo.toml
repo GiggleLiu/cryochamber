@@ -26,6 +26,3 @@ watch_inbox = true
 # [provider]
 # name = "opencode"
 # env = { OPENCODE_PROVIDER = "anthropic", OPENCODE_MODEL = "claude-sonnet-4-20250514", ANTHROPIC_API_KEY = "sk-ant-..." }
-#
-# Legacy `[[providers]]` arrays are still accepted for existing chambers, but
-# they are deprecated. Provider rotation has been removed; use `[provider]`.

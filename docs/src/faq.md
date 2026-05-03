@@ -65,7 +65,7 @@ The daemon process died without cleaning up.
 
 ### The agent keeps crashing and getting re-woken
 
-A crashed session re-injects the TODO that triggered it with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day), so the chamber keeps retrying at growing intervals.
+A crashed session marks the consumed TODO done and adds a fresh retry TODO (new ID) with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day), so the chamber keeps retrying at growing intervals until either a session succeeds or the operator marks the retry done.
 
 **Diagnose.**
 

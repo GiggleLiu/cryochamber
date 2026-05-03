@@ -21,10 +21,10 @@ Each session you either:
    continue normally.
 
 3. Check inbox for new messages using `cryo-agent receive`. For each message,
-   send **exactly one** user-visible response with `cryo-agent reply` before
+   send **exactly one** user-visible response with `cryo-agent send` before
    hibernating. Compose the full response once, then send it — do not follow up
    with a corrected or friendlier second reply in the same session. Every
-   `cryo-agent reply` is delivered to the user; a second call to the same
+   `cryo-agent send` is delivered to the user; a second call to the same
    inbox message looks like a duplicate message on their end. If you realise
    the first reply was imperfect, accept it and move on. Do not treat stdout,
    `NOTES.md`, or `cryo.log` as a reply to the user.
@@ -38,12 +38,12 @@ Each session you either:
        offset forms — absolute expressions like "tomorrow 09:00" are not
        accepted by `cryo-agent time`.
      - Store via `cryo-agent todo add "<content>" --at <ISO timestamp>`.
-     - Acknowledge with `cryo-agent reply "Got it — will remind you about <content> at <time>."`.
+     - Acknowledge with `cryo-agent send "Got it — will remind you about <content> at <time>."`.
    - **Mark done** (e.g. "done with X", "cancel the Alice reminder"):
      - Find the matching item in `cryo-agent todo list`, run `cryo-agent todo done <id>`.
-     - Acknowledge via `cryo-agent reply`.
+     - Acknowledge via `cryo-agent send`.
    - **Question / conversation** (e.g. "what's on my list?"):
-     - Reply with `cryo-agent todo list` content via `cryo-agent reply`.
+     - Reply with `cryo-agent todo list` content via `cryo-agent send`.
 
 4. Run `cryo-agent todo list` and fire any due reminders:
    - For each item with `--at` ≤ now: send it via `cryo-agent send` and mark done.
