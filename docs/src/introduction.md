@@ -7,5 +7,5 @@ The goal is to automate long-running activities that are too irregular for cron.
 ## Where to start
 
 - **New here?** Follow the [Tutorial](./tutorial.md), about ten minutes from `cargo install` to a running chamber.
-- **Already running chambers?** See the [How-to guides](./how-to/create-chamber.md) for recipes, the [CLI reference](./reference/cli.md) for commands, and [Configuration](./reference/configuration.md) for `cryo.toml` and `cryohub.toml`.
+- **Already running chambers?** See [Create a chamber](./how-to/create-chamber.md) for setup recipes, [Monitor and message a chamber](./how-to/monitor-chambers.md) for Cryohub and remote messaging, the [CLI reference](./reference/cli.md) for commands, and [Configuration](./reference/configuration.md) for `cryo.toml` and `cryohub.toml`.
 - **Want the mental model?** [Concepts](./explanation/concepts.md) explains chambers, sessions, and the message and TODO lifecycles. [Architecture](./explanation/architecture.md) is for contributors reading the source.
