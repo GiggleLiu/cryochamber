@@ -61,8 +61,8 @@ Run `cryo wake` to send a wake message to the daemon's inbox. You can include te
 cryo wake "Please check the latest PR"
 ```
 
-- If `watch_inbox` is enabled, the default, the daemon wakes immediately.
-- If `watch_inbox` is disabled, `cryo wake` sends `SIGUSR1` to force the daemon awake.
+- If inbox watching is enabled, the default, the daemon wakes immediately.
+- If inbox watching is disabled, `cryo wake` sends `SIGUSR1` to force the daemon awake.
 - If no daemon is running, the message is queued for the next `cryo start`.
 
 `cryo send --wake` has the same effect.
@@ -82,7 +82,7 @@ Common causes:
 - A required dependency is missing in the chamber directory.
 - The agent does not understand the `cryo-agent` protocol; check the session prompt in `cryo-agent.log`.
 
-**Break the cycle.** Remove the `(attempt k)` TODO with `cryo-agent todo remove <id>`, or edit `todo.json`, fix the underlying issue, then add a fresh TODO.
+**Break the cycle.** Remove the retry TODO with `cryo-agent todo remove <id>`, or edit `todo.json`, fix the underlying issue, then add a fresh TODO.
 
 ## Sync errors
 

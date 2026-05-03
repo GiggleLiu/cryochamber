@@ -17,7 +17,7 @@ cryohub start
 cryohub start --foreground
 ```
 
-`cryohub` prints a URL, `http://127.0.0.1:8765` by default. Open it in a browser.
+`cryohub` prints the local dashboard URL. Open it in a browser.
 
 ### Use the dashboard
 

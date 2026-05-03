@@ -11,13 +11,13 @@
 **Session.** A session is one wake, one agent run, and one return to hibernation. Each session gets chamber context, can read pending inbox messages, can schedule future TODOs, and must either hibernate for another wake or complete the plan.
 
 ```text
-cryo start -> spawn daemon -> run agent -> agent calls cryo-agent hibernate -> sleep
+cryo start -> spawn daemon -> run agent -> agent hibernates -> sleep
                                                                                   ↓
                 inbox message -> (immediate wake) <- - - - - - - - - - - - - - -┤
                                                                                   ↓
                                 (wake time reached) <- - - - - - - - - - - - - -┘
                                      ↓
-                                run agent -> agent calls cryo-agent hibernate -> ...
+                                run agent -> agent hibernates -> ...
 ```
 
 ## Message lifecycle
@@ -27,7 +27,7 @@ Messages and TODOs share two rules: work is consumed at most once, and every wak
 ![Message and TODO lifecycles inside a chamber](../images/lifecycles.svg)
 
 1. **You send a message.** The dashboard, `cryo send`, or a sync daemon writes a file into `messages/inbox/`.
-2. **The daemon wakes the agent.** If `watch_inbox = true`, that wake is immediate; otherwise the message waits for the next scheduled session.
+2. **The daemon wakes the agent.** If inbox watching is enabled, that wake is immediate; otherwise the message waits for the next scheduled session.
 3. **The agent claims the batch.** `cryo-agent receive` prints the inbox contents and moves the batch into `messages/inbox/archive/` right away.
 4. **The chamber answers.** Either the agent sends a reply with `cryo-agent send`, or the daemon emits the fallback reply for that claimed batch.
 

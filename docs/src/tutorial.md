@@ -88,7 +88,7 @@ cryo status
 cryohub start
 ```
 
-`cryohub` prints a URL, `http://127.0.0.1:8765` by default. Open it. The sidebar lists `mr-lazy`. Click it.
+`cryohub` prints the local dashboard URL. Open it. The sidebar lists `mr-lazy`. Click it.
 
 You should see, within a minute or two:
 
