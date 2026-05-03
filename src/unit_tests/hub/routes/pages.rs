@@ -1,10 +1,19 @@
 use super::*;
 
 #[test]
-fn shell_wires_search_and_history_interactions() {
+fn shell_omits_rail_search_and_keeps_history_interactions() {
     assert!(
-        SHELL_HTML.contains("railSearch.addEventListener('input'"),
-        "rail search input should filter the chamber list"
+        !SHELL_HTML.contains("id=\"rail-search\""),
+        "rail search box should not render"
+    );
+    assert!(
+        !SHELL_HTML.contains("railSearch.addEventListener('input'")
+            && !SHELL_HTML.contains("document.getElementById('rail-search')"),
+        "rail search wiring should be removed"
+    );
+    assert!(
+        !WEB_CSS.contains(".rail-search"),
+        "rail search CSS should be removed with the control"
     );
     assert!(
         SHELL_HTML.contains("window.addEventListener('popstate'"),
@@ -522,24 +531,21 @@ fn shell_folds_older_thread_messages_into_history_details() {
 }
 
 #[test]
-fn shell_stacks_task_and_wake_time_on_separate_rail_lines() {
-    // Task and wake used to share one line via `justify-content:
-    // space-between`, which made the wake time read as noise glued to the
-    // task text. Stack them so the wake time sits on its own line under
-    // the task — easier to parse at a glance.
-    let start = WEB_CSS
-        .find(".chamber-meta {")
-        .expect(".chamber-meta rule missing");
-    let after = &WEB_CSS[start..];
-    let end = after.find('}').expect(".chamber-meta rule unterminated");
-    let rule = &after[..end];
+fn shell_rail_omits_preview_and_task_lines() {
+    // The left rail should stay compact: title/status on the first row,
+    // wake time underneath. Session previews and `Task:` copy belong in
+    // the detail pane, not in every rail item.
     assert!(
-        rule.contains("flex-direction: column"),
-        "`.chamber-meta` should be a column flex: {rule}"
+        !SHELL_HTML.contains("prev.className = 'chamber-preview'"),
+        "rail rows should not render last-message preview lines"
     );
     assert!(
-        !rule.contains("space-between"),
-        "`.chamber-meta` should no longer use space-between: {rule}"
+        !SHELL_HTML.contains("`Task: ${c.task}`"),
+        "rail rows should not render task lines"
+    );
+    assert!(
+        SHELL_HTML.contains("applyWake(when, c.next_wake_display);"),
+        "rail rows should still render the wake time line"
     );
 }
 

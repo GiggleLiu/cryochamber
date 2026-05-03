@@ -26,7 +26,6 @@
       <span class="count" id="rail-count">0</span>
       <button class="rail-add" id="chamber-new" title="New chamber">+</button>
     </div>
-    <input class="rail-search" id="rail-search" placeholder="Filter chambers…">
     <div class="rail-list" id="chamber-list"></div>
     <div class="rail-foot">
       <span>auto-refresh · on</span>
@@ -229,24 +228,15 @@
     }
     row.appendChild(row1);
 
-    if (c.last_message_preview) {
-      const prev = document.createElement('div');
-      prev.className = 'chamber-preview';
-      prev.textContent = c.last_message_preview;
-      row.appendChild(prev);
+    if (c.next_wake_display) {
+      const meta = document.createElement('div');
+      meta.className = 'chamber-meta';
+      const when = document.createElement('span');
+      when.className = c.running ? 'when' : 'when muted';
+      applyWake(when, c.next_wake_display);
+      meta.appendChild(when);
+      row.appendChild(meta);
     }
-
-    const meta = document.createElement('div');
-    meta.className = 'chamber-meta';
-    const task = document.createElement('span');
-    task.className = 'task';
-    task.textContent = c.task ? `Task: ${c.task}` : (c.config_error ? 'config error' : '');
-    const when = document.createElement('span');
-    when.className = c.running ? 'when' : 'when muted';
-    applyWake(when, c.next_wake_display);
-    meta.appendChild(task);
-    meta.appendChild(when);
-    row.appendChild(meta);
 
     row.addEventListener('click', () => selectChamber(c.id));
     return row;
@@ -255,13 +245,6 @@
   function renderRail() {
     const list = document.getElementById('chamber-list');
     list.innerHTML = '';
-    const filter = document.getElementById('rail-search').value.trim().toLowerCase();
-    const matchesFilter = c => {
-      if (!filter) return true;
-      return [c.name, c.path_hint, c.task, c.last_message_preview, c.path]
-        .filter(Boolean)
-        .some(v => String(v).toLowerCase().includes(filter));
-    };
     // Split active vs completed: completed plans get folded into a
     // collapsible `<details>` section, same pattern as the TODO panel's
     // "History" fold. Keeps the rail focused on chambers that still need
@@ -269,7 +252,6 @@
     const active = [];
     const completed = [];
     for (const c of state.chambers) {
-      if (!matchesFilter(c)) continue;
       // Group by completion alone. The daemon can still be winding down
       // (running=true) right after `hibernate --complete`; `statusClass` and
       // the header glyph already prioritise "completed" in that window, so
@@ -308,9 +290,7 @@
       list.appendChild(details);
     }
 
-    const shown = active.length + completed.length;
-    document.getElementById('rail-count').textContent =
-      filter ? `${shown}/${state.chambers.length}` : state.chambers.length;
+    document.getElementById('rail-count').textContent = state.chambers.length;
   }
 
   async function loadChambers() {
@@ -1305,8 +1285,6 @@
     }
   }
 
-  const railSearch = document.getElementById('rail-search');
-  railSearch.addEventListener('input', renderRail);
   window.addEventListener('popstate', syncRouteSelection);
 
   document.getElementById('refresh').addEventListener('click', async () => {
