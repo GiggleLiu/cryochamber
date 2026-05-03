@@ -12,25 +12,15 @@ Execute these steps in order. **Do not skip or reorder steps.**
 
 ### Step 1: Orient
 
-Your prompt already carries session-dynamic context — do not re-fetch what's already there:
-
-- `## Current Time` — wall-clock at wake.
-- `## Task` — session directive.
-- `## TODO List` — pending TODOs plus claimed `[~]` TODOs (the ones that triggered this wake).
-- `## Inbox` — whether new inbox messages are waiting; run `cryo-agent receive` to read them.
-- `## System Notice` — only present after a delayed wake (e.g. machine was suspended).
-
-A header ending in `(no need to call <cmd> again)` means the content is complete; one ending in `(use <cmd> to get full text)` means it was truncated — run the named command.
+The wake prompt carries session-dynamic context (`## Current Time`, `## Task`, `## TODO List`, `## Inbox`, and after a delayed wake `## System Notice`) — don't re-fetch what's already there. Claimed `[~]` TODOs are the ones that triggered this wake. A header ending in `(use <cmd> to get full text)` means the content was truncated — run the named command.
 
 Then read `plan.md` for objectives and `NOTES.md` for context from previous sessions.
 
 ### Step 2: Work
 
-- Do the work in your plan.
-- Communicate with the human only via `cryo-agent send` (stdout/stderr are diagnostic logs, not a channel).
-- If your message asks a question or requires human feedback, use `cryo-agent send --question "<message>"`.
+- Communicate with the human only via `cryo-agent send` (stdout/stderr are diagnostic logs, not a channel). Use `--question` if you need a reply. Send at least once per session, even if it's only a status update that nothing changed.
 - To answer inbox mail: `cryo-agent receive` first (the daemon archives the batch immediately), then `cryo-agent send "response"`. The next successful `send` after `receive` is the reply for that batch by definition; if you exit without sending one, the daemon writes a fallback reply.
-- Update TODOs as you go: `cryo-agent todo done <id>`. Claimed TODOs (`[~]`) are completed automatically when the session ends successfully.
+- `cryo-agent todo done <id>` as you complete items. Claimed (`[~]`) TODOs auto-complete on successful session end.
 
 ### Step 3: Record
 
@@ -45,8 +35,6 @@ Append to `NOTES.md` only when this session produced something future-you cannot
 - **Friction:** anything about cryochamber tools or this protocol that surprised you, didn't work as expected, or made the right action unclear (a `cryo-agent` flag that rejected your input, an ambiguous prompt section hint, a step where you almost took a wrong shortcut). → `## Friction log`. This is how the protocol gets fixed — silent friction is lost.
 
 Edit existing bullets in place when their content changes; do not append a new dated entry on every wake. Trim aggressively — stale notes cost tokens every session.
-
-Then send a concise outbox message for this session, even if it is only a status update that nothing changed.
 
 ### Step 4: Confirm the next wake (TODO)
 
@@ -64,13 +52,13 @@ Add a TODO only when no existing one represents the correct next wake:
 cryo-agent todo add "<what to do next>" --at <TIME>
 ```
 
-Use `cryo-agent time "+30 minutes"` (or `"+1 day"`, ISO8601) to compute `<TIME>`.
+Compute `<TIME>` via `cryo-agent time` — never invent a wall-clock string.
 
 Always perform this check, even if the next wake is "just in case the human messages." The only session that skips Step 4 is one ending with `hibernate --complete`.
 
 ### Step 5: Hibernate (LAST action — nothing after this)
 
-Pick ONE form. **This must be your final tool call.** The daemon cannot archive messages, save state, or start the next session until your process exits.
+The daemon cannot archive messages, save state, or start the next session until your process exits. Pick ONE form:
 
 ```
 cryo-agent hibernate --summary "what I did, what's next"            # more work to do (Step 4 left a pending TODO)
