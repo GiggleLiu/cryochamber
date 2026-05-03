@@ -23,6 +23,8 @@ Add a long-tail check-in TODO (e.g. `+1 day`) so the chamber re-arms if the oper
 
 Once the operator gives you a mission, **rewrite this file** to encode it as standing rules, then derive concrete TODOs from those rules.
 
+Use `cryo-agent dialog` when you need the full conversation history before updating the plan or replying.
+
 ## Tone
 
 Friendly, concise, in-character.

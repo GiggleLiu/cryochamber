@@ -1,6 +1,6 @@
 # Agent Notes
 
-Working memory for things that aren't recoverable from messages, summaries, or the codebase.
+Your persistent memory for things that aren't recoverable from messages, summaries, or the codebase.
 
 **What belongs here:**
 - Durable facts you learned about the project, the human, or the world.
