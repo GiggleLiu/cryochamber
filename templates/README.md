@@ -24,16 +24,10 @@ Go to the project folder and type:
 cryo status          # check if the daemon is running
 cryo watch           # follow the live log
 cryo send "message"  # send a message to the agent
-cryo cancel          # stop the daemon
-```
-
-**Control the daemon:**
-
-```bash
-cryo wake         # force the agent to wake up now (don't wait for schedule)
-cryo restart      # stop and restart the daemon
-cryo cancel       # stop the daemon and clean up state
-cryo ps           # list all running cryochamber daemons on this machine
+cryo wake            # force the agent to wake up now (don't wait for schedule)
+cryo restart         # stop and restart the daemon
+cryo cancel          # stop the daemon and clean up state
+cryo ps              # list all running cryochamber daemons on this machine
 ```
 
 ## Messaging Channels
@@ -69,7 +63,7 @@ If the agent exits immediately or shows API errors in `cryo-agent.log`, check yo
 | File | Purpose |
 |------|---------|
 | `plan.md` | Task plan — the agent reads this every session |
-| `cryo.toml` | Project configuration (agent command, retries, inbox) |
+| `cryo.toml` | Project configuration (agent command, session timeout, inbox watcher, provider env) |
 | `cryo.log` | Session event log — append-only history of every session |
 | `cryo-agent.log` | Raw agent stdout/stderr output |
 | `messages/inbox/` | Incoming messages for the agent |

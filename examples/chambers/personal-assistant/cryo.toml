@@ -17,5 +17,7 @@ report_interval = 24
 # Zulip sync polling interval (seconds)
 zulip_poll_interval = 30
 
-# Provider rotation — deferred for now. To enable later, set rotate_on and add [[providers]].
-# rotate_on = "quick-exit"
+# Provider env injected into the agent process. To enable, uncomment and fill in:
+# [provider]
+# name = "opencode"
+# env = { ANTHROPIC_API_KEY = "sk-ant-..." }

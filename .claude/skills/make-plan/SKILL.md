@@ -104,8 +104,9 @@ Rule of thumb: if the thing has a **time** associated with it, prefer `todo --at
 
 ### Q6. Failure & retry strategy
 
-What if the agent crashes or hangs? Suggest based on task:
-- `max_retries`: how many retries (default 5). Note: after exhaustion, retries continue every 60s.
+What if the agent crashes or hangs? The daemon's contract is fixed and not configurable: a session that exits without `cryo-agent hibernate` causes the daemon to mark each claimed TODO done and add a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). Retries continue at growing intervals until the TODO is manually marked done or a session succeeds.
+
+Discuss with the user: at what attempt count would they want to be alerted, and via what channel? Encode that as a rule in `plan.md` (e.g. "if a TODO reaches `(attempt 5)`, send a help message before retrying further").
 
 ### Q7. AI agent & providers
 
@@ -119,12 +120,12 @@ Only switch when the user names a different agent.
 - **codex** — OpenAI's Codex CLI
 - **custom** — any command
 
-Then: do you have multiple API keys or providers to rotate between?
-- If yes: walk through `[[providers]]` entries. Each needs a `name` and `env` map (e.g. `ANTHROPIC_API_KEY`). Suggest rotation strategy:
-  - `quick-exit` (recommended) — rotate only on <5s exit (likely bad key)
-  - `any-failure` — rotate on any crash
-- If the user wants to set up providers later: skip for now and in Phase 4 tell them how to configure `[[providers]]` and `rotate_on` in `cryo.toml`.
-- If no: skip, single provider is fine.
+Then: API key configuration. The agent process inherits one provider's env via a `[provider]` block in `cryo.toml`:
+- If the user has an API key now, capture the env var name and value (e.g. `ANTHROPIC_API_KEY=sk-ant-...`) plus any model selection vars (e.g. `OPENCODE_PROVIDER`, `OPENCODE_MODEL`). Phase 2 will write a `[provider]` block that injects them into every spawned agent session.
+- If the user wants to configure the provider later: skip for now and in Phase 4 tell them how to add a `[provider]` block to `cryo.toml`.
+- If the agent picks credentials up some other way (e.g. `opencode auth login` keychain), no `[provider]` block is needed.
+
+(One active provider per chamber; provider rotation is not supported.)
 
 ### Q8. Agent permissions
 
@@ -242,8 +243,8 @@ After all questions:
 1. Draft `plan_path(project_dir)` with **Goal**, **Tasks**, **Configuration**, and **Notes** sections
 2. For interactive schedule tables: embed the schedule as a markdown table in Tasks
 3. Include delayed wake handling instructions in Tasks
-4. Include persistent state strategy in Notes (map each piece of state to `todo --at` vs. `note` — see the State primitives reference in Q5)
-5. Include a `cryo-agent time` usage note: the tool accepts `(no arg)` for current time, `+N minutes|hours|days|weeks` for offsets, or an ISO8601 string like `2026-04-25T10:00` as pass-through. It does **not** parse natural-language expressions ("tomorrow 9am"). For those, the agent should fetch the current time with `cryo-agent time`, compute the absolute ISO timestamp itself, and pass that directly to `todo --at` / `hibernate --wake`.
+4. Include persistent state strategy in Notes (map each piece of state to `todo --at` vs. `NOTES.md` — see the State primitives reference in Q5)
+5. Include a `cryo-agent time` usage note: the tool accepts `(no arg)` for current time, `+N minutes|hours|days|weeks` for offsets, or an ISO8601 string like `2026-04-25T10:00` as pass-through. It does **not** parse natural-language expressions ("tomorrow 9am"). For those, the agent should fetch the current time with `cryo-agent time`, compute the absolute ISO timestamp itself, and pass that directly to `todo add --at`.
 6. If `chamber_dir` is `project_dir/.cryo`, include a short Configuration note:
    "Project root is `..`; keep chamber memory in `NOTES.md`."
 7. Include the selected agent permission policy in Notes. For OpenCode, include
@@ -264,12 +265,11 @@ everything maps directly.
 | Brainstorm answer | cryo.toml field |
 |---|---|
 | AI agent (Q7) | `agent` |
-| Retry strategy (Q6) | `max_retries` |
+| Provider env (Q7) | `[provider]` with `name` and `env = { ... }` map |
 | Agent permissions (Q8) | Not a `cryo.toml` field. Record in `plan.md`; configure in the agent's own permission config (for OpenCode, `opencode.json` or user config). |
 | Sync channel (Q10) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
 | Sync channel (Q10) — Hub (Web UI) | Host, port, and dashboard-created chamber root live in `cryohub.toml`; nothing goes in per-chamber `cryo.toml`. |
 | Reports (Q11) | `report_time`, `report_interval` |
-| Provider rotation (Q7) | `rotate_on`, `[[providers]]` |
 
 Process:
 1. Generate `config_path(project_dir)` with values filled in and commented explanations
@@ -303,7 +303,7 @@ These checks are free. If any fails, stop — don't proceed to the live smoke te
   - Scripts: verify they exist and execute (e.g. `uv run chess_engine.py board`)
   - APIs: verify endpoints are reachable (e.g. `curl -sf https://... > /dev/null`)
   - Env vars: verify required variables are set and non-empty
-- If provider rotation configured: validate each provider's env vars
+- If a `[provider]` block is configured: validate the env vars it injects (e.g. `ANTHROPIC_API_KEY` is non-empty)
 
 ### Layer 3: Live smoke test
 
@@ -332,16 +332,11 @@ Ask the user if they want to launch the plan immediately.
 - If no: print instructions for launching later from `chamber_dir` (`cryo start`, sync commands if applicable, `cryo watch`).
 
 If the user deferred provider setup in Q7, remind them how to configure it:
-- Edit `config_path(project_dir)` and add `rotate_on = "quick-exit"` (or `"any-failure"`)
-- Add `[[providers]]` entries with `name` and `env` map, e.g.:
+- Edit `config_path(project_dir)` and add a `[provider]` block with `name` and `env` map, e.g.:
   ```toml
-  [[providers]]
-  name = "key-1"
-  env = { ANTHROPIC_API_KEY = "sk-ant-..." }
-
-  [[providers]]
-  name = "key-2"
-  env = { OPENAI_API_KEY = "sk-...", OPENAI_BASE_URL = "https://..." }
+  [provider]
+  name = "opencode"
+  env = { OPENCODE_PROVIDER = "anthropic", OPENCODE_MODEL = "claude-sonnet-4-20250514", ANTHROPIC_API_KEY = "sk-ant-..." }
   ```
 - Warn: add `config_path(project_dir)` to `.gitignore` if it contains API keys.
 
@@ -383,7 +378,7 @@ digraph cryo_create {
 |---|---|
 | Hardcoded timestamps in `plan_path(project_dir)` | Always compute times via `cryo-agent time` (relative) or an ISO8601 string the agent constructed |
 | Passing natural language to `cryo-agent time` (e.g. `"tomorrow 9am"`) | Only `+N minutes\|hours\|days\|weeks` and ISO8601 (`2026-04-25T10:00`) are accepted. Agent must reason about NL expressions itself. |
-| Using `note` for time-scheduled items | Use `todo add "..." --at <ISO>` for anything with a deadline; `note` is for auxiliary state. |
+| Appending to `NOTES.md` for time-scheduled items | Use `todo add "..." --at <ISO>` for anything with a deadline; `NOTES.md` is for auxiliary state without a deadline. |
 | Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |
 | Zulip bot not subscribed to target stream | `cryo-zulip init` fails to resolve — add the bot in Zulip's stream settings first |
 | Provider env vars not set | Validate in Phase 3 before starting |

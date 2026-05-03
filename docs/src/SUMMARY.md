@@ -2,16 +2,23 @@
 
 [Introduction](./introduction.md)
 
-# User Guide
+# Tutorial
 
-- [Getting Started](./getting-started.md)
-- [Configuration](./configuration.md)
-- [Commands](./commands.md)
-- [Hub](./hub.md)
-- [GitHub Sync](./github-sync.md)
-- [Zulip Sync](./zulip-sync.md)
-- [FAQ and troubleshooting](./faq.md)
+- [Build Mr. Lazy](./tutorial.md)
 
-# Developer Guide
+# How-to guides
 
-- [Architecture](./architecture.md)
+- [Create a chamber](./how-to/create-chamber.md)
+- [Monitor and message a chamber](./how-to/monitor-chambers.md)
+- [Troubleshoot](./how-to/troubleshoot.md)
+
+# Reference
+
+- [CLI](./reference/cli.md)
+- [Configuration](./reference/configuration.md)
+- [Runtime files](./reference/files.md)
+
+# Explanation
+
+- [Concepts](./explanation/concepts.md)
+- [Architecture](./explanation/architecture.md)
