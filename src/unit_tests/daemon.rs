@@ -1379,7 +1379,7 @@ fn test_drive_active_session_writes_daemon_status_without_outbound_message() {
     assert!(
         effects.replies[0]
             .1
-            .contains("without sending an outbox message"),
+            .contains("daemon: agent hibernated without sending anything"),
         "daemon status should explain why it was sent: {:?}",
         effects.replies
     );
@@ -1493,7 +1493,7 @@ fn test_drive_active_session_unreceived_inbox_only_gets_daemon_status() {
     assert!(
         effects.replies[0]
             .1
-            .contains("without sending an outbox message"),
+            .contains("daemon: agent hibernated without sending anything"),
         "without a claimed inbox batch, the daemon should only send its generic status: {:?}",
         effects.replies
     );
@@ -1890,7 +1890,7 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
     assert!(
         effects.replies[0]
             .1
-            .contains("the agent did not send a reply"),
+            .contains("daemon: agent hibernated without replying"),
         "daemon fallback reply should still be written after receive/archive: {:?}",
         effects.replies
     );
@@ -1964,7 +1964,7 @@ fn test_drive_active_session_dialog_request_returns_transcript_and_preserves_fal
     assert!(
         effects.replies[0]
             .1
-            .contains("the agent did not send a reply"),
+            .contains("daemon: agent hibernated without replying"),
         "dialog should preserve the fallback reply obligation: {:?}",
         effects.replies
     );
@@ -2026,7 +2026,7 @@ fn test_drive_active_session_dialog_failure_after_claim_still_triggers_fallback(
     assert!(
         effects.replies[0]
             .1
-            .contains("the agent did not send a reply"),
+            .contains("daemon: agent hibernated without replying"),
         "a failed dialog after claim must still preserve fallback reply behavior: {:?}",
         effects.replies
     );

@@ -230,21 +230,20 @@ struct EventLoopMutations<'a> {
     next_wake: &'a mut Option<NaiveDateTime>,
 }
 
-fn daemon_unanswered_reply_text(message_count: usize) -> String {
-    let (noun, verb) = if message_count == 1 {
-        ("message", "is")
+fn daemon_unanswered_reply_text(clean_hibernate: bool) -> &'static str {
+    if clean_hibernate {
+        "(daemon: agent hibernated without replying)"
     } else {
-        ("messages", "are")
-    };
-    format!(
-        "I received {message_count} {noun}, but the agent did not send a reply before the session ended. \
-         The daemon is replying so your {noun} {verb} not left unanswered."
-    )
+        "(daemon: agent crashed before replying)"
+    }
 }
 
-fn daemon_missing_outbound_text() -> &'static str {
-    "The agent completed this session without sending an outbox message. \
-     The daemon is sending this status so every agent run has a visible message."
+fn daemon_missing_outbound_text(clean_hibernate: bool) -> &'static str {
+    if clean_hibernate {
+        "(daemon: agent hibernated without sending anything)"
+    } else {
+        "(daemon: agent crashed before sending)"
+    }
 }
 
 fn ipc_protocol_response(protocol_version: u32) -> crate::socket::Response {
@@ -1091,12 +1090,13 @@ impl Daemon {
         effects: &mut impl SessionEffects,
         logger: &mut crate::log::EventLogger,
         inbox_state: &mut SessionInboxState,
+        clean_hibernate: bool,
     ) {
         let mut daemon_wrote_reply = false;
         let message_count = inbox_state.claimed_message_count();
         if message_count > 0 {
-            let text = daemon_unanswered_reply_text(message_count);
-            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now(), false) {
+            let text = daemon_unanswered_reply_text(clean_hibernate);
+            match effects.write_reply(ReplyAuthor::Daemon, text, self.clock.local_now(), false) {
                 Ok(()) => {
                     if let Err(e) = logger.log_event(&format!(
                         "daemon reply: {} unanswered inbox message{} [{}]",
@@ -1123,7 +1123,7 @@ impl Daemon {
         if message_count == 0 && !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
             match effects.write_reply(
                 ReplyAuthor::Daemon,
-                daemon_missing_outbound_text(),
+                daemon_missing_outbound_text(clean_hibernate),
                 self.clock.local_now(),
                 false,
             ) {
@@ -1168,11 +1168,17 @@ impl Daemon {
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
                 runtime.terminate();
+                let clean_hibernate = hibernate_outcome.is_some();
                 let decision = resolve_interrupted_session(
                     SessionInterruption::Shutdown,
                     hibernate_outcome.take(),
                 );
-                self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
+                self.finalize_human_replies(
+                    effects,
+                    &mut logger,
+                    &mut inbox_state,
+                    clean_hibernate,
+                );
                 logger.finish(decision.finish_reason)?;
                 return Ok(decision.outcome);
             }
@@ -1184,11 +1190,17 @@ impl Daemon {
                         context.timeout_secs
                     );
                     runtime.terminate();
+                    let clean_hibernate = hibernate_outcome.is_some();
                     let decision = resolve_interrupted_session(
                         SessionInterruption::Timeout,
                         hibernate_outcome.take(),
                     );
-                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
+                    self.finalize_human_replies(
+                        effects,
+                        &mut logger,
+                        &mut inbox_state,
+                        clean_hibernate,
+                    );
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
@@ -1206,7 +1218,13 @@ impl Daemon {
                             inbox_state: &mut inbox_state,
                         },
                     ) {
-                        self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
                         logger.finish(&format!("error handling agent request: {e}"))?;
                         return Err(e);
                     }
@@ -1231,6 +1249,7 @@ impl Daemon {
                             .unwrap_or_else(|| "signal".into())
                     ))?;
 
+                    let clean_hibernate = hibernate_outcome.is_some();
                     let decision = resolve_child_exit(hibernate_outcome.take(), elapsed);
                     if decision.quick_exit {
                         let elapsed_s = format!("{:.1}s", elapsed.as_secs_f32());
@@ -1244,13 +1263,24 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
-                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
+                    self.finalize_human_replies(
+                        effects,
+                        &mut logger,
+                        &mut inbox_state,
+                        clean_hibernate,
+                    );
                     logger.finish(decision.finish_reason)?;
                     return Ok(decision.outcome);
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    self.finalize_human_replies(effects, &mut logger, &mut inbox_state);
+                    let clean_hibernate = hibernate_outcome.is_some();
+                    self.finalize_human_replies(
+                        effects,
+                        &mut logger,
+                        &mut inbox_state,
+                        clean_hibernate,
+                    );
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
                 }

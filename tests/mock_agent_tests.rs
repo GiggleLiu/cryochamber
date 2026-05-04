@@ -724,7 +724,7 @@ fn test_unreceived_queued_inbox_gets_daemon_status_only() {
         outbox[0]
             .1
             .body
-            .contains("without sending an outbox message"),
+            .contains("hibernated without sending anything"),
         "without receive, the daemon should only emit its generic session status: {:?}",
         outbox[0].1.body
     );
