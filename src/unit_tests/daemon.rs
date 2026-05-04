@@ -1337,6 +1337,15 @@ fn test_drive_active_session_quick_exit_without_hibernate() {
     );
     assert!(!runtime.terminated());
     assert!(runtime.responses().is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("daemon: agent crashed before sending"),
+        "daemon status should explain the crash path: {:?}",
+        effects.replies
+    );
 }
 
 #[test]
@@ -1892,6 +1901,53 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
             .1
             .contains("daemon: agent hibernated without replying"),
         "daemon fallback reply should still be written after receive/archive: {:?}",
+        effects.replies
+    );
+}
+
+#[test]
+fn test_drive_active_session_receive_then_crash_uses_crash_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Receive))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(1) }))],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("msg-1.md", "Archive me");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        SessionLoopOutcome::ValidationFailed { quick_exit: true }
+    );
+    assert_eq!(runtime.responses().len(), 1);
+    assert!(runtime.responses()[0].0);
+    assert!(runtime.responses()[0].1.contains("--- msg-1.md ---"));
+    assert!(effects.inbox_messages.is_empty());
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
+    assert!(
+        effects.replies[0]
+            .1
+            .contains("daemon: agent crashed before replying"),
+        "daemon fallback reply should name the crash path: {:?}",
         effects.replies
     );
 }
