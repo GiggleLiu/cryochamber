@@ -39,21 +39,15 @@ Start Cryohub to monitor it in your browser:
 cryohub start
 ```
 
-→ **Full tutorial:** <https://giggleliu.github.io/cryochamber/tutorial.html>
-
-## Cryohub
-
 Cryohub is the local web dashboard for Cryochamber. It runs once per user,
 discovers chambers on this machine, and gives you a browser UI for status,
 logs, messages, TODOs, notes, and start/stop controls.
 
-![cryohub dashboard with the mr-lazy chamber selected](docs/src/images/cryohub-dashboard.png)
+→ **Full tutorial:** <https://giggleliu.github.io/cryochamber/tutorial.html>
 
-See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
+## Remote monitoring
 
-## Remote messaging
-
-Talk to a chamber from anywhere via GitHub Discussions, `cryo-gh`, or Zulip, `cryo-zulip`. See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
+Admin can talk to a chamber from anywhere via GitHub Discussions, `cryo-gh`, or Zulip, `cryo-zulip`. See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
 
 ## License
 
