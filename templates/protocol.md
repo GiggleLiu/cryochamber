@@ -6,6 +6,18 @@ You wake up, do work, then hibernate until the next session.
 Each session: **orient → work → record → confirm next wake → hibernate**.
 Non-negotiable: every session sends at least one human-visible outbox message, and (unless ending with `--complete`) leaves a pending TODO before the final `hibernate` call. Wake times are declared only via TODOs — `hibernate` takes no wake argument.
 
+These are separate actions:
+- `send` makes a human-visible message; it does not schedule or end the session.
+- `todo add --at` schedules the next wake; it does not message or end the session.
+- `hibernate` exits the agent; it does not message or schedule.
+
+Do not take these shortcuts:
+- "I sent a message, so I'm done." Wrong: still confirm the next TODO and hibernate.
+- "The plan says when to wake, so I don't need a TODO." Wrong: only pending TODOs wake the daemon.
+- "Nothing changed, so I can exit silently." Wrong: send a brief status.
+- "I added a TODO, so I can stop now." Wrong: hibernate is what ends the session.
+- "I received inbox mail, but can answer later." Wrong: after `receive` or `dialog`, send a reply before exiting.
+
 ## Session Workflow
 
 Execute these steps in order. **Do not skip or reorder steps.**
@@ -26,7 +38,7 @@ Then read `plan.md` for objectives and `NOTES.md` for context from previous sess
 
 ### Step 3: Record
 
-NOTES.md is your memory across sessions. The outbox and `hibernate --summary` are already the session journal — do **not** restate them in `NOTES.md`. Most sessions add nothing to `NOTES.md`; that is fine.
+NOTES.md is persistent memory, not the session journal. The outbox and `hibernate --summary` are already the session journal — do **not** restate them in `NOTES.md`. Most sessions add nothing to `NOTES.md`; that is fine.
 
 Append to `NOTES.md` only when this session produced something future-you cannot reconstruct from messages, summaries, or the code:
 
@@ -36,7 +48,7 @@ Append to `NOTES.md` only when this session produced something future-you cannot
 - A decision and *why* you made it (over the alternatives considered).
 - **Friction:** anything about cryochamber tools or this protocol that surprised you, didn't work as expected, or made the right action unclear (a `cryo-agent` flag that rejected your input, an ambiguous prompt section hint, a step where you almost took a wrong shortcut). → `## Friction log`. This is how the protocol gets fixed — silent friction is lost.
 
-Edit existing bullets in place when their content changes; do not append a new dated entry on every wake. Trim aggressively — stale notes cost tokens every session.
+Edit existing bullets in place when their content changes; do not append a new dated entry on every wake. If a session changes durable state, update the relevant section or add one concise durable marker under the appropriate heading. Do not use `NOTES.md` for scheduling or bootstrap detection; TODO state is the source of truth. Trim aggressively — stale notes cost tokens every session.
 
 ### Step 4: Confirm the next wake (TODO)
 
@@ -93,3 +105,11 @@ cryo-agent time                                                  # Current time 
 cryo-agent time "+1 day"                                         # Relative time computation
 cryo-agent hibernate [--complete|--exit N] [--summary "..."]     # End the session (no wake arg — wakes come from TODOs)
 ```
+
+## Core Invariants
+
+- TODOs drive wake time; no pending TODO means no scheduled wake.
+- Every session sends at least one human-visible outbox message.
+- Inbox is consumed by `receive` or `dialog`; after consuming inbox, send a reply before exiting.
+- `hibernate` must be the final action.
+- `NOTES.md` is persistent memory, not scheduling state or a run log.
