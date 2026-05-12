@@ -515,7 +515,7 @@ impl StartupPlatform for FakeStartupPlatform {
 
     fn start_inbox_watcher(
         &self,
-        _inbox_path: &Path,
+        _paths: &[PathBuf],
         _tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<Self::Watcher> {
         *self.watcher_calls.lock().unwrap() += 1;
@@ -590,7 +590,7 @@ fn test_inbox_watcher_detects_new_file() {
     std::fs::create_dir_all(&inbox).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _watcher = InboxWatcher::start(&inbox, tx).unwrap();
+    let _watcher = InboxWatcher::start(std::slice::from_ref(&inbox), tx).unwrap();
 
     // Create a file in inbox
     std::fs::write(inbox.join("test-message.md"), "hello").unwrap();
@@ -611,7 +611,7 @@ fn test_inbox_watcher_ignores_non_create_events() {
     std::fs::write(&file, "original").unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _watcher = InboxWatcher::start(&inbox, tx).unwrap();
+    let _watcher = InboxWatcher::start(std::slice::from_ref(&inbox), tx).unwrap();
 
     // Modify existing file (not a create)
     std::fs::write(&file, "modified").unwrap();
@@ -1163,7 +1163,7 @@ fn test_legacy_rotate_on_does_not_rotate_provider_in_event_loop() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let config: CryoConfig = toml::from_str(
@@ -1770,7 +1770,7 @@ fn test_run_event_loop_completes_claimed_todo_after_successful_session() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -1820,7 +1820,7 @@ fn test_run_event_loop_reschedules_claimed_todo_after_crash() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (tx, rx) = mpsc::channel();
@@ -2135,17 +2135,48 @@ fn test_build_bootstrap_state_only_enables_watcher_when_configured_and_present()
     let cryo_state = test_cryo_state();
     let mut config = CryoConfig::default();
 
+    // Default config lists `messages/inbox`, but the directory does not yet
+    // exist on disk so the daemon should filter it out.
     let no_inbox = daemon.build_bootstrap_state(&cryo_state, &config);
-    assert!(no_inbox.watch_inbox_path.is_none());
+    assert!(no_inbox.watch_dirs.is_empty());
 
     let inbox = dir.path().join("messages").join("inbox");
     std::fs::create_dir_all(&inbox).unwrap();
     let with_inbox = daemon.build_bootstrap_state(&cryo_state, &config);
-    assert_eq!(with_inbox.watch_inbox_path, Some(inbox.clone()));
+    assert_eq!(with_inbox.watch_dirs, vec![inbox.clone()]);
 
-    config.watch_inbox = false;
+    config.watch_dirs = Vec::new();
     let disabled = daemon.build_bootstrap_state(&cryo_state, &config);
-    assert!(disabled.watch_inbox_path.is_none());
+    assert!(disabled.watch_dirs.is_empty());
+}
+
+#[test]
+fn test_build_bootstrap_state_supports_multiple_watch_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
+    let cryo_state = test_cryo_state();
+
+    let inbox = dir.path().join("messages").join("inbox");
+    let drop_box = dir.path().join("drop_box");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::create_dir_all(&drop_box).unwrap();
+
+    let config = CryoConfig {
+        watch_dirs: vec![
+            std::path::PathBuf::from("messages/inbox"),
+            std::path::PathBuf::from("drop_box"),
+            std::path::PathBuf::from("not_yet_created"),
+        ],
+        ..Default::default()
+    };
+
+    let bootstrap = daemon.build_bootstrap_state(&cryo_state, &config);
+    assert_eq!(bootstrap.watch_dirs, vec![inbox.clone(), drop_box.clone()]);
 }
 
 #[test]
@@ -2183,7 +2214,7 @@ fn test_prepare_runtime_startup_returns_registry_warning_but_continues() {
     let (tx, _rx) = mpsc::channel();
 
     let startup = daemon
-        .prepare_runtime_startup(&platform, Some(inbox.as_path()), tx)
+        .prepare_runtime_startup(&platform, std::slice::from_ref(&inbox), tx)
         .unwrap();
 
     assert_eq!(
@@ -2212,7 +2243,7 @@ fn test_prepare_runtime_startup_watcher_failure_is_nonfatal() {
     let (tx, _rx) = mpsc::channel();
 
     let startup = daemon
-        .prepare_runtime_startup(&platform, Some(inbox.as_path()), tx)
+        .prepare_runtime_startup(&platform, std::slice::from_ref(&inbox), tx)
         .unwrap();
 
     assert!(startup.watcher.is_none());
@@ -2237,7 +2268,7 @@ fn test_prepare_runtime_startup_propagates_signal_registration_failure() {
     let (tx, _rx) = mpsc::channel();
 
     let error = daemon
-        .prepare_runtime_startup(&platform, None, tx)
+        .prepare_runtime_startup(&platform, &[], tx)
         .unwrap_err()
         .to_string();
 
@@ -2260,7 +2291,7 @@ fn test_prepare_runtime_startup_propagates_socket_bind_failure() {
     let (tx, _rx) = mpsc::channel();
 
     let error = daemon
-        .prepare_runtime_startup(&platform, None, tx)
+        .prepare_runtime_startup(&platform, &[], tx)
         .unwrap_err()
         .to_string();
 
@@ -2557,7 +2588,7 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2656,7 +2687,7 @@ fn test_session_active_observed_inside_session_and_cleared_after() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2724,7 +2755,7 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2775,7 +2806,7 @@ fn test_run_event_loop_marks_session_active_during_successful_session() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2838,7 +2869,7 @@ fn test_run_event_loop_clears_session_active_after_launcher_error() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (tx, rx) = mpsc::channel();
@@ -2903,7 +2934,7 @@ fn test_run_event_loop_does_not_abort_on_mid_loop_state_save_failure() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let (_tx, rx) = mpsc::channel();
@@ -2978,7 +3009,7 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
         next_report_time: None,
         next_wake: None,
         run_now: true,
-        watch_inbox_path: None,
+        watch_dirs: Vec::new(),
     };
 
     let config = CryoConfig::default();

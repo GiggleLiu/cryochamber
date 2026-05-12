@@ -1,35 +1,5 @@
 use super::*;
-use std::sync::{Mutex, MutexGuard};
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct RegistryEnvGuard<'a> {
-    _lock: MutexGuard<'a, ()>,
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl<'a> RegistryEnvGuard<'a> {
-    fn set(key: &'static str, value: &std::path::Path) -> Self {
-        let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self {
-            _lock: lock,
-            key,
-            previous,
-        }
-    }
-}
-
-impl Drop for RegistryEnvGuard<'_> {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
+use crate::test_support::EnvVarGuard;
 
 fn create_chamber(parent: &Path, name: &str) -> PathBuf {
     let chamber = parent.join(name);
@@ -85,7 +55,7 @@ fn scan_finds_chambers_with_valid_config() {
 #[test]
 fn discover_merges_registered_chambers_outside_workspace() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let workspace = tempfile::tempdir().unwrap();
     let other_workspace = tempfile::tempdir().unwrap();
     let registered = create_chamber(other_workspace.path(), "external");
@@ -104,7 +74,7 @@ fn discover_merges_registered_chambers_outside_workspace() {
 #[test]
 fn discover_reads_registry_without_scanning_workspace() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let workspace = tempfile::tempdir().unwrap();
     let other_workspace = tempfile::tempdir().unwrap();
     create_chamber(workspace.path(), "unregistered-local");
@@ -120,7 +90,7 @@ fn discover_reads_registry_without_scanning_workspace() {
 #[test]
 fn discover_names_project_local_dot_cryo_chamber_after_parent_project() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let hub_root = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let project_dir = project.path().join("qec");
@@ -142,7 +112,7 @@ fn discover_names_project_local_dot_cryo_chamber_after_parent_project() {
 #[test]
 fn discover_local_only_skips_registered_chambers() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let workspace = tempfile::tempdir().unwrap();
     let other_workspace = tempfile::tempdir().unwrap();
     create_chamber(workspace.path(), "local");

@@ -17,7 +17,11 @@ fn test_load_partial_toml() {
     let config = load_config(&path).unwrap().unwrap();
     assert_eq!(config.agent, "claude");
     assert_eq!(config.max_session_duration, 0, "Should use default timeout");
-    assert!(config.watch_inbox, "Should use default watch_inbox");
+    assert_eq!(
+        config.watch_dirs,
+        default_watch_dirs(),
+        "Should use default watch_dirs"
+    );
 }
 
 #[test]

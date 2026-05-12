@@ -139,8 +139,9 @@ and needs an explicit justification.
 - **Daemon mode**: `cryo start` installs an OS service (launchd on macOS, systemd on Linux) that survives reboots. The daemon sleeps until the scheduled wake time, watches `messages/inbox/` for reactive wake, and enforces session timeout. Set `CRYO_NO_SERVICE=1` to fall back to direct background process spawn.
 - **Socket-based IPC**: The agent communicates with the daemon via `cryo-agent` CLI subcommands (`hibernate`, `send`, `receive`, `todo`), which send JSON messages over a Unix domain socket. Only `time` is purely local.
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
-- **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_inbox` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
-- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_inbox, report interval, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_dirs` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
+- **Reactive wake via `watch_dirs`**: `cryo.toml` carries a list `watch_dirs` (default `["messages/inbox"]`) of directories the daemon attaches a notify watcher to. New files in any watched directory wake the agent, equivalent to inbox-triggered wake. Empty list disables reactive wake. Do not reintroduce `watch_inbox` compatibility.
+- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_dirs, report interval, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Provider config**: Cryochamber supports a single active provider profile. The canonical TOML shape is `[provider]` with an `env = { ... }` map, injected into every spawned agent session. Legacy `[[providers]]` arrays are accepted only for backward compatibility: loading them emits a deprecation warning, the first entry is used, and saving canonicalizes back to `[provider]`. Provider rotation has been removed; do not reintroduce `provider_index`, `rotate_on`, or multi-provider retry behavior.
 - **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender — both per-session fallback replies (when the agent never sends a human-visible message after claiming inbox, or crashes) and periodic reports. Agent-authored human-visible messages use `from: agent`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
@@ -186,7 +187,7 @@ and needs an explicit justification.
 
 ### Files Created by `cryo init`
 
-- `cryo.toml` — project configuration (agent, max_session_duration, watch_inbox)
+- `cryo.toml` — project configuration (agent, max_session_duration, watch_dirs)
 - `plan.md` — template plan file
 - `NOTES.md` — agent's persistent memory across sessions (seeded from `templates/notes.md`; agent reads/writes directly)
 - `README.md` — quickstart guide for the project (service commands, messaging channels)

@@ -1,17 +1,18 @@
 // tests/config_tests.rs
 use cryochamber::config::{
-    config_path, load_config, save_config, CryoConfig, ProviderConfig,
+    config_path, default_watch_dirs, load_config, save_config, CryoConfig, ProviderConfig,
     LEGACY_PROVIDERS_DEPRECATION_WARNING,
 };
 use cryochamber::state::CryoState;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[test]
 fn test_config_defaults() {
     let config = CryoConfig::default();
     assert_eq!(config.agent, "opencode");
     assert_eq!(config.max_session_duration, 0);
-    assert!(config.watch_inbox);
+    assert_eq!(config.watch_dirs, default_watch_dirs());
 }
 
 #[test]
@@ -22,7 +23,7 @@ fn test_config_roundtrip() {
     let config = CryoConfig {
         agent: "claude".to_string(),
         max_session_duration: 3600,
-        watch_inbox: false,
+        watch_dirs: vec![],
         ..Default::default()
     };
 
@@ -31,7 +32,7 @@ fn test_config_roundtrip() {
 
     assert_eq!(loaded.agent, "claude");
     assert_eq!(loaded.max_session_duration, 3600);
-    assert!(!loaded.watch_inbox);
+    assert!(loaded.watch_dirs.is_empty());
 }
 
 #[test]
@@ -52,7 +53,7 @@ fn test_config_partial_toml_uses_defaults() {
     let loaded = load_config(&path).unwrap().unwrap();
     assert_eq!(loaded.agent, "codex");
     assert_eq!(loaded.max_session_duration, 0); // default
-    assert!(loaded.watch_inbox); // default
+    assert_eq!(loaded.watch_dirs, default_watch_dirs()); // default
 }
 
 #[test]
@@ -81,7 +82,7 @@ fn test_apply_overrides_none_keeps_config() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
         max_session_duration: 1800,
-        watch_inbox: true,
+        watch_dirs: default_watch_dirs(),
         ..Default::default()
     };
 
@@ -102,7 +103,7 @@ fn test_apply_overrides_none_keeps_config() {
     // Nothing should change
     assert_eq!(config.agent, "opencode");
     assert_eq!(config.max_session_duration, 1800);
-    assert!(config.watch_inbox);
+    assert_eq!(config.watch_dirs, default_watch_dirs());
 }
 
 #[test]
@@ -110,7 +111,7 @@ fn test_apply_overrides_partial() {
     let mut config = CryoConfig {
         agent: "opencode".to_string(),
         max_session_duration: 1800,
-        watch_inbox: true,
+        watch_dirs: default_watch_dirs(),
         ..Default::default()
     };
 
@@ -130,7 +131,67 @@ fn test_apply_overrides_partial() {
 
     assert_eq!(config.agent, "claude"); // overridden
     assert_eq!(config.max_session_duration, 1800); // unchanged
-    assert!(config.watch_inbox); // unchanged
+    assert_eq!(config.watch_dirs, default_watch_dirs()); // unchanged
+}
+
+#[test]
+fn test_watch_inbox_is_ignored_when_watch_dirs_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+    std::fs::write(&path, "agent = \"opencode\"\nwatch_inbox = false\n").unwrap();
+
+    let loaded = load_config(&path).unwrap().unwrap();
+    assert_eq!(loaded.watch_dirs, default_watch_dirs());
+
+    save_config(&path, &loaded).unwrap();
+    let serialized = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !serialized.contains("watch_inbox"),
+        "legacy watch_inbox should not be reserialized: {serialized}"
+    );
+    assert!(serialized.contains("watch_dirs"));
+}
+
+#[test]
+fn test_watch_inbox_does_not_override_explicit_watch_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+    std::fs::write(
+        &path,
+        "agent = \"opencode\"\n\
+         watch_inbox = false\n\
+         watch_dirs = [\"custom/dir\"]\n",
+    )
+    .unwrap();
+
+    let loaded = load_config(&path).unwrap().unwrap();
+    assert_eq!(loaded.watch_dirs, vec![PathBuf::from("custom/dir")]);
+}
+
+#[test]
+fn test_multiple_watch_dirs_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = config_path(dir.path());
+    let config = CryoConfig {
+        watch_dirs: vec![
+            PathBuf::from("messages/inbox"),
+            PathBuf::from("incoming"),
+            PathBuf::from("/tmp/external"),
+        ],
+        ..Default::default()
+    };
+
+    save_config(&path, &config).unwrap();
+    let loaded = load_config(&path).unwrap().unwrap();
+
+    assert_eq!(
+        loaded.watch_dirs,
+        vec![
+            PathBuf::from("messages/inbox"),
+            PathBuf::from("incoming"),
+            PathBuf::from("/tmp/external"),
+        ]
+    );
 }
 
 #[test]

@@ -8,6 +8,11 @@ use crate::state::CryoState;
 
 pub const LEGACY_PROVIDERS_DEPRECATION_WARNING: &str = "Warning: [[providers]] is deprecated; use [provider] instead. Provider rotation has been removed; only one provider is used.";
 
+/// Default list of directories the daemon watches for reactive wake.
+pub fn default_watch_dirs() -> Vec<PathBuf> {
+    vec![PathBuf::from("messages/inbox")]
+}
+
 /// A named provider profile with environment variables to inject.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -28,9 +33,10 @@ pub struct CryoConfig {
     #[serde(default)]
     pub max_session_duration: u64,
 
-    /// Watch inbox for reactive wake
-    #[serde(default = "default_watch_inbox")]
-    pub watch_inbox: bool,
+    /// Directories (relative to the chamber root, or absolute) that the
+    /// daemon watches for reactive wake. Defaults to just `messages/inbox`.
+    #[serde(default = "default_watch_dirs")]
+    pub watch_dirs: Vec<PathBuf>,
 
     /// Time of day to send periodic report (HH:MM, local time)
     #[serde(default = "default_report_time")]
@@ -62,10 +68,6 @@ fn default_agent() -> String {
     "opencode".to_string()
 }
 
-fn default_watch_inbox() -> bool {
-    true
-}
-
 fn default_report_time() -> String {
     "09:00".to_string()
 }
@@ -79,7 +81,7 @@ impl Default for CryoConfig {
         Self {
             agent: default_agent(),
             max_session_duration: 0,
-            watch_inbox: default_watch_inbox(),
+            watch_dirs: default_watch_dirs(),
             report_time: default_report_time(),
             report_interval: 0,
             provider: None,

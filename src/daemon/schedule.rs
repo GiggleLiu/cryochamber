@@ -24,7 +24,9 @@ pub(super) struct DaemonBootstrapState {
     pub(super) next_report_time: Option<NaiveDateTime>,
     pub(super) next_wake: Option<NaiveDateTime>,
     pub(super) run_now: bool,
-    pub(super) watch_inbox_path: Option<PathBuf>,
+    /// Directories the daemon should attach a notify watcher to at startup.
+    /// Empty means "no reactive wake watcher".
+    pub(super) watch_dirs: Vec<PathBuf>,
 }
 
 pub(super) fn decide_next_step(

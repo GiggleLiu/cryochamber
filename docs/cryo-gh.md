@@ -66,7 +66,7 @@ Both run as background daemons. Monitor with `cryo watch`.
 
 ### 4. Send messages from GitHub
 
-Post a comment on the Discussion from the GitHub web UI or mobile app. The sync daemon picks it up within 30 seconds and writes it to `messages/inbox/`. The daemon wakes the agent on the next session (or immediately if `watch_inbox = true`).
+Post a comment on the Discussion from the GitHub web UI or mobile app. The sync daemon picks it up within 30 seconds and writes it to `messages/inbox/`. The daemon wakes the agent on the next session (or immediately if `messages/inbox` is in `watch_dirs`).
 
 ### 5. Read agent replies on GitHub
 
