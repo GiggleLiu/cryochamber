@@ -45,9 +45,13 @@ logs, messages, TODOs, notes, and start/stop controls.
 
 → **Full tutorial:** <https://giggleliu.github.io/cryochamber/tutorial.html>
 
-## Remote monitoring
+## Features
 
-Admin can talk to a chamber from anywhere via GitHub Discussions, `cryo-gh`, or Zulip, `cryo-zulip`. See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
+- **Agent-guided hibernation**: the agent decides when to wake next instead of running on a fixed cron schedule.
+- **Folder watching**: configure `watch_dirs` to wake the agent when a folder changes, such as `messages/inbox/` or another project directory.
+- **Crash recovery and reboot persistence**: `cryo start` installs a launchd/systemd service by default, so scheduled sessions survive machine reboots; failed TODO sessions are rescheduled as visible retry attempts with backoff.
+- **Configurable agents**: run OpenCode, Claude Code, Codex, or another command from `cryo.toml`.
+- **Local and remote monitoring**: use the Cryohub dashboard to monitor chamber status, logs, messages, TODOs, notes, and lifecycle controls in a local browser UI, or talk to a chamber from anywhere via GitHub Discussions with `cryo-gh` or Zulip with `cryo-zulip`. See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
 
 ## License
 
