@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 pub mod agent;
 pub mod chamber_status;
 pub mod channel;
@@ -27,4 +29,39 @@ pub fn work_dir() -> anyhow::Result<std::path::PathBuf> {
     dir.canonicalize().or_else(|_| Ok(dir))
 }
 
-use anyhow::Context;
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct EnvVarGuard<'a> {
+        _lock: MutexGuard<'a, ()>,
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl<'a> EnvVarGuard<'a> {
+        pub(crate) fn set_path(key: &'static str, value: &Path) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self {
+                _lock: lock,
+                key,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard<'_> {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}

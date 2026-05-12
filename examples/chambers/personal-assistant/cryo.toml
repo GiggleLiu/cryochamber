@@ -7,8 +7,8 @@ agent = "opencode"
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 0
 
-# Watch inbox for reactive wake (two-way interaction with user via Zulip)
-watch_inbox = true
+# Directories to watch for reactive wake (two-way interaction via Zulip)
+watch_dirs = ["messages/inbox"]
 
 # Periodic daily summary: desktop notification at 09:00 every 24 hours
 report_time = "09:00"

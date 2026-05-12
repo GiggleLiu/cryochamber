@@ -1,8 +1,10 @@
 //! Shared application state for the web server.
 
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+
+#[cfg(not(test))]
+use std::collections::BTreeSet;
 
 use crate::hub::discovery::{ChamberEntry, ChamberIndex, DiscoveryOptions};
 
@@ -103,6 +105,17 @@ impl AppState {
     /// Synchronise the watcher registry with the current chamber index:
     /// start watchers for any new chambers and stop watchers for removed ones.
     /// Tests that populate the index directly should call this after writing.
+    #[cfg(test)]
+    pub fn wire_watchers(&self) {
+        // Unit tests exercise WatcherRegistry directly. Avoid starting real OS
+        // watchers from unrelated route/state tests, since they are
+        // process-global resources and make the parallel test harness flaky.
+    }
+
+    /// Synchronise the watcher registry with the current chamber index:
+    /// start watchers for any new chambers and stop watchers for removed ones.
+    /// Tests that populate the index directly should call this after writing.
+    #[cfg(not(test))]
     pub fn wire_watchers(&self) {
         let (paths, entries): (BTreeSet<PathBuf>, Vec<(String, PathBuf)>) = {
             let idx = self.chambers.read().unwrap();

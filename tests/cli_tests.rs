@@ -589,14 +589,14 @@ fn test_daemon_cancel() {
 
 #[test]
 fn test_wake_signal_wakes_daemon() {
-    // Daemon with watch_inbox=false should still respond to `cryo wake` (SIGUSR1).
+    // Daemon with empty watch_dirs should still respond to `cryo wake` (SIGUSR1).
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
     init_dir(dir.path());
 
-    // Disable watch_inbox
+    // Disable reactive wake by clearing watch_dirs.
     let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = config.replace("watch_inbox = true", "watch_inbox = false");
+    let config = config.replace("watch_dirs = [\"messages/inbox\"]", "watch_dirs = []");
     fs::write(dir.path().join("cryo.toml"), config).unwrap();
 
     // Start daemon with a mock agent that hibernates with a far-future wake (not --complete)
@@ -645,14 +645,14 @@ fn test_wake_signal_wakes_daemon() {
 }
 
 #[test]
-fn test_daemon_config_watch_inbox() {
+fn test_daemon_config_watch_dirs() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("plan.md"), "# Plan").unwrap();
     init_dir(dir.path());
 
-    // Verify cryo.toml has watch_inbox: true (default)
+    // Verify cryo.toml has the default watch_dirs list
     let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    assert!(config_content.contains("watch_inbox = true"));
+    assert!(config_content.contains("watch_dirs = [\"messages/inbox\"]"));
 
     // Start with daemon mode
     // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
@@ -666,9 +666,10 @@ fn test_daemon_config_watch_inbox() {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // timer.json should be slim — no watch_inbox field at all
+    // timer.json should be slim — no watch_dirs / watch_inbox field at all
     let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
     assert!(!state_content.contains("watch_inbox"));
+    assert!(!state_content.contains("watch_dirs"));
 }
 
 #[test]

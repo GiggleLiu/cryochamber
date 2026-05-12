@@ -1,35 +1,5 @@
 use super::*;
-use std::sync::{Mutex, MutexGuard};
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct RegistryEnvGuard<'a> {
-    _lock: MutexGuard<'a, ()>,
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl<'a> RegistryEnvGuard<'a> {
-    fn set(key: &'static str, value: &std::path::Path) -> Self {
-        let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self {
-            _lock: lock,
-            key,
-            previous,
-        }
-    }
-}
-
-impl Drop for RegistryEnvGuard<'_> {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
+use crate::test_support::EnvVarGuard;
 
 fn scaffold_chamber(parent: &std::path::Path, name: &str) -> std::path::PathBuf {
     let dir = parent.join(name);
@@ -53,7 +23,7 @@ fn test_daemon_entry_has_socket_path() {
 #[test]
 fn registry_dir_uses_user_state_home() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
 
     let dir = registry_dir().unwrap();
 
@@ -64,7 +34,7 @@ fn registry_dir_uses_user_state_home() {
 #[test]
 fn unregister_keeps_stopped_chamber_in_registry() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let workspace = tempfile::tempdir().unwrap();
     let chamber = scaffold_chamber(workspace.path(), "alpha");
     let socket = chamber.join(".cryo/cryo.sock");
@@ -92,7 +62,7 @@ fn unregister_keeps_stopped_chamber_in_registry() {
 #[test]
 fn list_marks_dead_pid_as_stopped_without_forgetting_chamber() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let workspace = tempfile::tempdir().unwrap();
     let chamber = scaffold_chamber(workspace.path(), "alpha");
     let entry_path = registry_dir().unwrap().join(entry_filename(&chamber));
@@ -114,7 +84,7 @@ fn list_marks_dead_pid_as_stopped_without_forgetting_chamber() {
 #[test]
 fn list_prunes_registry_entries_for_missing_chambers() {
     let state_home = tempfile::tempdir().unwrap();
-    let _guard = RegistryEnvGuard::set("XDG_STATE_HOME", state_home.path());
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
     let missing = state_home.path().join("gone");
     let entry_path = registry_dir().unwrap().join(entry_filename(&missing));
     let entry = DaemonEntry {

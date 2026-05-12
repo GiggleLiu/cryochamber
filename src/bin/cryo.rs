@@ -489,23 +489,40 @@ enum WakeNotificationAction {
     SendSignal,
 }
 
-fn wake_notification_action(daemon_running: bool, watch_inbox: bool) -> WakeNotificationAction {
-    match (daemon_running, watch_inbox) {
+fn wake_notification_action(daemon_running: bool, inbox_watched: bool) -> WakeNotificationAction {
+    match (daemon_running, inbox_watched) {
         (false, _) => WakeNotificationAction::QueueUntilStart,
         (true, true) => WakeNotificationAction::InboxWatcher,
         (true, false) => WakeNotificationAction::SendSignal,
     }
 }
 
-/// After writing an inbox message, notify the daemon and print status.
-/// When watch_inbox is true, the inotify watcher handles wake — no signal needed.
-/// When watch_inbox is false, send SIGUSR1.
-fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
-    let watch_inbox = config::load_config(&config::config_path(dir))?
-        .map(|c| c.watch_inbox)
-        .unwrap_or(true);
+/// True when the configured `watch_dirs` list includes `messages/inbox`.
+/// Matches both the relative `messages/inbox` form and equivalent absolute
+/// paths against the chamber directory.
+fn inbox_is_watched(dir: &std::path::Path, watch_dirs: &[std::path::PathBuf]) -> bool {
+    let inbox_abs = dir.join("messages").join("inbox");
+    watch_dirs.iter().any(|p| {
+        let resolved = if p.is_absolute() {
+            p.clone()
+        } else {
+            dir.join(p)
+        };
+        resolved == inbox_abs
+    })
+}
 
-    match wake_notification_action(is_daemon_running(dir), watch_inbox) {
+/// After writing an inbox message, notify the daemon and print status.
+/// When `messages/inbox` is in `watch_dirs`, the inotify watcher handles
+/// wake — no signal needed. Otherwise, send SIGUSR1.
+fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
+    let watch_dirs = config::load_config(&config::config_path(dir))?
+        .map(|c| c.watch_dirs)
+        .unwrap_or_else(config::default_watch_dirs);
+
+    let inbox_watched = inbox_is_watched(dir, &watch_dirs);
+
+    match wake_notification_action(is_daemon_running(dir), inbox_watched) {
         WakeNotificationAction::QueueUntilStart => {
             eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
         }

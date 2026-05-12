@@ -79,7 +79,7 @@ fn status_reads_plan_and_config_from_disk() {
     std::fs::write(dir.path().join("plan.md"), "## Plan\n1. wake\n2. work\n").unwrap();
     std::fs::write(
         dir.path().join("cryo.toml"),
-        "agent = \"claude\"\nwatch_inbox = true\n",
+        "agent = \"claude\"\nwatch_dirs = [\"messages/inbox\"]\n",
     )
     .unwrap();
 
@@ -88,7 +88,7 @@ fn status_reads_plan_and_config_from_disk() {
     assert_eq!(status.plan_content, "## Plan\n1. wake\n2. work\n");
     assert_eq!(
         status.config_content,
-        "agent = \"claude\"\nwatch_inbox = true\n"
+        "agent = \"claude\"\nwatch_dirs = [\"messages/inbox\"]\n"
     );
     assert!(status.plan_html.contains("<h2>Plan</h2>"));
     assert!(status.plan_html.contains("<li>wake</li>"));
@@ -152,7 +152,7 @@ fn parse_settings_rows_handles_scalars_and_provider() {
     let toml = r#"
 agent = "claude"
 max_session_duration = 600
-watch_inbox = true
+watch_dirs = ["messages/inbox"]
 
 [provider]
 name = "anthropic"
@@ -166,7 +166,7 @@ env = { ANTHROPIC_API_KEY = "sk-secret-1", ANTHROPIC_MODEL = "claude-sonnet-4-6"
 
     assert_eq!(by_key.get("agent").copied(), Some("\"claude\""));
     assert_eq!(by_key.get("max_session_duration").copied(), Some("600"));
-    assert_eq!(by_key.get("watch_inbox").copied(), Some("true"));
+    assert_eq!(by_key.get("watch_dirs").copied(), Some("[1 items]"));
 
     let p0 = by_key.get("provider").expect("provider");
     assert!(p0.starts_with("anthropic"));

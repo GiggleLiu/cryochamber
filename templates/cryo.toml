@@ -6,8 +6,10 @@ agent = "{{agent}}"
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 0
 
-# Watch inbox for reactive wake
-watch_inbox = true
+# Directories the daemon watches for new files to wake the agent reactively.
+# Paths are interpreted relative to the chamber directory (this directory)
+# unless they are absolute. Set to [] to disable reactive wake entirely.
+watch_dirs = ["messages/inbox"]
 
 # Periodic status report (written to messages/outbox/ for sync delivery):
 #   report_time = "09:00" (HH:MM local time)

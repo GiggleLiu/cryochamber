@@ -163,39 +163,10 @@ mod validate_name {
 mod post_new {
     use crate::hub::routes::chambers::{post_new, NewChamberPayload};
     use crate::hub::state::AppState;
+    use crate::test_support::EnvVarGuard;
     use axum::{extract::State, response::Json};
     use serde_json::json;
-    use std::sync::{Arc, Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvVarGuard<'a> {
-        _lock: MutexGuard<'a, ()>,
-        key: &'static str,
-        previous: Option<String>,
-    }
-
-    impl<'a> EnvVarGuard<'a> {
-        fn set(key: &'static str, value: &std::path::Path) -> Self {
-            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
-            let previous = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self {
-                _lock: lock,
-                key,
-                previous,
-            }
-        }
-    }
-
-    impl Drop for EnvVarGuard<'_> {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn creates_new_chamber_returns_201_and_id() {
@@ -235,7 +206,7 @@ mod post_new {
     #[tokio::test]
     async fn global_create_remembers_new_chamber_in_registry() {
         let state_home = tempfile::tempdir().unwrap();
-        let _state = EnvVarGuard::set("XDG_STATE_HOME", state_home.path());
+        let _state = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
         let dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::with_discovery_options(
             dir.path().to_path_buf(),

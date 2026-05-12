@@ -488,7 +488,7 @@ fn test_provider_env_injected() {
     let config = r#"agent = "mock"
 max_retries = 1
 max_session_duration = 30
-watch_inbox = false
+watch_dirs = []
 
 [provider]
 name = "test-provider"
@@ -659,12 +659,8 @@ fn test_inbox_wake_coalesces_multiple_events() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "inbox-wake.sh");
 
-    // Enable watch_inbox
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = config.replace("watch_inbox = false", "watch_inbox = true");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    // Pre-create inbox dir so watcher can attach
+    // Default `watch_dirs = ["messages/inbox"]` is already what we need;
+    // just make sure the inbox dir exists so the watcher can attach.
     fs::create_dir_all(dir.path().join("messages/inbox")).unwrap();
 
     cryo_bin()
@@ -789,10 +785,7 @@ fn test_inbox_wake_no_delayed_wake_notice() {
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "inbox-delayed-wake.sh");
 
-    // Enable watch_inbox
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = config.replace("watch_inbox = false", "watch_inbox = true");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
+    // Default `watch_dirs = ["messages/inbox"]` is already what we need.
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "30"])

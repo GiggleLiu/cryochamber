@@ -119,15 +119,21 @@ fn wait_for_idle_event(
     }
 }
 
-/// Watches `messages/inbox/` for new files and sends events to a channel.
+/// Watches one or more directories for new files and sends events to a
+/// channel. Historically this only watched `messages/inbox/`, but it now
+/// accepts an arbitrary list of paths configured via `watch_dirs`.
 pub struct InboxWatcher {
     _watcher: RecommendedWatcher,
 }
 
 impl InboxWatcher {
-    /// Start watching the inbox directory. Sends `DaemonEvent::InboxChanged`
-    /// to `tx` when a new file is created.
-    pub fn start(inbox_path: &Path, tx: mpsc::Sender<DaemonEvent>) -> Result<Self> {
+    /// Start watching the given directories. Sends `DaemonEvent::InboxChanged`
+    /// to `tx` when a new file is created in any of them.
+    pub fn start(paths: &[PathBuf], tx: mpsc::Sender<DaemonEvent>) -> Result<Self> {
+        if paths.is_empty() {
+            anyhow::bail!("InboxWatcher requires at least one path");
+        }
+
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
                 if event.kind.is_create() {
@@ -137,9 +143,11 @@ impl InboxWatcher {
         })
         .context("Failed to create file watcher")?;
 
-        watcher
-            .watch(inbox_path, RecursiveMode::NonRecursive)
-            .with_context(|| format!("Failed to watch {}", inbox_path.display()))?;
+        for path in paths {
+            watcher
+                .watch(path, RecursiveMode::NonRecursive)
+                .with_context(|| format!("Failed to watch {}", path.display()))?;
+        }
 
         Ok(Self { _watcher: watcher })
     }
@@ -277,6 +285,25 @@ enum WatcherStartupNotice<'a> {
     Silent,
 }
 
+/// Resolve the configured watch directories into absolute filesystem paths.
+/// Relative entries are interpreted against the chamber directory. Paths that
+/// do not currently exist are filtered out; the daemon does not auto-create
+/// arbitrary watch targets (other than the canonical `messages/inbox` already
+/// scaffolded by `cryo init`).
+fn resolve_watch_dirs(chamber_dir: &Path, configured: &[PathBuf]) -> Vec<PathBuf> {
+    configured
+        .iter()
+        .map(|p| {
+            if p.is_absolute() {
+                p.clone()
+            } else {
+                chamber_dir.join(p)
+            }
+        })
+        .filter(|p| p.exists())
+        .collect()
+}
+
 fn watcher_startup_notice(
     watcher_warning: Option<&str>,
     watcher_started: bool,
@@ -309,7 +336,7 @@ trait StartupPlatform {
     fn register_registry(&self, dir: &Path, sock_path: &Path) -> Result<()>;
     fn start_inbox_watcher(
         &self,
-        inbox_path: &Path,
+        paths: &[PathBuf],
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<Self::Watcher>;
 }
@@ -347,10 +374,10 @@ impl StartupPlatform for SystemStartupPlatform {
 
     fn start_inbox_watcher(
         &self,
-        inbox_path: &Path,
+        paths: &[PathBuf],
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<Self::Watcher> {
-        InboxWatcher::start(inbox_path, tx)
+        InboxWatcher::start(paths, tx)
     }
 }
 
@@ -532,18 +559,13 @@ impl Daemon {
         let run_now = cryo_state.session_number == 0
             || next_wake.is_some_and(|w| self.clock.local_now() >= w);
 
-        let inbox_path = self.dir.join("messages").join("inbox");
-        let watch_inbox_path = if config.watch_inbox && inbox_path.exists() {
-            Some(inbox_path)
-        } else {
-            None
-        };
+        let watch_dirs = resolve_watch_dirs(&self.dir, &config.watch_dirs);
 
         DaemonBootstrapState {
             next_report_time,
             next_wake,
             run_now,
-            watch_inbox_path,
+            watch_dirs,
         }
     }
 
@@ -565,7 +587,7 @@ impl Daemon {
     fn prepare_runtime_startup<P: StartupPlatform>(
         &self,
         platform: &P,
-        watch_inbox_path: Option<&Path>,
+        watch_dirs: &[PathBuf],
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<StartupResources<P::Server, P::Watcher>> {
         platform.register_signal_handlers(&self.shutdown, &self.wake_requested)?;
@@ -581,13 +603,13 @@ impl Daemon {
             .err()
             .map(|e| e.to_string());
 
-        let (watcher, watcher_warning) = if let Some(inbox_path) = watch_inbox_path {
-            match platform.start_inbox_watcher(inbox_path, tx) {
+        let (watcher, watcher_warning) = if watch_dirs.is_empty() {
+            (None, None)
+        } else {
+            match platform.start_inbox_watcher(watch_dirs, tx) {
                 Ok(watcher) => (Some(watcher), None),
                 Err(e) => (None, Some(e.to_string())),
             }
-        } else {
-            (None, None)
         };
 
         Ok(StartupResources {
@@ -727,7 +749,7 @@ impl Daemon {
         let (tx, rx) = mpsc::channel();
         let startup = match self.prepare_runtime_startup(
             &SystemStartupPlatform,
-            bootstrap.watch_inbox_path.as_deref(),
+            &bootstrap.watch_dirs,
             tx.clone(),
         ) {
             Ok(startup) => startup,
@@ -753,10 +775,16 @@ impl Daemon {
             watcher_started,
         ) {
             WatcherStartupNotice::Warning(warning) => {
-                eprintln!("Daemon: failed to start inbox watcher: {warning}");
+                eprintln!("Daemon: failed to start watch_dirs watcher: {warning}");
             }
             WatcherStartupNotice::Started => {
-                eprintln!("Daemon: watching messages/inbox/ for new messages");
+                let label = bootstrap
+                    .watch_dirs
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!("Daemon: watching {label} for new files");
             }
             WatcherStartupNotice::Silent => {}
         }
