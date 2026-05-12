@@ -13,7 +13,7 @@ fn wake_notification_action_queues_when_daemon_is_not_running() {
 }
 
 #[test]
-fn wake_notification_action_uses_watcher_for_running_daemon_with_watch_inbox() {
+fn wake_notification_action_uses_watcher_for_running_daemon_with_inbox_watched() {
     assert_eq!(
         wake_notification_action(true, true),
         WakeNotificationAction::InboxWatcher

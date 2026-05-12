@@ -8,9 +8,6 @@ use crate::state::CryoState;
 
 pub const LEGACY_PROVIDERS_DEPRECATION_WARNING: &str = "Warning: [[providers]] is deprecated; use [provider] instead. Provider rotation has been removed; only one provider is used.";
 
-pub const LEGACY_WATCH_INBOX_DEPRECATION_WARNING: &str =
-    "Warning: `watch_inbox` is deprecated; use `watch_dirs = [\"messages/inbox\"]` instead.";
-
 /// Default list of directories the daemon watches for reactive wake.
 pub fn default_watch_dirs() -> Vec<PathBuf> {
     vec![PathBuf::from("messages/inbox")]
@@ -40,12 +37,6 @@ pub struct CryoConfig {
     /// daemon watches for reactive wake. Defaults to just `messages/inbox`.
     #[serde(default = "default_watch_dirs")]
     pub watch_dirs: Vec<PathBuf>,
-
-    /// Legacy boolean form of `watch_dirs`. Accepted on read for backward
-    /// compatibility but not written by new configs. `true` maps to the
-    /// default watch_dirs, `false` maps to an empty list.
-    #[serde(default, skip_serializing)]
-    pub watch_inbox: Option<bool>,
 
     /// Time of day to send periodic report (HH:MM, local time)
     #[serde(default = "default_report_time")]
@@ -91,7 +82,6 @@ impl Default for CryoConfig {
             agent: default_agent(),
             max_session_duration: 0,
             watch_dirs: default_watch_dirs(),
-            watch_inbox: None,
             report_time: default_report_time(),
             report_interval: 0,
             provider: None,
@@ -113,34 +103,10 @@ impl CryoConfig {
         !self.providers.is_empty()
     }
 
-    /// True when the config used the deprecated `watch_inbox` boolean.
-    pub fn uses_legacy_watch_inbox(&self) -> bool {
-        self.watch_inbox.is_some()
-    }
-
     fn normalize_legacy_provider(&mut self) {
         if self.provider.is_none() {
             self.provider = self.providers.first().cloned();
         }
-    }
-
-    /// Translate the legacy `watch_inbox` boolean into `watch_dirs`, unless
-    /// the user has already specified `watch_dirs` explicitly. We detect
-    /// "user provided watch_dirs" by comparing against the default, since
-    /// serde gives us no other signal.
-    fn normalize_legacy_watch_inbox(&mut self) {
-        let Some(legacy) = self.watch_inbox else {
-            return;
-        };
-        if self.watch_dirs != default_watch_dirs() {
-            // Author already migrated; keep their explicit list.
-            return;
-        }
-        self.watch_dirs = if legacy {
-            default_watch_dirs()
-        } else {
-            Vec::new()
-        };
     }
 
     /// Merge CLI overrides from timer.json into this config.
@@ -174,18 +140,12 @@ pub fn load_config(path: &Path) -> Result<Option<CryoConfig>> {
         eprintln!("{LEGACY_PROVIDERS_DEPRECATION_WARNING}");
         config.normalize_legacy_provider();
     }
-    if config.uses_legacy_watch_inbox() {
-        eprintln!("{LEGACY_WATCH_INBOX_DEPRECATION_WARNING}");
-        config.normalize_legacy_watch_inbox();
-    }
     Ok(Some(config))
 }
 
 pub fn save_config(path: &Path, config: &CryoConfig) -> Result<()> {
     let mut config = config.clone();
     config.normalize_legacy_provider();
-    config.normalize_legacy_watch_inbox();
-    config.watch_inbox = None;
     let toml = toml::to_string_pretty(&config)?;
     std::fs::write(path, toml)?;
     Ok(())

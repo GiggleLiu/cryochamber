@@ -135,14 +135,13 @@ fn test_apply_overrides_partial() {
 }
 
 #[test]
-fn test_legacy_watch_inbox_true_maps_to_default_watch_dirs() {
+fn test_watch_inbox_is_ignored_when_watch_dirs_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = config_path(dir.path());
-    std::fs::write(&path, "agent = \"opencode\"\nwatch_inbox = true\n").unwrap();
+    std::fs::write(&path, "agent = \"opencode\"\nwatch_inbox = false\n").unwrap();
 
     let loaded = load_config(&path).unwrap().unwrap();
     assert_eq!(loaded.watch_dirs, default_watch_dirs());
-    assert!(loaded.uses_legacy_watch_inbox());
 
     save_config(&path, &loaded).unwrap();
     let serialized = std::fs::read_to_string(&path).unwrap();
@@ -154,17 +153,7 @@ fn test_legacy_watch_inbox_true_maps_to_default_watch_dirs() {
 }
 
 #[test]
-fn test_legacy_watch_inbox_false_maps_to_empty_watch_dirs() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = config_path(dir.path());
-    std::fs::write(&path, "agent = \"opencode\"\nwatch_inbox = false\n").unwrap();
-
-    let loaded = load_config(&path).unwrap().unwrap();
-    assert!(loaded.watch_dirs.is_empty());
-}
-
-#[test]
-fn test_explicit_watch_dirs_overrides_legacy_watch_inbox() {
+fn test_watch_inbox_does_not_override_explicit_watch_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let path = config_path(dir.path());
     std::fs::write(
