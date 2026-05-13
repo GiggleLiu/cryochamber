@@ -253,3 +253,26 @@ fn message_round_trip_preserves_is_question() {
     assert_eq!(parsed.subject, msg.subject);
     assert_eq!(parsed.body, msg.body);
 }
+
+#[test]
+fn parse_frontmatter_strips_surrounding_double_quotes() {
+    let raw = "---\nfrom: \"Alice\"\nsubject: \"Hi there\"\ntimestamp: 2026-04-25T15:30:00\n---\n\nBody\n";
+    let msg = parse_message(raw).unwrap();
+    assert_eq!(msg.from, "Alice");
+    assert_eq!(msg.subject, "Hi there");
+}
+
+#[test]
+fn parse_frontmatter_keeps_unquoted_values_unchanged() {
+    let raw = "---\nfrom: Alice\nsubject: Hi there\ntimestamp: 2026-04-25T15:30:00\n---\n\nBody\n";
+    let msg = parse_message(raw).unwrap();
+    assert_eq!(msg.from, "Alice");
+    assert_eq!(msg.subject, "Hi there");
+}
+
+#[test]
+fn parse_frontmatter_strips_only_outer_quote_pair() {
+    let raw = "---\nfrom: \"Alice\\\"Q\\\" Smith\"\nsubject: Hi\ntimestamp: 2026-04-25T15:30:00\n---\n\nBody\n";
+    let msg = parse_message(raw).unwrap();
+    assert_eq!(msg.from, "Alice\"Q\" Smith");
+}

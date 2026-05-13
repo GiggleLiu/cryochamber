@@ -348,6 +348,16 @@ enum FrontmatterLine {
     Skip,
 }
 
+fn clean_frontmatter_value(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let stripped = if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    };
+    stripped.replace("\\\"", "\"")
+}
+
 fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
     let line = line.trim();
     let Some((key, value)) = line.split_once(':') else {
@@ -355,7 +365,7 @@ fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
     };
 
     let key = key.trim();
-    let value = value.trim().to_string();
+    let value = clean_frontmatter_value(value.trim());
     match key {
         "" => FrontmatterLine::Skip,
         "from" => FrontmatterLine::From(value),
