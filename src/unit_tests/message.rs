@@ -199,6 +199,33 @@ fn list_message_files_skips_archive_subdir() {
     assert!(list_message_files(&messages_dir).unwrap().is_empty());
 }
 
+#[test]
+fn read_message_dir_sets_source_dir_metadata_for_subdir_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let messages_dir = dir.path().join("messages");
+    std::fs::create_dir_all(&messages_dir).unwrap();
+
+    let valid = test_message("alice", "Hi", "Body", "2026-04-23T14:20:00");
+    std::fs::write(messages_dir.join("flat.md"), message_to_markdown(&valid)).unwrap();
+
+    let sub = messages_dir.join("abc123");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("message.md"), message_to_markdown(&valid)).unwrap();
+
+    let messages = read_message_dir(&messages_dir, "message").unwrap();
+    assert_eq!(messages.len(), 2);
+
+    let flat = messages.iter().find(|(name, _)| name == "flat.md").unwrap();
+    assert!(!flat.1.metadata.contains_key("source_dir"));
+
+    let subdir_msg = messages.iter().find(|(name, _)| name == "abc123").unwrap();
+    let canonical = std::fs::canonicalize(&sub).unwrap();
+    assert_eq!(
+        subdir_msg.1.metadata.get("source_dir"),
+        Some(&canonical.to_string_lossy().to_string())
+    );
+}
+
 fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {
     Message {
         from: from.to_string(),
