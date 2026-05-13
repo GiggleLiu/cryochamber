@@ -344,3 +344,54 @@ fn parse_frontmatter_strips_only_outer_quote_pair() {
     let msg = parse_message(raw).unwrap();
     assert_eq!(msg.from, "Alice\"Q\" Smith");
 }
+
+#[test]
+fn archive_messages_moves_subdir_entry_with_siblings() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path();
+
+    let inbox = chamber.join("messages").join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+
+    let valid = test_message("alice", "Hi", "Body", "2026-04-23T14:20:00");
+    let sub = inbox.join("abc123");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("message.md"), message_to_markdown(&valid)).unwrap();
+    std::fs::write(sub.join("meta.json"), r#"{"matched_by":"llm"}"#).unwrap();
+    std::fs::create_dir(sub.join("attachments")).unwrap();
+    std::fs::write(sub.join("attachments").join("foo.txt"), "hello").unwrap();
+
+    archive_messages(chamber, &["abc123".to_string()]).unwrap();
+
+    assert!(!sub.exists(), "subdir should be gone from inbox");
+    let archived = chamber.join("messages").join("inbox").join("archive").join("abc123");
+    assert!(archived.is_dir(), "subdir should be in archive");
+    assert!(archived.join("message.md").is_file());
+    assert!(archived.join("meta.json").is_file());
+    assert_eq!(
+        std::fs::read_to_string(archived.join("attachments").join("foo.txt")).unwrap(),
+        "hello"
+    );
+}
+
+#[test]
+fn archive_messages_mixed_batch_moves_flat_and_subdir_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path();
+    let inbox = chamber.join("messages").join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+
+    let valid = test_message("alice", "Hi", "Body", "2026-04-23T14:20:00");
+    std::fs::write(inbox.join("flat.md"), message_to_markdown(&valid)).unwrap();
+
+    let sub = inbox.join("subby");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("message.md"), message_to_markdown(&valid)).unwrap();
+
+    archive_messages(chamber, &["flat.md".to_string(), "subby".to_string()]).unwrap();
+
+    let archive_dir = chamber.join("messages").join("inbox").join("archive");
+    assert!(archive_dir.join("flat.md").is_file());
+    assert!(archive_dir.join("subby").is_dir());
+    assert!(archive_dir.join("subby").join("message.md").is_file());
+}
