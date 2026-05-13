@@ -129,17 +129,29 @@ fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
         return Ok(Vec::new());
     }
 
-    let mut files: Vec<_> = std::fs::read_dir(message_dir)?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry.path().extension().is_some_and(|ext| ext == "md")
-                && entry.file_type().is_ok_and(|file_type| file_type.is_file())
-        })
-        .map(|entry| MessageFile {
-            filename: entry.file_name().to_string_lossy().to_string(),
-            path: entry.path(),
-        })
-        .collect();
+    let mut files: Vec<MessageFile> = Vec::new();
+    for entry in std::fs::read_dir(message_dir)?.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let filename = entry.file_name().to_string_lossy().to_string();
+
+        if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            files.push(MessageFile { filename, path });
+            continue;
+        }
+
+        if file_type.is_dir() && filename != "archive" {
+            let inner = path.join("message.md");
+            if inner.is_file() {
+                files.push(MessageFile {
+                    filename,
+                    path: inner,
+                });
+            }
+        }
+    }
 
     files.sort_by(|left, right| left.filename.cmp(&right.filename));
     Ok(files)
