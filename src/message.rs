@@ -164,12 +164,17 @@ fn read_message_dir(message_dir: &Path, malformed_label: &str) -> Result<Vec<(St
             .with_context(|| format!("Failed to read {}", file.path.display()))?;
         match parse_message(&content) {
             Ok(mut message) => {
-                if file.path.file_name().is_some_and(|name| name == "message.md") {
+                if file
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == "message.md")
+                {
                     if let Some(parent) = file.path.parent() {
                         if let Ok(canonical) = std::fs::canonicalize(parent) {
-                            message
-                                .metadata
-                                .insert("source_dir".to_string(), canonical.to_string_lossy().to_string());
+                            message.metadata.insert(
+                                "source_dir".to_string(),
+                                canonical.to_string_lossy().to_string(),
+                            );
                         }
                     }
                 }
