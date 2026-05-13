@@ -364,7 +364,11 @@ fn archive_messages_moves_subdir_entry_with_siblings() {
     archive_messages(chamber, &["abc123".to_string()]).unwrap();
 
     assert!(!sub.exists(), "subdir should be gone from inbox");
-    let archived = chamber.join("messages").join("inbox").join("archive").join("abc123");
+    let archived = chamber
+        .join("messages")
+        .join("inbox")
+        .join("archive")
+        .join("abc123");
     assert!(archived.is_dir(), "subdir should be in archive");
     assert!(archived.join("message.md").is_file());
     assert!(archived.join("meta.json").is_file());
