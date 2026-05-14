@@ -149,10 +149,14 @@ fn message_store_read_and_archive_inbox_handles_messenger_subdir() {
     assert_eq!(msg.from, "Alice");
     assert_eq!(msg.subject, "Hello");
     assert_eq!(msg.body.trim(), "Hi there.");
-    assert!(msg.metadata.contains_key("source_dir"));
 
     assert!(!sub.exists());
     let archived = inbox.join("archive").join("mail-fixture1example-com");
+    let archived_source_dir = std::fs::canonicalize(&archived).unwrap();
+    assert_eq!(
+        msg.metadata.get("source_dir"),
+        Some(&archived_source_dir.to_string_lossy().to_string())
+    );
     assert!(archived.join("message.md").is_file());
     assert!(archived.join("meta.json").is_file());
 }

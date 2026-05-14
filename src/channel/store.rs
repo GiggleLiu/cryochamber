@@ -42,14 +42,53 @@ impl MessageStore {
     }
 
     pub fn read_and_archive_inbox(&self) -> Result<Vec<(String, Message)>> {
-        let messages = self.read_inbox_named()?;
+        let mut messages = self.read_inbox_named()?;
         if messages.is_empty() {
             return Ok(messages);
         }
 
+        let subdir_filenames = self.subdir_source_filenames(&messages);
         let filenames: Vec<String> = messages.iter().map(|(name, _)| name.clone()).collect();
         self.archive_inbox(&filenames)?;
+        self.repoint_archived_source_dirs(&mut messages, &subdir_filenames);
         Ok(messages)
+    }
+
+    fn subdir_source_filenames(&self, messages: &[(String, Message)]) -> Vec<String> {
+        let inbox_dir = self.dir.join("messages").join("inbox");
+        messages
+            .iter()
+            .filter_map(|(filename, msg)| {
+                let source_dir = msg.metadata.get("source_dir")?;
+                let entry_dir = inbox_dir.join(filename);
+                let canonical = std::fs::canonicalize(&entry_dir).ok()?;
+                if canonical.to_string_lossy() == source_dir.as_str() {
+                    Some(filename.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn repoint_archived_source_dirs(
+        &self,
+        messages: &mut [(String, Message)],
+        subdir_filenames: &[String],
+    ) {
+        let archive_dir = self.dir.join("messages").join("inbox").join("archive");
+        for (filename, msg) in messages {
+            if !subdir_filenames.iter().any(|name| name == filename) {
+                continue;
+            }
+
+            let archived = archive_dir.join(filename);
+            let source_dir = std::fs::canonicalize(&archived).unwrap_or(archived);
+            msg.metadata.insert(
+                "source_dir".to_string(),
+                source_dir.to_string_lossy().to_string(),
+            );
+        }
     }
 
     pub fn archive_inbox(&self, filenames: &[String]) -> Result<()> {

@@ -94,10 +94,12 @@ fn filter_flag(filter: DialogFilterResolved) -> &'static str {
 }
 
 fn render_message(message: &Message) -> String {
+    let metadata = crate::message::format_metadata_lines(&message.metadata);
     format!(
-        "[{}] from: {}\n{}\n\n",
+        "[{}] from: {}\n{}{}\n\n",
         message.timestamp.format("%Y-%m-%d %H:%M"),
         message.from,
+        metadata,
         message.body.trim_end()
     )
 }

@@ -159,6 +159,19 @@ fn format_inbox_multiple_messages_concatenates_in_order() {
 }
 
 #[test]
+fn format_inbox_includes_message_metadata() {
+    let mut msg = test_message("alice", "hi", "Hello world", "2026-04-23T14:20:00");
+    msg.metadata.insert(
+        "source_dir".to_string(),
+        "/tmp/chamber/messages/inbox/archive/msg1".to_string(),
+    );
+
+    let out = format_inbox(&[("msg1".to_string(), msg)]);
+
+    assert!(out.contains("source_dir: /tmp/chamber/messages/inbox/archive/msg1"));
+}
+
+#[test]
 fn list_message_files_includes_subdir_entries_with_message_md() {
     let dir = tempfile::tempdir().unwrap();
     let messages_dir = dir.path().join("messages");

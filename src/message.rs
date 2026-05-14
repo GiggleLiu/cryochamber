@@ -208,12 +208,21 @@ pub fn format_inbox(messages: &[(String, Message)]) -> String {
         if !msg.subject.is_empty() {
             body.push_str(&format!("Subject: {}\n", msg.subject));
         }
+        body.push_str(&format_metadata_lines(&msg.metadata));
         body.push('\n');
         body.push_str(&msg.body);
         body.push('\n');
         body.push('\n');
     }
     body
+}
+
+pub(crate) fn format_metadata_lines(metadata: &BTreeMap<String, String>) -> String {
+    let mut lines = String::new();
+    for (key, value) in metadata {
+        lines.push_str(&format!("{key}: {value}\n"));
+    }
+    lines
 }
 
 /// Move processed messages from inbox/ to inbox/archive/.

@@ -53,6 +53,24 @@ fn render_archived_only_oldest_first_no_marker() {
 }
 
 #[test]
+fn render_message_includes_metadata() {
+    let mut message = msg("human", "Hi", 2026, 4, 24, 18, 0);
+    message.metadata.insert(
+        "source_dir".to_string(),
+        "/tmp/chamber/messages/inbox/archive/msg1".to_string(),
+    );
+    let inputs = DialogInputs {
+        archived_inbox: vec![named("msg1", message)],
+        outbox: vec![],
+        new_filenames: vec![],
+    };
+
+    let out = render_dialog(&inputs, DialogFilterResolved::All);
+
+    assert!(out.contains("source_dir: /tmp/chamber/messages/inbox/archive/msg1"));
+}
+
+#[test]
 fn render_marker_before_first_new_message() {
     let inputs = DialogInputs {
         archived_inbox: vec![
