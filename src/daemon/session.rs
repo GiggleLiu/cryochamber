@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -107,6 +108,7 @@ pub(super) trait SessionLauncher: Send + Sync {
         cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
+        wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome>;
@@ -125,6 +127,7 @@ impl SessionLauncher for ProcessSessionLauncher {
         cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
+        wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
@@ -149,6 +152,13 @@ impl SessionLauncher for ProcessSessionLauncher {
         // the agent explicitly asks for it.
         let inbox_filenames: Vec<String> = store.list_inbox_filenames()?;
         let inbox_waiting = !inbox_filenames.is_empty();
+        let mut inbox_sources = format_wake_sources(&daemon.dir, wake_sources);
+        if inbox_waiting && inbox_sources.is_empty() {
+            inbox_sources.push(display_source_path(
+                &daemon.dir,
+                &daemon.dir.join("messages").join("inbox"),
+            ));
+        }
 
         let todo_path = daemon.dir.join("todo.json");
         let todo_display = match crate::todo::TodoFile::new(&todo_path).display() {
@@ -171,6 +181,7 @@ impl SessionLauncher for ProcessSessionLauncher {
             delayed_wake: notice,
             todo_list: todo_display,
             inbox_waiting,
+            inbox_sources,
         };
         let prompt = crate::agent::build_prompt(&agent_config);
 
@@ -212,6 +223,31 @@ impl SessionLauncher for ProcessSessionLauncher {
         };
         daemon.drive_active_session(&mut runtime, &mut effects, context, logger)
     }
+}
+
+fn format_wake_sources(chamber_dir: &Path, wake_sources: &[PathBuf]) -> Vec<String> {
+    let mut formatted = Vec::new();
+    for source in wake_sources {
+        let display = display_source_path(chamber_dir, source);
+        if !formatted.iter().any(|existing| existing == &display) {
+            formatted.push(display);
+        }
+    }
+    formatted
+}
+
+fn display_source_path(chamber_dir: &Path, source: &Path) -> String {
+    let root = chamber_dir
+        .canonicalize()
+        .unwrap_or_else(|_| chamber_dir.to_path_buf());
+    let path = source
+        .canonicalize()
+        .unwrap_or_else(|_| source.to_path_buf());
+
+    path.strip_prefix(&root)
+        .unwrap_or(&path)
+        .display()
+        .to_string()
 }
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.

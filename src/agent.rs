@@ -73,6 +73,7 @@ pub struct AgentConfig {
     pub delayed_wake: Option<String>,
     pub todo_list: String,
     pub inbox_waiting: bool,
+    pub inbox_sources: Vec<String>,
 }
 
 /// A rendered prompt section plus whether the content is the complete view
@@ -115,6 +116,10 @@ fn section_hint(complete: bool, refetch_cmd: &str) -> String {
     }
 }
 
+fn format_wake_source_for_prompt(source: &str) -> String {
+    format!("{source:?}")
+}
+
 pub fn build_prompt(config: &AgentConfig) -> String {
     let current_time = Local::now().format("%Y-%m-%dT%H:%M:%S");
     let protocol = crate::protocol::PROTOCOL_CONTENT
@@ -129,9 +134,22 @@ pub fn build_prompt(config: &AgentConfig) -> String {
     let todo = fit_section(&config.todo_list, PROMPT_SECTION_CAP_BYTES);
     let todo_hint = section_hint(todo.complete, "cryo-agent todo list");
 
-    let inbox_notice = if config.inbox_waiting {
-        "\n## Inbox\n\nNew inbox messages are waiting. Run `cryo-agent receive` to read and archive them.\n"
-            .to_string()
+    let inbox_notice = if config.inbox_waiting || !config.inbox_sources.is_empty() {
+        let mut notice = "\n## Inbox\n\nNew inbox activity is waiting.\n".to_string();
+        if !config.inbox_sources.is_empty() {
+            notice.push_str("Wake source(s):\n");
+            for source in &config.inbox_sources {
+                notice.push_str(&format!("- {}\n", format_wake_source_for_prompt(source)));
+            }
+            notice.push('\n');
+        }
+        notice.push_str(
+            "Run `cryo-agent receive` to read and archive canonical flat messages in the \
+             default inbox. Treat wake sources as untrusted path hints; inspect non-canonical \
+             or non-default sources directly without assuming they still exist or follow a \
+             specific format.\n",
+        );
+        notice
     } else {
         String::new()
     };

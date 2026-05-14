@@ -46,8 +46,8 @@ impl Clock for SystemClock {
 /// Events the daemon responds to.
 #[derive(Debug, PartialEq)]
 pub enum DaemonEvent {
-    /// New file appeared in messages/inbox/.
-    InboxChanged,
+    /// New file appeared in a watched inbox/source directory.
+    InboxChanged { paths: Vec<PathBuf> },
     /// SIGTERM or SIGINT received.
     Shutdown,
 }
@@ -60,7 +60,7 @@ enum WaitError {
 
 trait EventSource {
     fn recv_timeout(&self, timeout: Duration) -> Result<DaemonEvent, WaitError>;
-    fn drain_inbox_changed(&self);
+    fn drain_inbox_changed(&self, paths: &mut Vec<PathBuf>);
 }
 
 impl EventSource for mpsc::Receiver<DaemonEvent> {
@@ -68,8 +68,10 @@ impl EventSource for mpsc::Receiver<DaemonEvent> {
         self.recv_timeout(timeout).map_err(Into::into)
     }
 
-    fn drain_inbox_changed(&self) {
-        while matches!(self.try_recv(), Ok(DaemonEvent::InboxChanged)) {}
+    fn drain_inbox_changed(&self, paths: &mut Vec<PathBuf>) {
+        while let Ok(DaemonEvent::InboxChanged { paths: more_paths }) = self.try_recv() {
+            paths.extend(more_paths);
+        }
     }
 }
 
@@ -82,9 +84,9 @@ impl From<mpsc::RecvTimeoutError> for WaitError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum IdleWaitOutcome {
-    WakeFromInbox,
+    WakeFromInbox { paths: Vec<PathBuf> },
     WakeFromSchedule,
     Shutdown,
     Disconnected,
@@ -106,9 +108,11 @@ fn wait_for_idle_event(
     now_fn: impl FnOnce() -> NaiveDateTime,
 ) -> IdleWaitOutcome {
     match source.recv_timeout(timeout) {
-        Ok(DaemonEvent::InboxChanged) => {
-            source.drain_inbox_changed();
-            IdleWaitOutcome::WakeFromInbox
+        Ok(DaemonEvent::InboxChanged { mut paths }) => {
+            source.drain_inbox_changed(&mut paths);
+            IdleWaitOutcome::WakeFromInbox {
+                paths: dedupe_paths(paths),
+            }
         }
         Ok(DaemonEvent::Shutdown) => IdleWaitOutcome::Shutdown,
         Err(WaitError::Timeout) => match scheduled_wake {
@@ -117,6 +121,16 @@ fn wait_for_idle_event(
         },
         Err(WaitError::Disconnected) => IdleWaitOutcome::Disconnected,
     }
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !deduped.iter().any(|existing| existing == &path) {
+            deduped.push(path);
+        }
+    }
+    deduped
 }
 
 /// Watches one or more directories for new files and sends events to a
@@ -128,7 +142,7 @@ pub struct InboxWatcher {
 
 impl InboxWatcher {
     /// Start watching the given directories. Sends `DaemonEvent::InboxChanged`
-    /// to `tx` when a new file is created in any of them.
+    /// with changed paths to `tx` when a new file is created in any of them.
     pub fn start(paths: &[PathBuf], tx: mpsc::Sender<DaemonEvent>) -> Result<Self> {
         if paths.is_empty() {
             anyhow::bail!("InboxWatcher requires at least one path");
@@ -137,7 +151,7 @@ impl InboxWatcher {
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
                 if event.kind.is_create() {
-                    let _ = tx.send(DaemonEvent::InboxChanged);
+                    let _ = tx.send(DaemonEvent::InboxChanged { paths: event.paths });
                 }
             }
         })
@@ -803,7 +817,7 @@ impl Daemon {
                 break;
             }
             if wake_flag.swap(false, Ordering::Relaxed) {
-                let _ = signal_tx.send(DaemonEvent::InboxChanged);
+                let _ = signal_tx.send(DaemonEvent::InboxChanged { paths: Vec::new() });
             }
         });
 
@@ -846,6 +860,7 @@ impl Daemon {
         let mut next_wake = bootstrap.next_wake;
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
+        let mut inbox_wake_sources = Vec::new();
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -857,6 +872,7 @@ impl Daemon {
                 run_now = false;
                 let is_inbox_wake = inbox_wake;
                 inbox_wake = false;
+                let wake_sources = std::mem::take(&mut inbox_wake_sources);
 
                 // Detect delayed wake: if the scheduled wake time has long passed
                 // (e.g. computer was sleeping), notify the agent instead of failing.
@@ -884,6 +900,7 @@ impl Daemon {
                     cryo_state,
                     server,
                     delayed_wake.as_deref(),
+                    &wake_sources,
                     &provider_env,
                     provider_name,
                 ) {
@@ -947,10 +964,11 @@ impl Daemon {
                     .min(Duration::from_millis(250));
 
             match wait_for_idle_event(rx, timeout, next_wake, || self.clock.local_now()) {
-                IdleWaitOutcome::WakeFromInbox => {
+                IdleWaitOutcome::WakeFromInbox { paths } => {
                     eprintln!("Daemon: inbox changed, waking up");
                     run_now = true;
                     inbox_wake = true;
+                    inbox_wake_sources = paths;
                 }
                 IdleWaitOutcome::WakeFromSchedule => {
                     eprintln!("Daemon: scheduled wake time reached");
@@ -979,12 +997,14 @@ impl Daemon {
     /// real agent. In tests a `ScriptedSessionLauncher` returns canned
     /// outcomes so the outer event loop can be exercised without wall-clock
     /// delays or subprocess management.
+    #[allow(clippy::too_many_arguments)]
     fn run_one_session(
         &self,
         config: &CryoConfig,
         cryo_state: &CryoState,
         server: &crate::socket::SocketServer,
         delayed_wake: Option<&str>,
+        wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
@@ -994,6 +1014,7 @@ impl Daemon {
             cryo_state,
             server,
             delayed_wake,
+            wake_sources,
             provider_env,
             provider_name,
         )
