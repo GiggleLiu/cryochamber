@@ -197,10 +197,12 @@ impl EventSource for ScriptedSource {
             .unwrap_or(Err(WaitError::Timeout))
     }
 
-    fn drain_inbox_changed(&self) {
+    fn drain_inbox_changed(&self, paths: &mut Vec<PathBuf>) {
         let mut events = self.events.lock().unwrap();
-        while matches!(events.front(), Some(Ok(DaemonEvent::InboxChanged))) {
-            events.pop_front();
+        while matches!(events.front(), Some(Ok(DaemonEvent::InboxChanged { .. }))) {
+            if let Some(Ok(DaemonEvent::InboxChanged { paths: more_paths })) = events.pop_front() {
+                paths.extend(more_paths);
+            }
         }
     }
 }
@@ -222,7 +224,7 @@ proptest! {
         let deadline = deadline_offset.map(|s| offset_from_origin(now, s));
 
         let event: Result<DaemonEvent, WaitError> = match event_kind {
-            0 => Ok(DaemonEvent::InboxChanged),
+            0 => Ok(DaemonEvent::InboxChanged { paths: vec![] }),
             1 => Ok(DaemonEvent::Shutdown),
             2 => Err(WaitError::Timeout),
             3 => Err(WaitError::Disconnected),
@@ -233,7 +235,7 @@ proptest! {
         let outcome = wait_for_idle_event(&source, Duration::from_millis(1), deadline, || now);
 
         match event_kind {
-            0 => prop_assert_eq!(outcome, IdleWaitOutcome::WakeFromInbox),
+            0 => prop_assert_eq!(outcome, IdleWaitOutcome::WakeFromInbox { paths: vec![] }),
             1 => prop_assert_eq!(outcome, IdleWaitOutcome::Shutdown),
             3 => prop_assert_eq!(outcome, IdleWaitOutcome::Disconnected),
             _ => {

@@ -574,10 +574,12 @@ impl EventSource for FakeEventSource {
             .unwrap_or(Err(WaitError::Timeout))
     }
 
-    fn drain_inbox_changed(&self) {
+    fn drain_inbox_changed(&self, paths: &mut Vec<PathBuf>) {
         let mut events = self.events.lock().unwrap();
-        while matches!(events.front(), Some(Ok(DaemonEvent::InboxChanged))) {
-            events.pop_front();
+        while matches!(events.front(), Some(Ok(DaemonEvent::InboxChanged { .. }))) {
+            if let Some(Ok(DaemonEvent::InboxChanged { paths: more_paths })) = events.pop_front() {
+                paths.extend(more_paths);
+            }
             *self.drained_inbox.lock().unwrap() += 1;
         }
     }
@@ -596,8 +598,13 @@ fn test_inbox_watcher_detects_new_file() {
     std::fs::write(inbox.join("test-message.md"), "hello").unwrap();
 
     // Should receive InboxChanged within 2 seconds
-    let event = rx.recv_timeout(Duration::from_secs(2));
-    assert_eq!(event.unwrap(), DaemonEvent::InboxChanged);
+    let event = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    match event {
+        DaemonEvent::InboxChanged { paths } => {
+            assert!(paths.iter().any(|path| path.ends_with("test-message.md")));
+        }
+        other => panic!("expected inbox change, got {other:?}"),
+    }
 }
 
 #[test]
@@ -682,15 +689,40 @@ fn sample_time() -> NaiveDateTime {
 #[test]
 fn test_wait_for_idle_event_coalesces_inbox_changes() {
     let source = FakeEventSource::new(vec![
-        Ok(DaemonEvent::InboxChanged),
-        Ok(DaemonEvent::InboxChanged),
-        Ok(DaemonEvent::InboxChanged),
+        Ok(DaemonEvent::InboxChanged { paths: vec![] }),
+        Ok(DaemonEvent::InboxChanged { paths: vec![] }),
+        Ok(DaemonEvent::InboxChanged { paths: vec![] }),
     ]);
 
     let outcome = wait_for_idle_event(&source, Duration::from_secs(1), None, sample_time);
 
-    assert_eq!(outcome, IdleWaitOutcome::WakeFromInbox);
+    assert_eq!(outcome, IdleWaitOutcome::WakeFromInbox { paths: vec![] });
     assert_eq!(source.drained_count(), 2);
+}
+
+#[test]
+fn test_wait_for_idle_event_carries_inbox_sources() {
+    let source = FakeEventSource::new(vec![
+        Ok(DaemonEvent::InboxChanged {
+            paths: vec![PathBuf::from("messages/inbox/admin.md")],
+        }),
+        Ok(DaemonEvent::InboxChanged {
+            paths: vec![PathBuf::from(".messenger/inbox/mail-123")],
+        }),
+    ]);
+
+    let outcome = wait_for_idle_event(&source, Duration::from_secs(1), None, sample_time);
+
+    assert_eq!(
+        outcome,
+        IdleWaitOutcome::WakeFromInbox {
+            paths: vec![
+                PathBuf::from("messages/inbox/admin.md"),
+                PathBuf::from(".messenger/inbox/mail-123"),
+            ],
+        }
+    );
+    assert_eq!(source.drained_count(), 1);
 }
 
 #[test]
@@ -2439,6 +2471,7 @@ struct ScriptedStep {
 struct ScriptedInvocation {
     session: u32,
     provider: Option<String>,
+    wake_sources: Vec<PathBuf>,
 }
 
 impl ScriptedStep {
@@ -2487,6 +2520,15 @@ impl ScriptedSessionLauncher {
             .map(|i| i.provider.clone())
             .collect()
     }
+
+    fn wake_sources(&self) -> Vec<Vec<PathBuf>> {
+        self.invocations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| i.wake_sources.clone())
+            .collect()
+    }
 }
 
 impl SessionLauncher for ScriptedSessionLauncher {
@@ -2497,12 +2539,14 @@ impl SessionLauncher for ScriptedSessionLauncher {
         cryo_state: &CryoState,
         _server: &crate::socket::SocketServer,
         _delayed_wake: Option<&str>,
+        wake_sources: &[PathBuf],
         _provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
         self.invocations.lock().unwrap().push(ScriptedInvocation {
             session: cryo_state.session_number,
             provider: provider_name.map(str::to_string),
+            wake_sources: wake_sources.to_vec(),
         });
         let step = self
             .steps
@@ -2527,6 +2571,7 @@ impl SessionLauncher for ErrorSessionLauncher {
         _cryo_state: &CryoState,
         _server: &crate::socket::SocketServer,
         _delayed_wake: Option<&str>,
+        _wake_sources: &[PathBuf],
         _provider_env: &std::collections::HashMap<String, String>,
         _provider_name: Option<&str>,
     ) -> Result<SessionLoopOutcome> {
@@ -2621,6 +2666,57 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
     assert!(
         elapsed < Duration::from_secs(1),
         "in-process multi-session loop should be fast; took {elapsed:?}"
+    );
+}
+
+#[test]
+fn test_run_event_loop_passes_inbox_wake_sources_to_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon =
+        Daemon::new_with_clock_and_launcher(dir.path().to_path_buf(), clock, launcher.clone());
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+    let bootstrap = DaemonBootstrapState {
+        next_report_time: None,
+        next_wake: None,
+        run_now: false,
+        watch_dirs: Vec::new(),
+    };
+
+    let (tx, rx) = mpsc::channel();
+    tx.send(DaemonEvent::InboxChanged {
+        paths: vec![PathBuf::from(".messenger/inbox/mail-123")],
+    })
+    .unwrap();
+    drop(tx);
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(
+        launcher.wake_sources(),
+        vec![vec![PathBuf::from(".messenger/inbox/mail-123")]]
     );
 }
 

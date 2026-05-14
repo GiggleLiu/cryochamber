@@ -73,6 +73,7 @@ pub struct AgentConfig {
     pub delayed_wake: Option<String>,
     pub todo_list: String,
     pub inbox_waiting: bool,
+    pub inbox_sources: Vec<String>,
 }
 
 /// A rendered prompt section plus whether the content is the complete view
@@ -129,9 +130,20 @@ pub fn build_prompt(config: &AgentConfig) -> String {
     let todo = fit_section(&config.todo_list, PROMPT_SECTION_CAP_BYTES);
     let todo_hint = section_hint(todo.complete, "cryo-agent todo list");
 
-    let inbox_notice = if config.inbox_waiting {
-        "\n## Inbox\n\nNew inbox messages are waiting. Run `cryo-agent receive` to read and archive them.\n"
-            .to_string()
+    let inbox_notice = if config.inbox_waiting || !config.inbox_sources.is_empty() {
+        let mut notice = "\n## Inbox\n\nNew inbox activity is waiting.\n".to_string();
+        if !config.inbox_sources.is_empty() {
+            notice.push_str("Wake source(s):\n");
+            for source in &config.inbox_sources {
+                notice.push_str(&format!("- {source}\n"));
+            }
+            notice.push('\n');
+        }
+        notice.push_str(
+            "Run `cryo-agent receive` to read and archive messages in the default inbox. \
+             For non-default sources, inspect the source path above.\n",
+        );
+        notice
     } else {
         String::new()
     };

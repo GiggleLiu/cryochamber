@@ -36,6 +36,7 @@ fn test_build_prompt_with_context() {
         delayed_wake: None,
         todo_list: "1. [ ] Review PR (at: 2026-03-02T14:00)".to_string(),
         inbox_waiting: false,
+        inbox_sources: vec![],
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("Session number: 3"));
