@@ -119,7 +119,7 @@ fn test_message_store_covers_inbox_outbox_and_archives() {
 }
 
 #[test]
-fn message_store_read_and_archive_inbox_handles_messenger_subdir() {
+fn message_store_read_and_archive_inbox_ignores_messenger_subdir() {
     use std::fs;
 
     let dir = tempfile::tempdir().unwrap();
@@ -143,20 +143,8 @@ fn message_store_read_and_archive_inbox_handles_messenger_subdir() {
     let store = MessageStore::new(chamber.to_path_buf());
     let messages = store.read_and_archive_inbox().unwrap();
 
-    assert_eq!(messages.len(), 1);
-    let (filename, msg) = &messages[0];
-    assert_eq!(filename, "mail-fixture1example-com");
-    assert_eq!(msg.from, "Alice");
-    assert_eq!(msg.subject, "Hello");
-    assert_eq!(msg.body.trim(), "Hi there.");
-
-    assert!(!sub.exists());
-    let archived = inbox.join("archive").join("mail-fixture1example-com");
-    let archived_source_dir = std::fs::canonicalize(&archived).unwrap();
-    assert_eq!(
-        msg.metadata.get("source_dir"),
-        Some(&archived_source_dir.to_string_lossy().to_string())
-    );
-    assert!(archived.join("message.md").is_file());
-    assert!(archived.join("meta.json").is_file());
+    assert!(messages.is_empty());
+    assert!(sub.join("message.md").is_file());
+    assert!(sub.join("meta.json").is_file());
+    assert!(!inbox.join("archive").join("mail-fixture1example-com").exists());
 }

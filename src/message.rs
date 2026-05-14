@@ -129,29 +129,17 @@ fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
         return Ok(Vec::new());
     }
 
-    let mut files: Vec<MessageFile> = Vec::new();
-    for entry in std::fs::read_dir(message_dir)?.filter_map(|entry| entry.ok()) {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        let filename = entry.file_name().to_string_lossy().to_string();
-
-        if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-            files.push(MessageFile { filename, path });
-            continue;
-        }
-
-        if file_type.is_dir() && filename != "archive" {
-            let inner = path.join("message.md");
-            if inner.is_file() {
-                files.push(MessageFile {
-                    filename,
-                    path: inner,
-                });
-            }
-        }
-    }
+    let mut files: Vec<_> = std::fs::read_dir(message_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.path().extension().is_some_and(|ext| ext == "md")
+                && entry.file_type().is_ok_and(|file_type| file_type.is_file())
+        })
+        .map(|entry| MessageFile {
+            filename: entry.file_name().to_string_lossy().to_string(),
+            path: entry.path(),
+        })
+        .collect();
 
     files.sort_by(|left, right| left.filename.cmp(&right.filename));
     Ok(files)
@@ -163,23 +151,7 @@ fn read_message_dir(message_dir: &Path, malformed_label: &str) -> Result<Vec<(St
         let content = std::fs::read_to_string(&file.path)
             .with_context(|| format!("Failed to read {}", file.path.display()))?;
         match parse_message(&content) {
-            Ok(mut message) => {
-                if file
-                    .path
-                    .file_name()
-                    .is_some_and(|name| name == "message.md")
-                {
-                    if let Some(parent) = file.path.parent() {
-                        if let Ok(canonical) = std::fs::canonicalize(parent) {
-                            message.metadata.insert(
-                                "source_dir".to_string(),
-                                canonical.to_string_lossy().to_string(),
-                            );
-                        }
-                    }
-                }
-                messages.push((file.filename, message));
-            }
+            Ok(message) => messages.push((file.filename, message)),
             Err(e) => {
                 eprintln!(
                     "Warning: skipping malformed {malformed_label} {}: {e}",
@@ -208,21 +180,12 @@ pub fn format_inbox(messages: &[(String, Message)]) -> String {
         if !msg.subject.is_empty() {
             body.push_str(&format!("Subject: {}\n", msg.subject));
         }
-        body.push_str(&format_metadata_lines(&msg.metadata));
         body.push('\n');
         body.push_str(&msg.body);
         body.push('\n');
         body.push('\n');
     }
     body
-}
-
-pub(crate) fn format_metadata_lines(metadata: &BTreeMap<String, String>) -> String {
-    let mut lines = String::new();
-    for (key, value) in metadata {
-        lines.push_str(&format!("{key}: {value}\n"));
-    }
-    lines
 }
 
 /// Move processed messages from inbox/ to inbox/archive/.
@@ -385,16 +348,6 @@ enum FrontmatterLine {
     Skip,
 }
 
-fn clean_frontmatter_value(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let stripped = if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    };
-    stripped.replace("\\\"", "\"")
-}
-
 fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
     let line = line.trim();
     let Some((key, value)) = line.split_once(':') else {
@@ -402,7 +355,7 @@ fn parse_frontmatter_line(line: &str) -> FrontmatterLine {
     };
 
     let key = key.trim();
-    let value = clean_frontmatter_value(value.trim());
+    let value = value.trim().to_string();
     match key {
         "" => FrontmatterLine::Skip,
         "from" => FrontmatterLine::From(value),
