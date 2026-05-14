@@ -119,7 +119,7 @@ fn test_message_store_covers_inbox_outbox_and_archives() {
 }
 
 #[test]
-fn message_store_read_and_archive_inbox_ignores_messenger_subdir() {
+fn message_store_read_and_archive_inbox_ignores_subdir_entries() {
     use std::fs;
 
     let dir = tempfile::tempdir().unwrap();

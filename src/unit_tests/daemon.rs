@@ -707,7 +707,7 @@ fn test_wait_for_idle_event_carries_inbox_sources() {
             paths: vec![PathBuf::from("messages/inbox/admin.md")],
         }),
         Ok(DaemonEvent::InboxChanged {
-            paths: vec![PathBuf::from(".messenger/inbox/mail-123")],
+            paths: vec![PathBuf::from("mailbox/inbox/mail-123")],
         }),
     ]);
 
@@ -718,7 +718,7 @@ fn test_wait_for_idle_event_carries_inbox_sources() {
         IdleWaitOutcome::WakeFromInbox {
             paths: vec![
                 PathBuf::from("messages/inbox/admin.md"),
-                PathBuf::from(".messenger/inbox/mail-123"),
+                PathBuf::from("mailbox/inbox/mail-123"),
             ],
         }
     );
@@ -2699,7 +2699,7 @@ fn test_run_event_loop_passes_inbox_wake_sources_to_session() {
 
     let (tx, rx) = mpsc::channel();
     tx.send(DaemonEvent::InboxChanged {
-        paths: vec![PathBuf::from(".messenger/inbox/mail-123")],
+        paths: vec![PathBuf::from("mailbox/inbox/mail-123")],
     })
     .unwrap();
     drop(tx);
@@ -2716,7 +2716,7 @@ fn test_run_event_loop_passes_inbox_wake_sources_to_session() {
 
     assert_eq!(
         launcher.wake_sources(),
-        vec![vec![PathBuf::from(".messenger/inbox/mail-123")]]
+        vec![vec![PathBuf::from("mailbox/inbox/mail-123")]]
     );
 }
 
