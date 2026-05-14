@@ -142,12 +142,12 @@ fn test_build_prompt_hides_inbox_contents_even_when_waiting() {
         delayed_wake: None,
         todo_list: "No todos.".to_string(),
         inbox_waiting: true,
-        inbox_sources: vec![".messenger/inbox/mail-123".to_string()],
+        inbox_sources: vec!["mailbox/inbox/mail-123".to_string()],
     };
     let prompt = build_prompt(&config);
     assert!(prompt.contains("\n## Inbox\n\n"));
     assert!(prompt.contains("Wake source(s):"));
-    assert!(prompt.contains("- .messenger/inbox/mail-123"));
+    assert!(prompt.contains("- mailbox/inbox/mail-123"));
     assert!(prompt.contains("Run `cryo-agent receive`"));
     assert!(prompt.contains("non-default sources"));
     assert!(!prompt.contains("From: alice"));

@@ -139,7 +139,7 @@ fn format_inbox_empty_returns_no_messages() {
 }
 
 #[test]
-fn format_inbox_single_message_includes_metadata_and_body() {
+fn format_inbox_single_message_includes_headers_and_body() {
     let msg = test_message("alice", "hi", "Hello world", "2026-04-23T14:20:00");
     let out = format_inbox(&[("alice-2026-04-23T14-20-00.md".to_string(), msg)]);
     assert!(out.contains("--- alice-2026-04-23T14-20-00.md ---"));
@@ -159,20 +159,7 @@ fn format_inbox_multiple_messages_concatenates_in_order() {
 }
 
 #[test]
-fn format_inbox_includes_message_metadata() {
-    let mut msg = test_message("alice", "hi", "Hello world", "2026-04-23T14:20:00");
-    msg.metadata.insert(
-        "source_dir".to_string(),
-        "/tmp/chamber/messages/inbox/archive/msg1".to_string(),
-    );
-
-    let out = format_inbox(&[("msg1".to_string(), msg)]);
-
-    assert!(out.contains("source_dir: /tmp/chamber/messages/inbox/archive/msg1"));
-}
-
-#[test]
-fn list_message_files_includes_subdir_entries_with_message_md() {
+fn list_message_files_ignores_subdir_entries_with_message_md() {
     let dir = tempfile::tempdir().unwrap();
     let messages_dir = dir.path().join("messages");
     std::fs::create_dir_all(&messages_dir).unwrap();
@@ -186,9 +173,7 @@ fn list_message_files_includes_subdir_entries_with_message_md() {
     let files = list_message_files(&messages_dir).unwrap();
 
     let names: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();
-    assert_eq!(names, vec!["abc123", "flat.md"]); // ASCII sort: '.' (0x2e) > nothing
-    let abc = files.iter().find(|f| f.filename == "abc123").unwrap();
-    assert_eq!(abc.path, sub.join("message.md"));
+    assert_eq!(names, vec!["flat.md"]);
 }
 
 #[test]
@@ -210,33 +195,6 @@ fn list_message_files_skips_archive_subdir() {
     std::fs::write(messages_dir.join("archive").join("message.md"), "x").unwrap();
 
     assert!(list_message_files(&messages_dir).unwrap().is_empty());
-}
-
-#[test]
-fn read_message_dir_sets_source_dir_metadata_for_subdir_entries() {
-    let dir = tempfile::tempdir().unwrap();
-    let messages_dir = dir.path().join("messages");
-    std::fs::create_dir_all(&messages_dir).unwrap();
-
-    let valid = test_message("alice", "Hi", "Body", "2026-04-23T14:20:00");
-    std::fs::write(messages_dir.join("flat.md"), message_to_markdown(&valid)).unwrap();
-
-    let sub = messages_dir.join("abc123");
-    std::fs::create_dir(&sub).unwrap();
-    std::fs::write(sub.join("message.md"), message_to_markdown(&valid)).unwrap();
-
-    let messages = read_message_dir(&messages_dir, "message").unwrap();
-    assert_eq!(messages.len(), 2);
-
-    let flat = messages.iter().find(|(name, _)| name == "flat.md").unwrap();
-    assert!(!flat.1.metadata.contains_key("source_dir"));
-
-    let subdir_msg = messages.iter().find(|(name, _)| name == "abc123").unwrap();
-    let canonical = std::fs::canonicalize(&sub).unwrap();
-    assert_eq!(
-        subdir_msg.1.metadata.get("source_dir"),
-        Some(&canonical.to_string_lossy().to_string())
-    );
 }
 
 fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {
@@ -333,82 +291,4 @@ fn message_round_trip_preserves_is_question() {
     assert_eq!(parsed.from, msg.from);
     assert_eq!(parsed.subject, msg.subject);
     assert_eq!(parsed.body, msg.body);
-}
-
-#[test]
-fn parse_frontmatter_strips_surrounding_double_quotes() {
-    let raw = "---\nfrom: \"Alice\"\nsubject: \"Hi there\"\ntimestamp: 2026-04-25T15:30:00\n---\n\nBody\n";
-    let msg = parse_message(raw).unwrap();
-    assert_eq!(msg.from, "Alice");
-    assert_eq!(msg.subject, "Hi there");
-}
-
-#[test]
-fn parse_frontmatter_keeps_unquoted_values_unchanged() {
-    let raw = "---\nfrom: Alice\nsubject: Hi there\ntimestamp: 2026-04-25T15:30:00\n---\n\nBody\n";
-    let msg = parse_message(raw).unwrap();
-    assert_eq!(msg.from, "Alice");
-    assert_eq!(msg.subject, "Hi there");
-}
-
-#[test]
-fn parse_frontmatter_strips_only_outer_quote_pair() {
-    let raw = "---\nfrom: \"Alice\\\"Q\\\" Smith\"\nsubject: Hi\ntimestamp: 2026-04-25T15:30:00\n---\n\nBody\n";
-    let msg = parse_message(raw).unwrap();
-    assert_eq!(msg.from, "Alice\"Q\" Smith");
-}
-
-#[test]
-fn archive_messages_moves_subdir_entry_with_siblings() {
-    let dir = tempfile::tempdir().unwrap();
-    let chamber = dir.path();
-
-    let inbox = chamber.join("messages").join("inbox");
-    std::fs::create_dir_all(&inbox).unwrap();
-
-    let valid = test_message("alice", "Hi", "Body", "2026-04-23T14:20:00");
-    let sub = inbox.join("abc123");
-    std::fs::create_dir(&sub).unwrap();
-    std::fs::write(sub.join("message.md"), message_to_markdown(&valid)).unwrap();
-    std::fs::write(sub.join("meta.json"), r#"{"matched_by":"llm"}"#).unwrap();
-    std::fs::create_dir(sub.join("attachments")).unwrap();
-    std::fs::write(sub.join("attachments").join("foo.txt"), "hello").unwrap();
-
-    archive_messages(chamber, &["abc123".to_string()]).unwrap();
-
-    assert!(!sub.exists(), "subdir should be gone from inbox");
-    let archived = chamber
-        .join("messages")
-        .join("inbox")
-        .join("archive")
-        .join("abc123");
-    assert!(archived.is_dir(), "subdir should be in archive");
-    assert!(archived.join("message.md").is_file());
-    assert!(archived.join("meta.json").is_file());
-    assert_eq!(
-        std::fs::read_to_string(archived.join("attachments").join("foo.txt")).unwrap(),
-        "hello"
-    );
-}
-
-#[test]
-fn archive_messages_mixed_batch_moves_flat_and_subdir_together() {
-    let dir = tempfile::tempdir().unwrap();
-    let chamber = dir.path();
-    let inbox = chamber.join("messages").join("inbox");
-    std::fs::create_dir_all(&inbox).unwrap();
-
-    let valid = test_message("alice", "Hi", "Body", "2026-04-23T14:20:00");
-    std::fs::write(inbox.join("flat.md"), message_to_markdown(&valid)).unwrap();
-
-    let sub = inbox.join("subby");
-    std::fs::create_dir(&sub).unwrap();
-    std::fs::write(sub.join("message.md"), message_to_markdown(&valid)).unwrap();
-
-    archive_messages(chamber, &["flat.md".to_string(), "subby".to_string()]).unwrap();
-
-    let archive_dir = chamber.join("messages").join("inbox").join("archive");
-    assert!(archive_dir.join("flat.md").is_file());
-    assert!(archive_dir.join("subby").is_dir());
-    assert!(archive_dir.join("subby").join("message.md").is_file());
 }

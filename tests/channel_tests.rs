@@ -146,5 +146,8 @@ fn message_store_read_and_archive_inbox_ignores_messenger_subdir() {
     assert!(messages.is_empty());
     assert!(sub.join("message.md").is_file());
     assert!(sub.join("meta.json").is_file());
-    assert!(!inbox.join("archive").join("mail-fixture1example-com").exists());
+    assert!(!inbox
+        .join("archive")
+        .join("mail-fixture1example-com")
+        .exists());
 }
