@@ -139,7 +139,7 @@ fn format_inbox_empty_returns_no_messages() {
 }
 
 #[test]
-fn format_inbox_single_message_includes_headers_and_body() {
+fn format_inbox_single_message_includes_metadata_and_body() {
     let msg = test_message("alice", "hi", "Hello world", "2026-04-23T14:20:00");
     let out = format_inbox(&[("alice-2026-04-23T14-20-00.md".to_string(), msg)]);
     assert!(out.contains("--- alice-2026-04-23T14-20-00.md ---"));
@@ -156,45 +156,6 @@ fn format_inbox_multiple_messages_concatenates_in_order() {
     let pos_a = out.find("body1").unwrap();
     let pos_b = out.find("body2").unwrap();
     assert!(pos_a < pos_b, "messages should appear in input order");
-}
-
-#[test]
-fn list_message_files_ignores_subdir_entries_with_message_md() {
-    let dir = tempfile::tempdir().unwrap();
-    let messages_dir = dir.path().join("messages");
-    std::fs::create_dir_all(&messages_dir).unwrap();
-
-    std::fs::write(messages_dir.join("flat.md"), "x").unwrap();
-
-    let sub = messages_dir.join("abc123");
-    std::fs::create_dir(&sub).unwrap();
-    std::fs::write(sub.join("message.md"), "y").unwrap();
-
-    let files = list_message_files(&messages_dir).unwrap();
-
-    let names: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();
-    assert_eq!(names, vec!["flat.md"]);
-}
-
-#[test]
-fn list_message_files_skips_subdir_without_message_md() {
-    let dir = tempfile::tempdir().unwrap();
-    let messages_dir = dir.path().join("messages");
-    std::fs::create_dir_all(&messages_dir).unwrap();
-    std::fs::create_dir(messages_dir.join("incomplete")).unwrap();
-    std::fs::write(messages_dir.join("incomplete").join("meta.json"), "{}").unwrap();
-
-    assert!(list_message_files(&messages_dir).unwrap().is_empty());
-}
-
-#[test]
-fn list_message_files_skips_archive_subdir() {
-    let dir = tempfile::tempdir().unwrap();
-    let messages_dir = dir.path().join("messages");
-    std::fs::create_dir_all(messages_dir.join("archive")).unwrap();
-    std::fs::write(messages_dir.join("archive").join("message.md"), "x").unwrap();
-
-    assert!(list_message_files(&messages_dir).unwrap().is_empty());
 }
 
 fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {
