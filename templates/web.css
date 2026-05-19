@@ -531,6 +531,7 @@ body {
      is a no-op (the page scrolls instead of the thread). */
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 28px 12px;
   display: flex; flex-direction: column; gap: 22px;
 }
@@ -562,7 +563,9 @@ body {
   content:""; flex:1; height:1px; background: var(--line-soft);
 }
 .msg {
-  max-width: 68ch;
+  max-width: min(68ch, 100%);
+  min-width: 0;
+  box-sizing: border-box;
   padding: 14px 18px;
   border-radius: 10px;
   position: relative;
@@ -596,6 +599,8 @@ body {
   line-height: 1.6;
   color: var(--ink);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .msg-body em { font-family: var(--serif); font-style: italic; color: var(--ink); }
 
@@ -1042,6 +1047,9 @@ body {
   white-space: pre-wrap;
   max-height: 240px;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   scroll-behavior: smooth;
 }
 .log::-webkit-scrollbar { width: 6px; }
