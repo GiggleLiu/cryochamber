@@ -984,13 +984,8 @@
         const sessions = Number(d.total_sessions || 0);
         counts.textContent = `${sessions} session${sessions === 1 ? '' : 's'} · ${failed} failed`;
 
-        const latest = document.createElement('span');
-        latest.className = 'digest-latest';
-        latest.textContent = d.latest_session ? `latest #${d.latest_session}` : '';
-
         row.appendChild(date);
         row.appendChild(counts);
-        row.appendChild(latest);
         digestList.appendChild(row);
       }
       box.appendChild(digestList);

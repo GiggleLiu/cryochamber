@@ -995,7 +995,7 @@ body {
 }
 .daily-digest {
   display: grid;
-  grid-template-columns: minmax(82px, 0.9fr) minmax(0, 1.4fr) auto;
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-height: 20px;
@@ -1010,15 +1010,8 @@ body {
   color: var(--ink);
   font-weight: 500;
 }
-.digest-counts,
-.digest-latest {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.digest-counts {
   white-space: nowrap;
-}
-.digest-latest {
-  color: var(--ink-faint);
-  text-align: right;
 }
 .log-wrap {
   border: 1px solid var(--line);

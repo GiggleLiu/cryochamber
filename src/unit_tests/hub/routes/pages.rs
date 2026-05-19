@@ -118,6 +118,22 @@ fn shell_renders_daily_digests_in_log_tab() {
 }
 
 #[test]
+fn shell_daily_digest_rows_omit_latest_session_label() {
+    assert!(
+        !SHELL_HTML.contains("latest #"),
+        "daily digest rows should not render a latest-session label"
+    );
+    assert!(
+        !SHELL_HTML.contains("digest-latest"),
+        "daily digest rows should not reserve a third latest-session column"
+    );
+    assert!(
+        WEB_CSS.contains("grid-template-columns: max-content minmax(0, 1fr);"),
+        "daily digest rows should reserve columns for date and counts only"
+    );
+}
+
+#[test]
 fn shell_periodically_refreshes_chamber_registry() {
     assert!(
         SHELL_HTML.contains("async function refreshChamberIndex"),
