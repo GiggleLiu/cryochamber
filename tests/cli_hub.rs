@@ -135,6 +135,22 @@ fn cryohub_stop_reports_nothing_when_no_service() {
 }
 
 #[test]
+fn cryohub_restart_reports_nothing_when_no_service() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_home = tempfile::tempdir().unwrap();
+
+    #[allow(deprecated)]
+    Command::cargo_bin("cryohub")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("HOME", fake_home.path())
+        .arg("restart")
+        .assert()
+        .success()
+        .stdout(contains("No global cryohub service installed"));
+}
+
+#[test]
 fn cryohub_status_lists_other_installed_services_anchored_elsewhere() {
     // Install a fake hub service for /some/other/dir, then run `cryohub status`
     // from a different cwd and confirm the other service is surfaced. This is

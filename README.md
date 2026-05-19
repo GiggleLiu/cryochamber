@@ -41,7 +41,7 @@ cryohub start
 
 Cryohub is the local web dashboard for Cryochamber. It runs once per user,
 discovers chambers on this machine, and gives you a browser UI for status,
-logs, messages, TODOs, notes, and start/stop controls.
+logs, messages, TODOs, notes, and lifecycle controls.
 
 → **Full tutorial:** <https://giggleliu.github.io/cryochamber/tutorial.html>
 

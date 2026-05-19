@@ -47,3 +47,27 @@ fn launchctl_install_action_kickstarts_when_plist_and_label_are_current() {
         LaunchctlInstallAction::Kickstart
     );
 }
+
+#[test]
+fn launchctl_restart_action_reports_missing_plist() {
+    assert_eq!(
+        launchctl_restart_action(false, false),
+        LaunchctlRestartAction::NotInstalled
+    );
+}
+
+#[test]
+fn launchctl_restart_action_loads_existing_plist_when_label_missing() {
+    assert_eq!(
+        launchctl_restart_action(true, false),
+        LaunchctlRestartAction::LoadExistingPlist
+    );
+}
+
+#[test]
+fn launchctl_restart_action_kickstarts_loaded_label_without_reinstalling() {
+    assert_eq!(
+        launchctl_restart_action(true, true),
+        LaunchctlRestartAction::Kickstart
+    );
+}
