@@ -945,19 +945,30 @@
   function renderLog(status) {
     const box = document.getElementById('panel-log');
     box.innerHTML = '';
-    const digestTitle = document.createElement('div');
-    digestTitle.className = 'section-title';
-    digestTitle.textContent = 'Daily Digests';
-    box.appendChild(digestTitle);
-    const digests = Array.isArray(status.daily_digests) ? status.daily_digests : [];
-    const digestList = document.createElement('div');
-    digestList.className = 'digest-list';
-    if (!digests.length) {
-      const empty = document.createElement('div');
-      empty.className = 'digest-empty';
-      empty.textContent = 'No session history yet.';
-      digestList.appendChild(empty);
-    } else {
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.textContent = 'cryo.log';
+    box.appendChild(title);
+    const wrap = document.createElement('div');
+    wrap.className = 'log-wrap';
+    const log = document.createElement('pre');
+    log.className = 'log';
+    log.id = 'log';
+    log.textContent = status.log_tail || '';
+    wrap.appendChild(log);
+    box.appendChild(wrap);
+    view.logEl = log;
+    log.scrollTop = log.scrollHeight;
+
+    const digests = (Array.isArray(status.daily_digests) ? status.daily_digests : []).slice(0, 3);
+    if (digests.length) {
+      const digestTitle = document.createElement('div');
+      digestTitle.className = 'section-title digest-title';
+      digestTitle.textContent = 'Daily Digests';
+      box.appendChild(digestTitle);
+
+      const digestList = document.createElement('div');
+      digestList.className = 'digest-list';
       for (const d of digests) {
         const row = document.createElement('div');
         row.className = 'daily-digest';
@@ -982,23 +993,8 @@
         row.appendChild(latest);
         digestList.appendChild(row);
       }
+      box.appendChild(digestList);
     }
-    box.appendChild(digestList);
-
-    const title = document.createElement('div');
-    title.className = 'section-title';
-    title.textContent = 'cryo.log';
-    box.appendChild(title);
-    const wrap = document.createElement('div');
-    wrap.className = 'log-wrap';
-    const log = document.createElement('pre');
-    log.className = 'log';
-    log.id = 'log';
-    log.textContent = status.log_tail || '';
-    wrap.appendChild(log);
-    box.appendChild(wrap);
-    view.logEl = log;
-    log.scrollTop = log.scrollHeight;
   }
 
   // Center-pane tab strip: Messages / Plan / Notes. Tab bodies are siblings

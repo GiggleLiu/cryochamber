@@ -245,7 +245,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
             .ok()
             .flatten()
             .unwrap_or_default(),
-        daily_digests: crate::log::daily_digests(&log_file, 14).unwrap_or_default(),
+        daily_digests: crate::log::daily_digests(&log_file, 3).unwrap_or_default(),
         next_wake: next_wake(dir),
         notes_content,
         notes_html,
