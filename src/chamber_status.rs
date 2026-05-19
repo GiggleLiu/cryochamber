@@ -24,29 +24,13 @@ pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
     let mut rows = Vec::new();
     for (key, val) in &table {
         match val {
-            toml::Value::String(s) => rows.push(SettingsRow {
+            toml::Value::String(_)
+            | toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_) => rows.push(SettingsRow {
                 key: key.clone(),
-                value: format!("\"{s}\""),
-                kind: "scalar".into(),
-            }),
-            toml::Value::Integer(i) => rows.push(SettingsRow {
-                key: key.clone(),
-                value: i.to_string(),
-                kind: "scalar".into(),
-            }),
-            toml::Value::Float(f) => rows.push(SettingsRow {
-                key: key.clone(),
-                value: f.to_string(),
-                kind: "scalar".into(),
-            }),
-            toml::Value::Boolean(b) => rows.push(SettingsRow {
-                key: key.clone(),
-                value: b.to_string(),
-                kind: "scalar".into(),
-            }),
-            toml::Value::Datetime(d) => rows.push(SettingsRow {
-                key: key.clone(),
-                value: d.to_string(),
+                value: format_scalar(val),
                 kind: "scalar".into(),
             }),
             toml::Value::Array(arr) if key == "providers" => {
