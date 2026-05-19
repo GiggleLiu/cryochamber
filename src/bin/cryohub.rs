@@ -29,6 +29,8 @@ enum Commands {
     },
     /// Stop and remove the global hub service
     Stop,
+    /// Restart the global hub service without reinstalling it
+    Restart,
     /// Show whether the global hub service is installed.
     Status,
     /// Run the server in the current process (internal - used by the service)
@@ -50,6 +52,7 @@ fn main() -> Result<()> {
             foreground,
         } => cmd_start(host, port, foreground),
         Commands::Stop => cmd_stop(),
+        Commands::Restart => cmd_restart(),
         Commands::Status => cmd_status(),
         Commands::Daemon { host, port } => cmd_daemon(host, port),
     }
@@ -92,6 +95,17 @@ fn cmd_stop() -> Result<()> {
     let service_dir = cryochamber::hub::paths::hub_service_dir();
     if cryochamber::service::uninstall(SERVICE_LABEL, &service_dir)? {
         println!("Cryohub service stopped and removed.");
+        return Ok(());
+    }
+    println!("No global cryohub service installed.");
+    print_legacy_installed();
+    Ok(())
+}
+
+fn cmd_restart() -> Result<()> {
+    let service_dir = cryochamber::hub::paths::hub_service_dir();
+    if cryochamber::service::restart(SERVICE_LABEL, &service_dir)? {
+        println!("Cryohub service restarted.");
         return Ok(());
     }
     println!("No global cryohub service installed.");

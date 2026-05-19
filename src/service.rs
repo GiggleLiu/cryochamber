@@ -80,6 +80,14 @@ enum LaunchctlInstallAction {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchctlRestartAction {
+    NotInstalled,
+    LoadExistingPlist,
+    Kickstart,
+}
+
+#[cfg(target_os = "macos")]
 fn launchctl_install_action(plist_changed: bool, label_loaded: bool) -> LaunchctlInstallAction {
     match (plist_changed, label_loaded) {
         (true, label_loaded) => LaunchctlInstallAction::WritePlistAndLoad {
@@ -87,6 +95,15 @@ fn launchctl_install_action(plist_changed: bool, label_loaded: bool) -> Launchct
         },
         (false, false) => LaunchctlInstallAction::LoadExistingPlist,
         (false, true) => LaunchctlInstallAction::Kickstart,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_restart_action(plist_exists: bool, label_loaded: bool) -> LaunchctlRestartAction {
+    match (plist_exists, label_loaded) {
+        (false, _) => LaunchctlRestartAction::NotInstalled,
+        (true, false) => LaunchctlRestartAction::LoadExistingPlist,
+        (true, true) => LaunchctlRestartAction::Kickstart,
     }
 }
 
@@ -215,10 +232,7 @@ pub fn install(
             // have exited on its own (hibernate --complete, plan finished). Use
             // `kickstart -k` to restart it without rewriting the plist, so no
             // "Background items added" popup fires.
-            let uid = unsafe { libc::getuid() };
-            let _ = std::process::Command::new("launchctl")
-                .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
-                .status();
+            launchctl_kickstart(&label)?;
         }
     }
 
@@ -238,6 +252,19 @@ fn launchctl_load_plist(plist_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn launchctl_kickstart(label: &str) -> Result<()> {
+    let uid = unsafe { libc::getuid() };
+    let status = std::process::Command::new("launchctl")
+        .args(["kickstart", "-k", &format!("gui/{uid}/{label}")])
+        .status()
+        .context("Failed to run launchctl")?;
+    if !status.success() {
+        anyhow::bail!("launchctl kickstart failed");
+    }
+    Ok(())
+}
+
 /// Returns true if launchd knows about the given label (loaded, regardless
 /// of whether the process is currently running).
 #[cfg(target_os = "macos")]
@@ -247,6 +274,29 @@ fn launchctl_tracks(label: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Restart an already installed system service without rewriting or removing
+/// its service definition. Returns false if no service file is installed.
+#[cfg(target_os = "macos")]
+pub fn restart(label_prefix: &str, dir: &Path) -> Result<bool> {
+    let label = service_label(label_prefix, dir);
+    let plist_path = dirs::home_dir()
+        .context("Cannot determine home directory")?
+        .join("Library/LaunchAgents")
+        .join(format!("{label}.plist"));
+
+    match launchctl_restart_action(plist_path.exists(), launchctl_tracks(&label)) {
+        LaunchctlRestartAction::NotInstalled => Ok(false),
+        LaunchctlRestartAction::LoadExistingPlist => {
+            launchctl_load_plist(&plist_path)?;
+            Ok(true)
+        }
+        LaunchctlRestartAction::Kickstart => {
+            launchctl_kickstart(&label)?;
+            Ok(true)
+        }
+    }
 }
 
 /// Uninstall a system service. Returns true if a service was found and removed.
@@ -400,6 +450,28 @@ pub fn uninstall(label_prefix: &str, dir: &Path) -> Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
+pub fn restart(label_prefix: &str, dir: &Path) -> Result<bool> {
+    let label = service_label(label_prefix, dir);
+    let unit_path = dirs::home_dir()
+        .context("Cannot determine home directory")?
+        .join(".config/systemd/user")
+        .join(format!("{label}.service"));
+
+    if !unit_path.exists() {
+        return Ok(false);
+    }
+
+    let status = std::process::Command::new("systemctl")
+        .args(["--user", "restart", &label])
+        .status()
+        .context("Failed to run systemctl")?;
+    if !status.success() {
+        anyhow::bail!("systemctl restart failed");
+    }
+    Ok(true)
+}
+
+#[cfg(target_os = "linux")]
 pub fn is_installed(label_prefix: &str, dir: &Path) -> bool {
     let label = service_label(label_prefix, dir);
     dirs::home_dir()
@@ -451,6 +523,11 @@ pub fn install(
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn uninstall(_label_prefix: &str, _dir: &Path) -> Result<bool> {
+    anyhow::bail!("OS service management is not supported on this platform")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn restart(_label_prefix: &str, _dir: &Path) -> Result<bool> {
     anyhow::bail!("OS service management is not supported on this platform")
 }
 

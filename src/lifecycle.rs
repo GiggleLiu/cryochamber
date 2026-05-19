@@ -136,10 +136,40 @@ pub fn stop_chamber(dir: &Path) -> Result<()> {
 /// session number and CLI overrides by clearing only the PID lock before
 /// relaunching.
 pub fn restart_chamber(dir: &Path, exe: &Path) -> Result<DaemonLaunchMode> {
+    if std::env::var("CRYO_NO_SERVICE").is_err() {
+        let before = state::load_state(&state::state_path(dir))?;
+        if crate::service::restart("daemon", dir)? {
+            wait_for_restarted_daemon(dir, before.as_ref())?;
+            return Ok(DaemonLaunchMode::Service);
+        }
+    }
+
     stop_chamber(dir)?;
     let launch_mode = launch_daemon(dir, exe)?;
     wait_for_live_daemon(dir)?;
     Ok(launch_mode)
+}
+
+fn wait_for_restarted_daemon(dir: &Path, before: Option<&CryoState>) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(st) = state::load_state(&state::state_path(dir))? {
+            if restarted_state(before, &st) && state::is_locked(&st) && daemon_responding(dir) {
+                return Ok(());
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!("Daemon did not restart within 10 seconds. Check cryo.log for errors.");
+        }
+    }
+}
+
+fn restarted_state(before: Option<&CryoState>, after: &CryoState) -> bool {
+    match before {
+        Some(before) => before.pid != after.pid || before.instance_id != after.instance_id,
+        None => true,
+    }
 }
 
 fn new_archive_dir(dir: &Path) -> Result<PathBuf> {
@@ -225,3 +255,7 @@ pub fn wait_for_live_daemon_until(dir: &Path, deadline: std::time::Instant) -> R
         }
     }
 }
+
+#[cfg(test)]
+#[path = "unit_tests/lifecycle.rs"]
+mod tests;

@@ -6,7 +6,7 @@ You can run all three together. Cryohub is local-only by default; the sync chann
 
 ## Cryohub (primary, recommended)
 
-Cryohub is a global web dashboard that manages every chamber registered on this machine. It can be started and stopped from any directory.
+Cryohub is a global web dashboard that manages every chamber registered on this machine. It can be started, restarted, and stopped from any directory.
 
 ![cryohub dashboard with the mr-lazy chamber selected](../images/cryohub-dashboard.png)
 
@@ -25,14 +25,15 @@ cryohub start --foreground
 - **Main pane** - full detail for the selected chamber: status, current task, next wake time, notes, message history, log tail, and a send widget. Lifecycle buttons, Start, Stop, Restart, and Wake, sit next to the status.
 - **New Chamber** modal - scaffolds a chamber under the configured chamber root, `~/.cryo/chambers` by default.
 
-### Stop the hub
+### Manage the hub service
 
 ```bash
+cryohub restart
 cryohub stop
 cryohub status
 ```
 
-Use `cryohub status` to confirm the service state and see the configured URL, chamber root, config path, and log path.
+Use `cryohub restart` to restart the installed dashboard service without reinstalling it. Use `cryohub status` to confirm the service state and see the configured URL, chamber root, config path, and log path.
 
 ### Security
 

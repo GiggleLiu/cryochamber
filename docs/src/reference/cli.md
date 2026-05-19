@@ -12,7 +12,7 @@ Run these from inside a chamber directory unless noted otherwise.
 | `cryo start [--agent <cmd>]` | Start the daemon. Reads `cryo.toml` and writes overrides to `timer.json`. |
 | `cryo start --max-session-duration 3600` | Override the session timeout for this run. |
 | `cryo status` | Show whether the daemon is running, the current session number, and the next wake time. |
-| `cryo restart` | Stop the running daemon and start a fresh one. |
+| `cryo restart` | Restart the running daemon. When it is installed as an OS service, restart the existing service without rewriting or removing it. |
 | `cryo cancel` | Stop the daemon and remove the runtime state. |
 | `cryo watch [--all]` | Follow the session log in real time. |
 | `cryo log` | Print the full session log. |
@@ -29,6 +29,7 @@ Run these from inside a chamber directory unless noted otherwise.
 | `cryohub start [--host <ip>] [--port <n>]` | Install a service that survives reboot. `--host` and `--port` also update the saved hub config. |
 | `cryohub start --foreground` | Run the hub in the current terminal instead of installing a service. |
 | `cryohub stop` | Uninstall the global hub service. |
+| `cryohub restart` | Restart the installed global hub service without reinstalling it. |
 | `cryohub status` | Show the global hub URL, chamber root, config path, log path, and service status. Also lists legacy cwd-scoped hub services from older versions. |
 
 ## Agent IPC (`cryo-agent`)

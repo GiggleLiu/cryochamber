@@ -298,7 +298,7 @@ fn cmd_restart() -> Result<()> {
 
     match launch_mode {
         DaemonLaunchMode::BackgroundProcess => println!("Restarted (background process)."),
-        DaemonLaunchMode::Service => println!("Restarted (service reinstalled)."),
+        DaemonLaunchMode::Service => println!("Restarted (service)."),
     }
     println!("Use `cryo watch` or `cryohub start` to follow progress.");
     Ok(())
