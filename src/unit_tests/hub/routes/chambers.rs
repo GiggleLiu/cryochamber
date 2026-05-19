@@ -48,7 +48,6 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
             pid: None,
             agent_override: None,
             max_session_duration_override: None,
-            last_report_time: None,
             instance_id: None,
             session_active: false,
             previous_session_crashed: false,

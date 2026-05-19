@@ -392,6 +392,7 @@
     const name = document.createElement('span');
     name.className = 'name';
     name.textContent = entry.name;
+    if (entry.path) name.title = entry.path;
     const session = document.createElement('span');
     session.className = 'session';
     left.appendChild(title);
@@ -437,6 +438,7 @@
   function updateHead(entry, status) {
     const dot = statusDotChar(entry);
     view.headerName.textContent = entry.name;
+    view.headerName.title = entry.path || '';
     const summary = status.session_summary || '';
     const displaySummary = formatSessionSummary(status.session, summary);
     view.headerMeta.textContent = displaySummary ? '' : `SESSION #${status.session}`;
@@ -957,6 +959,37 @@
     box.appendChild(wrap);
     view.logEl = log;
     log.scrollTop = log.scrollHeight;
+
+    const digests = (Array.isArray(status.daily_digests) ? status.daily_digests : []).slice(0, 3);
+    if (digests.length) {
+      const digestTitle = document.createElement('div');
+      digestTitle.className = 'section-title digest-title';
+      digestTitle.textContent = 'Daily Digests';
+      box.appendChild(digestTitle);
+
+      const digestList = document.createElement('div');
+      digestList.className = 'digest-list';
+      for (const d of digests) {
+        const row = document.createElement('div');
+        row.className = 'daily-digest';
+        const failed = Number(d.failed_sessions || 0);
+        row.classList.toggle('has-failures', failed > 0);
+
+        const date = document.createElement('span');
+        date.className = 'digest-date';
+        date.textContent = d.date || 'unknown';
+
+        const counts = document.createElement('span');
+        counts.className = 'digest-counts';
+        const sessions = Number(d.total_sessions || 0);
+        counts.textContent = `${sessions} session${sessions === 1 ? '' : 's'} · ${failed} failed`;
+
+        row.appendChild(date);
+        row.appendChild(counts);
+        digestList.appendChild(row);
+      }
+      box.appendChild(digestList);
+    }
   }
 
   // Center-pane tab strip: Messages / Plan / Notes. Tab bodies are siblings

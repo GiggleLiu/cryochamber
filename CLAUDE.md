@@ -73,7 +73,7 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `socket` | Unix domain socket IPC — message types (`Request`/`Response`), client (`send_request`), server (`SocketServer`). |
 | `config` | TOML persistence for project config (`cryo.toml`). `CryoConfig` struct, load/save, `apply_overrides` merges CLI overrides from state. |
 | `state` | JSON persistence to `timer.json` — runtime-only state (session number, PID lock, CLI overrides). PID-based locking via `libc::kill(pid, 0)`. |
-| `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, hibernate, exit). |
+| `log` | Session log manager. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, hibernate, exit), and hub status derives daily digests from the same log. |
 | `protocol` | Loads templates from `templates/` via `include_str!` (protocol, plan, cryo.toml). Written by `init`/`start`. |
 | `agent` | Builds lightweight prompt with task + session context, spawns agent subprocess (stdout/stderr redirected to `cryo-agent.log`). |
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
@@ -82,7 +82,6 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `message` | File-based inbox/outbox message system. Agent-side `cryo-agent receive` goes through daemon IPC and archives the current inbox batch into `messages/inbox/archive/` immediately via `MessageStore`. Any “awaiting reply” state for that batch lives only in the daemon's current session. Operator `cryo receive` is separate: it reads messages from `messages/outbox/`. |
 | `channel` | Channel abstraction. Submodules: `store` (local inbox/outbox), `github` (Discussions via GraphQL), `zulip` (Zulip REST API). |
 | `registry` | User chamber registry for Cryohub discovery. Uses `$XDG_STATE_HOME/cryo/chambers/` (fallback `~/.cryo/chambers/`), keeps stopped chambers, clears stale PIDs, and prunes entries whose chamber disappeared. |
-| `report` | Periodic session summary reports. Parses log, counts sessions/failures, writes summary to `messages/outbox/` for sync delivery. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
 | `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoFile` structs plus retry rescheduling logic for crashed sessions. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |
@@ -141,9 +140,9 @@ and needs an explicit justification.
 - **Fire-and-forget agent**: The daemon spawns the agent and redirects its stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake**: `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of `watch_dirs` setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
 - **Reactive wake via `watch_dirs`**: `cryo.toml` carries a list `watch_dirs` (default `["messages/inbox"]`) of directories the daemon attaches a notify watcher to. New files in any watched directory wake the agent, equivalent to inbox-triggered wake. Empty list disables reactive wake. Do not reintroduce `watch_inbox` compatibility.
-- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_dirs, report interval, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **Config/state split**: `cryo.toml` is the project config (agent, session timeout, watch_dirs, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
 - **Provider config**: Cryochamber supports a single active provider profile. The canonical TOML shape is `[provider]` with an `env = { ... }` map, injected into every spawned agent session. Legacy `[[providers]]` arrays are accepted only for backward compatibility: loading them emits a deprecation warning, the first entry is used, and saving canonicalizes back to `[provider]`. Provider rotation has been removed; do not reintroduce `provider_index`, `rotate_on`, or multi-provider retry behavior.
-- **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender — both per-session fallback replies (when the agent never sends a human-visible message after claiming inbox, or crashes) and periodic reports. Agent-authored human-visible messages use `from: agent`.
+- **Chamber-authored messages**: All daemon-originated outbox messages use a single `from: cryochamber` sender for per-session fallback replies when the agent never sends a human-visible message after claiming inbox, or crashes. Agent-authored human-visible messages use `from: agent`.
 - **Preflight validation**: `cryo start` checks that the agent command exists on PATH before spawning.
 - **Crash handling via TODO re-injection**: If the agent exits without calling `cryo-agent hibernate`, the daemon records the crash and re-injects any TODOs it claimed for that wake with a `(attempt k)` suffix and an exponential delay (`2^k` min, capped at 1 day). There is no in-daemon backoff-retry loop; rescheduling lives entirely in `todo.json`, surviving daemon restarts and visible to both agent and operator. EventLogger is always finalized.
 - **Inbox contract**: There is no `cryo-agent reply`. Wake prompts do not include inbox contents; the daemon only checks whether inbox files exist so it can surface a notice in the session prompt. During an agent session, `cryo-agent receive` asks the daemon to read and archive the current inbox batch immediately; it is not an operator-facing command. The next successful `cryo-agent send` is the reply by definition for that received batch. If the agent exits or crashes before such a `send`, the daemon writes the fallback message for that batch. Inbox messages are never retried; only TODOs have retry semantics. If the human still wants action, they resend.
@@ -173,7 +172,7 @@ and needs an explicit justification.
   - Agent-side `cryo-agent receive` sends `socket::Request::Receive` through `daemon_client::send_checked_request`; during an active session, the daemon then reads and archives the inbox batch through `MessageStore` and records the reply obligation in session memory.
   - `cryo-agent send` must **not** write outbox files directly; it sends `socket::Request::Send` through `daemon_client::send_checked_request` so the daemon can both write the outbox message and resolve any claimed inbox batch correctly.
   - Do not design new file-backed pending/recovery flows for inbox messages; archive-on-receive plus daemon fallback is the contract.
-  - Daemon, operator CLI, sync daemons, hub routes, report generation, and status/read-model code should all use `MessageStore` for local mailbox file access.
+  - Daemon, operator CLI, sync daemons, hub routes, and status/read-model code should all use `MessageStore` for local mailbox file access.
   - Low-level markdown parsing / rendering / archiving primitives still live in `src/message.rs`; `MessageStore` composes them instead of reimplementing them.
 
 - **How the daemon manipulates TODOs and messages**:
@@ -199,7 +198,7 @@ and needs an explicit justification.
 - `cryo-agent.log` — agent stdout/stderr (raw tool-call output)
 - `todo.json` — per-project TODO items for agent task tracking
 - `messages/inbox/` — incoming messages for the agent
-- `messages/outbox/` — outgoing messages (agent replies, daemon stand-in replies, periodic reports)
+- `messages/outbox/` — outgoing messages (agent replies, daemon stand-in replies)
 - `messages/inbox/archive/` — processed inbox messages
 - `.cryo/cryo.sock` — Unix domain socket for agent-daemon IPC
 - `gh-sync.json` — GitHub Discussion sync state (if configured)

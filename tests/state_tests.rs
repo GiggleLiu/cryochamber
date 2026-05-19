@@ -11,8 +11,6 @@ fn test_save_and_load_state() {
         pid: Some(std::process::id()),
         agent_override: Some("opencode test".to_string()),
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -43,8 +41,6 @@ fn test_lock_mechanism() {
         pid: Some(std::process::id()),
         agent_override: None,
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -65,8 +61,6 @@ fn test_is_locked_dead_process() {
         pid: Some(999999),
         agent_override: None,
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -82,8 +76,6 @@ fn test_is_locked_no_pid() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -123,7 +115,6 @@ fn test_previous_session_crashed_default_false_and_skipped_when_false() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -145,7 +136,6 @@ fn test_previous_session_crashed_true_roundtrip() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: true,
@@ -203,8 +193,6 @@ fn test_override_fields_roundtrip() {
         pid: None,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: Some(1800),
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -225,8 +213,6 @@ fn test_none_overrides_not_serialized() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -239,30 +225,23 @@ fn test_none_overrides_not_serialized() {
 }
 
 #[test]
-fn test_last_report_time_roundtrip() {
+fn test_legacy_last_report_time_is_not_reserialized() {
     let dir = tempfile::tempdir().unwrap();
     let state_path = dir.path().join("timer.json");
-    let state = CryoState {
-        session_number: 1,
-        pid: None,
-        agent_override: None,
-        max_session_duration_override: None,
+    std::fs::write(
+        &state_path,
+        r#"{"session_number": 1, "pid": null, "last_report_time": "2026-02-28T09:00:00"}"#,
+    )
+    .unwrap();
 
-        last_report_time: Some("2026-02-28T09:00:00".to_string()),
-        instance_id: None,
-        session_active: false,
-        previous_session_crashed: false,
-    };
-    save_state(&state_path, &state).unwrap();
     let loaded = load_state(&state_path).unwrap().unwrap();
-    assert_eq!(
-        loaded.last_report_time,
-        Some("2026-02-28T09:00:00".to_string())
-    );
+    save_state(&state_path, &loaded).unwrap();
 
-    // Verify it appears in JSON
     let json = std::fs::read_to_string(&state_path).unwrap();
-    assert!(json.contains("last_report_time"));
+    assert!(
+        !json.contains("last_report_time"),
+        "last_report_time is legacy report state and should not be reserialized: {json}"
+    );
 }
 
 #[test]

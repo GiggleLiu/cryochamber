@@ -15,7 +15,7 @@ Every file a running chamber creates, where it lives, and whether it is safe to 
 | `cryo-agent.log` | daemon | no | no | Agent stdout and stderr, including raw tool-call output. |
 | `messages/inbox/` | local writers and sync daemons | no | no | Incoming messages waiting for the agent. |
 | `messages/inbox/archive/` | daemon on receive | no | no | Processed inbox messages. |
-| `messages/outbox/` | agent, daemon, and reports | no | no | Outgoing messages waiting for delivery. |
+| `messages/outbox/` | agent and daemon | no | no | Outgoing messages waiting for delivery. |
 | `messages/outbox/archive/` | sync daemons | no | no | Outbox messages already delivered remotely. |
 | `.cryo/cryo.sock` | daemon | no | no | Unix domain socket for agent-daemon IPC. |
 

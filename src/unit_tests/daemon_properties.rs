@@ -35,40 +35,27 @@ fn origin() -> NaiveDateTime {
 
 proptest! {
     /// The sleep is never longer than the nearest future deadline, and it is
-    /// zero whenever any deadline is already in the past.
+    /// zero whenever the wake deadline is already in the past.
     #[test]
     fn prop_sleep_respects_deadlines(
         wake_offset in prop::option::of(-3600i64..=7200),
-        report_offset in prop::option::of(-3600i64..=7200),
     ) {
         let now = origin();
         let wake = wake_offset.map(|s| offset_from_origin(now, s));
-        let report = report_offset.map(|s| offset_from_origin(now, s));
-        let sleep = compute_sleep_timeout(wake, report, now);
+        let sleep = compute_sleep_timeout(wake, now);
 
-        // If either deadline is in the past, sleep is zero (duration clamps to
+        // If the wake deadline is in the past, sleep is zero (duration clamps to
         // ZERO when the NaiveDateTime math goes negative).
         let wake_past = wake_offset.is_some_and(|s| s <= 0);
-        let report_past = report_offset.is_some_and(|s| s <= 0);
-        if wake_past || report_past {
+        if wake_past {
             prop_assert_eq!(sleep, Duration::ZERO);
             return Ok(());
         }
 
-        // Otherwise sleep is at most min(future deadlines).
-        let deadlines: Vec<i64> = [wake_offset, report_offset]
-            .into_iter()
-            .flatten()
-            .filter(|s| *s > 0)
-            .collect();
-        if deadlines.is_empty() {
-            prop_assert_eq!(sleep, Duration::from_secs(3600));
+        if let Some(offset) = wake_offset {
+            prop_assert_eq!(sleep, Duration::from_secs(offset as u64));
         } else {
-            let min_future = *deadlines.iter().min().unwrap() as u64;
-            prop_assert!(
-                sleep <= Duration::from_secs(min_future),
-                "sleep {sleep:?} exceeded nearest deadline {min_future}s"
-            );
+            prop_assert_eq!(sleep, Duration::from_secs(3600));
         }
     }
 }

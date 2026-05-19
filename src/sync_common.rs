@@ -140,8 +140,8 @@ pub trait SyncLoopBackend {
 /// Format an outbox message before posting it to an external sync backend.
 ///
 /// Agent replies use the body alone because the external service already
-/// shows which integration posted it. System messages are quoted so reports
-/// and fallback alerts read as generated status. Other senders keep explicit
+/// shows which integration posted it. System messages are quoted so fallback
+/// alerts read as generated status. Other senders keep explicit
 /// attribution in the body.
 pub fn format_outbox_post(msg: &Message) -> String {
     match outbox_post_style(msg) {

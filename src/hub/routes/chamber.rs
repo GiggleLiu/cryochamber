@@ -25,6 +25,7 @@ pub fn status_json(dir: &Path) -> Value {
         "session": status.session,
         "agent": status.agent,
         "log_tail": status.log_tail,
+        "daily_digests": status.daily_digests,
         "next_wake": status.next_wake,
         "notes_content": status.notes_content,
         "notes_html": status.notes_html,

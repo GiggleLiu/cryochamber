@@ -11,7 +11,6 @@ fn state_with_instance(instance_id: Option<&str>) -> CryoState {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: instance_id.map(str::to_string),
         session_active: false,
         previous_session_crashed: false,

@@ -26,17 +26,17 @@ fn agent_reply_posts_body_only() {
 }
 
 #[test]
-fn cryochamber_report_renders_as_blockquote() {
-    // Reports are machine-generated; render them as a Zulip blockquote
-    // so they read as system info rather than a human-style reply.
+fn cryochamber_system_message_renders_as_blockquote() {
+    // Daemon-authored messages are machine-generated; render them as a Zulip
+    // blockquote so they read as system info rather than a human-style reply.
     let out = format_outbox_post(&mk(
         "cryochamber",
-        "Cryochamber Report: demo",
-        "Last 24h: 3 sessions, 0 failed",
+        "Fallback Alert: demo",
+        "Agent hibernated without replying.",
     ));
     assert_eq!(
         out,
-        "> **Cryochamber Report: demo**\n>\n> Last 24h: 3 sessions, 0 failed"
+        "> **Fallback Alert: demo**\n>\n> Agent hibernated without replying."
     );
 }
 

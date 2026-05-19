@@ -1,7 +1,6 @@
 //! Integration tests using mock agent scenario scripts.
 //! Each test spawns a real daemon with CRYO_NO_SERVICE=1 and asserts on cryo.log/timer.json.
 
-use chrono::Timelike;
 use std::fs;
 use std::time::Duration;
 
@@ -515,7 +514,7 @@ MOCK_VAR = "hello"
     assert_eq!(content.trim(), "hello", "MOCK_VAR should be injected");
 }
 
-// --- Fallback, delayed wake, and periodic report tests ---
+// --- Fallback and delayed wake tests ---
 
 #[test]
 fn test_delayed_wake_detection() {
@@ -548,97 +547,6 @@ fn test_delayed_wake_detection() {
     assert!(
         log.contains("plan complete"),
         "Plan should complete after delayed wake: {log}"
-    );
-}
-
-#[test]
-fn test_periodic_report_fires() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "multi-session.sh");
-
-    // Configure report_interval=1 (hour) with report_time matching the current HH:MM.
-    // Note: `cryo start` creates a fresh timer.json, overwriting any pre-seeded state.
-    // The daemon reads last_report_time=None from the fresh state, and computes
-    // next_report_time using compute_next_report_time(report_time, 1, None).
-    //
-    // With report_time matching the current HH:MM, the next report time will be
-    // either now (if current second <= 0) or 1 hour from now. In either case,
-    // the report likely won't fire during this short test (minimum 1-hour interval).
-    //
-    // This test verifies that:
-    // 1. The daemon accepts report configuration without errors
-    // 2. The multi-session lifecycle completes normally with report config present
-    // 3. The daemon logs the computed next report time
-    let now = chrono::Local::now();
-    let report_time = format!("{:02}:{:02}", now.hour(), now.minute());
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = format!("{config}\nreport_interval = 1\nreport_time = \"{report_time}\"\n");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    cryo_bin()
-        .args(["start", "--agent", "mock", "--max-session-duration", "30"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(30)),
-        "Daemon should exit after completion"
-    );
-
-    // The daemon should have logged the next report time (stderr -> cryo.log)
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("next report at"),
-        "Daemon should log the computed next report time: {log}"
-    );
-
-    // Verify the plan completed normally despite report config
-    assert!(log.contains("plan complete"), "Plan should complete: {log}");
-
-    // Check timer.json state is valid
-    let state_content = fs::read_to_string(dir.path().join("timer.json")).unwrap();
-    let state: serde_json::Value = serde_json::from_str(&state_content).unwrap();
-    // session_number should be >= 3 (multi-session.sh completes on session 3)
-    let session_num = state["session_number"].as_u64().unwrap_or(0);
-    assert!(
-        session_num >= 3,
-        "Should have at least 3 sessions, got {session_num}"
-    );
-}
-
-#[test]
-fn test_invalid_report_time_warns() {
-    let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "quick-exit.sh");
-
-    let config = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let config = format!("{config}\nreport_interval = 1\nreport_time = \"not-a-time\"\n");
-    fs::write(dir.path().join("cryo.toml"), config).unwrap();
-
-    cryo_bin()
-        .args(["start", "--agent", "mock"])
-        .env("CRYO_NO_SERVICE", "1")
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    // The daemon should warn about invalid report_time.
-    // Since spawn_daemon redirects stderr to cryo.log, the warning
-    // "Daemon: warning: report_interval=1 but report_time='not-a-time' is invalid"
-    // appears in cryo.log.
-    assert!(
-        wait_for_log_content(dir.path(), "report_time", Duration::from_secs(10)),
-        "Should warn about invalid report_time in cryo.log"
-    );
-
-    cancel_and_wait(dir.path());
-
-    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
-    assert!(
-        log.contains("not-a-time"),
-        "Warning should mention the invalid value: {log}"
     );
 }
 
@@ -778,14 +686,22 @@ fn test_inbox_wake_no_delayed_wake_notice() {
     // notice into the agent prompt.
     //
     // Scenario: session 1 hibernates with a past wake time, then sleeps 2s.
-    // During that sleep, the test writes an inbox file. The InboxChanged event
-    // queues in the channel before the daemon's event loop resumes. When the
-    // daemon checks recv_timeout(0), it finds InboxChanged first, so session 2
-    // runs as an inbox wake (not a timeout wake) and skips delayed wake detection.
+    // During that sleep, the test runs `cryo wake`. With watch_dirs disabled,
+    // `cryo wake` writes an inbox file and sends SIGUSR1. The signal-forwarding
+    // thread queues an InboxChanged event before the daemon's event loop resumes.
+    // When the daemon checks recv_timeout(0), it finds InboxChanged first, so
+    // session 2 runs as an inbox wake (not a timeout wake) and skips delayed
+    // wake detection.
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "inbox-delayed-wake.sh");
 
-    // Default `watch_dirs = ["messages/inbox"]` is already what we need.
+    let config_path = dir.path().join("cryo.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    fs::write(
+        &config_path,
+        config.replace(r#"watch_dirs = ["messages/inbox"]"#, "watch_dirs = []"),
+    )
+    .unwrap();
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "30"])
@@ -802,7 +718,11 @@ fn test_inbox_wake_no_delayed_wake_notice() {
 
     // Write inbox file while session 1's script is still sleeping (2s after hibernate).
     // This queues an InboxChanged event before the daemon's event loop resumes.
-    write_inbox_message(dir.path(), "trigger.md", "wake up via inbox");
+    cryo_bin()
+        .args(["wake", "wake up via inbox"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
 
     // Wait for daemon to complete
     assert!(

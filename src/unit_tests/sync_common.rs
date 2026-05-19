@@ -189,7 +189,7 @@ fn outbox_post_style_uses_body_only_for_agent() {
 #[test]
 fn outbox_post_style_uses_system_quote_for_cryochamber() {
     assert_eq!(
-        outbox_post_style(&message("cryochamber", "Report", "summary")),
+        outbox_post_style(&message("cryochamber", "Fallback", "summary")),
         OutboxPostStyle::SystemQuote
     );
 }
@@ -212,12 +212,12 @@ fn format_outbox_post_uses_body_only_for_agent_reply() {
 fn format_outbox_post_marks_system_messages_as_quotes() {
     let out = format_outbox_post(&message(
         "cryochamber",
-        "Cryochamber Report: demo",
-        "Last 24h: 3 sessions, 0 failed",
+        "Fallback Alert: demo",
+        "Agent hibernated without replying.",
     ));
     assert_eq!(
         out,
-        "> **Cryochamber Report: demo**\n>\n> Last 24h: 3 sessions, 0 failed"
+        "> **Fallback Alert: demo**\n>\n> Agent hibernated without replying."
     );
 }
 

@@ -531,6 +531,7 @@ body {
      is a no-op (the page scrolls instead of the thread). */
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 28px 12px;
   display: flex; flex-direction: column; gap: 22px;
 }
@@ -562,7 +563,9 @@ body {
   content:""; flex:1; height:1px; background: var(--line-soft);
 }
 .msg {
-  max-width: 68ch;
+  max-width: min(68ch, 100%);
+  min-width: 0;
+  box-sizing: border-box;
   padding: 14px 18px;
   border-radius: 10px;
   position: relative;
@@ -596,6 +599,8 @@ body {
   line-height: 1.6;
   color: var(--ink);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .msg-body em { font-family: var(--serif); font-style: italic; color: var(--ink); }
 
@@ -980,6 +985,34 @@ body {
 }
 
 /* Log */
+.digest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.digest-title {
+  margin-top: 16px;
+}
+.daily-digest {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.daily-digest.has-failures {
+  color: #d88d7d;
+}
+.digest-date {
+  color: var(--ink);
+  font-weight: 500;
+}
+.digest-counts {
+  white-space: nowrap;
+}
 .log-wrap {
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -997,6 +1030,9 @@ body {
   white-space: pre-wrap;
   max-height: 240px;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   scroll-behavior: smooth;
 }
 .log::-webkit-scrollbar { width: 6px; }

@@ -38,14 +38,6 @@ pub struct CryoConfig {
     #[serde(default = "default_watch_dirs")]
     pub watch_dirs: Vec<PathBuf>,
 
-    /// Time of day to send periodic report (HH:MM, local time)
-    #[serde(default = "default_report_time")]
-    pub report_time: String,
-
-    /// Hours between reports (0 = disabled, 24 = daily, 168 = weekly)
-    #[serde(default)]
-    pub report_interval: u64,
-
     /// Provider environment profile injected when spawning the agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderConfig>,
@@ -68,10 +60,6 @@ fn default_agent() -> String {
     "opencode".to_string()
 }
 
-fn default_report_time() -> String {
-    "09:00".to_string()
-}
-
 fn default_poll_interval() -> u64 {
     5
 }
@@ -82,8 +70,6 @@ impl Default for CryoConfig {
             agent: default_agent(),
             max_session_duration: 0,
             watch_dirs: default_watch_dirs(),
-            report_time: default_report_time(),
-            report_interval: 0,
             provider: None,
             providers: Vec::new(),
             zulip_poll_interval: default_poll_interval(),

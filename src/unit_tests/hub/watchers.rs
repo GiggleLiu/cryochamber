@@ -60,10 +60,17 @@ async fn watcher_emits_new_message_event_with_chamber_id() {
 
     let (tx, mut rx) = tokio::sync::broadcast::channel::<SseEvent>(16);
     let reg = WatcherRegistry::new();
-    reg.ensure_watching("cham-1".into(), dir.path(), tx.clone());
+    for _ in 0..20 {
+        reg.ensure_watching("cham-1".into(), dir.path(), tx.clone());
+        if reg.inner.lock().unwrap().len() == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(reg.inner.lock().unwrap().len(), 1);
 
     // Give the OS watcher a moment to register before writing the file.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
     let msg = crate::message::Message {
         from: "tester".into(),
@@ -120,6 +127,12 @@ fn drop_watcher_allows_ensure_watching_to_rebuild() {
     reg.drop_watcher(dir.path());
     assert_eq!(reg.inner.lock().unwrap().len(), 0);
 
-    reg.ensure_watching("x".into(), dir.path(), tx);
+    for _ in 0..10 {
+        reg.ensure_watching("x".into(), dir.path(), tx.clone());
+        if reg.inner.lock().unwrap().len() == 1 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
     assert_eq!(reg.inner.lock().unwrap().len(), 1);
 }

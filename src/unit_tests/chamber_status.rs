@@ -6,7 +6,6 @@ fn test_state(session_number: u32) -> crate::state::CryoState {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -71,6 +70,29 @@ fn status_next_wake_uses_earliest_open_todo() {
     let status = status(dir.path());
 
     assert_eq!(status.next_wake, Some("2026-05-01T09:00".to_string()));
+}
+
+#[test]
+fn status_includes_daily_digests_from_log() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        crate::log::log_path(dir.path()),
+        "--- CRYO SESSION 1 | 2026-03-01T09:00:00Z ---\n\
+         [09:00:01] hibernate: wake=2026-03-01T14:00, exit=0\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 2 | 2026-03-01T12:00:00Z ---\n\
+         [12:00:01] agent exited without hibernate\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+
+    let status = status(dir.path());
+
+    assert_eq!(status.daily_digests.len(), 1);
+    assert_eq!(status.daily_digests[0].date, "2026-03-01");
+    assert_eq!(status.daily_digests[0].total_sessions, 2);
+    assert_eq!(status.daily_digests[0].failed_sessions, 1);
+    assert_eq!(status.daily_digests[0].latest_session, 2);
 }
 
 #[test]
@@ -166,7 +188,10 @@ env = { ANTHROPIC_API_KEY = "sk-secret-1", ANTHROPIC_MODEL = "claude-sonnet-4-6"
 
     assert_eq!(by_key.get("agent").copied(), Some("\"claude\""));
     assert_eq!(by_key.get("max_session_duration").copied(), Some("600"));
-    assert_eq!(by_key.get("watch_dirs").copied(), Some("[1 items]"));
+    assert_eq!(
+        by_key.get("watch_dirs").copied(),
+        Some("[\"messages/inbox\"]")
+    );
 
     let p0 = by_key.get("provider").expect("provider");
     assert!(p0.starts_with("anthropic"));
@@ -175,6 +200,25 @@ env = { ANTHROPIC_API_KEY = "sk-secret-1", ANTHROPIC_MODEL = "claude-sonnet-4-6"
     assert!(
         !p0.contains("sk-secret"),
         "env values must never leak into the settings rows; got {p0}"
+    );
+}
+
+#[test]
+fn parse_settings_rows_expands_scalar_arrays_inline() {
+    // Arrays of plain scalars (e.g. `watch_dirs`) should show their items
+    // inline so the operator can see what's actually configured instead of
+    // a "[N items]" placeholder.
+    let toml = r#"
+watch_dirs = ["messages/inbox", "drop_box"]
+"#;
+    let rows = parse_settings_rows(toml);
+    let by_key: std::collections::HashMap<&str, &str> = rows
+        .iter()
+        .map(|r| (r.key.as_str(), r.value.as_str()))
+        .collect();
+    assert_eq!(
+        by_key.get("watch_dirs").copied(),
+        Some("[\"messages/inbox\", \"drop_box\"]")
     );
 }
 

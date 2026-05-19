@@ -159,6 +159,66 @@ fn test_parse_sessions_since_empty_log() {
 }
 
 #[test]
+fn test_daily_digests_group_sessions_by_log_date_descending() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cryo.log");
+    std::fs::write(
+        &log_path,
+        "--- CRYO SESSION 1 | 2026-03-01T09:00:00Z ---\n\
+         [09:00:01] hibernate: wake=2026-03-01T14:00, exit=0\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 2 | 2026-03-01T12:00:00Z ---\n\
+         [12:00:01] agent exited without hibernate\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 3 | 2026-03-02T08:00:00Z ---\n\
+         [08:00:01] hibernate: wake=2026-03-02T14:00, exit=0\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+
+    let digests = daily_digests(&log_path, 10).unwrap();
+
+    assert_eq!(digests.len(), 2);
+    assert_eq!(digests[0].date, "2026-03-02");
+    assert_eq!(digests[0].total_sessions, 1);
+    assert_eq!(digests[0].failed_sessions, 0);
+    assert_eq!(digests[0].latest_session, 3);
+    assert_eq!(digests[1].date, "2026-03-01");
+    assert_eq!(digests[1].total_sessions, 2);
+    assert_eq!(digests[1].failed_sessions, 1);
+    assert_eq!(digests[1].latest_session, 2);
+}
+
+#[test]
+fn test_daily_digests_limit_days() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cryo.log");
+    std::fs::write(
+        &log_path,
+        "--- CRYO SESSION 1 | 2026-03-01T09:00:00Z ---\n\
+         [09:00:01] hibernate: wake=2026-03-01T14:00, exit=0\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 2 | 2026-03-02T09:00:00Z ---\n\
+         [09:00:01] hibernate: wake=2026-03-02T14:00, exit=0\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+
+    let digests = daily_digests(&log_path, 1).unwrap();
+
+    assert_eq!(digests.len(), 1);
+    assert_eq!(digests[0].date, "2026-03-02");
+}
+
+#[test]
+fn test_daily_digests_empty_for_missing_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let digests = daily_digests(&dir.path().join("cryo.log"), 10).unwrap();
+
+    assert!(digests.is_empty());
+}
+
+#[test]
 fn test_event_logger_drop_writes_interrupted() {
     let dir = tempfile::tempdir().unwrap();
     let log_path = dir.path().join("cryo.log");

@@ -1,6 +1,8 @@
 // src/log.rs
 use anyhow::Result;
 use chrono::NaiveDateTime;
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -218,6 +220,61 @@ pub struct SessionSummary {
     pub session_number: u32,
     pub timestamp: NaiveDateTime,
     pub outcome: SessionOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DailyDigest {
+    pub date: String,
+    pub total_sessions: usize,
+    pub failed_sessions: usize,
+    pub latest_session: u32,
+}
+
+#[derive(Debug, Default)]
+struct DailyDigestAccumulator {
+    total_sessions: usize,
+    failed_sessions: usize,
+    latest_session: u32,
+}
+
+/// Summarize recent session activity by the UTC date recorded in `cryo.log`.
+/// Results are newest day first. Missing or empty logs return an empty list.
+pub fn daily_digests(log_path: &Path, max_days: usize) -> Result<Vec<DailyDigest>> {
+    if max_days == 0 {
+        return Ok(Vec::new());
+    }
+
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let sessions = parse_sessions_since(log_path, epoch)?;
+    let mut by_date: BTreeMap<String, DailyDigestAccumulator> = BTreeMap::new();
+
+    for session in sessions {
+        let date = session.timestamp.date().format("%Y-%m-%d").to_string();
+        let entry = by_date.entry(date).or_default();
+        entry.total_sessions += 1;
+        if matches!(
+            session.outcome,
+            SessionOutcome::Failed | SessionOutcome::Interrupted
+        ) {
+            entry.failed_sessions += 1;
+        }
+        entry.latest_session = entry.latest_session.max(session.session_number);
+    }
+
+    Ok(by_date
+        .into_iter()
+        .rev()
+        .take(max_days)
+        .map(|(date, acc)| DailyDigest {
+            date,
+            total_sessions: acc.total_sessions,
+            failed_sessions: acc.failed_sessions,
+            latest_session: acc.latest_session,
+        })
+        .collect())
 }
 
 /// Parse all sessions from `cryo.log` whose timestamp is >= `since`.

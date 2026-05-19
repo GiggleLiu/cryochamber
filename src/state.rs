@@ -14,11 +14,6 @@ pub struct CryoState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_session_duration_override: Option<u64>,
 
-    /// Last time a periodic report was sent, stored as an ISO 8601 local time
-    /// string without timezone offset (from `Local::now().naive_local()`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_report_time: Option<String>,
-
     /// Identity token for the currently running daemon instance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
