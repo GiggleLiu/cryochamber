@@ -69,6 +69,29 @@ fn status_json_log_tail_spans_last_five_sessions() {
 }
 
 #[test]
+fn status_json_includes_daily_digests() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        crate::log::log_path(dir.path()),
+        "--- CRYO SESSION 1 | 2026-03-01T09:00:00Z ---\n\
+         [09:00:01] hibernate: wake=2026-03-01T14:00, exit=0\n\
+         --- CRYO END ---\n\
+         --- CRYO SESSION 2 | 2026-03-02T09:00:00Z ---\n\
+         [09:00:01] agent exited without hibernate\n\
+         --- CRYO END ---\n",
+    )
+    .unwrap();
+
+    let v = status_json(dir.path());
+
+    assert_eq!(v["daily_digests"][0]["date"], "2026-03-02");
+    assert_eq!(v["daily_digests"][0]["total_sessions"], 1);
+    assert_eq!(v["daily_digests"][0]["failed_sessions"], 1);
+    assert_eq!(v["daily_digests"][0]["latest_session"], 2);
+    assert_eq!(v["daily_digests"][1]["date"], "2026-03-01");
+}
+
+#[test]
 fn status_json_includes_latest_session_summary() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

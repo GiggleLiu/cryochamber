@@ -54,6 +54,11 @@ pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
                     rows.push(provider_row(i, prov));
                 }
             }
+            toml::Value::Array(arr) if arr.iter().all(is_scalar) => rows.push(SettingsRow {
+                key: key.clone(),
+                value: format_scalar_array(arr),
+                kind: "scalar".into(),
+            }),
             toml::Value::Array(arr) => rows.push(SettingsRow {
                 key: key.clone(),
                 value: format!("[{} items]", arr.len()),
@@ -70,6 +75,33 @@ pub fn parse_settings_rows(src: &str) -> Vec<SettingsRow> {
         }
     }
     rows
+}
+
+fn is_scalar(value: &toml::Value) -> bool {
+    matches!(
+        value,
+        toml::Value::String(_)
+            | toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+    )
+}
+
+fn format_scalar(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => format!("\"{s}\""),
+        toml::Value::Integer(i) => i.to_string(),
+        toml::Value::Float(f) => f.to_string(),
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Datetime(d) => d.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn format_scalar_array(arr: &[toml::Value]) -> String {
+    let parts: Vec<String> = arr.iter().map(format_scalar).collect();
+    format!("[{}]", parts.join(", "))
 }
 
 fn provider_row(index: usize, value: &toml::Value) -> SettingsRow {
@@ -136,6 +168,7 @@ pub struct ChamberStatus {
     pub session: u32,
     pub agent: String,
     pub log_tail: String,
+    pub daily_digests: Vec<crate::log::DailyDigest>,
     pub next_wake: Option<String>,
     pub notes_content: String,
     pub notes_html: String,
@@ -228,6 +261,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
             .ok()
             .flatten()
             .unwrap_or_default(),
+        daily_digests: crate::log::daily_digests(&log_file, 14).unwrap_or_default(),
         next_wake: next_wake(dir),
         notes_content,
         notes_html,

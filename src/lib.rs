@@ -14,7 +14,6 @@ pub mod message;
 pub mod process;
 pub mod protocol;
 pub mod registry;
-pub mod report;
 pub mod service;
 pub mod session;
 pub mod socket;

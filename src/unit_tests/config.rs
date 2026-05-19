@@ -25,6 +25,18 @@ fn test_load_partial_toml() {
 }
 
 #[test]
+fn test_save_config_omits_removed_report_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cryo.toml");
+
+    save_config(&path, &CryoConfig::default()).unwrap();
+
+    let toml = std::fs::read_to_string(path).unwrap();
+    assert!(!toml.contains("report_time"), "got {toml}");
+    assert!(!toml.contains("report_interval"), "got {toml}");
+}
+
+#[test]
 fn apply_optional_override_replaces_value_when_present() {
     let mut value = "opencode".to_string();
 
@@ -50,8 +62,6 @@ fn test_apply_overrides_all_fields() {
         pid: None,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: Some(300),
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -70,8 +80,6 @@ fn test_apply_overrides_none_fields() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,

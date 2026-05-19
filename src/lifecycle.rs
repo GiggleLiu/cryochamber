@@ -74,7 +74,6 @@ pub fn prepare_start(dir: &Path, options: StartOptions) -> Result<PreparedStart>
         pid: None,
         agent_override: options.agent_override,
         max_session_duration_override: options.max_session_duration_override,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,

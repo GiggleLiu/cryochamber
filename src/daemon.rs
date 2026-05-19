@@ -559,16 +559,6 @@ impl Daemon {
         cryo_state: &CryoState,
         config: &CryoConfig,
     ) -> DaemonBootstrapState {
-        let last_report = cryo_state
-            .last_report_time
-            .as_ref()
-            .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok());
-        let next_report_time = crate::report::compute_next_report_time(
-            &config.report_time,
-            config.report_interval,
-            last_report,
-        );
-
         let next_wake = next_wake_from_todos(&self.dir);
         let run_now = cryo_state.session_number == 0
             || next_wake.is_some_and(|w| self.clock.local_now() >= w);
@@ -576,7 +566,6 @@ impl Daemon {
         let watch_dirs = resolve_watch_dirs(&self.dir, &config.watch_dirs);
 
         DaemonBootstrapState {
-            next_report_time,
             next_wake,
             run_now,
             watch_dirs,
@@ -846,17 +835,6 @@ impl Daemon {
         server: &crate::socket::SocketServer,
         rx: &mpsc::Receiver<DaemonEvent>,
     ) -> Result<()> {
-        let mut next_report_time = bootstrap.next_report_time;
-        if config.report_interval > 0 && next_report_time.is_none() {
-            eprintln!(
-                "Daemon: warning: report_interval={} but report_time='{}' is invalid (expected HH:MM)",
-                config.report_interval, config.report_time
-            );
-        }
-        if let Some(nrt) = next_report_time {
-            eprintln!("Daemon: next report at {}", nrt.format("%Y-%m-%d %H:%M"));
-        }
-
         let mut next_wake = bootstrap.next_wake;
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
@@ -951,17 +929,9 @@ impl Daemon {
             let expected_instance_id = cryo_state.instance_id.as_deref();
             self.service_idle_socket_requests(server, expected_instance_id);
 
-            // Check if periodic report is due
-            if let Some(report_time) = next_report_time {
-                if self.clock.local_now() >= report_time {
-                    self.send_periodic_report(config, cryo_state, &mut next_report_time);
-                }
-            }
-
             // Wait for next event
-            let timeout =
-                compute_sleep_timeout(next_wake, next_report_time, self.clock.local_now())
-                    .min(Duration::from_millis(250));
+            let timeout = compute_sleep_timeout(next_wake, self.clock.local_now())
+                .min(Duration::from_millis(250));
 
             match wait_for_idle_event(rx, timeout, next_wake, || self.clock.local_now()) {
                 IdleWaitOutcome::WakeFromInbox { paths } => {
@@ -1403,56 +1373,6 @@ impl Daemon {
             ids,
         );
         true
-    }
-
-    /// Generate and send the periodic activity report.
-    fn send_periodic_report(
-        &self,
-        config: &CryoConfig,
-        cryo_state: &mut CryoState,
-        next_report_time: &mut Option<NaiveDateTime>,
-    ) {
-        let since =
-            chrono::Utc::now().naive_utc() - chrono::Duration::hours(config.report_interval as i64);
-        match crate::report::generate_report(&self.log_path, since) {
-            Ok(summary) => {
-                let project_name = self
-                    .dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                if let Err(e) =
-                    crate::report::write_report_to_outbox(&self.dir, &summary, project_name)
-                {
-                    eprintln!("Daemon: report outbox write failed: {e}");
-                }
-                eprintln!(
-                    "Daemon: report sent ({} sessions, {} failed)",
-                    summary.total_sessions, summary.failed_sessions
-                );
-            }
-            Err(e) => {
-                eprintln!("Daemon: report generation failed: {e}");
-            }
-        }
-
-        // Update state and advance timer
-        let now = self.clock.local_now();
-        let previous_last_report_time = cryo_state.last_report_time.clone();
-        cryo_state.last_report_time = Some(now.format("%Y-%m-%dT%H:%M:%S").to_string());
-        if let Err(e) = self.save_state(cryo_state) {
-            eprintln!("Daemon: failed to persist last_report_time: {e}");
-            cryo_state.last_report_time = previous_last_report_time;
-            return;
-        }
-        *next_report_time = crate::report::compute_next_report_time(
-            &config.report_time,
-            config.report_interval,
-            Some(now),
-        );
-        if let Some(next) = next_report_time {
-            eprintln!("Daemon: next report at {}", next.format("%Y-%m-%d %H:%M"));
-        }
     }
 }
 

@@ -532,7 +532,6 @@ fn test_cryo_state() -> CryoState {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: Some("test-instance".into()),
         session_active: false,
         previous_session_crashed: false,
@@ -632,41 +631,25 @@ fn test_inbox_watcher_ignores_non_create_events() {
 }
 
 #[test]
-fn test_compute_sleep_timeout_both() {
-    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap();
-    let wake = now + chrono::Duration::seconds(60);
-    let report = now + chrono::Duration::seconds(30);
-    let timeout = compute_sleep_timeout(Some(wake), Some(report), now);
-    assert_eq!(
-        timeout,
-        Duration::from_secs(30),
-        "Should pick earlier (report)"
-    );
-}
-
-#[test]
 fn test_compute_sleep_timeout_wake_only() {
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
     let wake = now + chrono::Duration::seconds(120);
-    let timeout = compute_sleep_timeout(Some(wake), None, now);
+    let timeout = compute_sleep_timeout(Some(wake), now);
     assert_eq!(timeout, Duration::from_secs(120));
 }
 
 #[test]
-fn test_compute_sleep_timeout_report_only() {
+fn test_compute_sleep_timeout_past_wake_is_zero() {
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
-    let report = now + chrono::Duration::seconds(45);
-    let timeout = compute_sleep_timeout(None, Some(report), now);
-    assert_eq!(timeout, Duration::from_secs(45));
+    let wake = now - chrono::Duration::seconds(45);
+    let timeout = compute_sleep_timeout(Some(wake), now);
+    assert_eq!(timeout, Duration::ZERO);
 }
 
 #[test]
@@ -675,7 +658,7 @@ fn test_compute_sleep_timeout_neither() {
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
-    let timeout = compute_sleep_timeout(None, None, now);
+    let timeout = compute_sleep_timeout(None, now);
     assert_eq!(timeout, Duration::from_secs(3600));
 }
 
@@ -1192,7 +1175,6 @@ fn test_legacy_rotate_on_does_not_rotate_provider_in_event_loop() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -1799,7 +1781,6 @@ fn test_run_event_loop_completes_claimed_todo_after_successful_session() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -1849,7 +1830,6 @@ fn test_run_event_loop_reschedules_claimed_todo_after_crash() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -2347,7 +2327,6 @@ fn test_run_clears_stranded_session_active_on_startup_save() {
             pid: None,
             agent_override: None,
             max_session_duration_override: None,
-            last_report_time: None,
             instance_id: None,
             session_active: true,
             previous_session_crashed: false,
@@ -2397,7 +2376,6 @@ fn test_run_recovers_stale_claimed_todo_on_startup() {
             pid: None,
             agent_override: None,
             max_session_duration_override: None,
-            last_report_time: None,
             instance_id: None,
             session_active: true,
             previous_session_crashed: false,
@@ -2630,7 +2608,6 @@ fn test_run_event_loop_drives_multiple_sessions_in_process() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -2691,7 +2668,6 @@ fn test_run_event_loop_passes_inbox_wake_sources_to_session() {
     cryo_state.session_number = 0;
     cryo_state.pid = Some(std::process::id());
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: false,
         watch_dirs: Vec::new(),
@@ -2780,7 +2756,6 @@ fn test_session_active_observed_inside_session_and_cleared_after() {
     cryo_state.session_active = false;
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -2848,7 +2823,6 @@ fn test_run_event_loop_hibernate_refreshes_next_wake_between_sessions() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -2899,7 +2873,6 @@ fn test_run_event_loop_marks_session_active_during_successful_session() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -2962,7 +2935,6 @@ fn test_run_event_loop_clears_session_active_after_launcher_error() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -3027,7 +2999,6 @@ fn test_run_event_loop_does_not_abort_on_mid_loop_state_save_failure() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),
@@ -3102,7 +3073,6 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
     cryo_state.pid = Some(std::process::id());
 
     let bootstrap = DaemonBootstrapState {
-        next_report_time: None,
         next_wake: None,
         run_now: true,
         watch_dirs: Vec::new(),

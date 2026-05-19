@@ -64,8 +64,6 @@ fn test_apply_overrides_all() {
         pid: None,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: Some(7200),
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -91,8 +89,6 @@ fn test_apply_overrides_none_keeps_config() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -120,8 +116,6 @@ fn test_apply_overrides_partial() {
         pid: None,
         agent_override: Some("claude".to_string()),
         max_session_duration_override: None,
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,

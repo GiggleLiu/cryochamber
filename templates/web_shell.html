@@ -392,6 +392,7 @@
     const name = document.createElement('span');
     name.className = 'name';
     name.textContent = entry.name;
+    if (entry.path) name.title = entry.path;
     const session = document.createElement('span');
     session.className = 'session';
     left.appendChild(title);
@@ -437,6 +438,7 @@
   function updateHead(entry, status) {
     const dot = statusDotChar(entry);
     view.headerName.textContent = entry.name;
+    view.headerName.title = entry.path || '';
     const summary = status.session_summary || '';
     const displaySummary = formatSessionSummary(status.session, summary);
     view.headerMeta.textContent = displaySummary ? '' : `SESSION #${status.session}`;
@@ -943,6 +945,46 @@
   function renderLog(status) {
     const box = document.getElementById('panel-log');
     box.innerHTML = '';
+    const digestTitle = document.createElement('div');
+    digestTitle.className = 'section-title';
+    digestTitle.textContent = 'Daily Digests';
+    box.appendChild(digestTitle);
+    const digests = Array.isArray(status.daily_digests) ? status.daily_digests : [];
+    const digestList = document.createElement('div');
+    digestList.className = 'digest-list';
+    if (!digests.length) {
+      const empty = document.createElement('div');
+      empty.className = 'digest-empty';
+      empty.textContent = 'No session history yet.';
+      digestList.appendChild(empty);
+    } else {
+      for (const d of digests) {
+        const row = document.createElement('div');
+        row.className = 'daily-digest';
+        const failed = Number(d.failed_sessions || 0);
+        row.classList.toggle('has-failures', failed > 0);
+
+        const date = document.createElement('span');
+        date.className = 'digest-date';
+        date.textContent = d.date || 'unknown';
+
+        const counts = document.createElement('span');
+        counts.className = 'digest-counts';
+        const sessions = Number(d.total_sessions || 0);
+        counts.textContent = `${sessions} session${sessions === 1 ? '' : 's'} · ${failed} failed`;
+
+        const latest = document.createElement('span');
+        latest.className = 'digest-latest';
+        latest.textContent = d.latest_session ? `latest #${d.latest_session}` : '';
+
+        row.appendChild(date);
+        row.appendChild(counts);
+        row.appendChild(latest);
+        digestList.appendChild(row);
+      }
+    }
+    box.appendChild(digestList);
+
     const title = document.createElement('div');
     title.className = 'section-title';
     title.textContent = 'cryo.log';

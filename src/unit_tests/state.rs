@@ -50,6 +50,26 @@ fn test_legacy_retry_count_is_not_reserialized() {
 }
 
 #[test]
+fn test_legacy_last_report_time_is_not_reserialized() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("timer.json");
+    std::fs::write(
+        &path,
+        r#"{"session_number": 5, "last_report_time": "2026-03-01T09:00:00"}"#,
+    )
+    .unwrap();
+
+    let state = load_state(&path).unwrap().unwrap();
+    save_state(&path, &state).unwrap();
+
+    let json = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !json.contains("last_report_time"),
+        "last_report_time is legacy report-interval state and should not be reserialized: {json}"
+    );
+}
+
+#[test]
 fn test_is_locked_stale_pid() {
     // Spawn a child, wait for it to exit, use its PID
     let mut child = std::process::Command::new("true").spawn().unwrap();
@@ -64,7 +84,6 @@ fn test_is_locked_stale_pid() {
 
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -80,7 +99,6 @@ fn test_is_locked_no_pid() {
 
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -96,7 +114,6 @@ fn test_is_locked_own_pid() {
 
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -125,7 +142,6 @@ fn test_session_active_round_trip() {
         pid: None,
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         previous_session_crashed: false,
         session_active: true,

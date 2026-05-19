@@ -12,7 +12,6 @@ fn test_state() -> cryochamber::state::CryoState {
         pid: Some(999_999),
         agent_override: Some("codex".to_string()),
         max_session_duration_override: Some(120),
-        last_report_time: Some("2026-04-22T10:00:00".to_string()),
         instance_id: Some("instance-1".to_string()),
         session_active: false,
         previous_session_crashed: true,
@@ -58,7 +57,6 @@ fn prepare_start_rejects_locked_state() {
         pid: Some(std::process::id()),
         agent_override: None,
         max_session_duration_override: None,
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,
@@ -86,10 +84,6 @@ fn stop_chamber_clears_pid_and_preserves_runtime_state() {
     assert_eq!(stopped.session_number, 7);
     assert_eq!(stopped.agent_override.as_deref(), Some("codex"));
     assert_eq!(stopped.max_session_duration_override, Some(120));
-    assert_eq!(
-        stopped.last_report_time.as_deref(),
-        Some("2026-04-22T10:00:00")
-    );
     assert_eq!(stopped.instance_id.as_deref(), Some("instance-1"));
     assert!(stopped.previous_session_crashed);
 }

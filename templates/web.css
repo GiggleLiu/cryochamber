@@ -980,6 +980,51 @@ body {
 }
 
 /* Log */
+.digest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.daily-digest {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.9fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.daily-digest.has-failures {
+  border-color: rgba(226,117,96,0.34);
+  background: rgba(226,117,96,0.06);
+}
+.digest-date {
+  color: var(--ink);
+  font-weight: 500;
+}
+.digest-counts,
+.digest-latest {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.digest-latest {
+  color: var(--ink-faint);
+  text-align: right;
+}
+.digest-empty {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px 12px;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
 .log-wrap {
   border: 1px solid var(--line);
   border-radius: 7px;

@@ -54,8 +54,6 @@ fn test_state_roundtrip() {
         pid: None,
         agent_override: Some("opencode".to_string()),
         max_session_duration_override: Some(1800),
-
-        last_report_time: None,
         instance_id: None,
         session_active: false,
         previous_session_crashed: false,

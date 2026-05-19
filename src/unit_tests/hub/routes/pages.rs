@@ -102,6 +102,22 @@ fn shell_refreshes_rail_after_log_events() {
 }
 
 #[test]
+fn shell_renders_daily_digests_in_log_tab() {
+    assert!(
+        SHELL_HTML.contains("status.daily_digests"),
+        "Log tab should render daily digests from chamber status"
+    );
+    assert!(
+        SHELL_HTML.contains("daily-digest"),
+        "Log tab should have digest rows separate from the raw log tail"
+    );
+    assert!(
+        WEB_CSS.contains(".digest-list") && WEB_CSS.contains(".daily-digest"),
+        "daily digest rows should have dedicated styling"
+    );
+}
+
+#[test]
 fn shell_periodically_refreshes_chamber_registry() {
     assert!(
         SHELL_HTML.contains("async function refreshChamberIndex"),

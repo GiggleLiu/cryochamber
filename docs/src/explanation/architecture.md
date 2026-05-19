@@ -51,11 +51,11 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
 | `agent` | Resolves the agent command and builds the per-session prompt. | `enum AgentKind`, `struct AgentConfig`, `fn agent_program`, `fn build_prompt`. |
-| `log` | Session log parsing. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, hibernate, exit). | `fn read_latest_session`, `fn read_current_session`, `fn read_recent_sessions`, `fn session_count`, `fn parse_latest_session_wake`, `fn parse_latest_session_task`. |
+| `log` | Session log parsing. Sessions delimited by `--- CRYO SESSION N ---` / `--- CRYO END ---`. `EventLogger` writes timestamped events (agent start, hibernate, exit), and hub status derives daily digests from the same log. | `fn read_latest_session`, `fn read_current_session`, `fn read_recent_sessions`, `fn daily_digests`, `fn session_count`, `fn parse_latest_session_wake`, `fn parse_latest_session_task`. |
 | `chamber_status` | Read model for status display — snapshots `timer.json`, logs, and message counts. | `struct ChamberStatus`, `struct ChamberMessage`, `struct ChamberOverview`, `struct ChamberSyncBadge`, `fn status`, `fn messages`, `fn next_wake`. |
 | `session` | Legacy helper (`should_copy_plan`). Currently unused — `plan.md` must already exist in the working directory. | `fn should_copy_plan`. |
 
-### Messaging, sync channels, and reports
+### Messaging and sync channels
 
 | Module | Purpose | Key interfaces |
 |--------|---------|----------------|
@@ -68,7 +68,6 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `zulip_sync` | Zulip sync state (`zulip-sync.json`). | `struct ZulipSyncState`, `fn save_sync_state`, `fn load_sync_state`, `fn is_sync_running`, `fn summarize`. |
 | `sync_common` | Shared types for sync backends (GitHub, Zulip). | `enum SyncBackend`, `struct SyncSummary`, `enum SyncLoopCommand`, `enum SyncCycleStatus`, `struct PidFile`. |
 | `sync_control` | Orchestration and CLI dispatch for sync backends (`start`, `stop`, `pull`, `push`, `status`). | `fn start`, `fn stop`, `fn pull`, `fn push`, `fn summarize`, `fn summarize_all`, `fn is_running`. |
-| `report` | Periodic session summary reports written to `messages/outbox/`. | `struct ReportSummary`, `fn generate_report`, `fn write_report_to_outbox`, `fn compute_next_report_time`. |
 
 ### Web dashboard
 
@@ -85,8 +84,8 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 - **Socket-based IPC.** The agent talks to the daemon via `cryo-agent` subcommands (`hibernate`, `send`, `receive`, `todo …`) which send JSON over a Unix domain socket. `cryo-agent` is for the spawned agent, not for operators; only `time` is purely local. TODO mutation and active-session inbox receive state are routed through the daemon so scheduling and reply obligations serialize with the session lifecycle.
 - **Fire-and-forget agent.** The daemon spawns the agent and redirects stdout/stderr to `cryo-agent.log`. Stdout/stderr are diagnostic logs, not a human communication channel. All structured communication flows through `cryo-agent`.
 - **SIGUSR1 wake.** `cryo wake` and `cryo send --wake` send SIGUSR1 to the daemon PID, which works regardless of the inbox-wake setting. The daemon's signal-forwarding thread converts this into an `InboxChanged` event.
-- **Config / state split.** `cryo.toml` is the project config (agent, session timeout, inbox-wake behavior, report interval, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
-- **Daemon-authored stand-in replies.** When a session ends without any agent-authored outbox message, the daemon writes a `from: cryochamber` message so operators always see at least one update per session. All chamber-level messages (stand-in replies, periodic reports) share the single `cryochamber` sender.
+- **Config / state split.** `cryo.toml` is the project config (agent, session timeout, inbox-wake behavior, provider env) created by `cryo init`. `timer.json` is runtime-only state (session number, PID, CLI overrides). CLI flags to `cryo start` are stored as optional overrides in `timer.json`.
+- **Daemon-authored stand-in replies.** When a session ends without any agent-authored outbox message, the daemon writes a `from: cryochamber` message so operators always see at least one update per session.
 - **Agent notes via `NOTES.md`.** The agent's persistent memory across sessions is a plain markdown file the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes tab.
 - **Crash handling via TODO retry.** If the agent exits without ending the session cleanly, the daemon records the crash, marks each claimed TODO done, and adds a fresh attempt-suffixed retry TODO with an exponential delay (`2^k` minutes, capped at 1 day). The original claim is terminal — retries are always *new* items with fresh IDs. There is no in-daemon backoff-retry loop; rescheduling lives entirely in the TODO list, so it survives daemon restarts and is visible to both the agent and operators. `EventLogger` is still finalized on every outcome.
 - **Daemon does not preview inbox, agent receives it.** Wake-time prompts do not include inbox contents. The daemon only notices that inbox files exist and surfaces that fact in the session prompt. During a session, agent-side `cryo-agent receive` goes back through daemon IPC, and the daemon immediately archives the current inbox batch to `messages/inbox/archive/`. The daemon remembers that batch only in the current session so the next successful agent `send` can count as its reply, or the daemon can fall back at session end. Operator `cryo receive` is unrelated; it reads the agent's outbox.

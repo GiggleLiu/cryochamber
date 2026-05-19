@@ -21,7 +21,6 @@ pub(super) enum NextStep {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DaemonBootstrapState {
-    pub(super) next_report_time: Option<NaiveDateTime>,
     pub(super) next_wake: Option<NaiveDateTime>,
     pub(super) run_now: bool,
     /// Directories the daemon should attach a notify watcher to at startup.
@@ -50,22 +49,16 @@ pub(super) fn decide_next_step(
     }
 }
 
-/// Compute how long to sleep given optional wake and report deadlines.
+/// Compute how long to sleep given an optional wake deadline.
 pub(super) fn compute_sleep_timeout(
     wake_deadline: Option<NaiveDateTime>,
-    report_deadline: Option<NaiveDateTime>,
     now: NaiveDateTime,
 ) -> Duration {
     let to_duration =
         |dt: NaiveDateTime| -> Duration { (dt - now).to_std().unwrap_or(Duration::ZERO) };
-    match (
-        wake_deadline.map(&to_duration),
-        report_deadline.map(&to_duration),
-    ) {
-        (Some(w), Some(r)) => w.min(r),
-        (Some(w), None) => w,
-        (None, Some(r)) => r,
-        (None, None) => Duration::from_secs(3600),
+    match wake_deadline.map(&to_duration) {
+        Some(wake) => wake,
+        None => Duration::from_secs(3600),
     }
 }
 

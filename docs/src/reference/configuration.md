@@ -9,10 +9,6 @@ Each chamber is configured through a `cryo.toml` file in its directory. `cryo in
 agent = "opencode"               # Agent command (opencode, claude, codex, ...)
 max_session_duration = 0         # Session timeout in seconds (0 = no timeout)
 watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
-
-# Periodic status report written to messages/outbox/
-# report_time = "09:00"     # local wall-clock time (HH:MM)
-# report_interval = 24      # hours between reports (0 disables)
 ```
 
 | Field | Default | Description |
@@ -20,8 +16,6 @@ watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] di
 | `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex, or any executable on `PATH`. |
 | `max_session_duration` | `0` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
-| `report_time` | `"09:00"` | Local wall-clock time for periodic reports, formatted `HH:MM`. |
-| `report_interval` | `0` | Hours between periodic reports. `0` disables reports; common values are `24` for daily and `168` for weekly. Reports are written to `messages/outbox/`. |
 
 See [`cryohub.toml`](#cryohubtoml) below.
 
