@@ -46,6 +46,7 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 | `cryo-agent todo done <id>` | Mark a TODO item as done. |
 | `cryo-agent todo remove <id>` | Remove a TODO item. |
 | `cryo-agent send "message"` | Write a message to the outbox for the human. |
+| `cryo-agent send --stdin` | Read the outbox message body from stdin exactly, including trailing newlines; use for multi-line or shell-sensitive text. |
 | `cryo-agent send --question "msg"` | Mark the message as a question awaiting a human reply. |
 | `cryo-agent receive` | Claim the current inbox batch from the human. |
 | `cryo-agent dialog [--last N \| --all]` | Render the full conversation transcript. Also archives any pending inbox batch as a side effect, satisfying the same reply obligation as `receive`. |
