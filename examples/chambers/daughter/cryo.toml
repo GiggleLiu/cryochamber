@@ -4,7 +4,7 @@
 agent = "opencode"
 
 # Session timeout in seconds (0 = no timeout)
-max_session_duration = 0
+max_session_duration = 3600
 
 # Directories to watch for reactive wake (relative to chamber dir)
 watch_dirs = ["messages/inbox"]

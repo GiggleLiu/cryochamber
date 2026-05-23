@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::state::CryoState;
 
 pub const LEGACY_PROVIDERS_DEPRECATION_WARNING: &str = "Warning: [[providers]] is deprecated; use [provider] instead. Provider rotation has been removed; only one provider is used.";
+pub const DEFAULT_MAX_SESSION_DURATION_SECS: u64 = 3600;
 
 /// Default list of directories the daemon watches for reactive wake.
 pub fn default_watch_dirs() -> Vec<PathBuf> {
@@ -30,7 +31,7 @@ pub struct CryoConfig {
     pub agent: String,
 
     /// Session timeout in seconds (0 = no timeout)
-    #[serde(default)]
+    #[serde(default = "default_max_session_duration")]
     pub max_session_duration: u64,
 
     /// Directories (relative to the chamber root, or absolute) that the
@@ -60,6 +61,10 @@ fn default_agent() -> String {
     "opencode".to_string()
 }
 
+fn default_max_session_duration() -> u64 {
+    DEFAULT_MAX_SESSION_DURATION_SECS
+}
+
 fn default_poll_interval() -> u64 {
     5
 }
@@ -68,7 +73,7 @@ impl Default for CryoConfig {
     fn default() -> Self {
         Self {
             agent: default_agent(),
-            max_session_duration: 0,
+            max_session_duration: default_max_session_duration(),
             watch_dirs: default_watch_dirs(),
             provider: None,
             providers: Vec::new(),

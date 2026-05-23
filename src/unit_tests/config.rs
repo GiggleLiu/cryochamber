@@ -16,7 +16,10 @@ fn test_load_partial_toml() {
     std::fs::write(&path, "agent = \"claude\"\n").unwrap();
     let config = load_config(&path).unwrap().unwrap();
     assert_eq!(config.agent, "claude");
-    assert_eq!(config.max_session_duration, 0, "Should use default timeout");
+    assert_eq!(
+        config.max_session_duration, 3600,
+        "Should use default timeout"
+    );
     assert_eq!(
         config.watch_dirs,
         default_watch_dirs(),

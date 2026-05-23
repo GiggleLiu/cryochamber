@@ -11,7 +11,7 @@ use std::path::PathBuf;
 fn test_config_defaults() {
     let config = CryoConfig::default();
     assert_eq!(config.agent, "opencode");
-    assert_eq!(config.max_session_duration, 0);
+    assert_eq!(config.max_session_duration, 3600);
     assert_eq!(config.watch_dirs, default_watch_dirs());
 }
 
@@ -52,7 +52,7 @@ fn test_config_partial_toml_uses_defaults() {
 
     let loaded = load_config(&path).unwrap().unwrap();
     assert_eq!(loaded.agent, "codex");
-    assert_eq!(loaded.max_session_duration, 0); // default
+    assert_eq!(loaded.max_session_duration, 3600); // default
     assert_eq!(loaded.watch_dirs, default_watch_dirs()); // default
 }
 

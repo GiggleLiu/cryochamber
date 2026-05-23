@@ -375,6 +375,15 @@ fn overview_agent_running_false_when_idle() {
     assert!(!ov.agent_running);
 }
 
+#[test]
+fn wake_imminent_accepts_seconds_precision() {
+    let wake = (chrono::Local::now().naive_local() + chrono::Duration::minutes(30))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+
+    assert!(wake_imminent(Some(&wake)));
+}
+
 fn write_outbox_msg(dir: &std::path::Path, from: &str, body: &str, ts: &str, is_question: bool) {
     let store = MessageStore::new(dir.to_path_buf());
     store.ensure_dirs().unwrap();

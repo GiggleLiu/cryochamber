@@ -55,6 +55,28 @@ fn test_todo_file_next_valid_wake_skips_invalid_and_empty() {
 }
 
 #[test]
+fn test_todo_file_next_valid_wake_accepts_seconds_precision() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    std::fs::write(
+        &path,
+        r#"[{"id":1,"text":"with seconds","done":false,"at":"2026-03-02T09:07:00","created":"unknown"}]"#,
+    )
+    .unwrap();
+
+    let wake = TodoFile::new(&path).next_valid_wake().unwrap();
+    assert_eq!(
+        wake,
+        Some(
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 2)
+                .unwrap()
+                .and_hms_opt(9, 7, 0)
+                .unwrap()
+        )
+    );
+}
+
+#[test]
 fn test_todo_file_round_trips_direct_file_operations() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");
@@ -152,6 +174,29 @@ fn test_todo_file_claim_due_claims_due_items_and_returns_them() {
         )
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn test_todo_file_claim_due_accepts_seconds_precision() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    let todos = TodoFile::new(&path);
+
+    todos
+        .add(
+            "due with seconds".to_string(),
+            "2026-03-02T10:00:00".to_string(),
+        )
+        .unwrap();
+
+    let popped = todos
+        .claim_due(
+            &chrono::NaiveDateTime::parse_from_str("2026-03-02T10:30", "%Y-%m-%dT%H:%M").unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(popped.len(), 1);
+    assert_eq!(popped[0].text, "due with seconds");
 }
 
 #[test]
