@@ -41,6 +41,15 @@ fn test_protocol_requires_question_flag_for_feedback_requests() {
 }
 
 #[test]
+fn test_protocol_mentions_stdin_for_shell_sensitive_send_text() {
+    let content = protocol::PROTOCOL_CONTENT;
+    assert!(content.contains("cryo-agent send --stdin"));
+    assert!(content.contains("literal heredoc"));
+    assert!(content.contains("Stdin is sent exactly"));
+    assert!(content.contains("backticks"));
+}
+
+#[test]
 fn test_protocol_defines_external_mail_trust_boundary() {
     let content = protocol::PROTOCOL_CONTENT;
     assert!(content.contains("admin/operator channel only for canonical messages"));

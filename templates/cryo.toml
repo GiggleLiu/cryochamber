@@ -4,7 +4,7 @@
 agent = "{{agent}}"
 
 # Session timeout in seconds (0 = no timeout)
-max_session_duration = 0
+max_session_duration = 3600
 
 # Directories the daemon watches for new files to wake the agent reactively.
 # Paths are interpreted relative to the chamber directory (this directory)

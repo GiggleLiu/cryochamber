@@ -1,7 +1,11 @@
 //! CLI edge case tests: user misuse, corrupted state, missing files.
 
 use assert_cmd::Command;
+use cryochamber::socket::{Request, Response, SocketServer};
+use predicates::prelude::*;
 use std::fs;
+use std::sync::mpsc;
+use std::time::Duration;
 
 fn cryo_bin() -> Command {
     #[allow(deprecated)]
@@ -107,6 +111,66 @@ fn test_agent_receive_no_daemon() {
         .current_dir(dir.path())
         .assert()
         .failure();
+}
+
+#[test]
+fn test_agent_send_stdin_no_daemon_is_parsed() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+
+    agent_bin()
+        .args(["send", "--stdin"])
+        .write_stdin("literal `cryo-agent dialog` text")
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot connect to daemon socket"));
+}
+
+#[test]
+fn test_agent_send_stdin_preserves_shell_sensitive_text() {
+    let dir = tempfile::tempdir().unwrap();
+    init_project(dir.path());
+    let sock = cryochamber::socket::socket_path(dir.path());
+    fs::create_dir_all(sock.parent().unwrap()).unwrap();
+
+    let server = SocketServer::bind(&sock).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (request, responder) = server.accept_one(None).unwrap().unwrap();
+            match request {
+                Request::Hello { .. } => responder
+                    .respond(&Response {
+                        ok: true,
+                        message: "IPC protocol ok".into(),
+                    })
+                    .unwrap(),
+                Request::Send { text, question } => {
+                    tx.send((text, question)).unwrap();
+                    responder
+                        .respond(&Response {
+                            ok: true,
+                            message: "Message sent".into(),
+                        })
+                        .unwrap();
+                }
+                other => panic!("unexpected request: {other:?}"),
+            }
+        }
+    });
+
+    agent_bin()
+        .args(["send", "--stdin"])
+        .write_stdin("literal `cryo-agent dialog` and $HOME\nsecond line\n")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let (text, question) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(text, "literal `cryo-agent dialog` and $HOME\nsecond line\n");
+    assert!(!question);
+    handle.join().unwrap();
 }
 
 // --- Double start / stale lock ---

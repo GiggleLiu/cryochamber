@@ -390,7 +390,7 @@ fn next_wake(dir: &Path) -> Option<String> {
 
 fn wake_imminent(next_wake: Option<&str>) -> bool {
     next_wake
-        .and_then(|w| chrono::NaiveDateTime::parse_from_str(w, "%Y-%m-%dT%H:%M").ok())
+        .and_then(|w| crate::todo::parse_wake_time(w).ok())
         .map(|wake| {
             let diff = wake - chrono::Local::now().naive_local();
             let diff_ms = diff.num_milliseconds();

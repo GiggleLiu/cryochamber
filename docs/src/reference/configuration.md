@@ -7,14 +7,14 @@ Each chamber is configured through a `cryo.toml` file in its directory. `cryo in
 ```toml
 # cryo.toml — cryochamber project configuration
 agent = "opencode"               # Agent command (opencode, claude, codex, ...)
-max_session_duration = 0         # Session timeout in seconds (0 = no timeout)
+max_session_duration = 3600      # Session timeout in seconds (0 = no timeout)
 watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex, or any executable on `PATH`. |
-| `max_session_duration` | `0` | Session timeout in seconds. `0` disables the timeout. |
+| `max_session_duration` | `3600` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
 
 See [`cryohub.toml`](#cryohubtoml) below.

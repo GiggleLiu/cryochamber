@@ -16,6 +16,31 @@ fn cryo_agent_exposes_send_without_reply_subcommand() {
 }
 
 #[test]
+fn send_stdin_flag_parses_without_text_argument() {
+    use clap::Parser;
+
+    let cli = super::Cli::parse_from(["cryo-agent", "send", "--stdin"]);
+    match cli.command {
+        super::Commands::Send { text, stdin, .. } => {
+            assert!(text.is_none());
+            assert!(stdin);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn send_stdin_conflicts_with_text_argument() {
+    use clap::Parser;
+
+    let err = match super::Cli::try_parse_from(["cryo-agent", "send", "--stdin", "text"]) {
+        Ok(_) => panic!("expected --stdin to conflict with a text argument"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+#[test]
 fn iso_pass_through_minute_precision() {
     assert_eq!(
         parse_iso_timestamp("2026-04-25T10:00").unwrap(),

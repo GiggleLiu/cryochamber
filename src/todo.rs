@@ -3,8 +3,10 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Minute-precision format shared with the daemon scheduler.
+/// Canonical minute-precision format used when Cryochamber writes TODO times.
 const WAKE_TIME_FMT: &str = "%Y-%m-%dT%H:%M";
+
+const WAKE_TIME_INPUT_FORMATS: &[&str] = &[WAKE_TIME_FMT, "%Y-%m-%dT%H:%M:%S"];
 
 /// Maximum per-attempt reschedule delay. Beyond this, exponential backoff is
 /// clamped to one day so a persistently failing TODO still polls once a day.
@@ -34,6 +36,17 @@ fn default_created() -> String {
 #[derive(Debug, Clone)]
 pub struct TodoFile {
     path: PathBuf,
+}
+
+pub fn parse_wake_time(input: &str) -> std::result::Result<NaiveDateTime, chrono::ParseError> {
+    let mut last_error = None;
+    for fmt in WAKE_TIME_INPUT_FORMATS {
+        match NaiveDateTime::parse_from_str(input, fmt) {
+            Ok(parsed) => return Ok(parsed),
+            Err(err) => last_error = Some(err),
+        }
+    }
+    Err(last_error.expect("wake time input format list must not be empty"))
 }
 
 impl TodoFile {
@@ -82,7 +95,7 @@ impl TodoFile {
             .iter()
             .filter(|i| !i.done && !i.claimed && !i.at.is_empty())
             .filter_map(|i| {
-                let parsed = NaiveDateTime::parse_from_str(&i.at, WAKE_TIME_FMT);
+                let parsed = parse_wake_time(&i.at);
                 if parsed.is_err() {
                     eprintln!(
                         "Daemon: Skipping TODO #{} with invalid at value: {:?}",
@@ -146,7 +159,7 @@ impl TodoFile {
             if item.done || item.claimed || item.at.is_empty() {
                 continue;
             }
-            if let Ok(at) = NaiveDateTime::parse_from_str(&item.at, WAKE_TIME_FMT) {
+            if let Ok(at) = parse_wake_time(&item.at) {
                 if at <= *now {
                     item.claimed = true;
                     claimed.push(item.clone());

@@ -1,6 +1,7 @@
 // src/bin/cryo_agent.rs
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use std::io::Read;
 use std::path::Path;
 
 use cryochamber::socket::Request;
@@ -29,7 +30,12 @@ enum Commands {
     /// Send message to human (writes to outbox)
     Send {
         /// Message text
-        text: String,
+        #[arg(required_unless_present = "stdin", conflicts_with = "stdin")]
+        text: Option<String>,
+        /// Read message text from stdin. Use this for multi-line text or text
+        /// containing shell-sensitive characters such as backticks or `$`.
+        #[arg(long)]
+        stdin: bool,
         /// Mark this message as a question awaiting a human reply.
         /// The hub rail shows a `?` badge until any human inbox message arrives.
         #[arg(long)]
@@ -117,7 +123,14 @@ fn main() -> Result<()> {
                 summary,
             },
         ),
-        Commands::Send { text, question } => send(&dir, &Request::Send { text, question }),
+        Commands::Send {
+            text,
+            stdin,
+            question,
+        } => {
+            let text = resolve_send_text(text, stdin)?;
+            send(&dir, &Request::Send { text, question })
+        }
         Commands::Receive => send(&dir, &Request::Receive),
         Commands::Dialog(args) => {
             let filter = dialog_filter_from_args(args)?;
@@ -126,6 +139,21 @@ fn main() -> Result<()> {
         Commands::Time { offset } => cmd_time(offset.as_deref()),
         Commands::Todo { action } => cmd_todo(&dir, action),
     }
+}
+
+fn resolve_send_text(text: Option<String>, stdin: bool) -> Result<String> {
+    match (text, stdin) {
+        (Some(text), false) => Ok(text),
+        (None, true) => read_send_text_from_stdin(),
+        (Some(_), true) => anyhow::bail!("provide either message text or --stdin, not both"),
+        (None, false) => anyhow::bail!("missing message text; use --stdin to read from stdin"),
+    }
+}
+
+fn read_send_text_from_stdin() -> Result<String> {
+    let mut text = String::new();
+    std::io::stdin().read_to_string(&mut text)?;
+    Ok(text)
 }
 
 fn dialog_filter_from_args(args: DialogArgs) -> Result<cryochamber::socket::DialogFilter> {

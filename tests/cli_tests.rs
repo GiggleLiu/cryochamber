@@ -679,7 +679,8 @@ fn test_daemon_status_shows_config() {
 
     // Update cryo.toml to set max_session_duration
     let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    let updated = config_content.replace("max_session_duration = 0", "max_session_duration = 1800");
+    let updated =
+        config_content.replace("max_session_duration = 3600", "max_session_duration = 1800");
     fs::write(dir.path().join("cryo.toml"), updated).unwrap();
 
     let state = serde_json::json!({
