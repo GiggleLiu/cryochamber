@@ -243,8 +243,40 @@ pub fn spawn_agent(
         cmd.envs(provider_env);
     }
 
+    // Put the agent in its own process group (pgid == child pid) so the daemon can
+    // reap the whole subtree on timeout/shutdown, not just the direct child. Without
+    // this, a wrapper-script `agent` (e.g. run-agent.sh -> claude -> ssh ...) leaks
+    // the real CLI and its grandchildren when a session is terminated.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
     let child = cmd
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to spawn agent: {e}"))?;
     Ok(child)
+}
+
+#[cfg(all(test, unix))]
+mod process_group_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// A spawned agent must be its own process-group leader (pgid == its pid) so the
+    /// daemon can reap the whole subtree via `kill(-pgid)` on timeout/shutdown.
+    #[test]
+    fn spawned_agent_is_process_group_leader() {
+        let mut child = spawn_agent("sleep", "30", None, &HashMap::new())
+            .expect("spawn sleep agent");
+        let pid = child.id() as i32;
+
+        let pgid = unsafe { libc::getpgid(pid) };
+        // Clean up before asserting so the sleep never lingers if the assert fails.
+        assert!(crate::process::send_signal_group(pid as u32, libc::SIGKILL));
+        let _ = child.wait();
+
+        assert_eq!(pgid, pid, "agent should lead its own process group (pgid == pid)");
+    }
 }

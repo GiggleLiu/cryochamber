@@ -14,6 +14,21 @@ pub fn send_signal(pid: u32, signal: i32) -> bool {
     }
 }
 
+/// Send a signal to the entire process group led by `pgid` (negative-PID `kill`).
+/// Agents are spawned as their own group leader (pgid == the agent's pid), so this
+/// reaps the whole subtree — the wrapper script, the real CLI it launches, and any
+/// grandchildren it spawned. Returns true if delivered, false on failure.
+pub fn send_signal_group(pgid: u32, signal: i32) -> bool {
+    let ret = unsafe { libc::kill(-(pgid as i32), signal) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        eprintln!("Warning: failed to send signal {signal} to process group {pgid}: {err}");
+        false
+    } else {
+        true
+    }
+}
+
 pub(crate) fn pid_probe_indicates_alive(ret: i32, errno: i32) -> bool {
     ret == 0 || errno == libc::EPERM
 }

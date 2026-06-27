@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::CryoConfig;
-use crate::process::send_signal;
+use crate::process::{send_signal, send_signal_group};
 use crate::state::CryoState;
 
 use super::effects::FsSessionEffects;
@@ -252,9 +252,15 @@ fn display_source_path(chamber_dir: &Path, source: &Path) -> String {
 
 /// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
 fn terminate_child(child: &mut std::process::Child, pid: u32, clock: &dyn Clock) {
+    // Signal the agent's whole process group (it is spawned as a group leader), not
+    // just the direct child, so wrapper-script -> CLI -> subprocess trees are fully
+    // reaped. Also signal the bare PID as a fallback in case the agent could not be
+    // placed in its own group.
+    send_signal_group(pid, libc::SIGTERM);
     send_signal(pid, libc::SIGTERM);
     clock.sleep(Duration::from_secs(2));
     if child.try_wait().ok().flatten().is_none() {
+        send_signal_group(pid, libc::SIGKILL);
         send_signal(pid, libc::SIGKILL);
     }
     let _ = child.wait();
