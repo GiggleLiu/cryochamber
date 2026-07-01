@@ -9,6 +9,10 @@ Each chamber is configured through a `cryo.toml` file in its directory. `cryo in
 agent = "opencode"               # Agent command (opencode, claude, codex, ...)
 max_session_duration = 3600      # Session timeout in seconds (0 = no timeout)
 watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
+
+# [provider]
+# name = "opencode"
+# env = { ANTHROPIC_API_KEY = "sk-ant-..." }
 ```
 
 | Field | Default | Description |
@@ -16,6 +20,7 @@ watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] di
 | `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex, or any executable on `PATH`. |
 | `max_session_duration` | `3600` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
+| `[provider]` | none | Provider environment injected into the agent process. Has `name` (e.g. `"opencode"`) and `env` (a map of environment variable names to values). WARNING: if it contains API keys, add `cryo.toml` to `.gitignore`. |
 
 See [`cryohub.toml`](#cryohubtoml) below.
 

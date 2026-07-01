@@ -1,8 +1,6 @@
 # Monitor and message a chamber
 
-There are three ways to monitor a chamber and exchange messages with the agent. **Cryohub is the primary monitor**; GitHub Discussions and Zulip add remote and mobile access.
-
-You can run all three together. Cryohub is local-only by default; the sync channels reach the same chamber from the outside.
+**Cryohub is the primary control panel** — a web dashboard for managing every chamber on this machine. Advanced sync channels (GitHub Discussions, Zulip) can optionally be layered on for remote and mobile access.
 
 ## Cryohub (primary, recommended)
 
@@ -43,7 +41,7 @@ The default bind address is `127.0.0.1`, so the dashboard is only reachable from
 
 For chamber discovery internals, see [Concepts](../explanation/concepts.md). For full configuration fields, see [`cryohub.toml`](../reference/configuration.md#cryohubtoml).
 
-## GitHub Discussions (remote)
+## GitHub Discussions (remote, advanced)
 
 `cryo-gh` bridges a chamber with a GitHub Discussion. Comments on the Discussion become inbox messages for the agent; outbox messages from the agent appear as new comments on the Discussion.
 
@@ -80,7 +78,7 @@ cryo-gh unsync
 
 For the full command list, see [CLI reference](../reference/cli.md#github-sync-cryo-gh).
 
-## Zulip (remote)
+## Zulip (remote, advanced)
 
 `cryo-zulip` bridges a chamber with a Zulip stream and topic.
 
@@ -118,7 +116,7 @@ For the full command list, see [CLI reference](../reference/cli.md#zulip-sync-cr
 
 ## Run multiple monitors together
 
-Cryohub, `cryo-gh sync`, and `cryo-zulip sync` are independent daemons. They all read and write `messages/inbox/` and `messages/outbox/` for the same chamber, so:
+Cryohub, `cryo-gh sync`, and `cryo-zulip sync` are independent daemons. If you have advanced sync channels running alongside the hub, they all read and write `messages/inbox/` and `messages/outbox/` for the same chamber, so:
 
 - A message posted on GitHub appears in Cryohub's history after the next poll and can wake the agent.
 - A message sent from Cryohub's send widget gets pushed to GitHub or Zulip by whichever sync daemons are running.

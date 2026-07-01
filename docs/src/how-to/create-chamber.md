@@ -41,7 +41,7 @@ The bundled examples are `mr-lazy`, `chess-by-mail`, and `personal-assistant`.
 ## What's in a chamber
 
 - `plan.md` - the goal, tasks, and any persistent state the agent should track. The agent reads this every session.
-- `cryo.toml` - chamber config: agent command, session timeout, inbox watcher. See [Configuration](../reference/configuration.md).
+- `cryo.toml` - chamber config: agent command, session timeout, inbox watcher, sync polling intervals, provider environment. See [Configuration](../reference/configuration.md).
 - `NOTES.md` - the agent's persistent memory. The agent reads and appends directly; there is no IPC command for it.
 
 For details on what these files mean and how a session uses them, see [Concepts](../explanation/concepts.md).
