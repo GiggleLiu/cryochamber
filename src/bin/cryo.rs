@@ -10,7 +10,7 @@ use cryochamber::message::Message;
 use cryochamber::state::{self, CryoState};
 
 #[derive(Parser)]
-#[command(name = "cryo", about = "Long-term AI agent task scheduler")]
+#[command(name = "cryo", about = "Long-term AI agent task scheduler", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -558,12 +558,15 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
     let store = MessageStore::new(dir.clone());
 
     let subject = subject.unwrap_or_else(|| {
-        // Truncate at a char boundary to avoid panic on non-ASCII input
-        let mut end = body.len().min(50);
-        while end > 0 && !body.is_char_boundary(end) {
+        // Default subject: first line of the body only, so a multi-line send
+        // never leaks extra text into the (single-line) subject frontmatter.
+        // Truncate at a char boundary to avoid panic on non-ASCII input.
+        let first_line = body.lines().next().unwrap_or("");
+        let mut end = first_line.len().min(50);
+        while end > 0 && !first_line.is_char_boundary(end) {
             end -= 1;
         }
-        &body[..end]
+        &first_line[..end]
     });
     let msg = build_inbox_message(from, subject, body);
     let path = store.send_in(&msg)?;

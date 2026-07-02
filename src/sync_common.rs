@@ -114,6 +114,10 @@ pub fn classify_sync_error(err: &anyhow::Error) -> SyncErrorKind {
     let text: String = err.chain().map(|c| format!("{c}\n")).collect();
     let lower = text.to_ascii_lowercase();
     const AUTH_MARKERS: &[&str] = &[
+        // ureq 3.x renders a status error as "http status: 401" (Zulip path).
+        "http status: 401",
+        "http status: 403",
+        // gh CLI stderr and other stringified paths.
         "http 401",
         "http 403",
         "401 unauthorized",
@@ -199,6 +203,22 @@ pub fn watch_outbox(dir: &Path, tx: Sender<()>) -> Result<notify::RecommendedWat
     Ok(watcher)
 }
 
+/// Push queued outbox messages to the backend in filename (timestamp) order.
+///
+/// Failure handling is per-message so one bad message can't jam the queue:
+/// - A **transient** failure (5xx, network blip, timeout — `Transient`) stops
+///   the cycle and returns the error, leaving this and every later message in
+///   the outbox so ordering is preserved and they retry next cycle.
+/// - A **permanent** failure (`AuthOrConfig`) does not wedge the outbox: we log
+///   loudly and archive the offending message anyway, so a body the backend
+///   will always reject (too long, invalid chars) can't starve every message
+///   queued behind it, then continue with the rest.
+///
+/// A genuine credential failure normally halts the loop earlier on the pull
+/// side, before send runs, so in practice this permanent-skip path handles
+/// message-specific rejections rather than account-wide auth. This also assumes
+/// a single sync daemon owns the outbox: running GitHub and Zulip sync against
+/// the same outbox concurrently is unsupported (GitHub sync is deprecated).
 pub fn push_outbox_messages(
     dir: &Path,
     success_message: impl Fn(&str) -> String,
@@ -212,9 +232,28 @@ pub fn push_outbox_messages(
 
     for (filename, msg) in messages {
         let body = format_outbox_post(&msg);
-        post(&body).with_context(|| format!("Failed to post outbox/{filename}"))?;
-        eprintln!("{}", success_message(&filename));
-        store.archive_outbox(std::slice::from_ref(&filename))?;
+        match post(&body) {
+            Ok(()) => {
+                eprintln!("{}", success_message(&filename));
+                store.archive_outbox(std::slice::from_ref(&filename))?;
+            }
+            Err(e) => match classify_sync_error(&e) {
+                SyncErrorKind::Transient => {
+                    // Retriable: stop now and preserve ordering. This message and
+                    // everything after it stay queued for the next cycle.
+                    return Err(e).with_context(|| format!("Failed to post outbox/{filename}"));
+                }
+                SyncErrorKind::AuthOrConfig => {
+                    // Permanent rejection for this specific message. Archiving it
+                    // lets the queue advance instead of re-posting the same doomed
+                    // body every cycle and starving every message behind it.
+                    eprintln!(
+                        "Sync: permanently rejected outbox/{filename} ({e:#}); archiving to unblock the queue"
+                    );
+                    store.archive_outbox(std::slice::from_ref(&filename))?;
+                }
+            },
+        }
     }
 
     Ok(())

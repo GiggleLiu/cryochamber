@@ -9,12 +9,6 @@ max_session_duration = 3600
 # Directories to watch for reactive wake (relative to chamber dir)
 watch_dirs = ["messages/inbox"]
 
-# Periodic status report (written to messages/outbox/ for sync delivery):
-#   report_time = "09:00" (HH:MM local time)
-#   report_interval = 24 (hours between reports; 0 = disabled)
-# report_time = "09:00"
-# report_interval = 24
-
 # Sync polling interval in seconds (for cryo-zulip sync / cryo-gh sync)
 # zulip_poll_interval = 5
 # gh_poll_interval = 5

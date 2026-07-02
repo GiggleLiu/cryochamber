@@ -8,13 +8,13 @@ A [cryochamber](https://github.com/GiggleLiu/cryochamber) application.
 cryo start                                                    # start the daemon
 ```
 
-Depending on the way you interact with your agent, start the corresponding service wtih:
+Depending on the way you interact with your agent, start the corresponding service with:
 ```bash
-cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip
+cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip (recommended remote channel)
 cryo-zulip sync
-cryo-gh init --repo owner/repo                                # if using GitHub Discussions
-cryo-gh sync
 cd <chambers-parent-dir> && cryohub start                     # if using the web UI
+cryo-gh init --repo owner/repo                                # GitHub Discussions (DEPRECATED — prefer Zulip)
+cryo-gh sync
 ```
 
 ## Manage the running service
@@ -42,9 +42,9 @@ Cryochamber supports external messaging channels that sync between a remote serv
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Hub](https://giggleliu.github.io/cryochamber/hub.html) |
-| GitHub Discussions | `cryo-gh` | GitHub GraphQL API | [GitHub Sync](https://giggleliu.github.io/cryochamber/github-sync.html) |
-| Zulip | `cryo-zulip` | Zulip REST API | [Zulip Sync](https://giggleliu.github.io/cryochamber/zulip-sync.html) |
+| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Cryohub](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#cryohub-primary-recommended) |
+| Zulip | `cryo-zulip` | Zulip REST API | [Zulip](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#zulip-remote) |
+| GitHub Discussions (deprecated) | `cryo-gh` | GitHub GraphQL API | [GitHub Discussions](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#github-discussions-remote-deprecated) |
 
 ## Troubleshooting
 

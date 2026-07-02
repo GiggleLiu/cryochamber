@@ -62,7 +62,7 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `clean`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
 | `cryo-agent` | Agent-side IPC/utility CLI — `hibernate`, `send`, `receive`, `dialog`, `time`, `todo` (used by the spawned agent, not by operators; most commands send requests to the daemon via socket, while `time` is local) |
-| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
+| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service). **Deprecated** (prints a warning on every invocation; single-account pull drops the operator's own comments); prefer `cryo-zulip`. |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |
 | `cryohub` | Global web dashboard — `start [--host --port --foreground --chamber-root]`, `stop`, `status`, `daemon` (`daemon` is internal — `start` installs a launchd/systemd service that serves the hub UI over HTTP). |
 

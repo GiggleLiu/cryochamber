@@ -241,24 +241,63 @@ fn format_outbox_post_keeps_attribution_for_other_senders() {
 }
 
 #[test]
-fn push_outbox_messages_returns_post_error_and_leaves_failed_message_unarchived() {
+fn push_outbox_messages_stops_on_transient_error_and_leaves_message_unarchived() {
     let dir = tempfile::tempdir().unwrap();
     let store = crate::channel::store::MessageStore::new(dir.path().to_path_buf());
     store.send_out(&message("agent", "Reply", "hello")).unwrap();
 
+    // A transient failure (5xx/network) must preserve ordering: return the
+    // error and leave the message queued for the next cycle rather than
+    // dropping it.
     let err = push_outbox_messages(
         dir.path(),
         |_| "posted".to_string(),
-        |_| anyhow::bail!("HTTP 401: Bad credentials"),
+        |_| anyhow::bail!("HTTP 500: internal server error"),
     )
     .unwrap_err();
 
     assert!(
-        format!("{err:#}").contains("HTTP 401"),
+        format!("{err:#}").contains("HTTP 500"),
         "post error should be preserved: {err:#}"
     );
     assert_eq!(store.read_outbox_named().unwrap().len(), 1);
     assert!(store.read_outbox_archive_named().unwrap().is_empty());
+}
+
+#[test]
+fn push_outbox_messages_skips_permanently_rejected_message_and_delivers_later_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::channel::store::MessageStore::new(dir.path().to_path_buf());
+
+    // Poison message queued first (earlier timestamp), good message second.
+    // A body the backend will always reject must not wedge the whole outbox.
+    let mut poison = message("agent", "Reply", "POISON");
+    poison.timestamp = "2020-01-01T00:00:00".parse().unwrap();
+    let mut good = message("agent", "Reply", "good");
+    good.timestamp = "2020-01-01T00:00:01".parse().unwrap();
+    store.send_out(&poison).unwrap();
+    store.send_out(&good).unwrap();
+
+    let mut delivered = Vec::new();
+    push_outbox_messages(
+        dir.path(),
+        |_| "posted".to_string(),
+        |body| {
+            if body == "POISON" {
+                // Permanent (auth/config-classified) rejection.
+                anyhow::bail!("http status: 403 forbidden");
+            }
+            delivered.push(body.to_string());
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    // The good message still went out even though the poison one was ahead of it.
+    assert_eq!(delivered, vec!["good".to_string()]);
+    // Both left the outbox: poison archived to unblock, good archived on success.
+    assert!(store.read_outbox_named().unwrap().is_empty());
+    assert_eq!(store.read_outbox_archive_named().unwrap().len(), 2);
 }
 
 #[test]
@@ -293,6 +332,24 @@ fn classify_sync_error_detects_auth_or_config() {
         "Invalid API key",
     ];
     for msg in cases {
+        let err = anyhow::anyhow!(msg.to_string());
+        assert_eq!(
+            classify_sync_error(&err),
+            SyncErrorKind::AuthOrConfig,
+            "expected AuthOrConfig for {msg:?}"
+        );
+    }
+}
+
+#[test]
+fn classify_sync_error_matches_ureq3_status_error_format() {
+    // ureq 3.x renders a status error as "http status: 401" (not "http 401"),
+    // which is what the Zulip client surfaces. A revoked key must classify as
+    // AuthOrConfig so the loop halts instead of looping forever.
+    for msg in [
+        "GET /users/me failed: http status: 401",
+        "POST /messages failed: http status: 403",
+    ] {
         let err = anyhow::anyhow!(msg.to_string());
         assert_eq!(
             classify_sync_error(&err),

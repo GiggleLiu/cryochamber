@@ -245,6 +245,13 @@ fn load_items(path: &Path) -> Result<Vec<TodoItem>> {
     }
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
+    if content.trim().is_empty() {
+        // File exists but is empty — likely caught mid-write (truncate-then-write
+        // race). Treat as no items rather than hard-erroring, which would
+        // otherwise silently disable all scheduling and retry. Mirrors
+        // `state::load_state`.
+        return Ok(Vec::new());
+    }
     serde_json::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))
 }
 

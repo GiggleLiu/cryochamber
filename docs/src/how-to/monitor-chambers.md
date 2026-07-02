@@ -1,8 +1,8 @@
 # Monitor and message a chamber
 
-There are three ways to monitor a chamber and exchange messages with the agent. **Cryohub is the primary monitor**; GitHub Discussions and Zulip add remote and mobile access.
+There are three ways to monitor a chamber and exchange messages with the agent. **Cryohub is the primary monitor**; **Zulip** is the recommended remote and mobile channel. GitHub Discussions sync (`cryo-gh`) still works but is **deprecated** — see the warning below.
 
-You can run all three together. Cryohub is local-only by default; the sync channels reach the same chamber from the outside.
+You can run them together. Cryohub is local-only by default; the sync channels reach the same chamber from the outside.
 
 ## Cryohub (primary, recommended)
 
@@ -43,7 +43,9 @@ The default bind address is `127.0.0.1`, so the dashboard is only reachable from
 
 For chamber discovery internals, see [Concepts](../explanation/concepts.md). For full configuration fields, see [`cryohub.toml`](../reference/configuration.md#cryohubtoml).
 
-## GitHub Discussions (remote)
+## GitHub Discussions (remote, deprecated)
+
+> **Deprecated.** GitHub Discussions sync is deprecated and not recommended for new chambers; it may be removed in a future release. In the documented single-account setup (you authenticate `gh` as yourself and comment from the same account), the pull path filters out your own comments, so your messages never reach the agent's inbox. Use [Zulip](#zulip-remote) instead. The reference below is kept for existing chambers.
 
 `cryo-gh` bridges a chamber with a GitHub Discussion. Comments on the Discussion become inbox messages for the agent; outbox messages from the agent appear as new comments on the Discussion.
 

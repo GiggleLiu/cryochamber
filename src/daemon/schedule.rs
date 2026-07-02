@@ -65,11 +65,24 @@ pub(super) fn compute_sleep_timeout(
 /// Compute the next wake time from the TODO list.
 /// Iterates all pending TODOs, parses each `at` field, and returns the earliest
 /// valid timestamp. Invalid or unparseable entries are skipped with a warning.
+///
+/// A genuinely unreadable/corrupt `todo.json` (as opposed to an empty one,
+/// which `load_items` tolerates as no items) is logged loudly instead of being
+/// swallowed — otherwise the chamber would idle forever with scheduling and
+/// retry silently disabled.
 pub(super) fn next_wake_from_todos(dir: &Path) -> Option<NaiveDateTime> {
-    crate::todo::TodoFile::new(dir.join("todo.json"))
-        .next_valid_wake()
-        .ok()
-        .flatten()
+    let path = dir.join("todo.json");
+    match crate::todo::TodoFile::new(&path).next_valid_wake() {
+        Ok(next_wake) => next_wake,
+        Err(error) => {
+            eprintln!(
+                "Daemon: FAILED to read TODO schedule from {}: {error:#}. \
+                 TODO scheduling disabled until todo.json is fixed.",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 /// Check if the scheduled wake time is significantly in the past (machine suspend).

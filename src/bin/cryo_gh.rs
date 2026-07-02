@@ -9,7 +9,11 @@ use cryochamber::channel::store::MessageStore;
 use cryochamber::sync_common::{SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
-#[command(name = "cryo-gh", about = "Cryochamber GitHub Discussion sync")]
+#[command(
+    name = "cryo-gh",
+    about = "Cryochamber GitHub Discussion sync",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -54,6 +58,15 @@ fn gh_sync_path(dir: &Path) -> PathBuf {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Soft-deprecation notice. Printed to stderr so machine-readable stdout
+    // (e.g. status output) stays clean. GitHub Discussions sync is kept working
+    // but no longer recommended; the single-account pull path drops the
+    // operator's own comments, so inbound messages are unreliable.
+    eprintln!(
+        "warning: GitHub Discussions sync is deprecated and will be removed in a future release. \
+         It does not reliably deliver inbound comments in single-account setups; prefer Zulip sync (cryo-zulip)."
+    );
 
     match cli.command {
         Commands::Init { repo, title } => cmd_gh_init(&repo, title.as_deref()),

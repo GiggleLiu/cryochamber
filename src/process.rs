@@ -14,6 +14,22 @@ pub fn send_signal(pid: u32, signal: i32) -> bool {
     }
 }
 
+/// Send a signal to an entire process group. `pgid` is the positive group id
+/// (equal to the group leader's pid); the kernel call targets `-pgid` so every
+/// member of the group receives the signal. This is how a session-timeout kill
+/// reaches an agent's whole subprocess tree rather than just the direct child.
+/// Returns true if delivered, false on failure.
+pub fn send_signal_group(pgid: u32, signal: i32) -> bool {
+    let ret = unsafe { libc::kill(-(pgid as i32), signal) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        eprintln!("Warning: failed to send signal {signal} to process group {pgid}: {err}");
+        false
+    } else {
+        true
+    }
+}
+
 pub(crate) fn pid_probe_indicates_alive(ret: i32, errno: i32) -> bool {
     ret == 0 || errno == libc::EPERM
 }

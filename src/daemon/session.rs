@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::CryoConfig;
-use crate::process::send_signal;
+use crate::process::send_signal_group;
 use crate::state::CryoState;
 
 use super::effects::FsSessionEffects;
@@ -221,7 +221,22 @@ impl SessionLauncher for ProcessSessionLauncher {
             timeout_secs,
             spawn_time,
         };
-        daemon.drive_active_session(&mut runtime, &mut effects, context, logger)
+        let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);
+
+        // `runtime` borrows `&mut child`; release the borrow before touching
+        // `child` again.
+        drop(runtime);
+
+        // On the error path (e.g. an IPC respond EPIPE or a disk-full
+        // `log_event`), `drive_active_session` returns `Err` without having
+        // terminated the agent. Kill and reap the whole process group here so
+        // the daemon never spawns a retry session alongside a still-running
+        // agent. The success and shutdown/timeout paths already reaped the
+        // child, so `terminate_child` short-circuits on those.
+        if outcome.is_err() {
+            terminate_child(&mut child, child_pid, daemon.clock.as_ref());
+        }
+        outcome
     }
 }
 
@@ -250,12 +265,21 @@ fn display_source_path(chamber_dir: &Path, source: &Path) -> String {
         .to_string()
 }
 
-/// Gracefully terminate a child process: SIGTERM, wait 2s, SIGKILL if needed.
+/// Gracefully terminate a child's process group: SIGTERM, wait 2s, SIGKILL if
+/// needed, then reap. The agent is spawned as its own group leader (see
+/// `spawn_agent`), so `pid == pgid` and signaling the group reaches the whole
+/// agent subprocess tree, not just the direct child.
 fn terminate_child(child: &mut std::process::Child, pid: u32, clock: &dyn Clock) {
-    send_signal(pid, libc::SIGTERM);
+    // Already exited (e.g. reaped by an earlier terminate on the
+    // shutdown/timeout path, or a normal self-exit): reap and return without
+    // signaling — the pid could otherwise have been recycled.
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    send_signal_group(pid, libc::SIGTERM);
     clock.sleep(Duration::from_secs(2));
     if child.try_wait().ok().flatten().is_none() {
-        send_signal(pid, libc::SIGKILL);
+        send_signal_group(pid, libc::SIGKILL);
     }
     let _ = child.wait();
 }

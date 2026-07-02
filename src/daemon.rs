@@ -205,7 +205,7 @@ use schedule::{detect_delayed_wake, WAKE_TIME_FMT};
 use request::TodoRequest;
 use request::{
     handle_dialog_request, handle_receive_request, handle_todo_request, resolve_hibernate_request,
-    DaemonRequest, FileMessageEffects, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
+    DaemonRequest, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;
@@ -641,20 +641,24 @@ impl Daemon {
             DaemonRequest::Hello { protocol_version } => {
                 let _ = responder.respond(&ipc_protocol_response(protocol_version));
             }
-            DaemonRequest::Dialog { filter } => {
-                let mut effects = FileMessageEffects::new(&self.dir);
-                let outcome = handle_dialog_request(filter, &[], &mut effects);
-                let _ = responder.respond(&outcome.into_response());
-            }
             DaemonRequest::Todo(todo_request) => {
                 let mut effects = FileTodoEffects::new(&self.dir);
                 let response = handle_todo_request(todo_request, &mut effects).into_response();
                 let _ = responder.respond(&response);
             }
-            DaemonRequest::Receive => {
-                let mut effects = FileMessageEffects::new(&self.dir);
-                let outcome = handle_receive_request(&mut effects);
-                let _ = responder.respond(&outcome.into_response());
+            // Reading the inbox is only valid inside an active session, which
+            // owns a `SessionInboxState` and therefore a reply obligation (the
+            // agent's next `send`, or the daemon fallback). When idle there is
+            // no such state, so claiming + archiving a batch here would
+            // terminally consume it with nobody on the hook to answer —
+            // violating invariant 2. Refuse without touching the inbox.
+            DaemonRequest::Receive | DaemonRequest::Dialog { .. } => {
+                let _ = responder.respond(&crate::socket::Response {
+                    ok: false,
+                    message:
+                        "No active session. Inbox can only be read while the agent is running."
+                            .into(),
+                });
             }
             DaemonRequest::Send { .. } | DaemonRequest::Hibernate { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
@@ -723,8 +727,13 @@ impl Daemon {
         let mut cryo_state =
             state::load_state(&self.state_path)?.context("No cryochamber state found")?;
 
-        // Guard: refuse to start if another daemon is already running
-        if state::is_locked(&cryo_state) {
+        // Guard: refuse to start only if another daemon is both locked AND
+        // actually answering on its socket. A stale PID (reboot / PID reuse)
+        // that no longer responds is treated as dead so this daemon can take
+        // over — the code below mints a fresh pid + instance_id. Bailing on
+        // `is_locked` alone could block startup forever behind a PID that now
+        // belongs to some unrelated process.
+        if state::is_locked(&cryo_state) && crate::daemon_client::daemon_responding(&self.dir) {
             anyhow::bail!(
                 "Another daemon is already running (PID: {:?}). Use `cryo cancel` first.",
                 cryo_state.pid
@@ -839,6 +848,23 @@ impl Daemon {
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
         let mut inbox_wake_sources = Vec::new();
+
+        // Inbox messages delivered while the daemon was down (after `cryo
+        // restart`, a service auto-restart, or a crash-restart) were never seen
+        // by the notify watcher, which only reports files created *after* it
+        // starts. Left alone they would sit unread until an unrelated TODO
+        // fired — forever if none is pending — violating invariant 2 (every
+        // inbox message is answered). Treat a non-empty inbox at startup as an
+        // inbox wake so the first session processes it, suppressing the
+        // delayed-wake notice as for any inbox-triggered wake.
+        match crate::message::list_inbox(&self.dir) {
+            Ok(files) if !files.is_empty() => {
+                run_now = true;
+                inbox_wake = true;
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("Daemon: failed to list inbox at startup: {e}"),
+        }
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {

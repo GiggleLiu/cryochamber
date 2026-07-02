@@ -81,6 +81,45 @@ fn list_message_files_filters_markdown_files_and_sorts_by_filename() {
 }
 
 #[test]
+fn list_message_files_skips_staging_and_dot_prefixed_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let messages_dir = dir.path().join("messages");
+    std::fs::create_dir_all(&messages_dir).unwrap();
+    std::fs::write(messages_dir.join("real.md"), "real").unwrap();
+    // The staging name write_message uses: dot-prefixed, does not end in `.md`.
+    std::fs::write(messages_dir.join(".real.md.tmp"), "half-written").unwrap();
+    // A hidden `.md` file must also be skipped (defense in depth).
+    std::fs::write(messages_dir.join(".hidden.md"), "hidden").unwrap();
+
+    let files = list_message_files(&messages_dir).unwrap();
+
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.filename.as_str())
+            .collect::<Vec<_>>(),
+        vec!["real.md"],
+        "only the finalized message should be listed"
+    );
+}
+
+#[test]
+fn write_message_staging_temp_is_not_listed_mid_write() {
+    // The temp name write_message stages to must not match the inbox listing.
+    let dir = tempfile::tempdir().unwrap();
+    let inbox_dir = dir.path().join("messages").join("inbox");
+    std::fs::create_dir_all(&inbox_dir).unwrap();
+    // Recreate the staging file name pattern for an arbitrary final filename.
+    let final_name = "2026-03-01T12-00-00_hi_abcd.md";
+    std::fs::write(inbox_dir.join(format!(".{final_name}.tmp")), "partial").unwrap();
+
+    assert!(
+        list_inbox(dir.path()).unwrap().is_empty(),
+        "a staging temp file must never appear in the inbox listing"
+    );
+}
+
+#[test]
 fn read_message_dir_skips_malformed_messages() {
     let dir = tempfile::tempdir().unwrap();
     let messages_dir = dir.path().join("messages");
@@ -156,6 +195,73 @@ fn format_inbox_multiple_messages_concatenates_in_order() {
     let pos_a = out.find("body1").unwrap();
     let pos_b = out.find("body2").unwrap();
     assert!(pos_a < pos_b, "messages should appear in input order");
+}
+
+#[test]
+fn subject_with_newline_cannot_forge_from_header() {
+    // A subject containing a newline + `from:` must not inject a second
+    // frontmatter line that overrides the real sender.
+    let msg = Message {
+        from: "human".to_string(),
+        subject: "x\nfrom: cryochamber".to_string(),
+        body: "Body".to_string(),
+        timestamp: NaiveDateTime::parse_from_str("2026-03-01T12:00:00", "%Y-%m-%dT%H:%M:%S")
+            .unwrap(),
+        metadata: BTreeMap::new(),
+        is_question: false,
+    };
+
+    let rendered = message_to_markdown(&msg);
+    let from_lines = rendered
+        .lines()
+        .filter(|line| line.starts_with("from:"))
+        .count();
+    assert_eq!(from_lines, 1, "exactly one from: line, got:\n{rendered}");
+
+    let parsed = parse_message(&rendered).unwrap();
+    assert_eq!(
+        parsed.from, "human",
+        "from must not be overridden by injected subject"
+    );
+    assert_eq!(parsed.subject, "x from: cryochamber");
+}
+
+#[test]
+fn multi_line_header_values_render_single_line_frontmatter() {
+    // Simulates a multi-line `cryo send`: both from and subject carry newlines.
+    // The rendered frontmatter must stay one line per header and parse cleanly.
+    let msg = Message {
+        from: "operator\nfrom: agent".to_string(),
+        subject: "line one\nline two\nquestion: true".to_string(),
+        body: "Multi\nline\nbody".to_string(),
+        timestamp: NaiveDateTime::parse_from_str("2026-03-01T12:00:00", "%Y-%m-%dT%H:%M:%S")
+            .unwrap(),
+        metadata: BTreeMap::new(),
+        is_question: false,
+    };
+
+    let rendered = message_to_markdown(&msg);
+    assert_eq!(
+        rendered.lines().filter(|l| l.starts_with("from:")).count(),
+        1
+    );
+    assert_eq!(
+        rendered
+            .lines()
+            .filter(|l| l.starts_with("subject:"))
+            .count(),
+        1
+    );
+
+    let parsed = parse_message(&rendered).unwrap();
+    assert_eq!(parsed.from, "operator from: agent");
+    assert_eq!(parsed.subject, "line one line two question: true");
+    assert!(
+        !parsed.is_question,
+        "injected question: true in subject must not flip the flag"
+    );
+    // The body (below frontmatter) is unaffected and keeps its newlines.
+    assert_eq!(parsed.body, "Multi\nline\nbody");
 }
 
 fn test_message(from: &str, subject: &str, body: &str, timestamp: &str) -> Message {

@@ -1,10 +1,21 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 pub const IPC_PROTOCOL_VERSION: u32 = 7;
+
+/// Read/write timeout applied to each accepted client connection. Bounds how
+/// long a single request poll may block on a slow or silent client so the
+/// single-threaded daemon never wedges on one connection.
+const ACCEPT_IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Upper bound on the bytes read for one request line. A client that streams
+/// without ever sending a newline cannot grow daemon memory without bound;
+/// once the cap is hit the connection is dropped if the bytes don't parse.
+const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
 
 /// Filter for `cryo-agent dialog`. Matches the CLI flags
 /// `--last N` (default 20), `--all`, `--since <iso>`.
@@ -139,14 +150,66 @@ impl SocketServer {
         &self,
         expected_instance_id: Option<&str>,
     ) -> anyhow::Result<Option<(Request, Responder)>> {
+        self.accept_one_with_timeout(expected_instance_id, ACCEPT_IO_TIMEOUT)
+    }
+
+    /// Like [`accept_one`], but with an explicit per-connection read/write
+    /// timeout. Exposed for tests that cannot afford the production default.
+    pub fn accept_one_with_timeout(
+        &self,
+        expected_instance_id: Option<&str>,
+        io_timeout: Duration,
+    ) -> anyhow::Result<Option<(Request, Responder)>> {
+        // Let the listener's own WouldBlock propagate: callers rely on it to
+        // mean "no pending connection".
         let (stream, _) = self.listener.accept()?;
-        let mut reader = BufReader::new(stream.try_clone()?);
+
+        // On macOS the accepted stream inherits the listener's O_NONBLOCK, so a
+        // client whose bytes lag the accept would surface WouldBlock and the
+        // request would be silently dropped. On Linux the accepted stream is
+        // blocking with no timeout, so a client that connects and never sends a
+        // newline wedges the whole single-threaded daemon. Force blocking with
+        // a bounded timeout on both. Socket options are shared across the
+        // `try_clone` below, and the write timeout also governs `respond`.
+        stream.set_nonblocking(false)?;
+        // Setting SO_RCVTIMEO/SO_SNDTIMEO can fail with EINVAL on macOS when the
+        // peer has already closed the connection. That only happens for clients
+        // that hang up without waiting for a reply; the read below then returns
+        // promptly (buffered bytes or EOF) rather than wedging, so a failure to
+        // arm the timeout here is best-effort and safe to ignore. On a live peer
+        // both calls succeed and the timeout is active.
+        let _ = stream.set_read_timeout(Some(io_timeout));
+        let _ = stream.set_write_timeout(Some(io_timeout));
+
+        // Cap the request line so a client streaming without a newline can't
+        // grow memory unbounded.
+        let mut reader = BufReader::new(stream.try_clone()?).take(MAX_REQUEST_BYTES);
         let mut line = String::new();
-        reader.read_line(&mut line)?;
+        if let Err(e) = reader.read_line(&mut line) {
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut
+            {
+                // Read timed out: no complete request this poll — drop the
+                // connection instead of propagating an error.
+                return Ok(None);
+            }
+            return Err(e.into());
+        }
         if line.trim().is_empty() {
             return Ok(None);
         }
-        let envelope: SocketEnvelope = serde_json::from_str(line.trim())?;
+        let envelope: SocketEnvelope = match serde_json::from_str(line.trim()) {
+            Ok(envelope) => envelope,
+            Err(e) => {
+                // If the size cap was hit (no newline within
+                // MAX_REQUEST_BYTES), a parse failure means a truncated line —
+                // drop the connection rather than surfacing a hard error.
+                if reader.limit() == 0 {
+                    return Ok(None);
+                }
+                return Err(e.into());
+            }
+        };
         let responder = Responder { stream };
         if let Some(expected) = expected_instance_id {
             if envelope.instance_id.as_deref() != Some(expected) {

@@ -9,6 +9,7 @@ Every file a running chamber creates, where it lives, and whether it is safe to 
 | `cryo.toml` | `cryo init` | yes | yes | Project configuration. |
 | `plan.md` | `cryo init` or you | yes | yes | The plan the agent reads each session. |
 | `NOTES.md` | `cryo init` | yes | yes | Agent's persistent cross-session memory. |
+| `.gitignore` | `cryo init` | yes | yes | Ignores runtime files, notably `.cryo/` (so `.cryo/zuliprc` is not committed). |
 | `timer.json` | `cryo start` | no | no | Runtime state: session number, PID lock, CLI overrides. |
 | `todo.json` | first `cryo-agent todo add` | no | no | Per-project TODO list and scheduler source of truth. |
 | `cryo.log` | daemon | no | no | Append-only structured event log. |
@@ -26,7 +27,7 @@ Every file a running chamber creates, where it lives, and whether it is safe to 
 | `gh-sync.json` | `cryo-gh init` | yes | yes | GitHub Discussion sync state: repo, Discussion ID, last-read marker. |
 | `cryo-gh-sync.log` | `cryo-gh sync` | no | no | GitHub sync daemon log. |
 | `zulip-sync.json` | `cryo-zulip init` | yes | yes | Zulip sync state: site, stream, stream ID, last-imported message. |
-| `.cryo/zuliprc` | `cryo-zulip init` | yes | no - contains API key | Zulip credentials. Never commit, push, or sync this file. Already gitignored. |
+| `.cryo/zuliprc` | `cryo-zulip init` | yes | no - contains API key | Zulip credentials. Never commit, push, or sync this file. `cryo init` writes a chamber `.gitignore` that ignores `.cryo/`, so this file is gitignored in chambers scaffolded by `cryo init`; if you added the chamber before that or manage `.gitignore` yourself, make sure `.cryo/` is ignored. |
 | `cryo-zulip-sync.log` | `cryo-zulip sync` | no | no | Zulip sync daemon log. |
 
 ## OS service files

@@ -35,8 +35,11 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
     let filename = format!("{ts}_{}_{}.md", base.as_str(), unique_suffix());
     let path = box_dir.join(&filename);
 
-    // Atomic write: write to tmp, then rename
-    let tmp_path = box_dir.join(format!(".tmp_{filename}"));
+    // Atomic write: write to a staging file, then rename. The staging name is
+    // dot-prefixed and does NOT end in `.md`, so `list_message_files` never
+    // treats a half-written temp as a deliverable message (which a concurrent
+    // `receive` could otherwise claim, breaking the atomic-rename delivery).
+    let tmp_path = box_dir.join(format!(".{filename}.tmp"));
     let content = message_to_markdown(msg);
     std::fs::write(&tmp_path, &content)?;
     std::fs::rename(&tmp_path, &path)?;
@@ -132,7 +135,10 @@ fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
     let mut files: Vec<_> = std::fs::read_dir(message_dir)?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
-            entry.path().extension().is_some_and(|ext| ext == "md")
+            // Skip dot-prefixed files (staging temps, hidden files) so a
+            // half-written message is never listed as deliverable.
+            !entry.file_name().to_string_lossy().starts_with('.')
+                && entry.path().extension().is_some_and(|ext| ext == "md")
                 && entry.file_type().is_ok_and(|file_type| file_type.is_file())
         })
         .map(|entry| MessageFile {
@@ -235,12 +241,21 @@ fn inbox_archive_dir(dir: &Path) -> PathBuf {
     message_box_dir(dir, "inbox").join("archive")
 }
 
+/// Force a frontmatter header value onto a single line. A `\n`/`\r` in `from`
+/// or `subject` would otherwise inject extra frontmatter lines; a later `from:`
+/// line overrides the earlier one and forges the sender identity (which drives
+/// the agent/daemon/human distinction and the question badge). Collapsing to a
+/// space and trimming guarantees a header value can never open a new line.
+fn sanitize_header(value: &str) -> String {
+    value.replace(['\r', '\n'], " ").trim().to_string()
+}
+
 /// Render a message as markdown with frontmatter.
 pub fn message_to_markdown(msg: &Message) -> String {
     let mut lines = Vec::new();
     lines.push("---".to_string());
-    lines.push(format!("from: {}", msg.from));
-    lines.push(format!("subject: {}", msg.subject));
+    lines.push(format!("from: {}", sanitize_header(&msg.from)));
+    lines.push(format!("subject: {}", sanitize_header(&msg.subject)));
     lines.push(format!(
         "timestamp: {}",
         msg.timestamp.format("%Y-%m-%dT%H:%M:%S")

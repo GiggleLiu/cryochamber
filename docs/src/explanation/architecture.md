@@ -10,9 +10,9 @@ For users: see [Concepts](./concepts.md). This page is for contributors reading 
 
 | Binary | Purpose |
 |--------|---------|
-| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon`. |
-| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `receive`, `time`, `todo`. Most commands send requests to the daemon via socket; only `time` is local. |
-| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Discussion-based messaging via an OS service. |
+| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `clean`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon`. |
+| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `receive`, `dialog`, `time`, `todo`. Most commands send requests to the daemon via socket; only `time` is local. |
+| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Discussion-based messaging via an OS service. **Deprecated; prefer `cryo-zulip`.** |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Zulip stream messaging via an OS service. |
 | `cryohub` | Global web dashboard — `start`, `stop`, `restart`, `status`, `daemon`. Installs a launchd/systemd service that serves the hub UI over HTTP. |
 | `cryo-mock` | Test-only mock agent for integration tests (`make check-mock`). |

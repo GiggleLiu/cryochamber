@@ -7,7 +7,11 @@ use clap::{Parser, Subcommand};
 const SERVICE_LABEL: &str = "hub";
 
 #[derive(Parser)]
-#[command(name = "cryohub", about = "Cryochamber hub: global web dashboard")]
+#[command(
+    name = "cryohub",
+    about = "Cryochamber hub: global web dashboard",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
