@@ -18,10 +18,6 @@ name = "cryo-agent"
 path = "src/bin/cryo_agent.rs"
 
 [[bin]]
-name = "cryo-gh"
-path = "src/bin/cryo_gh.rs"
-
-[[bin]]
 name = "cryo-zulip"
 path = "src/bin/cryo_zulip.rs"
 

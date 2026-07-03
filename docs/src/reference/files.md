@@ -24,8 +24,6 @@ Every file a running chamber creates, where it lives, and whether it is safe to 
 
 | File | Created by | Persists across runs | Sync-safe? | Purpose |
 |------|------------|----------------------|------------|---------|
-| `gh-sync.json` | `cryo-gh init` | yes | yes | GitHub Discussion sync state: repo, Discussion ID, last-read marker. |
-| `cryo-gh-sync.log` | `cryo-gh sync` | no | no | GitHub sync daemon log. |
 | `zulip-sync.json` | `cryo-zulip init` | yes | yes | Zulip sync state: site, stream, stream ID, last-imported message. |
 | `.cryo/zuliprc` | `cryo-zulip init` | yes | no - contains API key | Zulip credentials. Never commit, push, or sync this file. `cryo init` writes a chamber `.gitignore` that ignores `.cryo/`, so this file is gitignored in chambers scaffolded by `cryo init`; if you added the chamber before that or manage `.gitignore` yourself, make sure `.cryo/` is ignored. |
 | `cryo-zulip-sync.log` | `cryo-zulip sync` | no | no | Zulip sync daemon log. |

@@ -13,8 +13,6 @@ Depending on the way you interact with your agent, start the corresponding servi
 cryo-zulip init --config ./zuliprc --stream "my-stream"       # if using Zulip (recommended remote channel)
 cryo-zulip sync
 cryohub start                                                 # if using the web UI
-cryo-gh init --repo owner/repo                                # GitHub Discussions (DEPRECATED — prefer Zulip)
-cryo-gh sync
 ```
 
 ## Manage the running service
@@ -38,7 +36,6 @@ Cryochamber supports external messaging channels that sync between a remote serv
 |---------|--------|---------|------|
 | Hub (Web UI) | `cryohub` | Built-in HTTP server | [Cryohub](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#cryohub-primary-recommended) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#zulip-remote) |
-| GitHub Discussions (deprecated) | `cryo-gh` | GitHub GraphQL API | [GitHub Discussions](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#github-discussions-remote-deprecated) |
 
 ## Troubleshooting
 

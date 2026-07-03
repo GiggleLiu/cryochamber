@@ -923,7 +923,6 @@
         <div class="sync-card-head">
           <div class="sync-card-name">
             ${escapeHtml(s.backend)}
-            ${s.backend === 'gh' ? '<span class="badge stopped">deprecated</span>' : ''}
             <span class="badge${s.running ? '' : ' stopped'}">${s.running ? 'running' : 'off'}</span>
           </div>
           <label class="sync-toggle">

@@ -104,7 +104,6 @@ fn archive_runtime_moves_resettable_files_but_preserves_sync_config() {
         "message",
     )
     .unwrap();
-    std::fs::write(dir.path().join("gh-sync.json"), "{}").unwrap();
     std::fs::write(dir.path().join("zulip-sync.json"), "{}").unwrap();
 
     let archive = cryochamber::lifecycle::archive_runtime(dir.path()).unwrap();
@@ -123,7 +122,6 @@ fn archive_runtime_moves_resettable_files_but_preserves_sync_config() {
             "{name} should be moved out of the chamber root"
         );
     }
-    assert!(dir.path().join("gh-sync.json").exists());
     assert!(dir.path().join("zulip-sync.json").exists());
 }
 

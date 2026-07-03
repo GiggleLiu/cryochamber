@@ -26,20 +26,24 @@ fn summarize_all_empty_for_unconfigured_dir() {
 #[test]
 fn summarize_all_returns_configured_backends() {
     let dir = tempfile::tempdir().unwrap();
-    let state = crate::gh_sync::GhSyncState {
-        repo: "alice/notes".into(),
-        discussion_number: 7,
-        discussion_node_id: "node".into(),
-        last_read_cursor: None,
-        self_login: None,
+    let state = crate::zulip_sync::ZulipSyncState {
+        site: "https://z.example.com".into(),
+        stream: "notes".into(),
+        stream_id: 7,
+        self_email: "bot@z.example.com".into(),
+        topic: None,
+        last_message_id: None,
         last_pushed_session: Some(3),
     };
-    crate::gh_sync::save_sync_state(&dir.path().join("gh-sync.json"), &state).unwrap();
+    crate::zulip_sync::save_sync_state(&dir.path().join("zulip-sync.json"), &state).unwrap();
 
     let summaries = summarize_all(dir.path());
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].backend, SyncBackend::Gh);
-    assert_eq!(summaries[0].target, "alice/notes#7");
+    assert_eq!(summaries[0].backend, SyncBackend::Zulip);
+    assert_eq!(
+        summaries[0].target,
+        "https://z.example.com · notes / cryochamber"
+    );
     assert_eq!(summaries[0].last_pushed_session, Some(3));
     assert!(!summaries[0].running);
 }
@@ -49,10 +53,10 @@ fn start_invokes_sync_subcommand_via_env_override() {
     let _guard = ENV_LOCK.lock().unwrap();
     let bin = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
-    let stub = make_stub(bin.path(), "cryo-gh-stub", 0, "ok");
-    std::env::set_var("CRYO_GH_CLI", &stub);
-    let res = start(SyncBackend::Gh, work.path());
-    std::env::remove_var("CRYO_GH_CLI");
+    let stub = make_stub(bin.path(), "cryo-zulip-stub", 0, "ok");
+    std::env::set_var("CRYO_ZULIP_CLI", &stub);
+    let res = start(SyncBackend::Zulip, work.path());
+    std::env::remove_var("CRYO_ZULIP_CLI");
     assert!(res.is_ok(), "{res:?}");
 }
 
@@ -61,10 +65,10 @@ fn stop_propagates_non_zero_exit_as_error() {
     let _guard = ENV_LOCK.lock().unwrap();
     let bin = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
-    let stub = make_stub(bin.path(), "cryo-gh-stub", 7, "boom");
-    std::env::set_var("CRYO_GH_CLI", &stub);
-    let res = stop(SyncBackend::Gh, work.path());
-    std::env::remove_var("CRYO_GH_CLI");
+    let stub = make_stub(bin.path(), "cryo-zulip-stub", 7, "boom");
+    std::env::set_var("CRYO_ZULIP_CLI", &stub);
+    let res = stop(SyncBackend::Zulip, work.path());
+    std::env::remove_var("CRYO_ZULIP_CLI");
     assert!(res.is_err());
 }
 

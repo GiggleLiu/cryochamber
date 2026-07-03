@@ -262,7 +262,7 @@ struct DailyDigestAccumulator {
     latest_session: u32,
 }
 
-/// Summarize recent session activity by the UTC date recorded in `cryo.log`.
+/// Summarize recent session activity by the local date recorded in `cryo.log`.
 /// Results are newest day first. Missing or empty logs return an empty list.
 pub fn daily_digests(log_path: &Path, max_days: usize) -> Result<Vec<DailyDigest>> {
     if max_days == 0 {
@@ -354,7 +354,11 @@ fn parse_session_header(line: &str) -> Option<(u32, NaiveDateTime)> {
     }
     let session_number: u32 = parts[0].trim().parse().ok()?;
     let ts_str = parts[1].trim().trim_end_matches("---").trim();
-    let timestamp = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%SZ").ok()?;
+    // Session timestamps are local wall-clock time (`%Y-%m-%dT%H:%M:%S`).
+    // Tolerate the legacy UTC form (trailing `Z`) written by older versions
+    // by stripping the suffix before parsing.
+    let ts_str = ts_str.strip_suffix('Z').unwrap_or(ts_str);
+    let timestamp = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S").ok()?;
     Some((session_number, timestamp))
 }
 
@@ -378,11 +382,11 @@ impl EventLogger {
             .append(true)
             .open(log_path)?;
 
-        let now = chrono::Utc::now();
+        let now = chrono::Local::now().naive_local();
         writeln!(
             file,
             "--- CRYO SESSION {session_number} | {} ---",
-            now.format("%Y-%m-%dT%H:%M:%SZ")
+            now.format("%Y-%m-%dT%H:%M:%S")
         )?;
         writeln!(file, "task: {}", sanitize_event(task))?;
         writeln!(file, "agent: {}", sanitize_event(agent_cmd))?;
@@ -409,7 +413,7 @@ impl EventLogger {
 
     /// Log a timestamped event.
     pub fn log_event(&mut self, event: &str) -> Result<(), anyhow::Error> {
-        let now = chrono::Utc::now();
+        let now = chrono::Local::now().naive_local();
         writeln!(
             self.file,
             "[{}] {}",

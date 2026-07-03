@@ -17,7 +17,7 @@ cargo install cryochamber
 cryo --version
 ```
 
-This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub`.
+This installs `cryo`, `cryo-agent`, `cryo-zulip`, and `cryohub`.
 
 ## Step 2: Make the chamber directory
 

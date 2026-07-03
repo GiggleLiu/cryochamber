@@ -219,8 +219,8 @@ pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
 }
 
 /// Move resettable runtime state into `history/<timestamp>/`, returning the
-/// archive directory. Sync configuration files such as `gh-sync.json`,
-/// `zulip-sync.json`, and `.cryo/zuliprc` stay in place.
+/// archive directory. Sync configuration files such as `zulip-sync.json`
+/// and `.cryo/zuliprc` stay in place.
 pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
     let archive = new_archive_dir(dir)?;
     for name in [

@@ -12,21 +12,18 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncBackend {
-    Gh,
     Zulip,
 }
 
 impl SyncBackend {
     pub fn as_str(&self) -> &'static str {
         match self {
-            SyncBackend::Gh => "gh",
             SyncBackend::Zulip => "zulip",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "gh" => Some(SyncBackend::Gh),
             "zulip" => Some(SyncBackend::Zulip),
             _ => None,
         }
@@ -105,11 +102,11 @@ pub enum SyncErrorKind {
     Transient,
 }
 
-/// Heuristic classification of anyhow errors from gh/zulip pull/push calls.
-/// We don't own the channel layer's error types (subprocess stderr for gh,
-/// stringified API errors for zulip), so we match on well-known substrings
-/// in the full error chain. Anything unrecognized is `Transient` by default —
-/// we'd rather keep running on an unclassified hiccup than halt on one.
+/// Heuristic classification of anyhow errors from Zulip pull/push calls.
+/// We don't own the channel layer's error types (stringified API errors),
+/// so we match on well-known substrings in the full error chain. Anything
+/// unrecognized is `Transient` by default — we'd rather keep running on an
+/// unclassified hiccup than halt on one.
 pub fn classify_sync_error(err: &anyhow::Error) -> SyncErrorKind {
     let text: String = err.chain().map(|c| format!("{c}\n")).collect();
     let lower = text.to_ascii_lowercase();
@@ -117,7 +114,7 @@ pub fn classify_sync_error(err: &anyhow::Error) -> SyncErrorKind {
         // ureq 3.x renders a status error as "http status: 401" (Zulip path).
         "http status: 401",
         "http status: 403",
-        // gh CLI stderr and other stringified paths.
+        // Other stringified auth-error phrasings.
         "http 401",
         "http 403",
         "401 unauthorized",

@@ -37,6 +37,12 @@ Security and reliability hardening.
   comments, so inbound messages are unreliable — prefer Zulip sync
   (`cryo-zulip`).
 
+### Removed
+
+- **GitHub Discussions message sync (`cryo-gh`) removed.** The `cryo-gh` binary
+  and its Discussion-based sync channel are gone. Use Zulip (`cryo-zulip`) for
+  remote sync, or the local file-based inbox/outbox.
+
 ## v0.2.5 — 2026-05-19
 
 - **Daily digests replace the report interval.** Periodic status reports are

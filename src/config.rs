@@ -51,10 +51,6 @@ pub struct CryoConfig {
     /// Zulip sync polling interval in seconds (default: 5)
     #[serde(default = "default_poll_interval")]
     pub zulip_poll_interval: u64,
-
-    /// GitHub sync polling interval in seconds (default: 5)
-    #[serde(default = "default_poll_interval")]
-    pub gh_poll_interval: u64,
 }
 
 fn default_agent() -> String {
@@ -78,7 +74,6 @@ impl Default for CryoConfig {
             provider: None,
             providers: Vec::new(),
             zulip_poll_interval: default_poll_interval(),
-            gh_poll_interval: default_poll_interval(),
         }
     }
 }

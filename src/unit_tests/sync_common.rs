@@ -18,10 +18,10 @@ fn message(from: &str, subject: &str, body: &str) -> Message {
 
 #[test]
 fn backend_parse_roundtrip() {
-    assert_eq!(SyncBackend::parse("gh"), Some(SyncBackend::Gh));
     assert_eq!(SyncBackend::parse("zulip"), Some(SyncBackend::Zulip));
+    // GitHub sync was removed; "gh" is no longer a recognized backend.
+    assert_eq!(SyncBackend::parse("gh"), None);
     assert_eq!(SyncBackend::parse("nope"), None);
-    assert_eq!(SyncBackend::Gh.as_str(), "gh");
     assert_eq!(SyncBackend::Zulip.as_str(), "zulip");
 }
 

@@ -563,3 +563,28 @@ fn test_parse_sessions_since_filters_by_date() {
     assert_eq!(sessions[0].session_number, 2);
     assert_eq!(sessions[1].session_number, 3);
 }
+
+#[test]
+fn test_session_header_is_local_basis_without_z_suffix() {
+    // Regression: session timestamps must be local wall-clock — the SAME basis
+    // as message timestamps (Local::now().naive_local()) — so message-to-session
+    // attribution in chamber_status compares like for like. The legacy UTC form
+    // carried a trailing 'Z'; a regression back to UTC would reintroduce it.
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cryo.log");
+    EventLogger::begin(&log_path, 7, "task", "agent", &[]).unwrap();
+
+    let content = std::fs::read_to_string(&log_path).unwrap();
+    let header = content.lines().next().unwrap_or_default();
+    assert!(
+        header.starts_with("--- CRYO SESSION 7 |"),
+        "unexpected header: {header}"
+    );
+    assert!(
+        !header.contains('Z'),
+        "local session header must not carry a UTC 'Z' suffix: {header}"
+    );
+    // And it must still round-trip through the parser.
+    let (num, _ts) = parse_session_header(header).expect("header should parse");
+    assert_eq!(num, 7);
+}

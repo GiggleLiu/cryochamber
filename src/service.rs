@@ -25,7 +25,7 @@ fn path_hash(dir: &Path) -> String {
 }
 
 /// Build a unique service label for a given prefix and project directory.
-/// e.g. "com.cryo.daemon.abc123..." or "com.cryo.gh-sync.abc123..."
+/// e.g. "com.cryo.daemon.abc123..." or "com.cryo.zulip-sync.abc123..."
 pub fn service_label(prefix: &str, dir: &Path) -> String {
     format!("com.cryo.{}.{}", prefix, path_hash(dir))
 }
@@ -109,7 +109,7 @@ fn launchctl_restart_action(plist_exists: bool, label_loaded: bool) -> Launchctl
 
 /// Install and start a system service.
 ///
-/// - `label_prefix`: e.g. "daemon" or "gh-sync"
+/// - `label_prefix`: e.g. "daemon" or "zulip-sync"
 /// - `dir`: working directory for the service
 /// - `exe`: path to the executable
 /// - `args`: arguments to pass

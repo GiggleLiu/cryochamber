@@ -56,19 +56,6 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 | `cryo-agent time "+30 minutes"` | Compute a relative offset. Units: `minutes`, `hours`, `days`, `weeks`. |
 | `cryo-agent time "2026-04-25T10:00"` | Validate and normalize an ISO 8601 timestamp. |
 
-## GitHub Sync (`cryo-gh`)
-
-> **Deprecated.** GitHub Discussions sync is deprecated and may be removed in a future release; it does not reliably deliver inbound comments in single-account setups. Use [Zulip Sync](#zulip-sync-cryo-zulip) instead.
-
-| Command | What it does |
-|---------|--------------|
-| `cryo-gh init --repo owner/repo [--title <title>]` | Create a Discussion and write `gh-sync.json`. `--title` sets the Discussion title (default: derived from the chamber directory name). |
-| `cryo-gh sync [--interval N]` | Start the background sync daemon. Default interval comes from `cryo.toml` or falls back to 5 seconds. |
-| `cryo-gh unsync` | Stop the sync daemon. |
-| `cryo-gh pull` | One-shot pull. |
-| `cryo-gh push` | One-shot push. |
-| `cryo-gh status` | Show sync configuration. |
-
 ## Zulip Sync (`cryo-zulip`)
 
 | Command | What it does |

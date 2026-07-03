@@ -116,7 +116,10 @@ impl TodoFile {
                 return Ok(existing.id);
             }
             let id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-            let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let created = chrono::Local::now()
+                .naive_local()
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string();
             items.push(TodoItem {
                 id,
                 text,
@@ -215,7 +218,10 @@ impl TodoFile {
                 }
 
                 let id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let created = chrono::Local::now()
+                    .naive_local()
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string();
                 items.push(TodoItem {
                     id,
                     text: new_text,

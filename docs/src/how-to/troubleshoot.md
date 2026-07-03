@@ -83,17 +83,3 @@ Common causes:
 - The agent does not understand the `cryo-agent` protocol; check the session prompt in `cryo-agent.log`.
 
 **Break the cycle.** Remove the retry TODO with `cryo-agent todo remove <id>`, or edit `todo.json`, fix the underlying issue, then add a fresh TODO.
-
-## Sync errors
-
-### `cryo-gh`: `gh: command not found`
-
-The GitHub CLI is not installed.
-
-**Fix.** Install the [GitHub CLI](https://cli.github.com), then authenticate with `gh auth login`.
-
-### `cryo-gh`: `no gh-sync.json found`
-
-The chamber has not been linked to a Discussion.
-
-**Fix.** Run `cryo-gh init --repo owner/repo` to create a Discussion and initialize sync state.
