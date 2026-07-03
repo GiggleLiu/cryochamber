@@ -52,7 +52,7 @@ TODOs are the agent's way to schedule its own future wakeups.
 
 ## How sync channels bridge inbox/outbox
 
-The chamber itself is channel-agnostic. The daemon and agent only know about local mailbox files; sync daemons such as `cryo-gh sync` and `cryo-zulip sync` translate between a remote service and `messages/inbox/` plus `messages/outbox/`.
+The chamber itself is channel-agnostic. The daemon and agent only know about local mailbox files; sync daemons such as `cryo-zulip sync` translate between a remote service and `messages/inbox/` plus `messages/outbox/`.
 
 ```text
 Remote channel                     Local filesystem

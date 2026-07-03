@@ -17,7 +17,7 @@ cargo install cryochamber
 cryo --version
 ```
 
-This installs `cryo`, `cryo-agent`, `cryo-gh`, `cryo-zulip`, and `cryohub`.
+This installs `cryo`, `cryo-agent`, `cryo-zulip`, and `cryohub`.
 
 ## Step 2: Make the chamber directory
 
@@ -118,7 +118,7 @@ If you want to stop the dashboard service too, run `cryohub stop`.
 ## Where to next
 
 - **Build your own chamber from a conversation.** If your agent supports skills, install `<repo>/.claude/skills/make-plan` and ask the agent to invoke the `make-plan` skill to create a new cryochamber project here. The skill replaces this manual `plan.md` step with a guided Q and A. See [Create a chamber](./how-to/create-chamber.md) for all three options.
-- **Talk to your chamber from anywhere.** Wire it up to a GitHub Discussion or a Zulip stream so you can message the agent from the web or your phone. See [Monitor and message a chamber](./how-to/monitor-chambers.md).
+- **Talk to your chamber from anywhere.** Wire it up to a Zulip stream so you can message the agent from the web or your phone. See [Monitor and message a chamber](./how-to/monitor-chambers.md).
 - **Understand what just happened.** [Concepts](./explanation/concepts.md) explains chambers, sessions, message and TODO lifecycles, and the chamber invariants the daemon enforces.
 - **Tune the chamber.** [Configuration](./reference/configuration.md) lists every `cryo.toml` field.
 - **Look up commands.** [CLI reference](./reference/cli.md).

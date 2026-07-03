@@ -1,8 +1,28 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::message::Message;
+
+/// Global timeout bounding an entire HTTP call (DNS -> connect -> read body).
+/// Without it, a stalled connection blocks the single-threaded sync daemon
+/// forever. ureq treats `timeout_global` as an end-to-end cap covering all
+/// other timeouts.
+const HTTP_GLOBAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Tighter cap on just establishing the TCP+TLS connection, so a black-holed
+/// host fails fast instead of eating the whole global budget.
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Build the Zulip HTTP agent with bounded timeouts (ureq 3.x). A daemon that
+/// polls Zulip on a single thread must never block indefinitely on one call.
+fn build_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(HTTP_GLOBAL_TIMEOUT))
+        .timeout_connect(Some(HTTP_CONNECT_TIMEOUT))
+        .build()
+        .into()
+}
 
 /// Credentials parsed from a zuliprc INI file.
 pub struct ZulipCredentials {
@@ -63,7 +83,7 @@ impl ZulipClient {
 
         Ok(Self {
             creds,
-            agent: ureq::Agent::new_with_defaults(),
+            agent: build_agent(),
         })
     }
 

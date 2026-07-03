@@ -33,7 +33,6 @@ make example-clean  # remove auto-generated files from all examples
 make run-plan       # execute a plan with Codex by default (RUNNER=claude for Claude)
 make check-agent    # quick agent smoke test (AGENT=opencode|claude)
 make check-round-trip # full round-trip test with mr-lazy
-make check-gh       # verify GitHub Discussion sync (REPO=owner/repo)
 make check-service  # verify OS service install/uninstall lifecycle (launchd/systemd)
 make check-mock     # run mock agent integration tests (no external agent required)
 make book           # build mdbook documentation (auto-installs mdbook)
@@ -62,7 +61,6 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 |--------|---------|
 | `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `clean`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon` |
 | `cryo-agent` | Agent-side IPC/utility CLI — `hibernate`, `send`, `receive`, `dialog`, `time`, `todo` (used by the spawned agent, not by operators; most commands send requests to the daemon via socket, while `time` is local) |
-| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Discussion-based messaging via OS service) |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status` (manages Zulip stream messaging via OS service) |
 | `cryohub` | Global web dashboard — `start [--host --port --foreground --chamber-root]`, `stop`, `status`, `daemon` (`daemon` is internal — `start` installs a launchd/systemd service that serves the hub UI over HTTP). |
 
@@ -80,10 +78,9 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
 | `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, consumes past-due TODOs before each session, re-injects them with a `(attempt k)` suffix and `2^k`-minute delay (capped at 1 day) on crash, detects delayed wakes (e.g. after machine suspend), and coordinates the active-session inbox claim/send/fallback lifecycle. It notices when inbox messages exist but never previews bodies in the wake prompt. |
 | `message` | File-based inbox/outbox message system. Agent-side `cryo-agent receive` goes through daemon IPC and archives the current inbox batch into `messages/inbox/archive/` immediately via `MessageStore`. Any “awaiting reply” state for that batch lives only in the daemon's current session. Operator `cryo receive` is separate: it reads messages from `messages/outbox/`. |
-| `channel` | Channel abstraction. Submodules: `store` (local inbox/outbox), `github` (Discussions via GraphQL), `zulip` (Zulip REST API). |
+| `channel` | Channel abstraction. Submodules: `store` (local inbox/outbox), `zulip` (Zulip REST API). |
 | `registry` | User chamber registry for Cryohub discovery. Uses `$XDG_STATE_HOME/cryo/chambers/` (fallback `~/.cryo/chambers/`), keeps stopped chambers, clears stale PIDs, and prunes entries whose chamber disappeared. |
-| `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-gh sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
-| `gh_sync` | GitHub Discussion sync state persistence (`gh-sync.json`). |
+| `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-zulip sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoFile` structs plus retry rescheduling logic for crashed sessions. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |
 | `zulip_sync` | Zulip sync state persistence (`zulip-sync.json`). |
 | `hub` | Global web dashboard: Axum router (`serve`, `build_router_with_state`), registry-backed chamber discovery, SSE events, start/stop/restart handlers. Served by the `cryohub` binary. |
@@ -106,7 +103,15 @@ and needs an explicit justification.
    the sender with no reply is not. If a session ends with a received
    batch still unanswered, the daemon writes the fallback reply from
    `daemon_unanswered_reply_text` for that batch
-   (`finalize_human_replies`).
+   (`finalize_human_replies`). This guarantee is bounded by daemon
+   liveness: the reply obligation lives in the daemon's in-memory
+   session state (`SessionInboxState`), so it holds across agent
+   crashes, timeouts, and graceful shutdown, but a hard kill of the
+   *daemon process* (SIGKILL / OOM / power loss) after `cryo-agent
+   receive` archived a batch and before the reply is written strands
+   that batch — the sender must resend. This is an accepted limitation:
+   making the obligation durable would require a file-backed pending
+   flow, which the inbox contract deliberately avoids.
 3. **Every TODO is honoured, and every failure is reported.** When a
    TODO's `at` time arrives the daemon claims it and runs a session.
    The claimed item stays visible as `[~]` in `## TODO List` while the
@@ -201,10 +206,8 @@ and needs an explicit justification.
 - `messages/outbox/` — outgoing messages (agent replies, daemon stand-in replies)
 - `messages/inbox/archive/` — processed inbox messages
 - `.cryo/cryo.sock` — Unix domain socket for agent-daemon IPC
-- `gh-sync.json` — GitHub Discussion sync state (if configured)
-- `cryo-gh-sync.log` — GitHub sync daemon log output (if configured)
 - `zulip-sync.json` — Zulip sync state (if configured)
-- `.cryo/zuliprc` — Zulip credentials copied from user's zuliprc (if configured). **Never sync, commit, or push this file** — it holds API credentials. Already gitignored; sync channels (`cryo-gh`, `cryo-zulip`) must never include it in any payload.
+- `.cryo/zuliprc` — Zulip credentials copied from user's zuliprc (if configured). **Never sync, commit, or push this file** — it holds API credentials. Already gitignored; the `cryo-zulip` sync channel must never include it in any payload.
 - `cryo-zulip-sync.log` — Zulip sync daemon log output (if configured)
 - `~/Library/LaunchAgents/com.cryo.*.plist` — macOS launchd service files (auto-managed)
 - `~/.config/systemd/user/com.cryo.*.service` — Linux systemd service files (auto-managed)

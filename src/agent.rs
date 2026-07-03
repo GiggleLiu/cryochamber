@@ -1,6 +1,7 @@
 // src/agent.rs
 use anyhow::{Context, Result};
 use chrono::Local;
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 /// Supported agent types.
@@ -242,6 +243,12 @@ pub fn spawn_agent(
     if !provider_env.is_empty() {
         cmd.envs(provider_env);
     }
+
+    // Put the agent in its own process group (pgid == child pid). Real agents
+    // (opencode/claude/codex) spawn subprocess trees; a session-timeout kill
+    // must signal the whole group so grandchildren don't survive burning
+    // tokens. See `terminate_child` in the daemon session loop.
+    cmd.process_group(0);
 
     let child = cmd
         .spawn()

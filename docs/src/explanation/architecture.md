@@ -10,9 +10,8 @@ For users: see [Concepts](./concepts.md). This page is for contributors reading 
 
 | Binary | Purpose |
 |--------|---------|
-| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon`. |
-| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `receive`, `time`, `todo`. Most commands send requests to the daemon via socket; only `time` is local. |
-| `cryo-gh` | GitHub sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Discussion-based messaging via an OS service. |
+| `cryo` | Operator CLI — `init`, `start`, `status`, `cancel`, `clean`, `log`, `watch`, `send`, `receive`, `wake`, `ps`, `restart`, `daemon`. |
+| `cryo-agent` | Agent IPC CLI — `hibernate`, `send`, `receive`, `dialog`, `time`, `todo`. Most commands send requests to the daemon via socket; only `time` is local. |
 | `cryo-zulip` | Zulip sync CLI — `init`, `pull`, `push`, `sync`, `unsync`, `status`. Manages Zulip stream messaging via an OS service. |
 | `cryohub` | Global web dashboard — `start`, `stop`, `restart`, `status`, `daemon`. Installs a launchd/systemd service that serves the hub UI over HTTP. |
 | `cryo-mock` | Test-only mock agent for integration tests (`make check-mock`). |
@@ -35,7 +34,7 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `lifecycle` | Session startup validation and chamber lifecycle operations. | `enum DaemonLaunchMode`, `struct StartOptions`, `struct PreparedStart`, `fn require_valid_project`, `fn require_live_daemon`, `fn prepare_start`, `fn validate_agent_command`. |
 | `process` | Process management utilities. | `fn send_signal`, `fn terminate_pid`, `fn spawn_daemon`. |
 | `registry` | User chamber registry under `$XDG_STATE_HOME/cryo/chambers/` (fallback `~/.cryo/chambers/`). Keeps stopped chambers, clears stale PIDs, and prunes entries whose chamber disappeared. | `struct DaemonEntry`, `fn remember_chamber`, `fn register`, `fn unregister`, `fn list`. |
-| `service` | OS service management: launchd (macOS) / systemd (Linux) user services. Used by `cryo start`, `cryo-gh sync`, `cryo-zulip sync`. `CRYO_NO_SERVICE=1` disables. | `struct InstalledService`, `fn service_label`, `fn install`, `fn uninstall`, `fn list_installed`, `fn is_installed`. |
+| `service` | OS service management: launchd (macOS) / systemd (Linux) user services. Used by `cryo start` and `cryo-zulip sync`. `CRYO_NO_SERVICE=1` disables. | `struct InstalledService`, `fn service_label`, `fn install`, `fn uninstall`, `fn list_installed`, `fn is_installed`. |
 
 ### Config, state, and persistence
 
@@ -62,11 +61,9 @@ Modules live in `src/` and are re-exported via `lib.rs`. Entries list the module
 | `message` | Low-level markdown message parsing/rendering and file primitives used by the mailbox store. | `struct Message`, `fn write_message`, `fn read_inbox`, `fn list_inbox`, `fn archive_messages`, `fn format_inbox`, `fn parse_message`. |
 | `channel` | Channel abstraction over messaging backends. | `trait MessageChannel` (read inbox, post reply). |
 | `channel::store` | Local mailbox API over `messages/inbox/` + `messages/outbox/`, used by daemon, CLI, sync, hub, and status paths. | `struct MessageStore::new`, `fn send_in`, `fn send_out`, `fn read_inbox_named`, `fn read_and_archive_inbox`, `fn read_outbox_named`, `fn archive_outbox`. |
-| `channel::github` | GitHub Discussions backend via `gh` CLI / GraphQL. | `fn whoami`, `fn gh_graphql`, `fn build_fetch_comments_query`, `fn build_post_comment_mutation`. |
 | `channel::zulip` | Zulip REST API client. | `struct ZulipCredentials`, `struct ZulipClient`, `struct ZulipPullResult`, `fn from_zuliprc`. |
-| `gh_sync` | GitHub Discussion sync state (`gh-sync.json`). | `struct GhSyncState`, `fn save_sync_state`, `fn load_sync_state`, `fn is_sync_running`, `fn summarize`. |
 | `zulip_sync` | Zulip sync state (`zulip-sync.json`). | `struct ZulipSyncState`, `fn save_sync_state`, `fn load_sync_state`, `fn is_sync_running`, `fn summarize`. |
-| `sync_common` | Shared types for sync backends (GitHub, Zulip). | `enum SyncBackend`, `struct SyncSummary`, `enum SyncLoopCommand`, `enum SyncCycleStatus`, `struct PidFile`. |
+| `sync_common` | Shared types for sync backends (Zulip). | `enum SyncBackend`, `struct SyncSummary`, `enum SyncLoopCommand`, `enum SyncCycleStatus`, `struct PidFile`. |
 | `sync_control` | Orchestration and CLI dispatch for sync backends (`start`, `stop`, `pull`, `push`, `status`). | `fn start`, `fn stop`, `fn pull`, `fn push`, `fn summarize`, `fn summarize_all`, `fn is_running`. |
 
 ### Web dashboard

@@ -285,15 +285,8 @@ fn test_clean_preserves_sync_configuration() {
     .unwrap();
     fs::write(dir.path().join("cryo.log"), "log").unwrap();
     fs::write(dir.path().join("cryo-agent.log"), "agent log").unwrap();
-    fs::write(dir.path().join("cryo-gh-sync.log"), "gh log").unwrap();
-    fs::write(dir.path().join("cryo-gh-sync.pid"), "123").unwrap();
     fs::write(dir.path().join("cryo-zulip-sync.log"), "zulip log").unwrap();
     fs::write(dir.path().join("cryo-zulip-sync.pid"), "456").unwrap();
-    fs::write(
-        dir.path().join("gh-sync.json"),
-        r#"{"repo":"owner/repo","discussion_number":1,"discussion_id":"D_1","self_login":"bot"}"#,
-    )
-    .unwrap();
     fs::write(
         dir.path().join("zulip-sync.json"),
         r#"{"site":"https://zulip.example.com","stream":"ops","stream_id":7,"self_email":"bot@example.com"}"#,
@@ -313,13 +306,11 @@ fn test_clean_preserves_sync_configuration() {
         .assert()
         .success();
 
-    assert!(dir.path().join("gh-sync.json").exists());
     assert!(dir.path().join("zulip-sync.json").exists());
     assert!(dir.path().join(".cryo/zuliprc").exists());
     assert!(!dir.path().join(".cryo/cryo.sock").exists());
     assert!(!dir.path().join("messages").exists());
     assert!(!dir.path().join("timer.json").exists());
-    assert!(!dir.path().join("cryo-gh-sync.pid").exists());
     assert!(!dir.path().join("cryo-zulip-sync.pid").exists());
     assert!(!dir.path().join("cryo-zulip-sync.log").exists());
 }

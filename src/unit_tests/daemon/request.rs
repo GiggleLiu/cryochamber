@@ -1,5 +1,6 @@
 use crate::daemon::request::{
-    handle_dialog_request, FileMessageEffects, MessageEffects, TodoOperationError,
+    handle_dialog_request, handle_todo_request, FileMessageEffects, MessageEffects, TodoEffects,
+    TodoOperationError, TodoRequest,
 };
 use crate::message::Message;
 use crate::socket::DialogFilter;
@@ -54,6 +55,81 @@ impl MessageEffects for FakeMessages {
     ) -> std::result::Result<Vec<(String, Message)>, TodoOperationError> {
         Ok(self.archived_outbox.clone())
     }
+}
+
+#[derive(Default)]
+struct FakeTodos {
+    added: Vec<(String, String)>,
+}
+
+impl TodoEffects for FakeTodos {
+    fn add_todo(&mut self, text: &str, at: &str) -> std::result::Result<u32, TodoOperationError> {
+        self.added.push((text.to_string(), at.to_string()));
+        Ok(self.added.len() as u32)
+    }
+
+    fn done_todo(&mut self, _id: u32) -> std::result::Result<(), TodoOperationError> {
+        Ok(())
+    }
+
+    fn remove_todo(&mut self, _id: u32) -> std::result::Result<(), TodoOperationError> {
+        Ok(())
+    }
+
+    fn list_todos(&mut self) -> std::result::Result<String, TodoOperationError> {
+        Ok(String::new())
+    }
+}
+
+#[test]
+fn todo_add_rejects_unparseable_at_without_adding() {
+    let mut fake = FakeTodos::default();
+    let out = handle_todo_request(
+        TodoRequest::Add {
+            text: "water the plants".to_string(),
+            at: "tomorrow 9am".to_string(),
+        },
+        &mut fake,
+    );
+    assert!(!out.ok, "an unparseable at must be rejected");
+    assert!(out.message.contains("not a valid scheduled time"));
+    assert!(out.message.contains("cryo-agent time"));
+    assert!(out.log_event.is_none());
+    assert!(
+        fake.added.is_empty(),
+        "rejected add must not create a todo item"
+    );
+}
+
+#[test]
+fn todo_add_rejects_empty_at() {
+    let mut fake = FakeTodos::default();
+    let out = handle_todo_request(
+        TodoRequest::Add {
+            text: "task".to_string(),
+            at: String::new(),
+        },
+        &mut fake,
+    );
+    assert!(!out.ok, "empty at must be rejected");
+    assert!(fake.added.is_empty());
+}
+
+#[test]
+fn todo_add_accepts_valid_at() {
+    let mut fake = FakeTodos::default();
+    let out = handle_todo_request(
+        TodoRequest::Add {
+            text: "task".to_string(),
+            at: "2026-04-25T10:00".to_string(),
+        },
+        &mut fake,
+    );
+    assert!(out.ok);
+    assert_eq!(
+        fake.added,
+        vec![("task".to_string(), "2026-04-25T10:00".to_string())]
+    );
 }
 
 #[test]

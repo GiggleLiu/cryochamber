@@ -103,6 +103,21 @@ fn relative_offset_weeks() {
 }
 
 #[test]
+fn relative_offset_negative_count_rejected() {
+    // A negative offset would produce a past time -> immediately-due TODO.
+    let err = parse_relative_offset("-30 minutes")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unrecognized time expression"));
+    assert!(err.contains("Accepted forms"));
+}
+
+#[test]
+fn relative_offset_negative_hours_rejected() {
+    assert!(parse_relative_offset("-2 hours").is_err());
+}
+
+#[test]
 fn relative_offset_unknown_unit_lists_accepted_forms() {
     let err = parse_relative_offset("+1 fortnight")
         .unwrap_err()

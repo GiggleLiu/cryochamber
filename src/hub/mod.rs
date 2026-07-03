@@ -3,6 +3,7 @@ pub mod discovery;
 pub mod lifecycle;
 pub mod paths;
 pub mod routes;
+pub mod security;
 pub mod state;
 pub mod watchers;
 
@@ -32,7 +33,11 @@ pub fn build_router_local_only(workspace_dir: PathBuf) -> Router {
 
 /// Separate entry point so integration tests can inject their own `AppState`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
-    Router::new()
+    // Read the configured bind host once (loopback by default) so the security
+    // layer can allow it in addition to loopback. Falling back to loopback-only
+    // if the hub config is unreadable is safe — the default bind is loopback.
+    let configured_host = crate::hub::config::load_config().ok().map(|cfg| cfg.host);
+    let router = Router::new()
         .route("/", get(crate::hub::routes::pages::get_index))
         .route("/c/{id}", get(crate::hub::routes::pages::get_index))
         .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
@@ -95,7 +100,8 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             post(crate::hub::routes::sync::post_sync_action),
         )
         .route("/api/events", get(crate::hub::routes::events::get_events))
-        .with_state(app)
+        .with_state(app);
+    crate::hub::security::apply(router, configured_host)
 }
 
 pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {

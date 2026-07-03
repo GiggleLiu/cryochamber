@@ -1,3 +1,14 @@
+/// Per-session reply-obligation state for the active inbox batch.
+///
+/// Deliberately in-memory only, rebuilt fresh for each session. It backs
+/// invariant 2 ("every inbox message is answered") across agent crashes,
+/// timeouts, and graceful daemon shutdown, because `finalize_human_replies`
+/// runs on all of those paths. It does NOT survive a hard kill of the daemon
+/// process (SIGKILL / OOM / power loss): a batch archived by `cryo-agent
+/// receive` but not yet answered when the daemon is force-killed is stranded,
+/// and the sender must resend. Making this durable would require a file-backed
+/// pending flow, which the inbox contract deliberately avoids (see CLAUDE.md).
+/// Accepted limitation, not a bug.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct SessionInboxState {
     claimed_filenames: Vec<String>,

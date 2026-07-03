@@ -10,6 +10,44 @@ fn test_backward_compat_missing_at_field() {
 }
 
 #[test]
+fn test_empty_todo_json_loads_as_empty_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    // Zero-length file, e.g. caught mid-write. Must not hard-error.
+    std::fs::write(&path, "").unwrap();
+    let todos = TodoFile::new(&path);
+    assert!(
+        todos.items().unwrap().is_empty(),
+        "empty todo.json should load as []"
+    );
+    assert_eq!(todos.next_valid_wake().unwrap(), None);
+
+    // Whitespace-only is also tolerated.
+    std::fs::write(&path, "   \n\t ").unwrap();
+    assert!(TodoFile::new(&path).items().unwrap().is_empty());
+}
+
+#[test]
+fn test_corrupt_todo_json_errors_loudly_not_silently_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    // Non-empty but not valid JSON — must surface an error rather than a silent
+    // empty list that would disable scheduling and retry.
+    std::fs::write(&path, "{ this is not json ]").unwrap();
+    let todos = TodoFile::new(&path);
+
+    let items_err = todos.items().unwrap_err();
+    assert!(
+        items_err.to_string().contains("Failed to parse"),
+        "corrupt todo.json should produce a clear parse error, got: {items_err}"
+    );
+    assert!(
+        todos.next_valid_wake().is_err(),
+        "corrupt todo.json must not be swallowed into Ok(None) at the TodoFile layer"
+    );
+}
+
+#[test]
 fn test_todo_file_add_dedups_open_duplicates() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("todo.json");

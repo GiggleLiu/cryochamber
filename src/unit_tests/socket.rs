@@ -329,3 +329,83 @@ fn test_todo_list_request_serialization() {
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("\"cmd\":\"todo_list\""));
 }
+
+#[test]
+fn test_accept_one_times_out_on_silent_client() {
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+    let server = SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(false).unwrap();
+
+    // Client connects but never sends a newline. It holds the connection open
+    // (parking on the channel) until the server has returned, exercising the
+    // read-timeout path rather than an EOF.
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let handle = std::thread::spawn({
+        let sock_path = sock_path.clone();
+        move || {
+            let _stream = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+            release_rx.recv().ok();
+        }
+    });
+
+    let start = Instant::now();
+    let result = server
+        .accept_one_with_timeout(None, Duration::from_millis(200))
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    assert!(
+        result.is_none(),
+        "silent client should yield None once the read times out"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "accept_one should return shortly after the read timeout, took {elapsed:?}"
+    );
+
+    release_tx.send(()).ok();
+    handle.join().unwrap();
+}
+
+#[test]
+fn test_accept_one_large_request_round_trips() {
+    // A valid request several buffers wide must round-trip. This proves the
+    // blocking-with-timeout accepted stream (the macOS non-blocking-inherit
+    // path) reads a multi-chunk line correctly.
+    let dir = tempfile::tempdir().unwrap();
+    let sock = socket_path(dir.path());
+    std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+
+    let server = SocketServer::bind(&sock).unwrap();
+    let big_text = "x".repeat(64 * 1024);
+    let expected_len = big_text.len();
+
+    let handle = std::thread::spawn(move || match server.accept_one(None).unwrap() {
+        Some((Request::Send { text, .. }, responder)) => {
+            responder
+                .respond(&Response {
+                    ok: true,
+                    message: format!("len={}", text.len()),
+                })
+                .unwrap();
+        }
+        Some((other, _)) => panic!("expected send request, got {other:?}"),
+        None => panic!("expected a request"),
+    });
+
+    let resp = send_request(
+        dir.path(),
+        &Request::Send {
+            text: big_text,
+            question: false,
+        },
+    )
+    .unwrap();
+    assert!(resp.ok);
+    assert_eq!(resp.message, format!("len={expected_len}"));
+
+    handle.join().unwrap();
+}

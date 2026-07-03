@@ -31,10 +31,24 @@ fn scaffold_chamber_creates_all_artifacts_in_empty_dir() {
     assert!(report.plan_created);
     assert!(report.readme_created);
     assert!(report.notes_created);
+    assert!(report.gitignore_created);
 
-    for f in ["cryo.toml", "plan.md", "README.md", "NOTES.md"] {
+    for f in [
+        "cryo.toml",
+        "plan.md",
+        "README.md",
+        "NOTES.md",
+        ".gitignore",
+    ] {
         assert!(dir.path().join(f).exists(), "missing {f}");
     }
+    // The credential/socket dir must be gitignored so `.cryo/zuliprc` and the
+    // IPC socket are never committed.
+    let gitignore = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+    assert!(
+        gitignore.lines().any(|l| l.trim() == ".cryo/"),
+        ".gitignore must ignore .cryo/: {gitignore}"
+    );
     assert!(!dir.path().join("AGENTS.md").exists());
     assert!(!dir.path().join("CLAUDE.md").exists());
     assert!(dir.path().join("messages/inbox").exists());
@@ -59,4 +73,5 @@ fn scaffold_chamber_idempotent_on_existing_files() {
     assert!(!report.plan_created);
     assert!(!report.readme_created);
     assert!(!report.notes_created);
+    assert!(!report.gitignore_created);
 }

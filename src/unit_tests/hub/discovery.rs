@@ -191,27 +191,28 @@ fn populate_reads_session_and_unread() {
 }
 
 #[test]
-fn populate_reports_configured_gh_sync() {
+fn populate_reports_configured_zulip_sync() {
     let dir = tempfile::tempdir().unwrap();
     let alpha = dir.path().join("alpha");
     std::fs::create_dir_all(&alpha).unwrap();
     let cfg = crate::config::CryoConfig::default();
     crate::config::save_config(&alpha.join("cryo.toml"), &cfg).unwrap();
-    let state = crate::gh_sync::GhSyncState {
-        repo: "a/b".into(),
-        discussion_number: 1,
-        discussion_node_id: "n".into(),
-        last_read_cursor: None,
-        self_login: None,
+    let state = crate::zulip_sync::ZulipSyncState {
+        site: "https://z.example.com".into(),
+        stream: "notes".into(),
+        stream_id: 1,
+        self_email: "bot@z.example.com".into(),
+        topic: None,
+        last_message_id: None,
         last_pushed_session: None,
     };
-    crate::gh_sync::save_sync_state(&alpha.join("gh-sync.json"), &state).unwrap();
+    crate::zulip_sync::save_sync_state(&alpha.join("zulip-sync.json"), &state).unwrap();
 
     let mut idx = scan_workspace(dir.path());
     populate_runtime(&mut idx);
     let entry = idx.values().next().unwrap();
     assert_eq!(entry.sync.len(), 1);
-    assert_eq!(entry.sync[0].backend, "gh");
+    assert_eq!(entry.sync[0].backend, "zulip");
     assert!(!entry.sync[0].running);
 }
 

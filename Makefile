@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-gh check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -27,7 +27,6 @@ help:
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
 	@echo "  check-agent  - Quick agent smoke test (runs agent once)"
 	@echo "  check-round-trip - Full round-trip test with mr-lazy (daemon, Ctrl-C to stop)"
-	@echo "  check-gh     - Verify GitHub Discussion sync (requires gh auth)"
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
 	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
@@ -234,54 +233,6 @@ check-round-trip: build
 	rm -rf "$$TMPDIR"; \
 	echo "=== Round-trip test done ==="
 
-# Verify GitHub Discussion sync (requires: gh auth login)
-# Usage: make check-gh REPO="owner/repo"
-REPO ?= GiggleLiu/cryochamber
-
-check-gh: build
-	@echo "=== GitHub Sync Check ==="
-	@echo "1. Checking gh CLI..."; \
-	if command -v gh >/dev/null 2>&1; then \
-		echo "   OK: $$(command -v gh)"; \
-	else \
-		echo "   FAIL: 'gh' not found. Install: https://cli.github.com"; exit 1; \
-	fi; \
-	echo ""; \
-	echo "2. Checking gh authentication..."; \
-	if gh auth status >/dev/null 2>&1; then \
-		echo "   OK: authenticated as $$(gh api user -q .login)"; \
-	else \
-		echo "   FAIL: not authenticated. Run: gh auth login"; exit 1; \
-	fi; \
-	echo ""; \
-	echo "3. Creating test Discussion in $(REPO)..."; \
-	TMPDIR=$$(mktemp -d /tmp/cryo-check-gh-XXXXXX); \
-	printf '# Health Check\n\nThis is an automated test.\n' > "$$TMPDIR/plan.md"; \
-	cd "$$TMPDIR" && \
-	$(CURDIR)/target/debug/cryo-gh init --repo "$(REPO)" --title "[Cryo] Health Check $$(date +%Y%m%d-%H%M%S)"; \
-	RC=$$?; \
-	if [ $$RC -ne 0 ]; then \
-		echo "   FAIL: could not create Discussion"; \
-		rm -rf "$$TMPDIR"; \
-		exit 1; \
-	fi; \
-	echo "   OK: Discussion created"; \
-	echo ""; \
-	echo "4. Posting test comment..."; \
-	mkdir -p "$$TMPDIR/messages/inbox"; \
-	printf '%s\n' '--- CRYO SESSION 1 ---' 'task: health check' 'agent: gh-check' 'inbox: 0 messages' '[00:00:01] agent started (pid 1)' '[00:00:02] hibernate: complete, exit=0, summary="Health check passed"' '[00:00:02] agent exited (code 0)' '--- CRYO END ---' > "$$TMPDIR/cryo.log"; \
-	printf '{"plan_path":"plan.md","session_number":1,"last_command":null,"pid":null,"max_retries":1,"retry_count":0,"max_session_duration":300,"watch_inbox":false,"daemon_mode":false}' > "$$TMPDIR/timer.json"; \
-	$(CURDIR)/target/debug/cryo-gh push; \
-	RC=$$?; \
-	if [ $$RC -ne 0 ]; then \
-		echo "   FAIL: could not post comment"; \
-		rm -rf "$$TMPDIR"; \
-		exit 1; \
-	fi; \
-	echo "   OK: comment posted"; \
-	rm -rf "$$TMPDIR"; \
-	echo ""; \
-	echo "=== GitHub sync check passed ==="
 
 # Verify OS service install/uninstall lifecycle (launchd on macOS, systemd on Linux)
 # This test installs a real service, verifies it runs, cancels it, and cleans up.

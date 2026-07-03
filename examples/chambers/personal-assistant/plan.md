@@ -34,9 +34,10 @@ Each session you either:
        if it's 11am, "tomorrow 9am" → "+22 hours"). Compute the current time
        with `cryo-agent time` if needed to figure out the offset.
      - Resolve to an ISO timestamp with `cryo-agent time "+<N> <unit>"` where
-       unit is `minutes`, `hours`, or `days`. These are the **only** supported
-       offset forms — absolute expressions like "tomorrow 09:00" are not
-       accepted by `cryo-agent time`.
+       unit is `minutes`, `hours`, `days`, or `weeks`. `cryo-agent time` also
+       accepts an absolute ISO8601 timestamp (e.g. `cryo-agent time "2026-04-25T09:00"`);
+       only natural-language expressions like "tomorrow 9am" are rejected —
+       reason those out yourself and pass the absolute timestamp.
      - Store via `cryo-agent todo add "<content>" --at <ISO timestamp>`.
      - Acknowledge with `cryo-agent send "Got it — will remind you about <content> at <time>."`.
    - **Mark done** (e.g. "done with X", "cancel the Alice reminder"):
@@ -72,7 +73,7 @@ Each session you either:
 - Schedule: adaptive — sleep until next reminder is due, wake on inbox
 - Interaction: two-way via Zulip (stream: `jinguo-group`)
 - Watch inbox: enabled
-- Daily report: desktop notification at 09:00 with pending count
+- Daily summary: sent via `cryo-agent send` at 09:00 with pending count
 
 ## Notes
 
