@@ -49,6 +49,88 @@ pub fn parse_wake_time(input: &str) -> std::result::Result<NaiveDateTime, chrono
     Err(last_error.expect("wake time input format list must not be empty"))
 }
 
+/// User-facing description of the wake-time input grammar shared by
+/// `cryo-agent time` and `cryo-agent todo add --at`.
+pub fn wake_input_usage_error(got: &str) -> String {
+    format!(
+        "unrecognized time expression {got:?}.\n\
+         Accepted forms:\n  \
+           +30 minutes            # relative offset (minutes|hours|days|weeks)\n  \
+           2026-04-25T10:00       # absolute ISO8601 (also with :SS, a space\n  \
+                                  # separator, or date-only = midnight)\n\
+         Run `cryo-agent time` for the current time. For natural expressions like\n\
+         \"tomorrow 9am\", compute the absolute timestamp yourself and pass it directly."
+    )
+}
+
+/// Normalize any accepted wake-time input to the canonical `%Y-%m-%dT%H:%M`
+/// form: a relative offset resolved against `now`, or an absolute ISO8601
+/// timestamp. Anything else fails with the accepted-forms usage error.
+pub fn normalize_wake_input(input: &str, now: NaiveDateTime) -> anyhow::Result<String> {
+    let s = input.trim();
+    if looks_like_iso_date(s) {
+        return parse_iso_timestamp(s);
+    }
+    let offset = parse_relative_offset(s)?;
+    Ok((now + offset).format(WAKE_TIME_FMT).to_string())
+}
+
+/// Heuristic: input starts with `YYYY-MM-DD` → try ISO8601.
+fn looks_like_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 10
+        && b[0..4].iter().all(|c| c.is_ascii_digit())
+        && b[4] == b'-'
+        && b[5..7].iter().all(|c| c.is_ascii_digit())
+        && b[7] == b'-'
+        && b[8..10].iter().all(|c| c.is_ascii_digit())
+}
+
+/// Parse an ISO8601-ish absolute timestamp and return it normalized to `%Y-%m-%dT%H:%M`.
+pub fn parse_iso_timestamp(s: &str) -> anyhow::Result<String> {
+    let dt_formats = [
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+    ];
+    for fmt in &dt_formats {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(s, fmt) {
+            return Ok(dt.format(WAKE_TIME_FMT).to_string());
+        }
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let dt = date.and_hms_opt(0, 0, 0).unwrap();
+        return Ok(dt.format(WAKE_TIME_FMT).to_string());
+    }
+    anyhow::bail!("{}", wake_input_usage_error(s))
+}
+
+/// Parse "+N minutes|hours|days|weeks" (the `+` is optional).
+pub fn parse_relative_offset(s: &str) -> anyhow::Result<chrono::Duration> {
+    let rel = s.trim_start_matches('+');
+    let parts: Vec<&str> = rel.splitn(2, ' ').collect();
+    if parts.len() != 2 {
+        anyhow::bail!("{}", wake_input_usage_error(s));
+    }
+    let n: i64 = parts[0]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{}", wake_input_usage_error(s)))?;
+    // Reject negative offsets: a past `at` time becomes an immediately-due TODO
+    // (spurious instant wake). Only non-negative relative offsets are accepted.
+    if n < 0 {
+        anyhow::bail!("{}", wake_input_usage_error(s));
+    }
+    let unit = parts[1].trim_end_matches('s');
+    match unit {
+        "minute" | "min" => Ok(chrono::Duration::minutes(n)),
+        "hour" | "hr" => Ok(chrono::Duration::hours(n)),
+        "day" => Ok(chrono::Duration::days(n)),
+        "week" => Ok(chrono::Duration::weeks(n)),
+        _ => anyhow::bail!("{}", wake_input_usage_error(s)),
+    }
+}
+
 impl TodoFile {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {

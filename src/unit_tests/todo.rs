@@ -324,3 +324,75 @@ fn test_todo_file_reschedule_claimed_after_crash_marks_claimed_done_and_adds_ret
     assert!(!items[1].done);
     assert!(!items[1].claimed);
 }
+
+fn grammar_now() -> chrono::NaiveDateTime {
+    chrono::NaiveDate::from_ymd_opt(2026, 7, 8)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+}
+
+#[test]
+fn normalize_relative_offset_resolves_against_now() {
+    assert_eq!(
+        normalize_wake_input("+30 minutes", grammar_now()).unwrap(),
+        "2026-07-08T12:30"
+    );
+    assert_eq!(
+        normalize_wake_input("2 hours", grammar_now()).unwrap(),
+        "2026-07-08T14:00"
+    );
+}
+
+#[test]
+fn normalize_iso_minute_is_passthrough() {
+    assert_eq!(
+        normalize_wake_input("2026-08-01T09:15", grammar_now()).unwrap(),
+        "2026-08-01T09:15"
+    );
+}
+
+#[test]
+fn normalize_iso_seconds_truncates_to_minute() {
+    assert_eq!(
+        normalize_wake_input("2026-08-01T09:15:59", grammar_now()).unwrap(),
+        "2026-08-01T09:15"
+    );
+}
+
+#[test]
+fn normalize_iso_space_separator_accepted() {
+    assert_eq!(
+        normalize_wake_input("2026-08-01 09:15", grammar_now()).unwrap(),
+        "2026-08-01T09:15"
+    );
+}
+
+#[test]
+fn normalize_date_only_means_midnight() {
+    assert_eq!(
+        normalize_wake_input("2026-08-01", grammar_now()).unwrap(),
+        "2026-08-01T00:00"
+    );
+}
+
+#[test]
+fn normalize_rejects_tz_offset_with_usage_error() {
+    let err = normalize_wake_input("2026-08-01T09:15+08:00", grammar_now())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Accepted forms"), "got: {err}");
+}
+
+#[test]
+fn normalize_rejects_negative_offset() {
+    assert!(normalize_wake_input("-5 minutes", grammar_now()).is_err());
+}
+
+#[test]
+fn normalize_rejects_natural_language() {
+    let err = normalize_wake_input("tomorrow 9am", grammar_now())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Accepted forms"), "got: {err}");
+}
