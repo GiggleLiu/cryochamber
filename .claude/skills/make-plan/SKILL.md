@@ -226,15 +226,9 @@ If the machine was suspended and the agent wakes 5+ minutes late, how should it 
 ### Q10. Notification & sync channel
 
 How should the agent communicate with the user?
-- **Zulip** (recommended) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval. **Before Phase 3:** the bot (whoever owns the API key in the zuliprc) must be subscribed to the target stream; otherwise `cryo-zulip init` fails when resolving the stream. Remind the user to add the bot in Zulip's stream settings.
-- **Hub (Web UI) only** — simplest, browser via `cryohub start`. Cryohub is global and registry-backed; it can be started from any directory and shows chambers created in the UI or registered by `cryo start`. Host, port, and dashboard-created chamber root are in `~/.config/cryo/cryohub.toml` (or `$XDG_CONFIG_HOME/cryo/cryohub.toml`), with defaults `127.0.0.1:8765` and `~/.cryo/chambers`. For project-owned chamber collections, set `chamber_root` to `<project>/.cryo/chambers`. For remote access use `cryohub start --host 0.0.0.0`; if 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user.
+- **Hub (Web UI)** (recommended, default) — browser via `cryohub start`. Cryohub is global and registry-backed; it can be started from any directory and shows chambers created in the UI or registered by `cryo start`. Host, port, and dashboard-created chamber root are in `~/.config/cryo/cryohub.toml` (or `$XDG_CONFIG_HOME/cryo/cryohub.toml`), with defaults `127.0.0.1:8765` and `~/.cryo/chambers`. For project-owned chamber collections, set `chamber_root` to `<project>/.cryo/chambers`. For remote access use `cryohub start --host 0.0.0.0`; if 8765 is taken, pick a free port (check with `ss -tlnp | grep :8765`) and confirm with the user.
+- **Zulip** (advanced) — rich web UI, bot support, persistent history. Walk through: zuliprc path, stream name, sync interval. **Before Phase 3:** the bot (whoever owns the API key in the zuliprc) must be subscribed to the target stream; otherwise `cryo-zulip init` fails when resolving the stream. Remind the user to add the bot in Zulip's stream settings.
 - **None** — agent runs silently, check logs manually.
-
-### Q11. Periodic reports
-
-Want daily/hourly health summaries written to `messages/outbox/` (delivered via any configured sync channel)?
-- If yes: set `report_time` (e.g. "09:00") and `report_interval` (hours, e.g. 24 for daily).
-- If no: skip (disabled by default).
 
 ### Output
 
@@ -266,9 +260,7 @@ everything maps directly.
 | AI agent (Q7) | `agent` |
 | Provider env (Q7) | `[provider]` with `name` and `env = { ... }` map |
 | Agent permissions (Q8) | Not a `cryo.toml` field. Record in `plan.md`; configure in the agent's own permission config (for OpenCode, `opencode.json` or user config). |
-| Sync channel (Q10) — Zulip | `zulip_poll_interval` (init itself is a separate `cryo-zulip init` in Phase 3) |
-| Sync channel (Q10) — Hub (Web UI) | Host, port, and dashboard-created chamber root live in `cryohub.toml`; nothing goes in per-chamber `cryo.toml`. |
-| Reports (Q11) | `report_time`, `report_interval` |
+| Sync channel (Q10) — Hub (Web UI) (recommended) | Host, port, and dashboard-created chamber root live in `cryohub.toml`; nothing goes in per-chamber `cryo.toml`. |
 
 Process:
 1. Generate `config_path(project_dir)` with values filled in and commented explanations
@@ -378,5 +370,4 @@ digraph cryo_create {
 | Passing natural language to `cryo-agent time` (e.g. `"tomorrow 9am"`) | Only `+N minutes\|hours\|days\|weeks` and ISO8601 (`2026-04-25T10:00`) are accepted. Agent must reason about NL expressions itself. |
 | Appending to `NOTES.md` for time-scheduled items | Use `todo add "..." --at <ISO>` for anything with a deadline; `NOTES.md` is for auxiliary state without a deadline. |
 | Missing hibernation in plan — treated as crash | Every task path must end with `cryo-agent hibernate` |
-| Zulip bot not subscribed to target stream | `cryo-zulip init` fails to resolve — add the bot in Zulip's stream settings first |
 | Provider env vars not set | Validate in Phase 3 before starting |
