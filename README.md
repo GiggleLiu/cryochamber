@@ -18,6 +18,9 @@ The goal is to automate long-running activities that are too irregular for cron.
 ## Quick start
 
 Install Cryochamber:
+
+> **Platform support:** macOS and Linux only. Windows is not supported — the daemon relies on Unix domain sockets, POSIX signals, and launchd/systemd services (see issue #27).
+
 ```bash
 cargo install cryochamber
 ```

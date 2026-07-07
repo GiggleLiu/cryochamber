@@ -643,7 +643,9 @@ impl Daemon {
             }
             DaemonRequest::Todo(todo_request) => {
                 let mut effects = FileTodoEffects::new(&self.dir);
-                let response = handle_todo_request(todo_request, &mut effects).into_response();
+                let response =
+                    handle_todo_request(todo_request, &mut effects, self.clock.local_now())
+                        .into_response();
                 let _ = responder.respond(&response);
             }
             // Reading the inbox is only valid inside an active session, which
@@ -1120,7 +1122,7 @@ impl Daemon {
                     ok,
                     message,
                     log_event,
-                } = handle_todo_request(todo_request, effects);
+                } = handle_todo_request(todo_request, effects, self.clock.local_now());
                 if let Some(event) = log_event {
                     state.logger.log_event(&event)?;
                 }

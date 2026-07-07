@@ -7,6 +7,13 @@ use crate::socket::DialogFilter;
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
 
+fn request_now() -> chrono::NaiveDateTime {
+    chrono::NaiveDate::from_ymd_opt(2026, 7, 8)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+}
+
 fn msg(from: &str, body: &str, day: u32, hour: u32) -> Message {
     Message {
         from: from.to_string(),
@@ -90,6 +97,7 @@ fn todo_add_rejects_unparseable_at_without_adding() {
             at: "tomorrow 9am".to_string(),
         },
         &mut fake,
+        request_now(),
     );
     assert!(!out.ok, "an unparseable at must be rejected");
     assert!(out.message.contains("not a valid scheduled time"));
@@ -110,6 +118,7 @@ fn todo_add_rejects_empty_at() {
             at: String::new(),
         },
         &mut fake,
+        request_now(),
     );
     assert!(!out.ok, "empty at must be rejected");
     assert!(fake.added.is_empty());
@@ -124,12 +133,65 @@ fn todo_add_accepts_valid_at() {
             at: "2026-04-25T10:00".to_string(),
         },
         &mut fake,
+        request_now(),
     );
     assert!(out.ok);
     assert_eq!(
         fake.added,
         vec![("task".to_string(), "2026-04-25T10:00".to_string())]
     );
+}
+
+#[test]
+fn todo_add_normalizes_relative_offset_against_now() {
+    let mut fake = FakeTodos::default();
+    let out = handle_todo_request(
+        TodoRequest::Add {
+            text: "water the plants".to_string(),
+            at: "+30 minutes".to_string(),
+        },
+        &mut fake,
+        request_now(),
+    );
+    assert!(out.ok, "relative offsets must be accepted: {out:?}");
+    assert_eq!(
+        fake.added,
+        vec![(
+            "water the plants".to_string(),
+            "2026-07-08T12:30".to_string()
+        )]
+    );
+}
+
+#[test]
+fn todo_add_normalizes_seconds_to_canonical_minute() {
+    let mut fake = FakeTodos::default();
+    let out = handle_todo_request(
+        TodoRequest::Add {
+            text: "brief".to_string(),
+            at: "2026-08-01T09:15:59".to_string(),
+        },
+        &mut fake,
+        request_now(),
+    );
+    assert!(out.ok);
+    assert_eq!(fake.added[0].1, "2026-08-01T09:15");
+}
+
+#[test]
+fn todo_add_rejects_tz_offset_loudly() {
+    let mut fake = FakeTodos::default();
+    let out = handle_todo_request(
+        TodoRequest::Add {
+            text: "daily brief".to_string(),
+            at: "2026-05-12T07:30+08:00".to_string(),
+        },
+        &mut fake,
+        request_now(),
+    );
+    assert!(!out.ok, "a TZ-offset at must be rejected");
+    assert!(out.message.contains("not a valid scheduled time"));
+    assert!(fake.added.is_empty());
 }
 
 #[test]

@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::Path;
 
 use cryochamber::socket::Request;
+use cryochamber::todo::normalize_wake_input;
 
 #[derive(Parser)]
 #[command(name = "cryo-agent", about = "Cryochamber agent IPC commands", version)]
@@ -47,8 +48,10 @@ enum Commands {
     Dialog(DialogArgs),
     /// Print current time, compute a future time, or validate an ISO8601 timestamp
     Time {
-        /// Input: "+N minutes|hours|days|weeks" (relative offset)
-        /// or an absolute ISO8601 timestamp like "2026-04-25T10:00"
+        /// Input: "+N minutes|hours|days|weeks" (relative offset) or an
+        /// absolute ISO8601 timestamp like "2026-04-25T10:00" (also accepts
+        /// :SS, a space separator, or date-only = midnight). Any other form
+        /// (timezone offsets, natural language) is rejected.
         offset: Option<String>,
     },
     /// Manage TODO items across sessions
@@ -77,7 +80,10 @@ enum TodoAction {
     Add {
         /// Task description
         text: String,
-        /// Scheduled time (ISO8601) — required
+        /// Wake time. Accepted forms: "+30 minutes" (relative, units:
+        /// minutes|hours|days|weeks), "2026-04-25T10:00" (ISO8601; also
+        /// accepts :SS, a space separator, or date-only = midnight).
+        /// Anything else is rejected with the list of accepted forms.
         #[arg(long)]
         at: String,
     },
@@ -178,99 +184,28 @@ fn dialog_filter_from_args(args: DialogArgs) -> Result<cryochamber::socket::Dial
 }
 
 fn cmd_time(offset: Option<&str>) -> Result<()> {
-    use chrono::Local;
-
-    let now = Local::now();
-
+    let now = chrono::Local::now().naive_local();
     let formatted = match offset {
         None => now.format("%Y-%m-%dT%H:%M").to_string(),
-        Some(s) => {
-            let s = s.trim();
-            if looks_like_iso_date(s) {
-                parse_iso_timestamp(s)?
-            } else {
-                let dt = now + parse_relative_offset(s)?;
-                dt.format("%Y-%m-%dT%H:%M").to_string()
-            }
-        }
+        Some(s) => normalize_wake_input(s, now)?,
     };
-
     println!("{formatted}");
     Ok(())
 }
 
-/// Accepted forms for `cryo-agent time` input, as a user-facing error body.
-fn time_usage_error(got: &str) -> String {
-    format!(
-        "unrecognized time expression {got:?}.\n\
-         Accepted forms:\n  \
-           (no argument)          # current time\n  \
-           +30 minutes            # relative offset (minutes|hours|days|weeks)\n  \
-           2026-04-25T10:00       # absolute ISO8601\n\
-         For natural expressions like \"tomorrow 9am\", compute the absolute\n\
-         timestamp yourself from the current time and pass it directly."
-    )
-}
-
-/// Heuristic: input starts with `YYYY-MM-DD` → try ISO8601.
-fn looks_like_iso_date(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() >= 10
-        && b[0..4].iter().all(|c| c.is_ascii_digit())
-        && b[4] == b'-'
-        && b[5..7].iter().all(|c| c.is_ascii_digit())
-        && b[7] == b'-'
-        && b[8..10].iter().all(|c| c.is_ascii_digit())
-}
-
-/// Parse an ISO8601-ish absolute timestamp and return it normalized to `%Y-%m-%dT%H:%M`.
-fn parse_iso_timestamp(s: &str) -> Result<String> {
-    let dt_formats = [
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d %H:%M:%S",
-    ];
-    for fmt in &dt_formats {
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-            return Ok(dt.format("%Y-%m-%dT%H:%M").to_string());
-        }
-    }
-    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let dt = date.and_hms_opt(0, 0, 0).unwrap();
-        return Ok(dt.format("%Y-%m-%dT%H:%M").to_string());
-    }
-    anyhow::bail!("{}", time_usage_error(s))
-}
-
-/// Parse "+N minutes|hours|days|weeks" (the `+` is optional).
-fn parse_relative_offset(s: &str) -> Result<chrono::Duration> {
-    let rel = s.trim_start_matches('+');
-    let parts: Vec<&str> = rel.splitn(2, ' ').collect();
-    if parts.len() != 2 {
-        anyhow::bail!("{}", time_usage_error(s));
-    }
-    let n: i64 = parts[0]
-        .parse()
-        .map_err(|_| anyhow::anyhow!("{}", time_usage_error(s)))?;
-    // Reject negative offsets: a past `at` time becomes an immediately-due TODO
-    // (spurious instant wake). Only non-negative relative offsets are accepted.
-    if n < 0 {
-        anyhow::bail!("{}", time_usage_error(s));
-    }
-    let unit = parts[1].trim_end_matches('s');
-    match unit {
-        "minute" | "min" => Ok(chrono::Duration::minutes(n)),
-        "hour" | "hr" => Ok(chrono::Duration::hours(n)),
-        "day" => Ok(chrono::Duration::days(n)),
-        "week" => Ok(chrono::Duration::weeks(n)),
-        _ => anyhow::bail!("{}", time_usage_error(s)),
-    }
+/// Resolve and validate a `--at` argument to the canonical wake-time form
+/// before any IPC roundtrip, so a bad value fails loudly at the CLI.
+fn resolve_at_arg(at: &str) -> Result<String> {
+    normalize_wake_input(at, chrono::Local::now().naive_local())
+        .map_err(|e| anyhow::anyhow!("invalid --at value: {e}"))
 }
 
 fn cmd_todo(dir: &Path, action: TodoAction) -> Result<()> {
     match action {
-        TodoAction::Add { text, at } => send(dir, &Request::TodoAdd { text, at }),
+        TodoAction::Add { text, at } => {
+            let at = resolve_at_arg(&at)?;
+            send(dir, &Request::TodoAdd { text, at })
+        }
         TodoAction::List => send(dir, &Request::TodoList),
         TodoAction::Done { id } => send(dir, &Request::TodoDone { id }),
         TodoAction::Remove { id } => send(dir, &Request::TodoRemove { id }),

@@ -280,3 +280,45 @@ fn test_build_command_claude_p_flag_is_idempotent() {
     assert_eq!(args.iter().filter(|arg| arg.as_str() == "-p").count(), 1);
     assert_eq!(args.last().map(String::as_str), Some("test prompt"));
 }
+
+/// #48: everything that is byte-stable across wakes (the protocol body and
+/// the per-chamber task) must precede all per-session variables, so LLM
+/// prefix caches can reuse it. Guard the invariant by asserting the common
+/// byte prefix of two maximally-different sessions still spans the protocol
+/// and task sections.
+#[test]
+fn prompt_static_prefix_precedes_all_per_session_variables() {
+    let task = "Watch the CI dashboard and report failures.";
+    let a = cryochamber::agent::build_prompt(&cryochamber::agent::AgentConfig {
+        session_number: 1,
+        task: task.to_string(),
+        delayed_wake: None,
+        todo_list: "No todos.".to_string(),
+        inbox_waiting: false,
+        inbox_sources: vec![],
+    });
+    let b = cryochamber::agent::build_prompt(&cryochamber::agent::AgentConfig {
+        session_number: 42,
+        task: task.to_string(),
+        delayed_wake: Some("The machine was suspended.".to_string()),
+        todo_list: "1. [ ] check CI (at: 2026-07-09T09:00)".to_string(),
+        inbox_waiting: true,
+        inbox_sources: vec!["messages/inbox".to_string()],
+    });
+
+    let common: usize = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+    let common_str = &a[..common];
+
+    assert!(
+        common_str.contains("## Cryochamber Protocol"),
+        "protocol heading must be in the shared prefix (common = {common} bytes)"
+    );
+    assert!(
+        common_str.contains(task),
+        "the per-chamber task must be in the shared prefix (common = {common} bytes)"
+    );
+    assert!(
+        common >= 4000,
+        "shared prefix must span the protocol body, got {common} bytes"
+    );
+}

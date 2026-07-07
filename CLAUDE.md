@@ -3,6 +3,8 @@
 Developer guidance for Claude Code (claude.ai/code) when working on this repository.
 For project overview and usage, see `README.md`.
 
+> **Scope note:** Most of this document's normative content is duplicated where its real audiences can see it: `templates/protocol.md` (for in-chamber agents — injected into every wake prompt) and `docs/src/explanation/` (for end users). What lives only here is maintainer-facing design rationale — *why* a rule exists, not *how* to follow it. When changing an operational contract, land the change in those user-visible surfaces first, then mirror it here.
+
 ## Build & Test
 
 ```bash

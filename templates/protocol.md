@@ -12,13 +12,14 @@ Execute these steps in order. **Do not skip or reorder steps.**
 
 ### Step 1: Orient
 
-The wake prompt carries session-dynamic context (`## Current Time`, `## Task`, `## TODO List`, `## Inbox`, and after a delayed wake `## System Notice`) — don't re-fetch what's already there. Claimed `[~]` TODOs are the ones that triggered this wake. A header ending in `(use <cmd> to get full text)` means the content was truncated — run the named command.
+The wake prompt carries your per-chamber and per-session context (`## Task`, `## Session`, `## Current Time`, `## TODO List`, `## Inbox`, and after a delayed wake `## System Notice`) — don't re-fetch what's already there. Claimed `[~]` TODOs are the ones that triggered this wake. A header ending in `(use <cmd> to get full text)` means the content was truncated — run the named command.
 
 Then read `plan.md` for objectives and `NOTES.md` for context from previous sessions.
 
 ### Step 2: Work
 
 - The only supported way to communicate with the human is through `cryo-agent send` (stdout/stderr are diagnostic logs, not a channel). Send at least once per session, even if it's only a status update that nothing changed.
+- Never write files into `messages/outbox/` yourself — `cryo-agent send` is the only supported way to produce an outbox message; direct writes bypass the daemon's reply bookkeeping.
 - If your outgoing message asks a question, requests a decision, asks for approval, or otherwise requires human feedback, you MUST use `cryo-agent send --question "<message>"`.
 - If the message is multi-line or contains shell-sensitive text (quotes, `$`, or backticks), do not put the body in a shell-quoted argument. Use `--stdin` with a single-quoted literal heredoc so the shell cannot expand the content. Stdin is sent exactly, including the final newline before `EOF`:
 
@@ -68,7 +69,13 @@ Add a TODO only when no existing one represents the correct next wake:
 cryo-agent todo add "<what to do next>" --at <TIME>
 ```
 
-Compute `<TIME>` via `cryo-agent time` — never invent a wall-clock string.
+`--at` accepts these forms — anything else (timezone offsets, natural language) is rejected with this list:
+
+- `+30 minutes` — relative offset; units: `minutes|hours|days|weeks`
+- `2026-04-25T10:00` — absolute ISO8601 (seconds and a space separator are accepted and truncated to the minute)
+- `2026-04-25` — date-only, meaning midnight
+
+Compute absolute times via `cryo-agent time` — never invent a wall-clock string.
 
 Always perform this check, even if the next wake is "just in case the human messages." The only session that skips Step 4 is one ending with `hibernate --complete`.
 
@@ -82,7 +89,7 @@ cryo-agent hibernate --complete --summary "All tasks finished"      # plan's suc
 cryo-agent hibernate --exit 1 --summary "Failure: why to retry"     # retryable failure
 ```
 
-If you exit without calling `cryo-agent hibernate`, the daemon marks each claimed TODO done and creates a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day).
+If you exit without calling `cryo-agent hibernate`, the daemon marks each claimed TODO done and creates a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). The daemon also writes a stand-in `from: cryochamber` outbox message if you never sent a human-visible message this session — don't make the human read a crash notice instead of your words.
 
 ## Wake Time Guidelines
 
@@ -102,11 +109,11 @@ EOF
 cryo-agent send --question "what should I do?"  # Send a question (rail shows ? until human replies)
 cryo-agent receive                                               # Claim current inbox batch from human
 cryo-agent dialog [--last N | --all]                             # Render full sent+received transcript; also claims any pending inbox batch
-cryo-agent todo add "text" --at <TIME>                           # Schedule a task (--at required) — ONLY way to set next wake
+cryo-agent todo add "text" --at <TIME>                           # Schedule a task — ONLY way to set next wake; --at takes "+30 minutes", ISO8601, or date-only
 cryo-agent todo list                                             # List all TODO items
 cryo-agent todo done <id>                                        # Mark item as done
 cryo-agent todo remove <id>                                      # Remove an item
 cryo-agent time                                                  # Current time in ISO8601
-cryo-agent time "+1 day"                                         # Relative time computation
+cryo-agent time "+1 day"                                         # Relative time computation (other forms: ISO8601, date-only; anything else is rejected)
 cryo-agent hibernate [--complete|--exit N] [--summary "..."]     # End the session (no wake arg — wakes come from TODOs)
 ```
