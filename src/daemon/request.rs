@@ -338,13 +338,15 @@ pub(super) fn handle_todo_request(
             // honoured.
             let at = match crate::todo::normalize_wake_input(&at, now) {
                 Ok(canonical) => canonical,
-                Err(e) => return TodoRequestOutcome {
-                    ok: false,
-                    message: format!(
+                Err(e) => {
+                    return TodoRequestOutcome {
+                        ok: false,
+                        message: format!(
                         "todo add refused: `--at` value {at:?} is not a valid scheduled time. {e}"
                     ),
-                    log_event: None,
-                },
+                        log_event: None,
+                    }
+                }
             };
             match effects.add_todo(&text, &at) {
                 Ok(id) => TodoRequestOutcome {
