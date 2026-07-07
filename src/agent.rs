@@ -155,11 +155,12 @@ pub fn build_prompt(config: &AgentConfig) -> String {
         String::new()
     };
 
+    // Static-first ordering (issue #48): the byte-stable protocol body and
+    // the per-chamber task precede every per-session variable so LLM prefix
+    // caches can reuse them across wakes.
     format!(
         r#"# Cryochamber Session
 
-Session number: {session_number}
-{delayed}
 Read plan.md before starting. Follow this embedded cryochamber protocol; it is
 the source of truth for tool usage.
 
@@ -167,13 +168,17 @@ the source of truth for tool usage.
 
 {protocol}
 
-## Current Time (no need to call `cryo-agent time` again)
-
-{current_time}
-
 ## Task
 
 {task}
+
+## Session
+
+Session number: {session_number}
+{delayed}
+## Current Time (no need to call `cryo-agent time` again)
+
+{current_time}
 
 ## TODO List ({todo_hint})
 
@@ -181,10 +186,12 @@ the source of truth for tool usage.
 
 {inbox_notice}
 "#,
-        session_number = config.session_number,
-        delayed = delayed_section,
         protocol = protocol,
         task = config.task,
+        session_number = config.session_number,
+        delayed = delayed_section,
+        current_time = current_time,
+        todo_hint = todo_hint,
         todo_content = todo.content,
         inbox_notice = inbox_notice,
     )
