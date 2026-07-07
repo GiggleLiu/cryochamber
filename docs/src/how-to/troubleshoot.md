@@ -83,3 +83,7 @@ Common causes:
 - The agent does not understand the `cryo-agent` protocol; check the session prompt in `cryo-agent.log`.
 
 **Break the cycle.** Remove the retry TODO with `cryo-agent todo remove <id>`, or edit `todo.json`, fix the underlying issue, then add a fresh TODO.
+
+## Windows
+
+Cryochamber does not run on Windows. The daemon's IPC uses Unix domain sockets, wake signalling uses POSIX signals (SIGUSR1), and reboot persistence uses launchd (macOS) or systemd (Linux). Use WSL2 if you need Cryochamber on a Windows machine.
