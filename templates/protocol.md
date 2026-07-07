@@ -12,7 +12,7 @@ Execute these steps in order. **Do not skip or reorder steps.**
 
 ### Step 1: Orient
 
-The wake prompt carries session-dynamic context (`## Current Time`, `## Task`, `## TODO List`, `## Inbox`, and after a delayed wake `## System Notice`) — don't re-fetch what's already there. Claimed `[~]` TODOs are the ones that triggered this wake. A header ending in `(use <cmd> to get full text)` means the content was truncated — run the named command.
+The wake prompt carries your per-chamber and per-session context (`## Task`, `## Session`, `## Current Time`, `## TODO List`, `## Inbox`, and after a delayed wake `## System Notice`) — don't re-fetch what's already there. Claimed `[~]` TODOs are the ones that triggered this wake. A header ending in `(use <cmd> to get full text)` means the content was truncated — run the named command.
 
 Then read `plan.md` for objectives and `NOTES.md` for context from previous sessions.
 
@@ -69,7 +69,7 @@ Add a TODO only when no existing one represents the correct next wake:
 cryo-agent todo add "<what to do next>" --at <TIME>
 ```
 
-`--at` accepts exactly these forms — anything else (timezone offsets, natural language) is rejected with this list:
+`--at` accepts these forms — anything else (timezone offsets, natural language) is rejected with this list:
 
 - `+30 minutes` — relative offset; units: `minutes|hours|days|weeks`
 - `2026-04-25T10:00` — absolute ISO8601 (seconds and a space separator are accepted and truncated to the minute)

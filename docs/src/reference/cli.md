@@ -43,7 +43,7 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 | `cryo-agent hibernate --summary "..."` | End the session; more work remains. |
 | `cryo-agent hibernate --complete` | End the session; the plan is done. |
 | `cryo-agent hibernate --exit 1` | Report a failed session. The daemon marks consumed TODOs done and adds a fresh numbered retry TODO. |
-| `cryo-agent todo add "text" --at <TIME>` | Schedule the next wake via a TODO. |
+| `cryo-agent todo add "text" --at <TIME>` | Schedule the next wake via a TODO. `--at` accepts a relative offset (`+30 minutes`), an ISO 8601 timestamp (`2026-04-25T10:00`; seconds and a space separator are tolerated), or a date only (`2026-04-25`, meaning midnight). |
 | `cryo-agent todo list` | List all TODO items. |
 | `cryo-agent todo done <id>` | Mark a TODO item as done. |
 | `cryo-agent todo remove <id>` | Remove a TODO item. |
