@@ -112,6 +112,7 @@ fn status_reads_plan_and_config_from_disk() {
         status.config_content,
         "agent = \"claude\"\nwatch_dirs = [\"messages/inbox\"]\n"
     );
+    assert!(status.has_config);
     assert!(status.plan_html.contains("<h2>Plan</h2>"));
     assert!(status.plan_html.contains("<li>wake</li>"));
 }
@@ -139,6 +140,7 @@ fn status_plan_and_config_empty_when_files_missing() {
     assert!(status.notes_content.is_empty());
     assert!(status.notes_html.is_empty());
     assert!(status.config_content.is_empty());
+    assert!(!status.has_config);
 }
 
 #[test]

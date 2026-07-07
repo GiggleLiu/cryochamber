@@ -22,6 +22,18 @@ pub const README_TEMPLATE: &str = include_str!("../templates/README.md");
 /// Source: templates/notes.md
 pub const NOTES_TEMPLATE: &str = include_str!("../templates/notes.md");
 
+/// `.gitignore` written by `cryo init` if none exists. The critical entry is
+/// `.cryo/`, which holds sync credentials (`.cryo/zuliprc`) and the IPC socket
+/// and must never be committed; the rest are per-chamber runtime artifacts.
+pub const GITIGNORE_CONTENT: &str = "\
+# Cryochamber runtime state and credentials (never commit)
+.cryo/
+timer.json
+todo.json
+messages/
+*.log
+";
+
 /// Outcome of `scaffold_chamber`. Each `*_created` field is true if the file
 /// was newly created, false if it already existed and was kept untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,11 +42,12 @@ pub struct ScaffoldReport {
     pub plan_created: bool,
     pub readme_created: bool,
     pub notes_created: bool,
+    pub gitignore_created: bool,
 }
 
 /// Scaffold a fresh chamber under `dir` for the given `agent_cmd`. Creates
-/// `cryo.toml`, `plan.md`, `README.md`, `NOTES.md`, and ensures the
-/// `messages/` directory tree.
+/// `cryo.toml`, `plan.md`, `README.md`, `NOTES.md`, `.gitignore`, and ensures
+/// the `messages/` directory tree.
 /// Each file is no-clobber: existing files are kept and reported as
 /// `*_created: false`. Used by both `cryo init` and the hub's
 /// `POST /api/chambers/new` route so the two paths stay in lockstep.
@@ -43,12 +56,14 @@ pub fn scaffold_chamber(dir: &Path, agent_cmd: &str) -> Result<ScaffoldReport> {
     let plan_created = write_template_plan(dir)?;
     let readme_created = write_readme(dir)?;
     let notes_created = write_notes_file(dir)?;
+    let gitignore_created = write_gitignore(dir)?;
     crate::channel::store::MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
     Ok(ScaffoldReport {
         cryo_toml_created,
         plan_created,
         readme_created,
         notes_created,
+        gitignore_created,
     })
 }
 
@@ -82,6 +97,15 @@ pub fn write_readme(dir: &Path) -> Result<bool> {
 pub fn write_notes_file(dir: &Path) -> Result<bool> {
     let path = dir.join("NOTES.md");
     write_file_if_missing(&path, NOTES_TEMPLATE)
+}
+
+/// Write `.gitignore` if none exists. Returns true if written. Keeps the
+/// credential/socket dir `.cryo/` out of git along with other runtime state.
+/// No-clobber: a hand-authored `.gitignore` is kept untouched (`cryo-zulip
+/// init` separately ensures `.cryo/` is present in that case).
+pub fn write_gitignore(dir: &Path) -> Result<bool> {
+    let path = dir.join(".gitignore");
+    write_file_if_missing(&path, GITIGNORE_CONTENT)
 }
 
 fn write_file_if_missing(path: &Path, content: &str) -> Result<bool> {

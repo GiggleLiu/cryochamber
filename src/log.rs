@@ -18,6 +18,27 @@ pub fn agent_log_path(dir: &Path) -> PathBuf {
 pub const SESSION_START: &str = "--- CRYO SESSION";
 pub const SESSION_END: &str = "--- CRYO END ---";
 
+/// Byte offsets where `marker` begins at the start of a line (offset 0 or right
+/// after a `\n`). Session delimiters are only honored line-anchored, so injected
+/// text that merely contains a marker mid-line cannot forge a session block.
+/// This is defense-in-depth for logs that may predate event sanitization.
+fn line_anchored_indices(contents: &str, marker: &str) -> Vec<usize> {
+    contents
+        .match_indices(marker)
+        .filter(|&(i, _)| i == 0 || contents.as_bytes()[i - 1] == b'\n')
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Collapse CR/LF in agent- or message-supplied text so a logged event is
+/// always exactly one physical line. Without this, multi-line text (e.g. from
+/// `cryo-agent send --stdin`) could plant `--- CRYO SESSION/END ---`, `task:`,
+/// or `hibernate:` lines and forge session blocks or rewrite the next session's
+/// task. The `⏎` glyph keeps the original line breaks visible in the log.
+fn sanitize_event(text: &str) -> String {
+    text.replace("\r\n", "⏎").replace(['\r', '\n'], "⏎")
+}
+
 pub fn read_latest_session(log_path: &Path) -> Result<Option<String>> {
     if !log_path.exists() {
         return Ok(None);
@@ -28,8 +49,12 @@ pub fn read_latest_session(log_path: &Path) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    let last_start = contents.rfind(SESSION_START);
-    let last_end = contents.rfind(SESSION_END);
+    let last_start = line_anchored_indices(&contents, SESSION_START)
+        .last()
+        .copied();
+    let last_end = line_anchored_indices(&contents, SESSION_END)
+        .last()
+        .copied();
 
     match (last_start, last_end) {
         (Some(start), Some(end)) if end > start => {
@@ -52,7 +77,10 @@ pub fn read_current_session(log_path: &Path) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    match contents.rfind(SESSION_START) {
+    match line_anchored_indices(&contents, SESSION_START)
+        .last()
+        .copied()
+    {
         Some(start) => Ok(Some(contents[start..].to_string())),
         None => Ok(None),
     }
@@ -70,10 +98,7 @@ pub fn read_recent_sessions(log_path: &Path, n: usize) -> Result<Option<String>>
     if contents.trim().is_empty() {
         return Ok(None);
     }
-    let indices: Vec<usize> = contents
-        .match_indices(SESSION_START)
-        .map(|(i, _)| i)
-        .collect();
+    let indices: Vec<usize> = line_anchored_indices(&contents, SESSION_START);
     if indices.is_empty() {
         return Ok(None);
     }
@@ -86,7 +111,7 @@ pub fn session_count(log_path: &Path) -> Result<u32> {
         return Ok(0);
     }
     let contents = fs::read_to_string(log_path)?;
-    Ok(contents.matches(SESSION_START).count() as u32)
+    Ok(line_anchored_indices(&contents, SESSION_START).len() as u32)
 }
 
 /// Extract the most recent wake time from the log.
@@ -237,7 +262,7 @@ struct DailyDigestAccumulator {
     latest_session: u32,
 }
 
-/// Summarize recent session activity by the UTC date recorded in `cryo.log`.
+/// Summarize recent session activity by the local date recorded in `cryo.log`.
 /// Results are newest day first. Missing or empty logs return an empty list.
 pub fn daily_digests(log_path: &Path, max_days: usize) -> Result<Vec<DailyDigest>> {
     if max_days == 0 {
@@ -287,11 +312,8 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
     let contents = fs::read_to_string(log_path)?;
     let mut summaries = Vec::new();
 
-    // Split into session blocks by finding SESSION_START markers
-    let starts: Vec<usize> = contents
-        .match_indices(SESSION_START)
-        .map(|(i, _)| i)
-        .collect();
+    // Split into session blocks by finding line-anchored SESSION_START markers.
+    let starts: Vec<usize> = line_anchored_indices(&contents, SESSION_START);
 
     for (idx, &start) in starts.iter().enumerate() {
         let end = if idx + 1 < starts.len() {
@@ -332,7 +354,11 @@ fn parse_session_header(line: &str) -> Option<(u32, NaiveDateTime)> {
     }
     let session_number: u32 = parts[0].trim().parse().ok()?;
     let ts_str = parts[1].trim().trim_end_matches("---").trim();
-    let timestamp = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%SZ").ok()?;
+    // Session timestamps are local wall-clock time (`%Y-%m-%dT%H:%M:%S`).
+    // Tolerate the legacy UTC form (trailing `Z`) written by older versions
+    // by stripping the suffix before parsing.
+    let ts_str = ts_str.strip_suffix('Z').unwrap_or(ts_str);
+    let timestamp = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%S").ok()?;
     Some((session_number, timestamp))
 }
 
@@ -356,23 +382,25 @@ impl EventLogger {
             .append(true)
             .open(log_path)?;
 
-        let now = chrono::Utc::now();
+        let now = chrono::Local::now().naive_local();
         writeln!(
             file,
             "--- CRYO SESSION {session_number} | {} ---",
-            now.format("%Y-%m-%dT%H:%M:%SZ")
+            now.format("%Y-%m-%dT%H:%M:%S")
         )?;
-        writeln!(file, "task: {task}")?;
-        writeln!(file, "agent: {agent_cmd}")?;
+        writeln!(file, "task: {}", sanitize_event(task))?;
+        writeln!(file, "agent: {}", sanitize_event(agent_cmd))?;
 
         if inbox_filenames.is_empty() {
             writeln!(file, "inbox: 0 messages")?;
         } else {
+            let sanitized: Vec<String> =
+                inbox_filenames.iter().map(|f| sanitize_event(f)).collect();
             writeln!(
                 file,
                 "inbox: {} messages ({})",
-                inbox_filenames.len(),
-                inbox_filenames.join(", ")
+                sanitized.len(),
+                sanitized.join(", ")
             )?;
         }
 
@@ -385,8 +413,13 @@ impl EventLogger {
 
     /// Log a timestamped event.
     pub fn log_event(&mut self, event: &str) -> Result<(), anyhow::Error> {
-        let now = chrono::Utc::now();
-        writeln!(self.file, "[{}] {event}", now.format("%H:%M:%S"))?;
+        let now = chrono::Local::now().naive_local();
+        writeln!(
+            self.file,
+            "[{}] {}",
+            now.format("%H:%M:%S"),
+            sanitize_event(event)
+        )?;
         self.file.flush()?;
         Ok(())
     }

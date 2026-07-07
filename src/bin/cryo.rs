@@ -10,7 +10,7 @@ use cryochamber::message::Message;
 use cryochamber::state::{self, CryoState};
 
 #[derive(Parser)]
-#[command(name = "cryo", about = "Long-term AI agent task scheduler")]
+#[command(name = "cryo", about = "Long-term AI agent task scheduler", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -380,12 +380,9 @@ fn cmd_clean(force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Uninstall services (daemon + gh-sync)
+    // Uninstall services (daemon + zulip-sync)
     if cryochamber::service::uninstall("daemon", &dir)? {
         println!("Removed daemon service.");
-    }
-    if cryochamber::service::uninstall("gh-sync", &dir)? {
-        println!("Removed gh-sync service.");
     }
     if cryochamber::service::uninstall("zulip-sync", &dir)? {
         println!("Removed zulip-sync service.");
@@ -406,8 +403,6 @@ fn cmd_clean(force: bool) -> Result<()> {
         "timer.json",
         "cryo.log",
         "cryo-agent.log",
-        "cryo-gh-sync.log",
-        "cryo-gh-sync.pid",
         "cryo-zulip-sync.log",
         "cryo-zulip-sync.pid",
     ];
@@ -420,7 +415,7 @@ fn cmd_clean(force: bool) -> Result<()> {
     }
 
     // Remove runtime directories. Keep sync configuration such as
-    // gh-sync.json, zulip-sync.json, and .cryo/zuliprc.
+    // zulip-sync.json and .cryo/zuliprc.
     let runtime_dirs = ["messages"];
     for name in &runtime_dirs {
         let path = dir.join(name);
@@ -558,12 +553,15 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
     let store = MessageStore::new(dir.clone());
 
     let subject = subject.unwrap_or_else(|| {
-        // Truncate at a char boundary to avoid panic on non-ASCII input
-        let mut end = body.len().min(50);
-        while end > 0 && !body.is_char_boundary(end) {
+        // Default subject: first line of the body only, so a multi-line send
+        // never leaks extra text into the (single-line) subject frontmatter.
+        // Truncate at a char boundary to avoid panic on non-ASCII input.
+        let first_line = body.lines().next().unwrap_or("");
+        let mut end = first_line.len().min(50);
+        while end > 0 && !first_line.is_char_boundary(end) {
             end -= 1;
         }
-        &body[..end]
+        &first_line[..end]
     });
     let msg = build_inbox_message(from, subject, body);
     let path = store.send_in(&msg)?;

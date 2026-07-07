@@ -116,7 +116,10 @@ impl TodoFile {
                 return Ok(existing.id);
             }
             let id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-            let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let created = chrono::Local::now()
+                .naive_local()
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string();
             items.push(TodoItem {
                 id,
                 text,
@@ -215,7 +218,10 @@ impl TodoFile {
                 }
 
                 let id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let created = chrono::Local::now()
+                    .naive_local()
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string();
                 items.push(TodoItem {
                     id,
                     text: new_text,
@@ -245,6 +251,13 @@ fn load_items(path: &Path) -> Result<Vec<TodoItem>> {
     }
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
+    if content.trim().is_empty() {
+        // File exists but is empty — likely caught mid-write (truncate-then-write
+        // race). Treat as no items rather than hard-erroring, which would
+        // otherwise silently disable all scheduling and retry. Mirrors
+        // `state::load_state`.
+        return Ok(Vec::new());
+    }
     serde_json::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))
 }
 

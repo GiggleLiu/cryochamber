@@ -141,15 +141,6 @@ pub(super) struct ReceiveRequestOutcome {
     pub(super) claimed_filenames: Vec<String>,
 }
 
-impl ReceiveRequestOutcome {
-    pub(super) fn into_response(self) -> crate::socket::Response {
-        crate::socket::Response {
-            ok: self.ok,
-            message: self.message,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TodoOperationError {
     response_message: String,
@@ -254,10 +245,16 @@ impl FileTodoEffects {
     }
 }
 
+/// File-backed `MessageEffects` used only by tests that exercise the dialog /
+/// receive handlers against a real `MessageStore`. Production idle-mode inbox
+/// access is intentionally refused (see `handle_idle_request`), and the active
+/// session path uses `FsSessionEffects`, so this has no production caller.
+#[cfg(test)]
 pub(super) struct FileMessageEffects {
     store: crate::channel::store::MessageStore,
 }
 
+#[cfg(test)]
 impl FileMessageEffects {
     pub(super) fn new(dir: &Path) -> Self {
         Self {
@@ -292,6 +289,7 @@ impl TodoEffects for FileTodoEffects {
     }
 }
 
+#[cfg(test)]
 impl MessageEffects for FileMessageEffects {
     fn claim_inbox_batch(
         &mut self,
@@ -331,18 +329,36 @@ pub(super) fn handle_todo_request(
     effects: &mut impl TodoEffects,
 ) -> TodoRequestOutcome {
     match request {
-        TodoRequest::Add { text, at } => match effects.add_todo(&text, &at) {
-            Ok(id) => TodoRequestOutcome {
-                ok: true,
-                message: format!("Added todo #{id}"),
-                log_event: Some(format!("todo add: #{id} \"{text}\" at {at}")),
-            },
-            Err(e) => TodoRequestOutcome {
-                ok: false,
-                message: e.response_message,
-                log_event: None,
-            },
-        },
+        TodoRequest::Add { text, at } => {
+            // Reject an `at` that the scheduler cannot parse (including empty).
+            // Otherwise the item is accepted but `claim_due`/`next_valid_wake`
+            // skip it forever, so the TODO is never honoured.
+            if crate::todo::parse_wake_time(at.trim()).is_err() {
+                return TodoRequestOutcome {
+                    ok: false,
+                    message: format!(
+                        "todo add refused: `--at` value {at:?} is not a valid scheduled time. \
+                         Every TODO needs an absolute wake time. Accepted forms: \
+                         YYYY-MM-DDTHH:MM (optionally with :SS). Run \
+                         `cryo-agent time \"+30 minutes\"` (or pass an ISO8601 timestamp) \
+                         to compute TIME, then retry."
+                    ),
+                    log_event: None,
+                };
+            }
+            match effects.add_todo(&text, &at) {
+                Ok(id) => TodoRequestOutcome {
+                    ok: true,
+                    message: format!("Added todo #{id}"),
+                    log_event: Some(format!("todo add: #{id} \"{text}\" at {at}")),
+                },
+                Err(e) => TodoRequestOutcome {
+                    ok: false,
+                    message: e.response_message,
+                    log_event: None,
+                },
+            }
+        }
         TodoRequest::Done { id } => match effects.done_todo(id) {
             Ok(()) => TodoRequestOutcome {
                 ok: true,
@@ -430,15 +446,6 @@ pub(super) struct DialogRequestOutcome {
     pub(super) message: String,
     pub(super) log_event: Option<String>,
     pub(super) claimed_filenames: Vec<String>,
-}
-
-impl DialogRequestOutcome {
-    pub(super) fn into_response(self) -> crate::socket::Response {
-        crate::socket::Response {
-            ok: self.ok,
-            message: self.message,
-        }
-    }
 }
 
 pub(super) fn handle_dialog_request(

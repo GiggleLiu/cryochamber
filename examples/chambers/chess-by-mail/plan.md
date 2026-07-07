@@ -6,7 +6,7 @@ Play a correspondence chess game against a human opponent. Maintain the board st
 
 ## Closing ritual — every session
 
-Every session of this plan must send an outbox message, then end with the standard scheduling ritual (see `CLAUDE.md` / `AGENTS.md`):
+Every session of this plan must send an outbox message, then end with the standard scheduling ritual (see the protocol section of your prompt):
 
 ```
 cryo-agent send "<board, move, or status update>"

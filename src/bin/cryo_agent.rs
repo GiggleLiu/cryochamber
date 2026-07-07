@@ -7,7 +7,7 @@ use std::path::Path;
 use cryochamber::socket::Request;
 
 #[derive(Parser)]
-#[command(name = "cryo-agent", about = "Cryochamber agent IPC commands")]
+#[command(name = "cryo-agent", about = "Cryochamber agent IPC commands", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -253,6 +253,11 @@ fn parse_relative_offset(s: &str) -> Result<chrono::Duration> {
     let n: i64 = parts[0]
         .parse()
         .map_err(|_| anyhow::anyhow!("{}", time_usage_error(s)))?;
+    // Reject negative offsets: a past `at` time becomes an immediately-due TODO
+    // (spurious instant wake). Only non-negative relative offsets are accepted.
+    if n < 0 {
+        anyhow::bail!("{}", time_usage_error(s));
+    }
     let unit = parts[1].trim_end_matches('s');
     match unit {
         "minute" | "min" => Ok(chrono::Duration::minutes(n)),

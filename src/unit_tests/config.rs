@@ -39,6 +39,24 @@ fn test_save_config_omits_removed_report_fields() {
     assert!(!toml.contains("report_interval"), "got {toml}");
 }
 
+#[cfg(unix)]
+#[test]
+fn test_save_config_is_owner_readable_only() {
+    // cryo.toml can carry a provider API key, so it must never be world- or
+    // group-readable on disk.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cryo.toml");
+
+    save_config(&path, &CryoConfig::default()).unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "cryo.toml must be mode 0600");
+
+    // And the config still round-trips for the owner.
+    assert!(load_config(&path).unwrap().is_some());
+}
+
 #[test]
 fn apply_optional_override_replaces_value_when_present() {
     let mut value = "opencode".to_string();

@@ -31,7 +31,10 @@ pub fn status_json(dir: &Path) -> Value {
         "notes_html": status.notes_html,
         "plan_content": status.plan_content,
         "plan_html": status.plan_html,
-        "config_content": status.config_content,
+        // `config_content` (the raw cryo.toml, which may hold an API key) is
+        // deliberately never serialized. The masked `settings_rows` (env key
+        // names only) plus `has_config` carry everything the UI needs.
+        "has_config": status.has_config,
         "settings_rows": status.settings_rows,
         "task": status.task,
         "session_summary": status.session_summary,

@@ -105,6 +105,14 @@
   }
 
   async function fetchJSON(url, opts) {
+    opts = opts || {};
+    const method = (opts.method || 'GET').toUpperCase();
+    // CSRF guard: the daemon rejects state-changing requests that don't carry
+    // this custom header (a cross-origin simple request can't set it). GET/HEAD
+    // are safe and exempt.
+    if (method !== 'GET' && method !== 'HEAD') {
+      opts.headers = { 'X-Cryo-CSRF': '1', ...(opts.headers || {}) };
+    }
     const res = await fetch(url, opts);
     let data = null;
     try {
@@ -1158,8 +1166,8 @@
     }
   }
 
-  function settingsSignature(rows, raw) {
-    if (!rows || rows.length === 0) return raw === '' ? 'empty' : 'raw:' + raw;
+  function settingsSignature(rows, hasConfig) {
+    if (!rows || rows.length === 0) return hasConfig ? 'unparsed' : 'empty';
     return 'rows:' + rows.map(r => `${r.kind}|${r.key}|${r.value}`).join('\n');
   }
 
@@ -1167,8 +1175,10 @@
     const box = document.getElementById('panel-settings');
     if (!box) return;
     const rows = Array.isArray(status.settings_rows) ? status.settings_rows : [];
-    const raw = status.config_content || '';
-    const sig = settingsSignature(rows, raw);
+    // The raw cryo.toml is no longer sent to the browser (it can hold an API
+    // key); `has_config` distinguishes an absent file from an unparseable one.
+    const hasConfig = !!status.has_config;
+    const sig = settingsSignature(rows, hasConfig);
     if (sig === view.settingsLastSig) return;
     view.settingsLastSig = sig;
 
@@ -1178,7 +1188,7 @@
     title.textContent = 'cryo.toml';
     box.appendChild(title);
 
-    if (raw === '') {
+    if (!hasConfig) {
       const empty = document.createElement('div');
       empty.className = 'settings-empty';
       empty.textContent = 'No cryo.toml in this chamber.';
@@ -1188,17 +1198,13 @@
     }
 
     if (rows.length === 0) {
-      // Couldn't parse — fall back to the raw text so the user can still
-      // see what's there and fix it.
+      // Present but unparseable. Never echo the raw file — it may hold an API
+      // key. Point the operator at the file on disk instead.
       const note = document.createElement('div');
       note.className = 'settings-empty';
-      note.textContent = '(could not parse — showing raw text)';
+      note.textContent = '(could not parse cryo.toml — open it on disk)';
       box.appendChild(note);
-      const pre = document.createElement('pre');
-      pre.className = 'settings-pre';
-      pre.textContent = raw;
-      box.appendChild(pre);
-      view.settingsEl = pre;
+      view.settingsEl = note;
       return;
     }
 
@@ -1570,7 +1576,7 @@
       try {
         const r = await fetch('/api/chambers/new', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Cryo-CSRF': '1' },
           body: JSON.stringify(payload),
         });
         const body = await r.json().catch(() => ({}));

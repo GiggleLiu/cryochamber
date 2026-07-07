@@ -1,6 +1,8 @@
 # Monitor and message a chamber
 
-**Cryohub is the primary control panel** — a web dashboard for managing every chamber on this machine. Advanced sync channels (GitHub Discussions, Zulip) can optionally be layered on for remote and mobile access.
+There are two ways to monitor a chamber and exchange messages with the agent. **Cryohub is the primary monitor**; **Zulip** is the recommended remote and mobile channel.
+
+You can run them together. Cryohub is local-only by default; the sync channels reach the same chamber from the outside.
 
 ## Cryohub (primary, recommended)
 
@@ -41,44 +43,7 @@ The default bind address is `127.0.0.1`, so the dashboard is only reachable from
 
 For chamber discovery internals, see [Concepts](../explanation/concepts.md). For full configuration fields, see [`cryohub.toml`](../reference/configuration.md#cryohubtoml).
 
-## GitHub Discussions (remote, advanced)
-
-`cryo-gh` bridges a chamber with a GitHub Discussion. Comments on the Discussion become inbox messages for the agent; outbox messages from the agent appear as new comments on the Discussion.
-
-### Prerequisites
-
-- The [GitHub CLI](https://cli.github.com), `gh`, installed and authenticated with `gh auth login`.
-- A GitHub repository where you have write access.
-- An initialized cryochamber project. See [Tutorial](../tutorial.md) if you do not have one.
-
-### Set up
-
-```bash
-cryo-gh init --repo owner/repo
-cryo start
-cryo-gh sync
-cryo-gh status
-```
-
-Both daemons run as OS services and survive reboots. Logs go to `cryo-gh-sync.log`. Use `cryo-gh sync --interval N` to override the default 5-second poll interval.
-
-### Use it
-
-Post a comment on the Discussion and it appears in `messages/inbox/` within the poll interval. When the agent sends an outbox message, `cryo-gh` posts it back to the Discussion within seconds.
-
-### Stop
-
-```bash
-cryo-gh unsync
-```
-
-### Rate limits
-
-`gh` counts against the authenticated GitHub API quota of 5,000 requests per hour. At the default 5-second interval, sync makes about 720 requests per hour. If you run many chambers, raise `--interval`.
-
-For the full command list, see [CLI reference](../reference/cli.md#github-sync-cryo-gh).
-
-## Zulip (remote, advanced)
+## Zulip (remote)
 
 `cryo-zulip` bridges a chamber with a Zulip stream and topic.
 
@@ -116,10 +81,10 @@ For the full command list, see [CLI reference](../reference/cli.md#zulip-sync-cr
 
 ## Run multiple monitors together
 
-Cryohub, `cryo-gh sync`, and `cryo-zulip sync` are independent daemons. If you have advanced sync channels running alongside the hub, they all read and write `messages/inbox/` and `messages/outbox/` for the same chamber, so:
+Cryohub and `cryo-zulip sync` are independent daemons. They both read and write `messages/inbox/` and `messages/outbox/` for the same chamber, so:
 
-- A message posted on GitHub appears in Cryohub's history after the next poll and can wake the agent.
-- A message sent from Cryohub's send widget gets pushed to GitHub or Zulip by whichever sync daemons are running.
+- A message posted on Zulip appears in Cryohub's history after the next poll and can wake the agent.
+- A message sent from Cryohub's send widget gets pushed to Zulip by the sync daemon if it is running.
 
 There is no extra configuration to combine them. Start the monitors you want.
 

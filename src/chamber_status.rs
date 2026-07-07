@@ -158,7 +158,14 @@ pub struct ChamberStatus {
     pub notes_html: String,
     pub plan_content: String,
     pub plan_html: String,
+    /// Raw `cryo.toml` text. Kept server-side (e.g. to derive `settings_rows`)
+    /// but never serialized: it can contain a provider API key. The hub UI must
+    /// use `has_config` + the masked `settings_rows` instead.
+    #[serde(skip)]
     pub config_content: String,
+    /// Whether a non-empty `cryo.toml` exists, so the UI can distinguish an
+    /// absent config from one that failed to parse — without shipping the text.
+    pub has_config: bool,
     pub settings_rows: Vec<SettingsRow>,
     pub task: Option<String>,
     pub session_summary: Option<String>,
@@ -234,6 +241,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
     let notes_content = std::fs::read_to_string(dir.join("NOTES.md")).unwrap_or_default();
     let notes_html = render_markdown_safe(&notes_content);
     let config_content = std::fs::read_to_string(dir.join("cryo.toml")).unwrap_or_default();
+    let has_config = !config_content.is_empty();
     let settings_rows = parse_settings_rows(&config_content);
 
     ChamberStatus {
@@ -252,6 +260,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
         plan_content,
         plan_html,
         config_content,
+        has_config,
         settings_rows,
         task: crate::log::parse_latest_session_task(&log_file)
             .ok()

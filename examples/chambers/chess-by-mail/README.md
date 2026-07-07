@@ -8,7 +8,7 @@ The AI adapts to your pace — respond fast and it checks back quickly, take you
 
 A cron job can't do this because:
 - The AI decides when to stop checking (adaptive patience, not fixed schedule)
-- Wake-up from deep sleep is event-driven (your next move), not time-driven
+- It schedules its own next check adaptively (fast when you're active, backing off when idle); this chamber sets `watch_dirs = []` (no reactive inbox wake), so it looks on its own schedule — send `cryo send "<move>" --wake` to make it check immediately instead of waiting for the next scheduled check
 - Board state and strategy notes persist across arbitrarily long gaps
 - Multiple moves can accumulate; the AI processes them all on wake
 

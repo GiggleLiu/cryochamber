@@ -11,9 +11,8 @@ max_session_duration = 3600
 # unless they are absolute. Set to [] to disable reactive wake entirely.
 watch_dirs = ["messages/inbox"]
 
-# Sync polling interval in seconds (for cryo-zulip sync / cryo-gh sync)
+# Sync polling interval in seconds (for cryo-zulip sync)
 # zulip_poll_interval = 5
-# gh_poll_interval = 5
 
 # Provider environment injected into the agent process.
 # WARNING: If you add API keys below, ensure cryo.toml is in your .gitignore

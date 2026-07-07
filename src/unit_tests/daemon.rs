@@ -3165,3 +3165,195 @@ fn fs_session_effects_write_reply_without_question_omits_frontmatter_and_prefix(
         "got:\n{content}"
     );
 }
+
+#[test]
+fn test_run_event_loop_wakes_on_preexisting_inbox_at_startup() {
+    // Regression for the bug where inbox messages delivered while the daemon
+    // was down (after `cryo restart`, a service auto-restart, or a
+    // crash-restart) sat unread forever: the notify watcher only reports files
+    // created after it starts, and `run_now` was set only for the first session
+    // or a past-due TODO. A resumed daemon (session_number > 0, no pending
+    // TODO, run_now = false) with a pre-existing inbox file must still run a
+    // session immediately (invariant 2).
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = dir.path().join("messages").join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::write(inbox.join("human-1.md"), "from: human\n\nAnswer me").unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon =
+        Daemon::new_with_clock_and_launcher(dir.path().to_path_buf(), clock, launcher.clone());
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 4; // resumed daemon, not the first session
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_wake: None,
+        run_now: false,
+        watch_dirs: Vec::new(),
+    };
+
+    let (_tx, rx) = mpsc::channel();
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(
+        launcher.session_numbers(),
+        vec![5],
+        "a pre-existing inbox file must drive one session even with run_now=false and no pending TODO"
+    );
+}
+
+#[test]
+fn test_run_treats_locked_but_unresponsive_pid_as_stale_on_startup() {
+    // A live PID (our own) that `is_locked` reports as alive but whose daemon
+    // is not answering on the socket is the reboot / PID-reuse case. Startup
+    // must NOT bail ("Another daemon is already running"); it must treat the
+    // lock as stale, take over, and mint a fresh identity.
+    let dir = tempfile::tempdir().unwrap();
+    crate::config::save_config(
+        &crate::config::config_path(dir.path()),
+        &crate::config::CryoConfig::default(),
+    )
+    .unwrap();
+    crate::state::save_state(
+        &crate::state::state_path(dir.path()),
+        &CryoState {
+            session_number: 3,
+            pid: Some(std::process::id()),
+            agent_override: None,
+            max_session_duration_override: None,
+            instance_id: Some("stale".into()),
+            session_active: false,
+            previous_session_crashed: false,
+        },
+    )
+    .unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let state_store = Arc::new(RecordingStateStore::default());
+    let daemon = Daemon::with_deps(
+        dir.path().to_path_buf(),
+        clock,
+        Arc::new(ProcessSessionLauncher),
+        state_store.clone(),
+    );
+    daemon.shutdown.store(true, Ordering::Relaxed);
+
+    // With the old `is_locked`-only guard this returned Err; the liveness probe
+    // lets it proceed.
+    daemon.run().unwrap();
+
+    let saved = state_store.saved_states();
+    assert!(
+        !saved.is_empty(),
+        "startup should proceed past the stale-PID guard and persist state"
+    );
+}
+
+/// Drive one idle-mode IPC round-trip: a client thread sends `request` while
+/// the main thread accepts it and dispatches through `handle_idle_request`.
+/// Returns the client's response plus the inbox filenames left behind, so
+/// tests can assert idle commands neither succeed nor archive.
+fn idle_request_round_trip(
+    request: crate::socket::Request,
+) -> (crate::socket::Response, Vec<String>) {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = dir.path().join("messages").join("inbox");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::write(inbox.join("human-1.md"), "from: human\n\nHello").unwrap();
+
+    let sock = crate::socket::socket_path(dir.path());
+    std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+    let mut st = test_cryo_state();
+    st.instance_id = Some("idle-instance".into());
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock);
+
+    let server = crate::socket::SocketServer::bind(&sock).unwrap();
+
+    let dir_for_client = dir.path().to_path_buf();
+    let handle =
+        std::thread::spawn(move || crate::daemon_client::send_request(&dir_for_client, &request));
+
+    let (req, responder) = server
+        .accept_one(Some("idle-instance"))
+        .unwrap()
+        .expect("request should pass the instance check");
+    daemon.handle_idle_request(req, responder).unwrap();
+
+    let response = handle.join().unwrap().unwrap();
+    let remaining = crate::message::list_inbox(dir.path()).unwrap();
+    (response, remaining)
+}
+
+#[test]
+fn test_idle_receive_refuses_without_archiving_inbox() {
+    // Idle `Receive` has no `SessionInboxState` and thus no reply obligation, so
+    // claiming + archiving the batch would terminally consume it with nobody on
+    // the hook to answer (invariant 2). It must refuse and leave the inbox.
+    let (response, remaining) = idle_request_round_trip(crate::socket::Request::Receive);
+
+    assert!(!response.ok, "idle receive must be refused: {response:?}");
+    assert!(
+        response.message.contains("No active session"),
+        "refusal should explain why: {}",
+        response.message
+    );
+    assert_eq!(
+        remaining,
+        vec!["human-1.md".to_string()],
+        "idle receive must leave the inbox untouched (not archive it)"
+    );
+}
+
+#[test]
+fn test_idle_dialog_refuses_without_archiving_inbox() {
+    // Idle `Dialog` used to claim + archive the inbox via `handle_dialog_request`
+    // with no fallback reply. It must now refuse and leave the inbox in place.
+    let (response, remaining) = idle_request_round_trip(crate::socket::Request::Dialog {
+        filter: crate::socket::DialogFilter::All,
+    });
+
+    assert!(!response.ok, "idle dialog must be refused: {response:?}");
+    assert!(
+        response.message.contains("No active session"),
+        "refusal should explain why: {}",
+        response.message
+    );
+    assert_eq!(
+        remaining,
+        vec!["human-1.md".to_string()],
+        "idle dialog must leave the inbox untouched (not archive it)"
+    );
+}

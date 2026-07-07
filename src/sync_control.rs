@@ -7,13 +7,12 @@ use std::time::{Duration, Instant};
 
 pub fn summarize(backend: SyncBackend, dir: &Path) -> Option<SyncSummary> {
     match backend {
-        SyncBackend::Gh => crate::gh_sync::summarize(dir),
         SyncBackend::Zulip => crate::zulip_sync::summarize(dir),
     }
 }
 
 pub fn summarize_all(dir: &Path) -> Vec<SyncSummary> {
-    [SyncBackend::Gh, SyncBackend::Zulip]
+    [SyncBackend::Zulip]
         .into_iter()
         .filter_map(|b| summarize(b, dir))
         .collect()
@@ -21,7 +20,6 @@ pub fn summarize_all(dir: &Path) -> Vec<SyncSummary> {
 
 fn resolve_cli(backend: SyncBackend) -> Result<PathBuf> {
     let (env_var, bin_name) = match backend {
-        SyncBackend::Gh => ("CRYO_GH_CLI", "cryo-gh"),
         SyncBackend::Zulip => ("CRYO_ZULIP_CLI", "cryo-zulip"),
     };
     if let Ok(p) = std::env::var(env_var) {
@@ -91,7 +89,6 @@ pub fn push(backend: SyncBackend, dir: &Path) -> Result<()> {
 /// sync toggle.
 pub fn is_running(backend: SyncBackend, dir: &Path) -> bool {
     match backend {
-        SyncBackend::Gh => crate::gh_sync::is_sync_running(dir),
         SyncBackend::Zulip => crate::zulip_sync::is_sync_running(dir),
     }
 }

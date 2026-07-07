@@ -2,6 +2,8 @@
 
 All cryochamber binaries and their commands. For tutorials and how-to guides, follow links from [Tutorial](../tutorial.md) and the [how-to guides](../how-to/create-chamber.md).
 
+Every binary accepts `--version` (print the version and exit) and `--help`.
+
 ## Operator CLI (`cryo`)
 
 Run these from inside a chamber directory unless noted otherwise.
@@ -14,9 +16,9 @@ Run these from inside a chamber directory unless noted otherwise.
 | `cryo status` | Show whether the daemon is running, the current session number, and the next wake time. |
 | `cryo restart` | Restart the running daemon. When it is installed as an OS service, restart the existing service without rewriting or removing it. |
 | `cryo cancel` | Stop the daemon and remove the runtime state. |
-| `cryo watch [--all]` | Follow the session log in real time. |
+| `cryo watch [--all] [--viewpoint cryo\|agent]` | Follow a log in real time. `--all` shows the log from the beginning. `--viewpoint cryo` (default) follows the structured event log; `--viewpoint agent` follows raw agent output (`cryo-agent.log`). |
 | `cryo log` | Print the full session log. |
-| `cryo send "<message>"` | Send a message to the agent's inbox. |
+| `cryo send "<message>" [--from <name>] [--subject <text>] [--wake]` | Send a message to the agent's inbox. `--from` sets the sender (default `human`), `--subject` sets the subject (default: derived from the body), `--wake` wakes the agent immediately after sending. |
 | `cryo receive` | Read messages the agent sent to the outbox. |
 | `cryo wake ["message"]` | Wake the daemon immediately, optionally with a message. |
 | `cryo clean [--force]` | Remove runtime files such as logs, state, and messages. |
@@ -49,21 +51,10 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 | `cryo-agent send --stdin` | Read the outbox message body from stdin exactly, including trailing newlines; use for multi-line or shell-sensitive text. |
 | `cryo-agent send --question "msg"` | Mark the message as a question awaiting a human reply. |
 | `cryo-agent receive` | Claim the current inbox batch from the human. |
-| `cryo-agent dialog [--last N \| --all]` | Render the full conversation transcript. Also archives any pending inbox batch as a side effect, satisfying the same reply obligation as `receive`. |
+| `cryo-agent dialog [--last N \| --all \| --since <iso>]` | Render the conversation transcript (default: last 20 messages). `--last N` shows the last N, `--all` shows every archived message, `--since <iso>` shows messages at or after an ISO 8601 time; the three are mutually exclusive. Also archives any pending inbox batch as a side effect, satisfying the same reply obligation as `receive`. |
 | `cryo-agent time` | Print the current local time in ISO 8601 format. |
 | `cryo-agent time "+30 minutes"` | Compute a relative offset. Units: `minutes`, `hours`, `days`, `weeks`. |
 | `cryo-agent time "2026-04-25T10:00"` | Validate and normalize an ISO 8601 timestamp. |
-
-## GitHub Sync (`cryo-gh`)
-
-| Command | What it does |
-|---------|--------------|
-| `cryo-gh init --repo owner/repo` | Create a Discussion and write `gh-sync.json`. |
-| `cryo-gh sync [--interval N]` | Start the background sync daemon. Default interval comes from `cryo.toml` or falls back to 5 seconds. |
-| `cryo-gh unsync` | Stop the sync daemon. |
-| `cryo-gh pull` | One-shot pull. |
-| `cryo-gh push` | One-shot push. |
-| `cryo-gh status` | Show sync configuration. |
 
 ## Zulip Sync (`cryo-zulip`)
 

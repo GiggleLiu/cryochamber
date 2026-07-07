@@ -132,7 +132,7 @@ fn status_json_notes_content_empty_when_file_missing() {
 }
 
 #[test]
-fn status_json_includes_plan_and_config_content() {
+fn status_json_includes_plan_and_masked_config() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("plan.md"), "# Plan\n- step one\n").unwrap();
     std::fs::write(
@@ -142,13 +142,44 @@ fn status_json_includes_plan_and_config_content() {
     .unwrap();
     let v = status_json(dir.path());
     assert_eq!(v["plan_content"], "# Plan\n- step one\n");
-    assert_eq!(
-        v["config_content"],
-        "agent = \"opencode\"\nmax_session_duration = 600\n"
+    // Raw cryo.toml is never shipped to the browser (it can hold an API key).
+    // Only a present/absent bool and the masked rows are exposed.
+    assert!(
+        v.get("config_content").is_none(),
+        "raw config must not be in the status payload"
     );
+    assert_eq!(v["has_config"], true);
+    assert!(v["settings_rows"].is_array());
     let plan_html = v["plan_html"].as_str().expect("plan_html");
     assert!(plan_html.contains("<h1>Plan</h1>"), "got {plan_html}");
     assert!(plan_html.contains("<li>step one</li>"), "got {plan_html}");
+}
+
+#[test]
+fn status_json_never_leaks_provider_api_key() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("cryo.toml"),
+        "agent = \"opencode\"\n\n[provider]\nname = \"openai\"\n\n\
+         [provider.env]\nOPENAI_API_KEY = \"sk-secret-should-not-leak\"\n",
+    )
+    .unwrap();
+    let v = status_json(dir.path());
+    let serialized = v.to_string();
+    assert!(
+        !serialized.contains("sk-secret-should-not-leak"),
+        "status payload leaked the API key: {serialized}"
+    );
+    assert!(v.get("config_content").is_none());
+    assert_eq!(v["has_config"], true);
+    // The env *key name* is still surfaced (masked), just never its value.
+    let rows = v["settings_rows"].as_array().expect("settings_rows");
+    let joined = rows.iter().map(|r| r.to_string()).collect::<String>();
+    assert!(
+        joined.contains("OPENAI_API_KEY"),
+        "env key name should show: {joined}"
+    );
+    assert!(!joined.contains("sk-secret-should-not-leak"));
 }
 
 #[test]
@@ -159,7 +190,8 @@ fn status_json_plan_and_config_empty_when_files_missing() {
     assert_eq!(v["plan_html"], "");
     assert_eq!(v["notes_content"], "");
     assert_eq!(v["notes_html"], "");
-    assert_eq!(v["config_content"], "");
+    assert_eq!(v["has_config"], false);
+    assert!(v.get("config_content").is_none());
 }
 
 #[test]

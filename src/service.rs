@@ -25,7 +25,7 @@ fn path_hash(dir: &Path) -> String {
 }
 
 /// Build a unique service label for a given prefix and project directory.
-/// e.g. "com.cryo.daemon.abc123..." or "com.cryo.gh-sync.abc123..."
+/// e.g. "com.cryo.daemon.abc123..." or "com.cryo.zulip-sync.abc123..."
 pub fn service_label(prefix: &str, dir: &Path) -> String {
     format!("com.cryo.{}.{}", prefix, path_hash(dir))
 }
@@ -109,7 +109,7 @@ fn launchctl_restart_action(plist_exists: bool, label_loaded: bool) -> Launchctl
 
 /// Install and start a system service.
 ///
-/// - `label_prefix`: e.g. "daemon" or "gh-sync"
+/// - `label_prefix`: e.g. "daemon" or "zulip-sync"
 /// - `dir`: working directory for the service
 /// - `exe`: path to the executable
 /// - `args`: arguments to pass
@@ -358,6 +358,92 @@ fn parse_plist_working_directory(text: &str) -> Option<String> {
     Some(after[str_start..str_start + str_end_rel].to_string())
 }
 
+/// Escape a value for interpolation into a systemd unit file. In unit files
+/// `%` introduces a specifier (e.g. `%h`, `%i`), so a literal `%` must be
+/// written as `%%`; otherwise a `%` in a path silently corrupts the unit.
+#[cfg(target_os = "linux")]
+fn systemd_escape_specifiers(s: &str) -> String {
+    s.replace('%', "%%")
+}
+
+/// Quote a single ExecStart word. systemd splits ExecStart on whitespace, so
+/// each word is double-quoted to preserve spaces, with the characters that are
+/// active inside systemd's double quotes escaped: `\` and `"` are C-escaped,
+/// `$` is doubled to `$$` (so it is not read as a variable reference), and `%`
+/// is doubled to `%%` (specifier). Order matters — backslashes are escaped
+/// first so the escapes we add below are not themselves doubled.
+#[cfg(target_os = "linux")]
+fn systemd_quote_exec_arg(arg: &str) -> String {
+    let escaped = arg
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "$$")
+        .replace('%', "%%");
+    format!("\"{escaped}\"")
+}
+
+/// Build the ExecStart value: the executable followed by its arguments, each
+/// quoted/escaped via `systemd_quote_exec_arg`.
+#[cfg(target_os = "linux")]
+fn systemd_exec_start(exe: &str, args: &[&str]) -> String {
+    std::iter::once(systemd_quote_exec_arg(exe))
+        .chain(args.iter().map(|a| systemd_quote_exec_arg(a)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Build the `Environment=` line for PATH. The value is double-quoted so a
+/// space in PATH cannot truncate it into a second (bogus) assignment, with `\`
+/// and `"` C-escaped and `%` doubled to `%%`.
+#[cfg(target_os = "linux")]
+fn systemd_environment_path(path_env: &str) -> String {
+    let escaped = path_env
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%");
+    format!("Environment=\"PATH={escaped}\"")
+}
+
+/// Render a systemd user unit file. Pure and escaping-aware so it can be
+/// unit-tested without invoking `systemctl`. `exec_start` must already be the
+/// quoted/escaped ExecStart value (see `systemd_exec_start`); `dir` and `log`
+/// are `%`-escaped here, and `path_env` is quoted+escaped into an
+/// `Environment=` line.
+#[cfg(target_os = "linux")]
+fn systemd_unit_string(
+    label_prefix: &str,
+    exec_start: &str,
+    dir: &str,
+    path_env: &str,
+    restart: &str,
+    log: &str,
+) -> String {
+    let dir = systemd_escape_specifiers(dir);
+    let log = systemd_escape_specifiers(log);
+    let environment = systemd_environment_path(path_env);
+    format!(
+        "[Unit]\n\
+         Description=Cryochamber {prefix} ({dir})\n\
+         \n\
+         [Service]\n\
+         ExecStart={exec_start}\n\
+         WorkingDirectory={dir}\n\
+         {environment}\n\
+         Restart={restart}\n\
+         StandardOutput=append:{log}\n\
+         StandardError=append:{log}\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n",
+        prefix = label_prefix,
+        exec_start = exec_start,
+        dir = dir,
+        environment = environment,
+        restart = restart,
+        log = log,
+    )
+}
+
 #[cfg(target_os = "linux")]
 pub fn install(
     label_prefix: &str,
@@ -374,37 +460,19 @@ pub fn install(
     std::fs::create_dir_all(&unit_dir)?;
     let unit_path = unit_dir.join(format!("{label}.service"));
 
-    // Quote executable and arguments for systemd ExecStart (handles spaces/special chars)
-    let exec_start = std::iter::once(format!("\"{}\"", exe.display()))
-        .chain(args.iter().map(|a| format!("\"{}\"", a)))
-        .collect::<Vec<_>>()
-        .join(" ");
-
+    let exec_start = systemd_exec_start(&exe.display().to_string(), args);
     let restart = if keep_alive { "always" } else { "on-failure" };
 
     // Capture PATH so the daemon can find agent binaries (e.g. opencode, claude).
     let path_env = std::env::var("PATH").unwrap_or_default();
 
-    let unit = format!(
-        "[Unit]\n\
-         Description=Cryochamber {prefix} ({dir})\n\
-         \n\
-         [Service]\n\
-         ExecStart={exec_start}\n\
-         WorkingDirectory={dir}\n\
-         Environment=PATH={path}\n\
-         Restart={restart}\n\
-         StandardOutput=append:{log}\n\
-         StandardError=append:{log}\n\
-         \n\
-         [Install]\n\
-         WantedBy=default.target\n",
-        prefix = label_prefix,
-        exec_start = exec_start,
-        dir = dir.display(),
-        path = path_env,
-        restart = restart,
-        log = log_file.display(),
+    let unit = systemd_unit_string(
+        label_prefix,
+        &exec_start,
+        &dir.display().to_string(),
+        &path_env,
+        restart,
+        &log_file.display().to_string(),
     );
 
     std::fs::write(&unit_path, unit)?;
@@ -423,6 +491,16 @@ pub fn install(
     if !status.success() {
         anyhow::bail!("systemctl enable --now failed");
     }
+
+    // `enable --now` starts a stopped service but does NOT restart one that was
+    // already running, so a changed unit (new PATH, args, log path) would not
+    // take effect until the next reboot. `try-restart` restarts it only if it
+    // is currently active (a no-op otherwise), applying the new unit now.
+    // Best-effort: the service is already enabled+started above, so a
+    // try-restart hiccup must not fail the whole install.
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "try-restart", &label])
+        .status();
 
     Ok(())
 }
@@ -579,3 +657,7 @@ fn list_installed_in(
 #[cfg(all(test, target_os = "macos"))]
 #[path = "unit_tests/service.rs"]
 mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "unit_tests/service_linux.rs"]
+mod linux_tests;

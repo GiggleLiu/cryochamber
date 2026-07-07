@@ -51,10 +51,6 @@ pub struct CryoConfig {
     /// Zulip sync polling interval in seconds (default: 5)
     #[serde(default = "default_poll_interval")]
     pub zulip_poll_interval: u64,
-
-    /// GitHub sync polling interval in seconds (default: 5)
-    #[serde(default = "default_poll_interval")]
-    pub gh_poll_interval: u64,
 }
 
 fn default_agent() -> String {
@@ -78,7 +74,6 @@ impl Default for CryoConfig {
             provider: None,
             providers: Vec::new(),
             zulip_poll_interval: default_poll_interval(),
-            gh_poll_interval: default_poll_interval(),
         }
     }
 }
@@ -139,6 +134,14 @@ pub fn save_config(path: &Path, config: &CryoConfig) -> Result<()> {
     config.normalize_legacy_provider();
     let toml = toml::to_string_pretty(&config)?;
     std::fs::write(path, toml)?;
+    // cryo.toml may hold a provider API key in `[provider].env`, so keep it
+    // owner-readable only. Applied to every writer since any of them can carry
+    // secrets.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
     Ok(())
 }
 

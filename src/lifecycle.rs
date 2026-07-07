@@ -121,12 +121,25 @@ pub fn launch_daemon(dir: &Path, exe: &Path) -> Result<DaemonLaunchMode> {
 pub fn stop_chamber(dir: &Path) -> Result<()> {
     let _ = crate::service::uninstall("daemon", dir);
     if let Some(st) = state::load_state(&state::state_path(dir))? {
-        if state::is_locked(&st) {
+        // Only terminate a daemon that is both locked AND answering on its
+        // socket (mirrors `cmd_cancel`). A stale PID (reboot / PID reuse) that
+        // no longer responds must never be signalled — that PID may now belong
+        // to an unrelated process.
+        if state::is_locked(&st) && daemon_responding(dir) {
             if let Some(pid) = st.pid {
                 crate::process::terminate_pid(pid)?;
             }
         }
-        let updated = CryoState { pid: None, ..st };
+        // Re-load AFTER termination: a live daemon writes its own final state
+        // (pid = None, session_active = false) during shutdown. Null only `pid`
+        // from that fresh snapshot instead of clobbering it with the stale
+        // pre-termination one, which would otherwise resurrect a stranded
+        // `session_active` / `previous_session_crashed`.
+        let latest = state::load_state(&state::state_path(dir))?.unwrap_or(st);
+        let updated = CryoState {
+            pid: None,
+            ..latest
+        };
         state::save_state(&state::state_path(dir), &updated)?;
     }
     Ok(())
@@ -206,8 +219,8 @@ pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
 }
 
 /// Move resettable runtime state into `history/<timestamp>/`, returning the
-/// archive directory. Sync configuration files such as `gh-sync.json`,
-/// `zulip-sync.json`, and `.cryo/zuliprc` stay in place.
+/// archive directory. Sync configuration files such as `zulip-sync.json`
+/// and `.cryo/zuliprc` stay in place.
 pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
     let archive = new_archive_dir(dir)?;
     for name in [

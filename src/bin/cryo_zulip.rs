@@ -10,7 +10,7 @@ use cryochamber::channel::zulip::ZulipClient;
 use cryochamber::sync_common::{SyncLoopBackend, SyncLoopCommand};
 
 #[derive(Parser)]
-#[command(name = "cryo-zulip", about = "Cryochamber Zulip sync")]
+#[command(name = "cryo-zulip", about = "Cryochamber Zulip sync", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -126,6 +126,7 @@ fn cmd_init(
     cryochamber::zulip_sync::save_sync_state(&zulip_sync_path(&dir), &sync_state)?;
 
     copy_zuliprc_to_project(Path::new(config_path), &dir)?;
+    ensure_cryo_gitignored(&dir)?;
 
     println!("Saved zulip-sync.json");
     println!("Copied zuliprc to .cryo/zuliprc");
@@ -163,6 +164,41 @@ fn copy_zuliprc_to_project(config_path: &Path, dir: &Path) -> Result<()> {
 
     std::fs::copy(config_path, &dest)
         .with_context(|| format!("Failed to copy zuliprc to {}", dest.display()))?;
+
+    // The copied file holds API credentials; keep it owner-only (0600) so it is
+    // not world/group-readable regardless of the source file's mode or umask.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to secure permissions on {}", dest.display()))?;
+    }
+    Ok(())
+}
+
+/// Ensure the chamber's `.gitignore` keeps `.cryo/` out of git, so the copied
+/// credentials (`.cryo/zuliprc`) and the IPC socket are never committed.
+/// `cryo init` normally writes a `.gitignore` that already covers this, but
+/// `cryo-zulip init` may run on a chamber created some other way (or with a
+/// hand-authored `.gitignore`), so append the entry if it is missing and
+/// create the file if there is none.
+fn ensure_cryo_gitignored(dir: &Path) -> Result<()> {
+    let path = dir.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let already = existing
+        .lines()
+        .any(|l| matches!(l.trim(), ".cryo/" | ".cryo"));
+    if already {
+        return Ok(());
+    }
+
+    let mut content = existing;
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(".cryo/\n");
+    std::fs::write(&path, content)
+        .with_context(|| format!("Failed to update {}", path.display()))?;
     Ok(())
 }
 
