@@ -327,25 +327,25 @@ impl MessageEffects for FileMessageEffects {
 pub(super) fn handle_todo_request(
     request: TodoRequest,
     effects: &mut impl TodoEffects,
+    now: chrono::NaiveDateTime,
 ) -> TodoRequestOutcome {
     match request {
         TodoRequest::Add { text, at } => {
-            // Reject an `at` that the scheduler cannot parse (including empty).
-            // Otherwise the item is accepted but `claim_due`/`next_valid_wake`
-            // skip it forever, so the TODO is never honoured.
-            if crate::todo::parse_wake_time(at.trim()).is_err() {
-                return TodoRequestOutcome {
+            // Normalize (and thereby validate) the `at` value here so the
+            // scheduler only ever sees canonical `%Y-%m-%dT%H:%M` strings.
+            // Otherwise the item would be accepted but `claim_due` /
+            // `next_valid_wake` would skip it forever, so the TODO is never
+            // honoured.
+            let at = match crate::todo::normalize_wake_input(&at, now) {
+                Ok(canonical) => canonical,
+                Err(e) => return TodoRequestOutcome {
                     ok: false,
                     message: format!(
-                        "todo add refused: `--at` value {at:?} is not a valid scheduled time. \
-                         Every TODO needs an absolute wake time. Accepted forms: \
-                         YYYY-MM-DDTHH:MM (optionally with :SS). Run \
-                         `cryo-agent time \"+30 minutes\"` (or pass an ISO8601 timestamp) \
-                         to compute TIME, then retry."
+                        "todo add refused: `--at` value {at:?} is not a valid scheduled time. {e}"
                     ),
                     log_event: None,
-                };
-            }
+                },
+            };
             match effects.add_todo(&text, &at) {
                 Ok(id) => TodoRequestOutcome {
                     ok: true,

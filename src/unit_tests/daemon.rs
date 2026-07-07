@@ -1045,6 +1045,10 @@ fn test_handle_todo_request_returns_response_and_log_event() {
             at: "2026-03-01T13:00".into(),
         },
         &mut effects,
+        chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap(),
     );
 
     assert_eq!(
