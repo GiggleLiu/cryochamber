@@ -92,6 +92,14 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             post(crate::hub::routes::chamber::post_reset),
         )
         .route(
+            "/api/chambers/{id}/archive",
+            post(crate::hub::routes::chamber::post_archive),
+        )
+        .route(
+            "/api/chambers/{id}/unarchive",
+            post(crate::hub::routes::chamber::post_unarchive),
+        )
+        .route(
             "/api/chambers/{id}/sync",
             get(crate::hub::routes::sync::get_sync),
         )

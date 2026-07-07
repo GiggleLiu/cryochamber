@@ -47,6 +47,22 @@ pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
     crate::lifecycle::archive_runtime(dir)
 }
 
+/// Archive a chamber: fold it out of the hub's active grid. The daemon must be
+/// stopped first — archived chambers cannot run until unarchived. Reversible
+/// via `unarchive_chamber`; no files are moved. Only touches the registry flag.
+pub fn archive_chamber(dir: &Path) -> Result<()> {
+    if crate::chamber_status::overview(dir).running {
+        anyhow::bail!("Stop the chamber before archiving it");
+    }
+    crate::registry::set_archived(dir, true)
+}
+
+/// Unarchive a chamber: return it to the active grid. Leaves it stopped — the
+/// operator presses Launch to run it again.
+pub fn unarchive_chamber(dir: &Path) -> Result<()> {
+    crate::registry::set_archived(dir, false)
+}
+
 /// Reset the chamber: stop the daemon (if running) and archive runtime state
 /// under `history/<timestamp>/`. Leaves the chamber stopped — the operator
 /// presses Start when they want a new session. Re-creates `messages/` so

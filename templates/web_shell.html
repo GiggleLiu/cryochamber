@@ -97,6 +97,7 @@
     detailSeq: 0,
     lifecyclePending: {},
     chamberHistoryOpen: false,
+    chamberArchivedOpen: false,
   };
 
   function urlChamberId() {
@@ -259,7 +260,12 @@
     // attention.
     const active = [];
     const completed = [];
+    const archived = [];
     for (const c of state.chambers) {
+      // Archived is a display state the operator chose explicitly, so it wins
+      // over completion — an archived chamber folds into "Archived" regardless
+      // of plan status.
+      if (c.archived) { archived.push(c); continue; }
       // Group by completion alone. The daemon can still be winding down
       // (running=true) right after `hibernate --complete`; `statusClass` and
       // the header glyph already prioritise "completed" in that window, so
@@ -295,6 +301,22 @@
       summary.textContent = `Completed (${completed.length})`;
       details.appendChild(summary);
       for (const c of completed) details.appendChild(buildChamberRow(c));
+      list.appendChild(details);
+    }
+
+    if (archived.length) {
+      archived.sort((a, b) => a.name.localeCompare(b.name));
+      const details = document.createElement('details');
+      details.className = 'chamber-history';
+      const selectedIsInside = archived.some(c => c.id === state.currentId);
+      if (state.chamberArchivedOpen || selectedIsInside) details.open = true;
+      details.addEventListener('toggle', () => {
+        state.chamberArchivedOpen = details.open;
+      });
+      const summary = document.createElement('summary');
+      summary.textContent = `Archived (${archived.length})`;
+      details.appendChild(summary);
+      for (const c of archived) details.appendChild(buildChamberRow(c));
       list.appendChild(details);
     }
 
@@ -483,11 +505,17 @@
 
   function updateLifecycleButtons(entry) {
     const pending = state.lifecyclePending[entry.id];
-    const sig = `${entry.running}|${!!entry.config_error}|${!!entry.completed}|${!!pending}`;
+    const sig = `${entry.running}|${!!entry.config_error}|${!!entry.completed}|${!!entry.archived}|${!!pending}`;
     if (sig === view.lastLifecycleSig) return;
     view.lastLifecycleSig = sig;
     const btns = view.lifecycleBtns;
     btns.innerHTML = '';
+    // Archived chambers are put away: the only action is to bring them back.
+    // Unarchive leaves the chamber stopped; the operator then presses Launch.
+    if (entry.archived) {
+      btns.appendChild(btn('unarchive', () => lifecycle(entry.id, 'unarchive'), 'primary', pending));
+      return;
+    }
     if (entry.running) {
       btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
     } else if (!entry.config_error && !entry.completed) {
@@ -497,6 +525,9 @@
     }
     if (!entry.running && !entry.config_error) {
       btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
+      // Archive is only offered once the daemon is stopped — the natural next
+      // step after Stop. Reversible, so no confirm dialog.
+      btns.appendChild(btn('archive', () => lifecycle(entry.id, 'archive'), '', pending));
     }
   }
 

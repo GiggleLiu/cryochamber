@@ -203,6 +203,24 @@ pub async fn post_reset(
     }
 }
 
+pub async fn post_archive(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::archive_chamber).await;
+    Ok(Json(lifecycle_status_json(result, "Archived")))
+}
+
+pub async fn post_unarchive(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, StatusCode> {
+    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::unarchive_chamber).await;
+    Ok(Json(lifecycle_status_json(result, "Unarchived")))
+}
+
 fn lifecycle_status_json(result: anyhow::Result<()>, success_message: &str) -> Value {
     match result {
         Ok(()) => json!({"ok": true, "message": success_message}),
