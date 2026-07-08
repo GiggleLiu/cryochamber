@@ -21,8 +21,9 @@ cryohub start --foreground
 
 ### Use the dashboard
 
-- **Sidebar** - every registered chamber, sorted by running state and name. Each row shows a status dot and an unread-message badge.
+- **Sidebar** - every registered chamber, sorted by running state and name. Each row shows a status dot and an unread-message badge. Completed and archived chambers fold into collapsible **Completed** and **Archived** sections at the bottom.
 - **Main pane** - full detail for the selected chamber: status, current task, next wake time, notes, message history, log tail, and a send widget. Lifecycle buttons, Start, Stop, Restart, and Wake, sit next to the status.
+- **Archive** - a stopped chamber shows an **Archive** button that folds it out of the active list into the **Archived** section without moving any files. Archiving is reversible: an archived chamber offers only **Unarchive**, which returns it to the active list (still stopped) so you can Launch it again. A running chamber must be stopped first.
 - **New Chamber** modal - scaffolds a chamber under the configured chamber root, `~/.cryo/chambers` by default.
 
 ### Manage the hub service

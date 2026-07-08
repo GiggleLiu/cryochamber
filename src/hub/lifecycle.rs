@@ -9,6 +9,9 @@ use crate::channel::store::MessageStore;
 
 /// Start a daemon for the chamber at `dir`. Mirrors `cmd_start` in the CLI.
 pub fn start_chamber(dir: &Path) -> Result<()> {
+    if crate::registry::is_archived(dir) {
+        anyhow::bail!("Unarchive the chamber before launching it");
+    }
     let exe = resolve_cryo_exe()?;
     let prepared = crate::lifecycle::prepare_start(dir, crate::lifecycle::StartOptions::default())?;
     crate::lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;
@@ -45,6 +48,22 @@ pub fn archive_logs(dir: &Path) -> Result<PathBuf> {
 /// archive directory. Missing files are skipped.
 pub fn archive_runtime(dir: &Path) -> Result<PathBuf> {
     crate::lifecycle::archive_runtime(dir)
+}
+
+/// Archive a chamber: fold it out of the hub's active grid. The daemon must be
+/// stopped first — archived chambers cannot run until unarchived. Reversible
+/// via `unarchive_chamber`; no files are moved. Only touches the registry flag.
+pub fn archive_chamber(dir: &Path) -> Result<()> {
+    if crate::chamber_status::overview(dir).running {
+        anyhow::bail!("Stop the chamber before archiving it");
+    }
+    crate::registry::set_archived(dir, true)
+}
+
+/// Unarchive a chamber: return it to the active grid. Leaves it stopped — the
+/// operator presses Launch to run it again.
+pub fn unarchive_chamber(dir: &Path) -> Result<()> {
+    crate::registry::set_archived(dir, false)
 }
 
 /// Reset the chamber: stop the daemon (if running) and archive runtime state

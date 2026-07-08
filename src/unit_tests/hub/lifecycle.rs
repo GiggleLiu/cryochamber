@@ -190,3 +190,65 @@ fn resolve_cryo_exe_from_test_binary_prefers_target_debug_cryo() {
     let resolved = resolve_cryo_exe_from(&test_bin, || None).unwrap();
     assert_eq!(resolved, cryo);
 }
+
+#[test]
+fn archive_and_unarchive_toggle_the_registry_flag() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = crate::test_support::EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&crate::config::config_path(dir.path()), &cfg).unwrap();
+    let chamber = dir.path().canonicalize().unwrap();
+    crate::registry::remember_chamber(&chamber).unwrap();
+
+    let archived = |c: &std::path::Path| {
+        crate::registry::list()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.dir == c.display().to_string())
+            .unwrap()
+            .archived
+    };
+
+    archive_chamber(&chamber).unwrap();
+    assert!(archived(&chamber), "archive sets the flag");
+    unarchive_chamber(&chamber).unwrap();
+    assert!(!archived(&chamber), "unarchive clears the flag");
+}
+
+#[test]
+fn archive_chamber_refuses_while_daemon_running() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = crate::test_support::EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&crate::config::config_path(dir.path()), &cfg).unwrap();
+    // A live pid (our own) makes the chamber look running to `overview`.
+    let st = crate::state::CryoState {
+        session_number: 1,
+        pid: Some(std::process::id()),
+        agent_override: None,
+        max_session_duration_override: None,
+        instance_id: None,
+        session_active: false,
+        previous_session_crashed: false,
+    };
+    crate::state::save_state(&crate::state::state_path(dir.path()), &st).unwrap();
+
+    let err = archive_chamber(dir.path()).unwrap_err();
+    assert!(err.to_string().contains("Stop the chamber"));
+}
+
+#[test]
+fn start_chamber_refuses_archived_chamber_before_launch_preflight() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = crate::test_support::EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&crate::config::config_path(dir.path()), &cfg).unwrap();
+    crate::registry::set_archived(dir.path(), true).unwrap();
+
+    let err = start_chamber(dir.path()).unwrap_err();
+
+    assert!(err.to_string().contains("Unarchive"));
+}

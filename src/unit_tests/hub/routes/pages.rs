@@ -159,12 +159,20 @@ fn shell_only_renders_reset_for_stopped_chambers() {
 }
 
 #[test]
-fn shell_does_not_render_archive_button_in_global_hub() {
+fn shell_renders_archive_for_stopped_chambers_and_unarchive_when_archived() {
+    // #59: stopped chambers can be archived (folded out of the active grid);
+    // archived chambers expose only Unarchive.
     assert!(
-        !SHELL_HTML.contains("confirmArchive")
-            && !SHELL_HTML.contains("/api/chambers/${id}/archive")
-            && !SHELL_HTML.contains("btn('archive'"),
-        "archive is disabled because the hub is global, not workspace-scoped"
+        SHELL_HTML.contains("btn('archive'"),
+        "stopped chambers should expose an Archive button"
+    );
+    assert!(
+        SHELL_HTML.contains("btn('unarchive'"),
+        "archived chambers should expose an Unarchive button"
+    );
+    assert!(
+        SHELL_HTML.contains("Archived (${archived.length})"),
+        "archived chambers should fold into an Archived section in the rail"
     );
 }
 

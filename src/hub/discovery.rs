@@ -53,6 +53,10 @@ pub struct ChamberEntry {
     pub task: Option<String>,
     pub last_message_preview: Option<String>,
     pub completed: bool,
+    /// Hub display state carried from the registry: archived chambers fold into
+    /// the dashboard's "Archived" section and cannot be launched until
+    /// unarchived. Not a runtime field — `populate_runtime` leaves it untouched.
+    pub archived: bool,
     pub sync: Vec<SyncBadge>,
 }
 
@@ -126,6 +130,7 @@ pub fn scan_workspace(dir: &Path) -> ChamberIndex {
                 task: None,
                 last_message_preview: None,
                 completed: false,
+                archived: false,
                 sync: vec![],
             },
         );
@@ -180,6 +185,7 @@ fn registry_entry_for_path(workspace: &Path, path: PathBuf) -> Option<ChamberEnt
         task: None,
         last_message_preview: None,
         completed: false,
+        archived: false,
         sync: vec![],
     })
 }
@@ -192,10 +198,12 @@ fn merge_registry(workspace: &Path, idx: &mut ChamberIndex) {
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf());
     for registered in entries {
+        let archived = registered.archived;
         let path = PathBuf::from(registered.dir);
-        let Some(entry) = registry_entry_for_path(&workspace, path) else {
+        let Some(mut entry) = registry_entry_for_path(&workspace, path) else {
             continue;
         };
+        entry.archived = archived;
         idx.entry(entry.id.clone()).or_insert(entry);
     }
 }
