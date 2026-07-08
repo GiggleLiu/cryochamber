@@ -197,3 +197,37 @@ fn list_dedupes_legacy_raw_path_entries_for_same_canonical_chamber() {
         "legacy raw-path registry file should be removed"
     );
 }
+
+#[test]
+fn list_migrates_single_legacy_raw_path_entry_to_canonical_filename() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let root = tempfile::tempdir().unwrap();
+    let real = scaffold_chamber(root.path(), "real");
+    let link = root.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let reg = registry_dir().unwrap();
+    let legacy_path = reg.join(legacy_raw_entry_filename(&link));
+    let canonical_path = reg.join(entry_filename(&real));
+    let legacy_entry = DaemonEntry {
+        pid: None,
+        dir: link.display().to_string(),
+        socket_path: None,
+        archived: true,
+    };
+    std::fs::write(&legacy_path, serde_json::to_string(&legacy_entry).unwrap()).unwrap();
+
+    let entries = list().unwrap();
+
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].archived);
+    assert!(
+        canonical_path.exists(),
+        "entry should be rewritten canonically"
+    );
+    assert!(
+        !legacy_path.exists(),
+        "legacy raw-path registry file should be removed"
+    );
+}

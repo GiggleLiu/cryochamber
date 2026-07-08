@@ -31,6 +31,47 @@ async fn post_start_refuses_archived_chamber_without_launching() {
     assert!(v["message"].as_str().unwrap_or("").contains("Unarchive"));
 }
 
+#[tokio::test]
+async fn post_archive_sets_registry_flag_for_stopped_chamber() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = crate::test_support::EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
+
+    let Json(v) = post_archive(State(app), AxumPath(id)).await.unwrap();
+
+    assert_eq!(v["ok"], true);
+    assert!(crate::registry::is_archived(&chamber));
+}
+
+#[tokio::test]
+async fn post_unarchive_clears_registry_flag() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = crate::test_support::EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+    crate::registry::set_archived(&chamber, true).unwrap();
+
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
+
+    let Json(v) = post_unarchive(State(app), AxumPath(id)).await.unwrap();
+
+    assert_eq!(v["ok"], true);
+    assert!(!crate::registry::is_archived(&chamber));
+}
+
 #[test]
 fn status_json_includes_notes_content() {
     let dir = tempfile::tempdir().unwrap();
