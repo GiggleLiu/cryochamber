@@ -163,15 +163,15 @@ fn shell_renders_archive_for_stopped_chambers_and_unarchive_when_archived() {
     // #59: stopped chambers can be archived (folded out of the active grid);
     // archived chambers expose only Unarchive.
     assert!(
-        SHELL_HTML.contains("btn('archive'"),
+        SHELL_HTML.contains("btn(t('lc.archive')"),
         "stopped chambers should expose an Archive button"
     );
     assert!(
-        SHELL_HTML.contains("btn('unarchive'"),
+        SHELL_HTML.contains("btn(t('lc.unarchive')"),
         "archived chambers should expose an Unarchive button"
     );
     assert!(
-        SHELL_HTML.contains("Archived (${archived.length})"),
+        SHELL_HTML.contains("t('rail.archived', { n: archived.length })"),
         "archived chambers should fold into an Archived section in the rail"
     );
 }
@@ -265,7 +265,7 @@ fn shell_folds_completed_chambers_in_rail() {
         "completed chambers should be placed inside a `.chamber-history` <details>"
     );
     assert!(
-        SHELL_HTML.contains("`Completed (${completed.length})`"),
+        SHELL_HTML.contains("t('rail.completed', { n: completed.length })"),
         "the fold summary should announce how many completed chambers are hidden"
     );
 }
@@ -407,7 +407,7 @@ fn shell_wires_new_chamber_modal_to_api_and_selection() {
         "successful chamber creation should select the new chamber"
     );
     assert!(
-        SHELL_HTML.contains("showErr('name is empty')"),
+        SHELL_HTML.contains("showErr(t('modal.err.name_empty'))"),
         "empty chamber names should be rejected inline before hitting the network"
     );
 }
@@ -442,7 +442,7 @@ fn shell_emits_session_markers_between_messages_of_different_sessions() {
         "shell should build a session marker element"
     );
     assert!(
-        SHELL_HTML.contains("`Session ${session}`"),
+        SHELL_HTML.contains("t('marker.session', { n: session })"),
         "session marker should display the session number"
     );
     assert!(
@@ -557,7 +557,7 @@ fn shell_folds_older_thread_messages_into_history_details() {
         "thread should wrap older messages in a `.thread-history` <details>"
     );
     assert!(
-        SHELL_HTML.contains("`History (${historyCount} older)`"),
+        SHELL_HTML.contains("t('thread.history', { n: historyCount })"),
         "fold summary should announce how many older messages are hidden"
     );
     assert!(
@@ -640,7 +640,7 @@ fn shell_renders_session_summary_without_repeated_labels() {
 #[test]
 fn shell_wake_chip_uses_relative_first_copy() {
     assert!(
-        SHELL_HTML.contains("applyWake(txt, status.next_wake, 'next wake ');"),
+        SHELL_HTML.contains("applyWake(txt, status.next_wake, t('wake.next_prefix'));"),
         "detail wake chip should read like `next wake in 23h 11m`, not `next wake · ...`"
     );
     assert!(
@@ -702,5 +702,51 @@ fn shell_places_sync_controls_in_right_drawer() {
     assert!(
         SHELL_HTML.contains("view.syncEl = document.getElementById('panel-sync');"),
         "sync controls should render through the right-drawer panel"
+    );
+}
+
+#[test]
+fn shell_supports_chinese_language_toggle() {
+    // A top-bar toggle switches the dashboard between English and Simplified
+    // Chinese. The choice persists in localStorage and is honoured on load.
+    assert!(
+        SHELL_HTML.contains("id=\"lang-btn\""),
+        "top bar should render a language toggle button"
+    );
+    assert!(
+        WEB_CSS.contains(".lang-btn"),
+        "language toggle button should be styled"
+    );
+    assert!(
+        SHELL_HTML.contains("localStorage.setItem('hub:lang'"),
+        "switching language should persist the choice in localStorage"
+    );
+    assert!(
+        SHELL_HTML.contains("localStorage.getItem('hub:lang')"),
+        "the persisted language should be read back on load"
+    );
+    assert!(
+        SHELL_HTML.contains("window.location.reload();"),
+        "language switch should reload so every string re-renders"
+    );
+    // Both dictionaries must be present, with zh keyed distinctly from en.
+    assert!(
+        SHELL_HTML.contains("en: {") && SHELL_HTML.contains("zh: {"),
+        "i18n dictionary should define both English and Chinese tables"
+    );
+    // The navigator-language default path must fall back to Chinese for a
+    // zh* browser and English otherwise.
+    assert!(
+        SHELL_HTML.contains("startsWith('zh') ? 'zh' : 'en'"),
+        "first-visit language should follow the browser locale"
+    );
+    // Static chrome is translated declaratively, not only via JS calls.
+    assert!(
+        SHELL_HTML.contains("data-i18n=\"rail.title\""),
+        "static labels should carry data-i18n attributes for translation"
+    );
+    assert!(
+        SHELL_HTML.contains("applyStaticI18n()"),
+        "static translations should be applied on load"
     );
 }

@@ -16,35 +16,36 @@
   <div class="brand">
     <img src="/assets/logo.svg" class="logo" alt="cryochamber">
   </div>
+  <button class="lang-btn" id="lang-btn" data-i18n-title="lang.toggle_title" title="Language / 语言">EN</button>
 </div>
 
 <div class="app">
 
   <aside class="rail">
     <div class="rail-head">
-      <span class="title">Chambers</span>
+      <span class="title" data-i18n="rail.title">Chambers</span>
       <span class="count" id="rail-count">0</span>
-      <button class="rail-add" id="chamber-new" title="New chamber">+</button>
+      <button class="rail-add" id="chamber-new" data-i18n-title="rail.new_title" title="New chamber">+</button>
     </div>
     <div class="rail-list" id="chamber-list"></div>
     <div class="rail-foot">
-      <span>auto-refresh · on</span>
+      <span data-i18n="rail.autorefresh">auto-refresh · on</span>
       <span><button id="refresh">⟳</button></span>
     </div>
   </aside>
 
   <section class="center" id="pane">
     <div class="pane-empty">
-      <div>Pick a chamber from the rail</div>
+      <div data-i18n="pane.empty">Pick a chamber from the rail</div>
     </div>
   </section>
 
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-tabs">
-      <div class="drawer-tab active" data-tab="todos">Todos<span class="tab-count" id="todos-count">0</span></div>
-      <div class="drawer-tab" data-tab="sync">Sync</div>
-      <div class="drawer-tab" data-tab="settings">Settings</div>
-      <div class="drawer-tab" data-tab="log">Log</div>
+      <div class="drawer-tab active" data-tab="todos"><span data-i18n="tab.todos">Todos</span><span class="tab-count" id="todos-count">0</span></div>
+      <div class="drawer-tab" data-tab="sync" data-i18n="tab.sync">Sync</div>
+      <div class="drawer-tab" data-tab="settings" data-i18n="tab.settings">Settings</div>
+      <div class="drawer-tab" data-tab="log" data-i18n="tab.log">Log</div>
     </div>
     <div class="drawer-body" data-panel="todos" id="panel-todos"></div>
     <div class="drawer-body hidden" data-panel="sync" id="panel-sync"></div>
@@ -58,33 +59,33 @@
 
 <div class="modal-backdrop" id="modal-backdrop" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <h3 id="modal-title">New chamber</h3>
+    <h3 id="modal-title" data-i18n="modal.title">New chamber</h3>
     <div class="modal-field">
-      <label for="modal-name-input">Name</label>
-      <input id="modal-name-input" type="text" placeholder="my-chamber" autocomplete="off">
+      <label for="modal-name-input" data-i18n="modal.name">Name</label>
+      <input id="modal-name-input" type="text" data-i18n-placeholder="ph.name" placeholder="my-chamber" autocomplete="off">
     </div>
     <details class="modal-provider-details" id="modal-provider-details">
-      <summary>API key provider</summary>
+      <summary data-i18n="modal.provider_summary">API key provider</summary>
       <div class="modal-field">
-        <label for="modal-provider-input">Provider</label>
-        <input id="modal-provider-input" list="modal-provider-options" type="text" placeholder="provider-id" autocomplete="off">
+        <label for="modal-provider-input" data-i18n="modal.provider">Provider</label>
+        <input id="modal-provider-input" list="modal-provider-options" type="text" data-i18n-placeholder="ph.provider" placeholder="provider-id" autocomplete="off">
         <datalist id="modal-provider-options"></datalist>
       </div>
       <div class="modal-field">
-        <label for="modal-model-input">Model</label>
-        <input id="modal-model-input" list="modal-model-options" type="text" placeholder="model-id" autocomplete="off">
+        <label for="modal-model-input" data-i18n="modal.model">Model</label>
+        <input id="modal-model-input" list="modal-model-options" type="text" data-i18n-placeholder="ph.model" placeholder="model-id" autocomplete="off">
         <datalist id="modal-model-options"></datalist>
       </div>
       <div class="modal-field">
-        <label for="modal-api-key-input">API key</label>
-        <input id="modal-api-key-input" type="password" placeholder="sk-..." autocomplete="off">
+        <label for="modal-api-key-input" data-i18n="modal.apikey">API key</label>
+        <input id="modal-api-key-input" type="password" data-i18n-placeholder="ph.apikey" placeholder="sk-..." autocomplete="off">
       </div>
       <div class="modal-model-status" id="modal-model-status"></div>
     </details>
     <div class="modal-error" id="modal-error" hidden></div>
     <div class="modal-actions">
-      <button id="modal-cancel" class="modal-btn">Cancel</button>
-      <button id="modal-create" class="modal-btn modal-btn-primary">Create</button>
+      <button id="modal-cancel" class="modal-btn" data-i18n="modal.cancel">Cancel</button>
+      <button id="modal-create" class="modal-btn modal-btn-primary" data-i18n="modal.create">Create</button>
     </div>
   </div>
 </div>
@@ -99,6 +100,223 @@
     chamberHistoryOpen: false,
     chamberArchivedOpen: false,
   };
+
+  // ---- i18n ----
+  // Client-side translation. Values may be strings (with {placeholder}
+  // substitution) or functions (for pluralised strings). Keys missing
+  // from the active language fall back to English, then to the key itself.
+  const I18N = {
+    en: {
+      'rail.title': 'Chambers',
+      'rail.new_title': 'New chamber',
+      'rail.autorefresh': 'auto-refresh · on',
+      'pane.empty': 'Pick a chamber from the rail',
+      'tab.todos': 'Todos',
+      'tab.sync': 'Sync',
+      'tab.settings': 'Settings',
+      'tab.log': 'Log',
+      'modal.title': 'New chamber',
+      'modal.name': 'Name',
+      'modal.provider_summary': 'API key provider',
+      'modal.provider': 'Provider',
+      'modal.model': 'Model',
+      'modal.apikey': 'API key',
+      'modal.cancel': 'Cancel',
+      'modal.create': 'Create',
+      'ph.name': 'my-chamber',
+      'ph.provider': 'provider-id',
+      'ph.model': 'model-id',
+      'ph.apikey': 'sk-...',
+      'modal.err.name_empty': 'name is empty',
+      'modal.err.provider_empty': 'api key provider is empty',
+      'modal.err.key_empty': 'api key is empty',
+      'modal.err.http': 'error: HTTP {n}',
+      'modal.err.generic': 'error: {msg}',
+      'modal.models_loading': 'Loading models...',
+      'modal.models_unavailable': 'Model list unavailable',
+      'lang.toggle_title': 'Language / 语言',
+      'question.badge_title': 'Open question — agent is waiting on you',
+      'time.now': 'now',
+      'time.ago.m': '{n}m ago',
+      'time.ago.h': '{n}h ago',
+      'time.ago.d': '{n}d ago',
+      'time.in_m': 'in {n}m',
+      'time.in_h': 'in {n}h',
+      'time.in_hm': 'in {n}h {m}m',
+      'time.in_d': 'in {n}d',
+      'wake.next_prefix': 'next wake ',
+      'rail.completed': 'Completed ({n})',
+      'rail.archived': 'Archived ({n})',
+      'head.plan_complete': '✓ Plan complete',
+      'head.session': 'SESSION #{n}',
+      'head.session_prefix': 'Session {n}: ',
+      'lc.launch': 'launch',
+      'lc.stop': 'stop',
+      'lc.reset': 'reset',
+      'lc.archive': 'archive',
+      'lc.unarchive': 'unarchive',
+      'toast.started': 'started',
+      'toast.stopped': 'stopped',
+      'toast.woken': 'woken',
+      'confirm.reset_title': 'Reset "{name}"?',
+      'confirm.reset_body': 'This will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Launch to begin a new session\n\nThis cannot be undone.',
+      'confirm.stop_sync': 'Stop {backend} sync and uninstall its service?',
+      'todos.title': 'Todos',
+      'todos.count': '{pending} pending · {done} done',
+      'todos.more': '+{n} more pending',
+      'todos.history': 'History ({n})',
+      'sync.title': 'Message sync',
+      'sync.running': 'running',
+      'sync.off': 'off',
+      'sync.last_push': 'last push · session #{n}',
+      'sync.configured': 'configured',
+      'sync.empty': 'No message sync is configured for this chamber.',
+      'digest.title': 'Daily Digests',
+      'digest.unknown': 'unknown',
+      'digest.counts': (a) => `${a.n} session${a.n === 1 ? '' : 's'} · ${a.m} failed`,
+      'ctab.messages': 'Messages',
+      'ctab.plan': 'Plan',
+      'ctab.notes': "Agent's Notes",
+      'marker.session': 'Session {n}',
+      'compose.placeholder': 'Send a message to the chamber… (Enter for newline, ⌘↵ to send)',
+      'compose.hint': '⌘↵',
+      'compose.send': 'Send',
+      'thread.history': 'History ({n} older)',
+      'notes.empty': 'No NOTES.md in this chamber.',
+      'plan.empty': 'No plan.md in this chamber.',
+      'settings.empty': 'No cryo.toml in this chamber.',
+      'settings.unparseable': '(could not parse cryo.toml — open it on disk)',
+    },
+    zh: {
+      'rail.title': 'Chambers',
+      'rail.new_title': '新建 chamber',
+      'rail.autorefresh': '自动刷新 · 开',
+      'pane.empty': '请从左侧列表选择一个 chamber',
+      'tab.todos': '待办',
+      'tab.sync': '同步',
+      'tab.settings': '设置',
+      'tab.log': '日志',
+      'modal.title': '新建 chamber',
+      'modal.name': '名称',
+      'modal.provider_summary': 'API 密钥提供商',
+      'modal.provider': '提供商',
+      'modal.model': '模型',
+      'modal.apikey': 'API 密钥',
+      'modal.cancel': '取消',
+      'modal.create': '创建',
+      'ph.name': 'my-chamber',
+      'ph.provider': 'provider-id',
+      'ph.model': 'model-id',
+      'ph.apikey': 'sk-...',
+      'modal.err.name_empty': '名称为空',
+      'modal.err.provider_empty': 'API 密钥提供商为空',
+      'modal.err.key_empty': 'API 密钥为空',
+      'modal.err.http': '错误：HTTP {n}',
+      'modal.err.generic': '错误：{msg}',
+      'modal.models_loading': '正在加载模型…',
+      'modal.models_unavailable': '模型列表不可用',
+      'lang.toggle_title': 'Language / 语言',
+      'question.badge_title': '有未回答的问题 —— agent 正在等你回复',
+      'time.now': '现在',
+      'time.ago.m': '{n} 分钟前',
+      'time.ago.h': '{n} 小时前',
+      'time.ago.d': '{n} 天前',
+      'time.in_m': '{n} 分钟后',
+      'time.in_h': '{n} 小时后',
+      'time.in_hm': '{n} 小时 {m} 分钟后',
+      'time.in_d': '{n} 天后',
+      'wake.next_prefix': '下次唤醒 ',
+      'rail.completed': '已完成 ({n})',
+      'rail.archived': '已归档 ({n})',
+      'head.plan_complete': '✓ 计划已完成',
+      'head.session': '第 {n} 次会话',
+      'head.session_prefix': '第 {n} 次会话：',
+      'lc.launch': '启动',
+      'lc.stop': '停止',
+      'lc.reset': '重置',
+      'lc.archive': '归档',
+      'lc.unarchive': '取消归档',
+      'toast.started': '已启动',
+      'toast.stopped': '已停止',
+      'toast.woken': '已唤醒',
+      'confirm.reset_title': '重置「{name}」？',
+      'confirm.reset_body': '此操作将：\n  • 若守护进程正在运行则将其停止\n  • 将日志、todo.json、NOTES.md、消息和 timer.json 归档到 history/<时间戳>/\n  • 停止该 chamber —— 按「启动」开始新的会话\n\n此操作不可撤销。',
+      'confirm.stop_sync': '停止 {backend} 同步并卸载其服务？',
+      'todos.title': '待办',
+      'todos.count': '{pending} 项待办 · {done} 项已完成',
+      'todos.more': '还有 {n} 项待办',
+      'todos.history': '历史记录 ({n})',
+      'sync.title': '消息同步',
+      'sync.running': '运行中',
+      'sync.off': '已关闭',
+      'sync.last_push': '上次推送 · 第 {n} 次会话',
+      'sync.configured': '已配置',
+      'sync.empty': '该 chamber 未配置消息同步。',
+      'digest.title': '每日摘要',
+      'digest.unknown': '未知',
+      'digest.counts': (a) => `${a.n} 次会话 · ${a.m} 次失败`,
+      'ctab.messages': '消息',
+      'ctab.plan': '计划',
+      'ctab.notes': 'Agent 笔记',
+      'marker.session': '第 {n} 次会话',
+      'compose.placeholder': '向 chamber 发送消息……（回车换行，⌘↵ 发送）',
+      'compose.hint': '⌘↵',
+      'compose.send': '发送',
+      'thread.history': '历史记录（更早的 {n} 条）',
+      'notes.empty': '该 chamber 中没有 NOTES.md。',
+      'plan.empty': '该 chamber 中没有 plan.md。',
+      'settings.empty': '该 chamber 中没有 cryo.toml。',
+      'settings.unparseable': '（无法解析 cryo.toml —— 请在磁盘上打开它）',
+    },
+  };
+
+  function detectLang() {
+    try {
+      const saved = localStorage.getItem('hub:lang');
+      if (saved && I18N[saved]) return saved;
+    } catch (e) {}
+    const nav = (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
+    return String(nav).toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+
+  let LANG = detectLang();
+
+  function t(key, args) {
+    let v = (I18N[LANG] && I18N[LANG][key] != null) ? I18N[LANG][key] : I18N.en[key];
+    if (v == null) return key;
+    if (typeof v === 'function') return v(args || {});
+    if (args) {
+      v = String(v).replace(/\{(\w+)\}/g, (_, k) => (args[k] != null ? args[k] : '{' + k + '}'));
+    }
+    return v;
+  }
+
+  function applyStaticI18n() {
+    document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+      el.title = t(el.getAttribute('data-i18n-title'));
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
+    const lb = document.getElementById('lang-btn');
+    if (lb) lb.textContent = LANG === 'zh' ? 'EN' : '中文';
+  }
+
+  applyStaticI18n();
+  const langBtn = document.getElementById('lang-btn');
+  if (langBtn) {
+    langBtn.addEventListener('click', () => {
+      const next = LANG === 'zh' ? 'en' : 'zh';
+      try { localStorage.setItem('hub:lang', next); } catch (e) {}
+      // Reload so every static + dynamically-rendered string re-renders
+      // against the new language without re-running each render by hand.
+      window.location.reload();
+    });
+  }
 
   function urlChamberId() {
     const m = window.location.pathname.match(/^\/c\/(.+)$/);
@@ -161,20 +379,20 @@
   function formatWakeRelative(iso, nowMs) {
     if (!iso) return null;
     const target = new Date(iso);
-    const t = target.getTime();
-    if (!Number.isFinite(t)) return null;
-    const diffMin = Math.round((t - (nowMs ?? Date.now())) / 60000);
+    const targetMs = target.getTime();
+    if (!Number.isFinite(targetMs)) return null;
+    const diffMin = Math.round((targetMs - (nowMs ?? Date.now())) / 60000);
     let text;
-    if (diffMin <= -60 * 24) text = `${Math.round(-diffMin / (60 * 24))}d ago`;
-    else if (diffMin <= -60)  text = `${Math.round(-diffMin / 60)}h ago`;
-    else if (diffMin < 0)     text = `${-diffMin}m ago`;
-    else if (diffMin < 1)     text = 'now';
-    else if (diffMin < 60)    text = `in ${diffMin}m`;
+    if (diffMin <= -60 * 24) text = t('time.ago.d', { n: Math.round(-diffMin / (60 * 24)) });
+    else if (diffMin <= -60)  text = t('time.ago.h', { n: Math.round(-diffMin / 60) });
+    else if (diffMin < 0)     text = t('time.ago.m', { n: -diffMin });
+    else if (diffMin < 1)     text = t('time.now');
+    else if (diffMin < 60)    text = t('time.in_m', { n: diffMin });
     else if (diffMin < 60 * 24) {
       const h = Math.floor(diffMin / 60);
       const m = diffMin % 60;
-      text = m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
-    } else text = `in ${Math.floor(diffMin / (60 * 24))}d`;
+      text = m > 0 ? t('time.in_hm', { n: h, m }) : t('time.in_h', { n: h });
+    } else text = t('time.in_d', { n: Math.floor(diffMin / (60 * 24)) });
     return { text, soon: diffMin >= 0 && diffMin <= 60 };
   }
 
@@ -232,7 +450,7 @@
       const badge = document.createElement('span');
       badge.className = 'question-badge';
       badge.textContent = '?';
-      badge.title = 'Open question — agent is waiting on you';
+      badge.title = t('question.badge_title');
       row1.appendChild(badge);
     }
     row.appendChild(row1);
@@ -298,7 +516,7 @@
         state.chamberHistoryOpen = details.open;
       });
       const summary = document.createElement('summary');
-      summary.textContent = `Completed (${completed.length})`;
+      summary.textContent = t('rail.completed', { n: completed.length });
       details.appendChild(summary);
       for (const c of completed) details.appendChild(buildChamberRow(c));
       list.appendChild(details);
@@ -314,7 +532,7 @@
         state.chamberArchivedOpen = details.open;
       });
       const summary = document.createElement('summary');
-      summary.textContent = `Archived (${archived.length})`;
+      summary.textContent = t('rail.archived', { n: archived.length });
       details.appendChild(summary);
       for (const c of archived) details.appendChild(buildChamberRow(c));
       list.appendChild(details);
@@ -407,7 +625,7 @@
     const text = String(summary || '').trim();
     if (!text) return '';
     const body = text.replace(/^Session\s+#?\d+\s*:\s*/i, '').trim();
-    const prefix = Number(session) > 0 ? `Session ${session}: ` : '';
+    const prefix = Number(session) > 0 ? t('head.session_prefix', { n: session }) : '';
     return prefix + (body || text);
   }
 
@@ -471,11 +689,11 @@
     view.headerName.title = entry.path || '';
     const summary = status.session_summary || '';
     const displaySummary = formatSessionSummary(status.session, summary);
-    view.headerMeta.textContent = displaySummary ? '' : `SESSION #${status.session}`;
+    view.headerMeta.textContent = displaySummary ? '' : t('head.session', { n: status.session });
     view.headerMeta.style.display = displaySummary ? 'none' : '';
     if (status.completed) {
       view.planCompleteBox.style.display = '';
-      view.planCompleteBox.textContent = '✓ Plan complete' +
+      view.planCompleteBox.textContent = t('head.plan_complete') +
         (status.completion_summary ? ': ' + status.completion_summary : '');
       view.headerTaskLine.textContent = '';
       view.headerTaskLine.title = '';
@@ -496,7 +714,7 @@
       const txt = document.createElement('span');
       view.wakeChip.appendChild(pulse);
       view.wakeChip.appendChild(txt);
-      applyWake(txt, status.next_wake, 'next wake ');
+      applyWake(txt, status.next_wake, t('wake.next_prefix'));
       view.wakeChip.style.display = '';
     } else {
       view.wakeChip.style.display = 'none';
@@ -513,21 +731,21 @@
     // Archived chambers are put away: the only action is to bring them back.
     // Unarchive leaves the chamber stopped; the operator then presses Launch.
     if (entry.archived) {
-      btns.appendChild(btn('unarchive', () => lifecycle(entry.id, 'unarchive'), 'primary', pending));
+      btns.appendChild(btn(t('lc.unarchive'), () => lifecycle(entry.id, 'unarchive'), 'primary', pending));
       return;
     }
     if (entry.running) {
-      btns.appendChild(btn('stop', () => lifecycle(entry.id, 'stop'), '', pending));
+      btns.appendChild(btn(t('lc.stop'), () => lifecycle(entry.id, 'stop'), '', pending));
     } else if (!entry.config_error && !entry.completed) {
       // A completed plan has nothing to resume — hide Launch. Reset stays
       // available so the operator can archive the run and begin a new plan.
-      btns.appendChild(btn('launch', () => lifecycle(entry.id, 'start'), 'primary', pending));
+      btns.appendChild(btn(t('lc.launch'), () => lifecycle(entry.id, 'start'), 'primary', pending));
     }
     if (!entry.running && !entry.config_error) {
-      btns.appendChild(btn('reset', () => confirmReset(entry.id, entry.name), 'danger', pending));
+      btns.appendChild(btn(t('lc.reset'), () => confirmReset(entry.id, entry.name), 'danger', pending));
       // Archive is only offered once the daemon is stopped — the natural next
       // step after Stop. Reversible, so no confirm dialog.
-      btns.appendChild(btn('archive', () => lifecycle(entry.id, 'archive'), '', pending));
+      btns.appendChild(btn(t('lc.archive'), () => lifecycle(entry.id, 'archive'), '', pending));
     }
   }
 
@@ -544,9 +762,20 @@
   }
 
   function confirmReset(id, name) {
-    const msg = `Reset "${name}"?\n\nThis will:\n  • stop the daemon if running\n  • archive logs, todo.json, NOTES.md, messages, and timer.json to history/<timestamp>/\n  • leave the chamber stopped — press Launch to begin a new session\n\nThis cannot be undone.`;
+    const msg = t('confirm.reset_title', { name }) + '\n\n' + t('confirm.reset_body');
     if (window.confirm(msg)) lifecycle(id, 'reset');
   }
+
+  // Toast fallback when the server provides no message: map the lifecycle
+  // action to a localised status word.
+  const ACTION_TOAST = {
+    start: 'toast.started',
+    stop: 'toast.stopped',
+    wake: 'toast.woken',
+    reset: 'lc.reset',
+    archive: 'lc.archive',
+    unarchive: 'lc.unarchive',
+  };
 
   async function lifecycle(id, action) {
     if (state.lifecyclePending[id]) return;
@@ -558,7 +787,7 @@
         opts.body = JSON.stringify({});
       }
       const resp = await fetchJSON(`/api/chambers/${id}/${action}`, opts);
-      toast(resp.message || action, resp.ok ? '' : 'error');
+      toast(resp.message || t(ACTION_TOAST[action] || action), resp.ok ? '' : 'error');
       await loadChambers();
       if (state.currentId === id) await selectChamber(id, { push: false });
     } catch (e) {
@@ -635,7 +864,7 @@
     el.className = 'session-marker';
     el.dataset.day = day;
     el.dataset.session = String(session);
-    el.textContent = `Session ${session}`;
+    el.textContent = t('marker.session', { n: session });
     return el;
   }
 
@@ -693,7 +922,7 @@
       const details = document.createElement('details');
       details.className = 'thread-history';
       const summary = document.createElement('summary');
-      summary.textContent = `History (${historyCount} older)`;
+      summary.textContent = t('thread.history', { n: historyCount });
       details.appendChild(summary);
       const body = document.createElement('div');
       body.className = 'thread-history-body';
@@ -757,10 +986,10 @@
     wrap.className = 'compose';
     wrap.innerHTML = `
       <div class="compose-inner">
-        <textarea id="send-body" rows="1" placeholder="Send a message to the chamber… (Enter for newline, ⌘↵ to send)"></textarea>
+        <textarea id="send-body" rows="1" placeholder="${escapeHtml(t('compose.placeholder'))}"></textarea>
         <div class="controls">
-          <div class="hint">⌘↵</div>
-          <button class="send">Send</button>
+          <div class="hint">${escapeHtml(t('compose.hint'))}</div>
+          <button class="send">${escapeHtml(t('compose.send'))}</button>
         </div>
       </div>`;
     pane.appendChild(wrap);
@@ -869,17 +1098,17 @@
     const title = document.createElement('div');
     title.className = 'section-title';
     title.innerHTML =
-      `Todos <span class="count">${pending.length} pending · ${done.length} done</span>`;
+      `${escapeHtml(t('todos.title'))} <span class="count">${escapeHtml(t('todos.count', { pending: pending.length, done: done.length }))}</span>`;
     box.appendChild(title);
 
     const list = document.createElement('div');
     list.className = 'todos';
     const visible = pending.slice(0, TODO_PENDING_CAP);
-    for (const t of visible) list.appendChild(buildTodoRow(t));
+    for (const td of visible) list.appendChild(buildTodoRow(td));
     if (pending.length > TODO_PENDING_CAP) {
       const more = document.createElement('div');
       more.className = 'todo-more';
-      more.textContent = `+${pending.length - TODO_PENDING_CAP} more pending`;
+      more.textContent = t('todos.more', { n: pending.length - TODO_PENDING_CAP });
       list.appendChild(more);
     }
     box.appendChild(list);
@@ -888,11 +1117,11 @@
       const details = document.createElement('details');
       details.className = 'todo-history';
       const summary = document.createElement('summary');
-      summary.textContent = `History (${done.length})`;
+      summary.textContent = t('todos.history', { n: done.length });
       details.appendChild(summary);
       const histList = document.createElement('div');
       histList.className = 'todos';
-      for (const t of done) histList.appendChild(buildTodoRow(t));
+      for (const td of done) histList.appendChild(buildTodoRow(td));
       details.appendChild(histList);
       box.appendChild(details);
     }
@@ -909,14 +1138,14 @@
 
   async function syncToggle(id, backend, running) {
     if (running) {
-      if (!window.confirm(`Stop ${backend} sync and uninstall its service?`)) return false;
+      if (!window.confirm(t('confirm.stop_sync', { backend }))) return false;
     }
     try {
       const resp = await fetchJSON(
         `/api/chambers/${id}/sync/${backend}/${running ? 'stop' : 'start'}`,
         { method: 'POST' }
       );
-      toast(resp.message || (running ? 'stopped' : 'started'), resp.ok ? '' : 'error');
+      toast(resp.message || t(running ? 'toast.stopped' : 'toast.started'), resp.ok ? '' : 'error');
       return true;
     } catch (e) {
       toast(e.message, 'error');
@@ -935,12 +1164,12 @@
     const title = document.createElement('div');
     title.className = 'section-title';
     const running = items.filter(s => s.running).length;
-    title.innerHTML = `Message sync <span class="count">${running}/${items.length}</span>`;
+    title.innerHTML = `${escapeHtml(t('sync.title'))} <span class="count">${running}/${items.length}</span>`;
     box.appendChild(title);
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'sync-help';
-      empty.textContent = 'No message sync is configured for this chamber.';
+      empty.textContent = t('sync.empty');
       box.appendChild(empty);
       return;
     }
@@ -950,11 +1179,14 @@
     for (const s of items) {
       const card = document.createElement('div');
       card.className = 'sync-card';
+      const footText = s.last_pushed_session != null
+        ? t('sync.last_push', { n: s.last_pushed_session })
+        : (s.configured ? t('sync.configured') : '');
       card.innerHTML = `
         <div class="sync-card-head">
           <div class="sync-card-name">
             ${escapeHtml(s.backend)}
-            <span class="badge${s.running ? '' : ' stopped'}">${s.running ? 'running' : 'off'}</span>
+            <span class="badge${s.running ? '' : ' stopped'}">${escapeHtml(s.running ? t('sync.running') : t('sync.off'))}</span>
           </div>
           <label class="sync-toggle">
             <input type="checkbox" ${s.running ? 'checked' : ''}>
@@ -963,9 +1195,7 @@
         </div>
         <div class="sync-target">${escapeHtml(s.target || '—')}</div>
         <div class="sync-foot">
-          <span>${s.last_pushed_session != null
-            ? 'last push · session #' + s.last_pushed_session
-            : (s.configured ? 'configured' : '')}</span>
+          <span>${escapeHtml(footText)}</span>
         </div>`;
       const cb = card.querySelector('input[type=checkbox]');
       cb.addEventListener('change', async () => {
@@ -1003,7 +1233,7 @@
     if (digests.length) {
       const digestTitle = document.createElement('div');
       digestTitle.className = 'section-title digest-title';
-      digestTitle.textContent = 'Daily Digests';
+      digestTitle.textContent = t('digest.title');
       box.appendChild(digestTitle);
 
       const digestList = document.createElement('div');
@@ -1016,12 +1246,12 @@
 
         const date = document.createElement('span');
         date.className = 'digest-date';
-        date.textContent = d.date || 'unknown';
+        date.textContent = d.date || t('digest.unknown');
 
         const counts = document.createElement('span');
         counts.className = 'digest-counts';
         const sessions = Number(d.total_sessions || 0);
-        counts.textContent = `${sessions} session${sessions === 1 ? '' : 's'} · ${failed} failed`;
+        counts.textContent = t('digest.counts', { n: sessions, m: failed });
 
         row.appendChild(date);
         row.appendChild(counts);
@@ -1043,7 +1273,7 @@
     const messagesTab = document.createElement('div');
     messagesTab.className = 'center-tab';
     messagesTab.dataset.tab = 'messages';
-    messagesTab.textContent = 'Messages';
+    messagesTab.textContent = t('ctab.messages');
     const unread = document.createElement('span');
     unread.className = 'tab-count';
     unread.hidden = true;
@@ -1053,12 +1283,12 @@
     const planTab = document.createElement('div');
     planTab.className = 'center-tab';
     planTab.dataset.tab = 'plan';
-    planTab.textContent = 'Plan';
+    planTab.textContent = t('ctab.plan');
 
     const notesTab = document.createElement('div');
     notesTab.className = 'center-tab';
     notesTab.dataset.tab = 'notes';
-    notesTab.textContent = "Agent's Notes";
+    notesTab.textContent = t('ctab.notes');
 
     bar.appendChild(messagesTab);
     bar.appendChild(planTab);
@@ -1141,7 +1371,7 @@
       view.notesEl,
       status.notes_html || '',
       'notesLastHtml',
-      "No NOTES.md in this chamber.",
+      t('notes.empty'),
       { stickToBottom: true }
     );
   }
@@ -1152,7 +1382,7 @@
       view.planEl,
       status.plan_html || '',
       'planLastHtml',
-      'No plan.md in this chamber.'
+      t('plan.empty')
     );
   }
 
@@ -1222,7 +1452,7 @@
     if (!hasConfig) {
       const empty = document.createElement('div');
       empty.className = 'settings-empty';
-      empty.textContent = 'No cryo.toml in this chamber.';
+      empty.textContent = t('settings.empty');
       box.appendChild(empty);
       view.settingsEl = empty;
       return;
@@ -1233,7 +1463,7 @@
       // key. Point the operator at the file on disk instead.
       const note = document.createElement('div');
       note.className = 'settings-empty';
-      note.textContent = '(could not parse cryo.toml — open it on disk)';
+      note.textContent = t('settings.unparseable');
       box.appendChild(note);
       view.settingsEl = note;
       return;
@@ -1341,7 +1571,7 @@
     ++state.detailSeq;
     view = null;
     document.getElementById('pane').innerHTML =
-      '<div class="pane-empty"><div>Pick a chamber from the rail</div></div>';
+      `<div class="pane-empty"><div>${escapeHtml(t('pane.empty'))}</div></div>`;
     document.getElementById('drawer').hidden = true;
     renderRail();
   }
@@ -1507,7 +1737,7 @@
     async function loadModelsDevCatalog() {
       if (modelCatalogLoaded || modelCatalogLoading) return;
       modelCatalogLoading = true;
-      modelStatus.textContent = 'Loading models...';
+      modelStatus.textContent = t('modal.models_loading');
       try {
         const res = await fetch(MODELS_DEV_API_URL, { cache: 'force-cache' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1518,7 +1748,7 @@
         renderProviderOptions();
         renderModelOptions();
       } catch (e) {
-        modelStatus.textContent = 'Model list unavailable';
+        modelStatus.textContent = t('modal.models_unavailable');
       } finally {
         modelCatalogLoading = false;
       }
@@ -1584,15 +1814,15 @@
         || key
         || selectedModel;
       if (!name) {
-        showErr('name is empty');
+        showErr(t('modal.err.name_empty'));
         return;
       }
       if (configureProvider && !providerId) {
-        showErr('api key provider is empty');
+        showErr(t('modal.err.provider_empty'));
         return;
       }
       if (configureProvider && !key) {
-        showErr('api key is empty');
+        showErr(t('modal.err.key_empty'));
         return;
       }
 
@@ -1618,10 +1848,10 @@
             await selectChamber(body.id);
           }
         } else {
-          showErr((body && body.error) || `error: HTTP ${r.status}`);
+          showErr((body && body.error) || t('modal.err.http', { n: r.status }));
         }
       } catch (e) {
-        showErr(`error: ${e}`);
+        showErr(t('modal.err.generic', { msg: e }));
       } finally {
         btnCreate.disabled = false;
       }
