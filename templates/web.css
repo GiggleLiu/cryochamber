@@ -48,6 +48,18 @@ body {
   /* logo.svg is navy-on-white; flip for dark theme. */
   filter: invert(0.92) hue-rotate(180deg) saturate(0.9) brightness(1.05);
 }
+.lang-btn {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.lang-btn:hover { color: var(--ink); border-color: var(--ink-faint); }
 /* ---------- Layout ---------- */
 .app {
   display: grid;

@@ -4,6 +4,14 @@
 
 Security and reliability hardening.
 
+### Cryohub
+
+- **Dashboard speaks Chinese.** The cryohub web UI ships a Simplified Chinese
+  (zh-CN) translation alongside English. A language toggle in the top bar
+  switches the whole UI; the choice persists and a Chinese-locale browser
+  defaults to Chinese on first visit. Server-provided strings (status
+  summaries, dates, message bodies) remain in their source language.
+
 ### Security
 
 - **Hub hardened against cross-origin abuse.** The dashboard now validates the
