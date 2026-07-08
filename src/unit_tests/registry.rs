@@ -9,6 +9,14 @@ fn scaffold_chamber(parent: &std::path::Path, name: &str) -> std::path::PathBuf 
     dir.canonicalize().unwrap()
 }
 
+fn legacy_raw_entry_filename(dir: &std::path::Path) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    dir.hash(&mut hasher);
+    format!("{:016x}.json", hasher.finish())
+}
+
 #[test]
 fn test_daemon_entry_has_socket_path() {
     let entry = DaemonEntry {
@@ -149,5 +157,43 @@ fn entry_filename_dedupes_symlinked_path_forms() {
         entry_filename(&real),
         entry_filename(&link),
         "symlinked and real paths must share one registry entry"
+    );
+}
+
+#[test]
+fn list_dedupes_legacy_raw_path_entries_for_same_canonical_chamber() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let root = tempfile::tempdir().unwrap();
+    let real = scaffold_chamber(root.path(), "real");
+    let link = root.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let reg = registry_dir().unwrap();
+    let legacy_path = reg.join(legacy_raw_entry_filename(&link));
+    let legacy_entry = DaemonEntry {
+        pid: None,
+        dir: link.display().to_string(),
+        socket_path: None,
+        archived: false,
+    };
+    std::fs::write(&legacy_path, serde_json::to_string(&legacy_entry).unwrap()).unwrap();
+    set_archived(&real, true).unwrap();
+
+    let entries = list().unwrap();
+    let matching: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            std::path::PathBuf::from(&entry.dir)
+                .canonicalize()
+                .is_ok_and(|path| path == real)
+        })
+        .collect();
+
+    assert_eq!(matching.len(), 1, "registry should list one chamber entry");
+    assert!(matching[0].archived, "canonical archived flag should win");
+    assert!(
+        !legacy_path.exists(),
+        "legacy raw-path registry file should be removed"
     );
 }

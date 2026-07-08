@@ -8,6 +8,29 @@ fn status_json_for_missing_state_has_zero_session() {
     assert_eq!(v["session"], 0);
 }
 
+#[tokio::test]
+async fn post_start_refuses_archived_chamber_without_launching() {
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = {
+        let mut idx = app.chambers.write().unwrap();
+        let (id, entry) = idx.iter_mut().next().unwrap();
+        entry.archived = true;
+        id.clone()
+    };
+
+    let Json(v) = post_start(State(app), AxumPath(id)).await.unwrap();
+
+    assert_eq!(v["ok"], false);
+    assert!(v["message"].as_str().unwrap_or("").contains("Unarchive"));
+}
+
 #[test]
 fn status_json_includes_notes_content() {
     let dir = tempfile::tempdir().unwrap();

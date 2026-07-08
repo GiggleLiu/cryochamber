@@ -9,6 +9,9 @@ use crate::channel::store::MessageStore;
 
 /// Start a daemon for the chamber at `dir`. Mirrors `cmd_start` in the CLI.
 pub fn start_chamber(dir: &Path) -> Result<()> {
+    if crate::registry::is_archived(dir) {
+        anyhow::bail!("Unarchive the chamber before launching it");
+    }
     let exe = resolve_cryo_exe()?;
     let prepared = crate::lifecycle::prepare_start(dir, crate::lifecycle::StartOptions::default())?;
     crate::lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;

@@ -94,6 +94,11 @@ fn read_archived(dir: &Path) -> bool {
     read_entry(dir).map(|e| e.archived).unwrap_or(false)
 }
 
+/// Return whether a chamber is archived in the hub registry.
+pub fn is_archived(dir: &Path) -> bool {
+    read_archived(dir)
+}
+
 /// Read the current on-disk entry for a chamber, if any.
 fn read_entry(dir: &Path) -> Option<DaemonEntry> {
     let reg = registry_dir().ok()?;
@@ -136,34 +141,43 @@ pub fn unregister(dir: &Path) {
 /// List all remembered chambers. Missing chamber directories are pruned;
 /// dead PIDs are cleared so the entry remains visible as stopped.
 pub fn list() -> Result<Vec<DaemonEntry>> {
+    struct Candidate {
+        entry: DaemonEntry,
+        file_path: PathBuf,
+        canonical_file: PathBuf,
+        is_canonical_file: bool,
+    }
+
     let reg = registry_dir()?;
-    let mut entries = Vec::new();
+    let mut entries = std::collections::BTreeMap::<PathBuf, Candidate>::new();
+    let mut remove_paths = Vec::new();
 
     let dir = match std::fs::read_dir(&reg) {
-        Ok(d) => d,
-        Err(_) => return Ok(entries),
+        Ok(dir) => dir,
+        Err(_) => return Ok(Vec::new()),
     };
 
     for file in dir {
         let file = file?;
-        if file.path().extension().is_none_or(|ext| ext != "json") {
+        let file_path = file.path();
+        if file_path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
-        let content = match std::fs::read_to_string(file.path()) {
+        let content = match std::fs::read_to_string(&file_path) {
             Ok(c) => c,
             Err(_) => continue,
         };
         let mut entry: DaemonEntry = match serde_json::from_str(&content) {
             Ok(e) => e,
             Err(_) => {
-                let _ = std::fs::remove_file(file.path());
+                let _ = std::fs::remove_file(&file_path);
                 continue;
             }
         };
 
         let chamber_dir = PathBuf::from(&entry.dir);
         if !crate::config::config_path(&chamber_dir).exists() {
-            let _ = std::fs::remove_file(file.path());
+            let _ = std::fs::remove_file(&file_path);
             continue;
         }
 
@@ -171,14 +185,55 @@ pub fn list() -> Result<Vec<DaemonEntry>> {
             if !is_pid_alive(pid) {
                 entry.pid = None;
                 entry.socket_path = None;
-                let _ = std::fs::write(file.path(), serde_json::to_string(&entry)?);
             }
         }
 
-        entries.push(entry);
+        let canonical = canonical_dir(&chamber_dir);
+        let canonical_file = reg.join(entry_filename(&canonical));
+        let candidate = Candidate {
+            entry,
+            is_canonical_file: file_path == canonical_file,
+            file_path,
+            canonical_file,
+        };
+
+        match entries.entry(canonical) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(candidate);
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                if candidate.is_canonical_file && !slot.get().is_canonical_file {
+                    remove_paths.push(slot.get().file_path.clone());
+                    slot.insert(candidate);
+                } else {
+                    remove_paths.push(candidate.file_path);
+                }
+            }
+        }
     }
 
-    Ok(entries)
+    let mut out = Vec::new();
+    for candidate in entries.into_values() {
+        if candidate.file_path != candidate.canonical_file {
+            std::fs::write(
+                &candidate.canonical_file,
+                serde_json::to_string(&candidate.entry)?,
+            )?;
+            remove_paths.push(candidate.file_path);
+        } else {
+            std::fs::write(
+                &candidate.file_path,
+                serde_json::to_string(&candidate.entry)?,
+            )?;
+        }
+        out.push(candidate.entry);
+    }
+
+    for path in remove_paths {
+        let _ = std::fs::remove_file(path);
+    }
+
+    Ok(out)
 }
 
 fn is_pid_alive(pid: u32) -> bool {

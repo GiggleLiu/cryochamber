@@ -238,3 +238,17 @@ fn archive_chamber_refuses_while_daemon_running() {
     let err = archive_chamber(dir.path()).unwrap_err();
     assert!(err.to_string().contains("Stop the chamber"));
 }
+
+#[test]
+fn start_chamber_refuses_archived_chamber_before_launch_preflight() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = crate::test_support::EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&crate::config::config_path(dir.path()), &cfg).unwrap();
+    crate::registry::set_archived(dir.path(), true).unwrap();
+
+    let err = start_chamber(dir.path()).unwrap_err();
+
+    assert!(err.to_string().contains("Unarchive"));
+}

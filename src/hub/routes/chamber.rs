@@ -160,7 +160,13 @@ pub async fn post_start(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    if entry.archived {
+        return Ok(Json(json!({
+            "ok": false,
+            "message": "Unarchive the chamber before launching it",
+        })));
+    }
     let result = run_blocking_lifecycle(app, path, crate::hub::lifecycle::start_chamber).await;
     Ok(Json(lifecycle_status_json(result, "Started")))
 }
