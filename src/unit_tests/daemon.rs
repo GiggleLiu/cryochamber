@@ -4165,3 +4165,56 @@ fn test_receive_wait_refused_after_previous_wait_timed_out() {
         .expect("second ReceiveWait must be refused with an already-timed-out message");
     assert!(!refusal.0, "refusal must be ok=false: {responses:?}");
 }
+
+#[test]
+fn test_send_log_line_trims_trailing_newline_from_stdin_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // `send --stdin` bodies end with the heredoc's final newline; the logged
+    // event must not render it as a trailing ⏎ inside the quotes.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Send {
+                question: false,
+                text: "Got it — reminder saved.\n".into(),
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("send: \"Got it — reminder saved.\""),
+        "send event should be logged without the trailing newline: {log}"
+    );
+    assert!(
+        !log.contains('⏎'),
+        "no ⏎ should appear for a trailing-only newline: {log}"
+    );
+}

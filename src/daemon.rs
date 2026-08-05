@@ -1137,7 +1137,12 @@ impl Daemon {
                         } else {
                             state.inbox_state.record_status_send();
                         }
-                        state.logger.log_event(&format!("send: \"{text}\""))?;
+                        // `send --stdin` bodies end with the heredoc's final
+                        // newline; trim it so the log line doesn't render a
+                        // meaningless trailing ⏎ inside the quotes.
+                        state
+                            .logger
+                            .log_event(&format!("send: \"{}\"", text.trim_end()))?;
                         runtime.respond(true, "Message sent".into())?;
                     }
                     Err(e) => {

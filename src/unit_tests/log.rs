@@ -588,3 +588,22 @@ fn test_session_header_is_local_basis_without_z_suffix() {
     let (num, _ts) = parse_session_header(header).expect("header should parse");
     assert_eq!(num, 7);
 }
+
+#[test]
+fn test_trailing_newlines_are_trimmed_from_logged_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("cryo.log");
+
+    // Interior line breaks stay visible as ⏎; trailing ones carry no
+    // information and must not decorate the logged line.
+    let mut logger = EventLogger::begin(&log_path, 1, "task", "claude -p", &[]).unwrap();
+    logger.log_event("line one\nline two\n").unwrap();
+    logger.log_event("crlf tail\r\n").unwrap();
+    logger.finish("session complete").unwrap();
+
+    let content = std::fs::read_to_string(&log_path).unwrap();
+    assert!(content.contains("line one⏎line two\n"));
+    assert!(!content.contains("line two⏎"));
+    assert!(content.contains("crlf tail\n"));
+    assert!(!content.contains("crlf tail⏎"));
+}
