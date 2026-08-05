@@ -109,3 +109,20 @@ fn test_apply_overrides_none_fields() {
     assert_eq!(config.agent, original.agent);
     assert_eq!(config.max_session_duration, original.max_session_duration);
 }
+
+#[test]
+fn wait_timeout_defaults_to_none_and_is_not_serialized() {
+    let config = CryoConfig::default();
+    assert_eq!(config.wait_timeout, None);
+    let toml = toml::to_string(&config).unwrap();
+    assert!(!toml.contains("wait_timeout"));
+}
+
+#[test]
+fn wait_timeout_round_trips_when_set() {
+    let toml_src = "agent = \"mock\"\nwait_timeout = 7200\n";
+    let config: CryoConfig = toml::from_str(toml_src).unwrap();
+    assert_eq!(config.wait_timeout, Some(7200));
+    let out = toml::to_string(&config).unwrap();
+    assert!(out.contains("wait_timeout = 7200"));
+}
