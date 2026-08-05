@@ -4097,6 +4097,24 @@ fn test_should_ignore_inbox_wake_mixed_paths_wakes_even_if_inbox_empty() {
     ));
 }
 
+#[test]
+fn test_should_ignore_inbox_wake_stale_path_under_symlinked_dir_is_ignored() {
+    // CI regression: on macOS the tempdir lives under /var → /private/var, so
+    // an existing inbox dir canonicalizes to the real path while a stale
+    // (already-archived) file path cannot be canonicalized and used to fall
+    // back to the symlinked raw path — making containment fail and the stale
+    // wake spawn a spurious session. The parent-resolving fallback must keep
+    // the two sides comparable.
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    fs::create_dir_all(real.join("messages").join("inbox")).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let inbox_via_link = link.join("messages").join("inbox");
+    let stale = inbox_via_link.join("archived-away.md");
+    assert!(should_ignore_inbox_wake(&[stale], &inbox_via_link, true));
+}
+
 // --- SessionWaitState.timed_out (Finding 3: post-timeout re-wait must not
 // bypass max_session_duration) ---
 

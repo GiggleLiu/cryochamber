@@ -156,14 +156,27 @@ fn should_ignore_inbox_wake(paths: &[PathBuf], inbox_dir: &Path, inbox_empty: bo
     paths.iter().all(|path| path_is_within(inbox_dir, path))
 }
 
-/// Canonicalize-or-fallback containment check, mirroring the approach in
-/// `display_source_path` (src/daemon/session.rs): a path may not exist
-/// anymore (e.g. it was already archived away) so a strict `canonicalize()`
-/// on it would fail; fall back to the raw path in that case.
+/// Canonicalize-or-fallback containment check. A stale watcher path usually
+/// no longer exists (it was archived away), so canonicalizing it directly
+/// fails; canonicalizing only the raw path while the root resolves symlinks
+/// (e.g. macOS `/var` → `/private/var` temp dirs) would make the two sides
+/// disagree. Resolve the path's parent directory instead — for inbox events
+/// that is the inbox dir itself, which still exists — and re-attach the file
+/// name. Any residual mismatch returns false, which fails open into a wake.
 fn path_is_within(root: &Path, path: &Path) -> bool {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    path.starts_with(&root)
+    if let Ok(path) = path.canonicalize() {
+        return path.starts_with(&root);
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            parent.join(name).starts_with(&root)
+        }
+        _ => path.starts_with(&root),
+    }
 }
 
 /// Watches one or more directories for new files and sends events to a
