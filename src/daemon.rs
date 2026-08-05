@@ -133,6 +133,39 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     deduped
 }
 
+/// True if a `WakeFromInbox` event should be dropped instead of spawning a
+/// new session.
+///
+/// The notify watcher forwards every fs event under `messages/inbox`,
+/// including the removals caused by `MessageStore` archiving a batch a
+/// parked `receive --wait` already delivered mid-session. Those events sit
+/// queued on the channel while the session is active and would otherwise
+/// look like a fresh wake once the idle loop resumes, even though the inbox
+/// is empty. Ignore the wake iff all three hold:
+///   (a) `paths` is non-empty — SIGUSR1 / `cryo wake` send empty paths and
+///       must always wake regardless of inbox state.
+///   (b) every path lies inside `inbox_dir` — a mixed batch (e.g. some other
+///       watched dir) must still wake.
+///   (c) the caller has already determined the inbox is empty. A listing
+///       error must be treated as non-empty (fail open — wake rather than
+///       risk stranding a message unread).
+fn should_ignore_inbox_wake(paths: &[PathBuf], inbox_dir: &Path, inbox_empty: bool) -> bool {
+    if paths.is_empty() || !inbox_empty {
+        return false;
+    }
+    paths.iter().all(|path| path_is_within(inbox_dir, path))
+}
+
+/// Canonicalize-or-fallback containment check, mirroring the approach in
+/// `display_source_path` (src/daemon/session.rs): a path may not exist
+/// anymore (e.g. it was already archived away) so a strict `canonicalize()`
+/// on it would fail; fall back to the raw path in that case.
+fn path_is_within(root: &Path, path: &Path) -> bool {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    path.starts_with(&root)
+}
+
 /// Watches one or more directories for new files and sends events to a
 /// channel. Historically this only watched `messages/inbox/`, but it now
 /// accepts an arbitrary list of paths configured via `watch_dirs`.
@@ -263,6 +296,12 @@ struct SessionWaitState {
     /// Set when a wait resolves; the loop consumes it to re-arm the session
     /// deadline so each conversation round gets a fresh work budget.
     reset_session_deadline: bool,
+    /// Set once a parked wait resolves via timeout (never via delivery).
+    /// The protocol's contract is timeout -> wrap up and hibernate, so once
+    /// set, `ReceiveWait` requests are refused for the rest of the session —
+    /// otherwise a buggy agent looping `receive --wait --timeout 1` could
+    /// keep resetting the session deadline forever.
+    timed_out: bool,
 }
 
 struct EventLoopMutations<'a> {
@@ -992,10 +1031,19 @@ impl Daemon {
 
             match wait_for_idle_event(rx, timeout, next_wake, || self.clock.local_now()) {
                 IdleWaitOutcome::WakeFromInbox { paths } => {
-                    eprintln!("Daemon: inbox changed, waking up");
-                    run_now = true;
-                    inbox_wake = true;
-                    inbox_wake_sources = paths;
+                    let inbox_dir = self.dir.join("messages").join("inbox");
+                    let inbox_empty = crate::channel::store::MessageStore::new(self.dir.clone())
+                        .list_inbox_filenames()
+                        .map(|files| files.is_empty())
+                        .unwrap_or(false);
+                    if should_ignore_inbox_wake(&paths, &inbox_dir, inbox_empty) {
+                        eprintln!("Daemon: ignoring stale inbox events (inbox empty)");
+                    } else {
+                        eprintln!("Daemon: inbox changed, waking up");
+                        run_now = true;
+                        inbox_wake = true;
+                        inbox_wake_sources = paths;
+                    }
                 }
                 IdleWaitOutcome::WakeFromSchedule => {
                     eprintln!("Daemon: scheduled wake time reached");
@@ -1133,6 +1181,16 @@ impl Daemon {
                 }
             }
             DaemonRequest::ReceiveWait { timeout_secs } => {
+                if state.wait.timed_out {
+                    runtime.respond(
+                        false,
+                        "receive --wait refused: a previous wait already timed out this \
+                         session. Send any final message, ensure a TODO schedules the next \
+                         wake, then run `cryo-agent hibernate`."
+                            .into(),
+                    )?;
+                    return Ok(());
+                }
                 if state.inbox_state.has_claimed_batch() {
                     runtime.respond(
                         false,
@@ -1294,6 +1352,7 @@ impl Daemon {
             parked_deadline: None,
             default_timeout_secs: context.wait_timeout_secs,
             reset_session_deadline: false,
+            timed_out: false,
         };
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
@@ -1434,11 +1493,28 @@ impl Daemon {
                     inbox_state.record_claimed_batch(&outcome.claimed_filenames);
                     wait_state.parked_deadline = None;
                     wait_state.reset_session_deadline = true;
-                    logger.log_event(&format!(
+                    if let Err(e) = logger.log_event(&format!(
                         "wait: delivered {} message(s) [{}]",
                         outcome.claimed_filenames.len(),
                         outcome.claimed_filenames.join(", ")
-                    ))?;
+                    )) {
+                        // The batch is already recorded in inbox_state above,
+                        // so a log failure here must not skip finalization —
+                        // mirror the handle_active_request error arm: best-
+                        // effort respond so the blocked client isn't left
+                        // hanging, then finalize (writes the fallback reply
+                        // per chamber invariant 2), then best-effort finish.
+                        let _ = runtime.respond_parked(true, outcome.message);
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
+                        let _ = logger.finish(&format!("error logging wait delivery: {e}"));
+                        return Err(e);
+                    }
                     // Best-effort: the batch is already recorded in
                     // inbox_state, so if the blocked client is gone
                     // (EPIPE/EOF) the next tick's child-exit detection still
@@ -1451,7 +1527,21 @@ impl Daemon {
                 } else if self.clock.monotonic_now() >= wait_deadline {
                     wait_state.parked_deadline = None;
                     wait_state.reset_session_deadline = true;
-                    logger.log_event("wait: timed out")?;
+                    wait_state.timed_out = true;
+                    if let Err(e) = logger.log_event("wait: timed out") {
+                        // Same reasoning as the delivery branch above: a log
+                        // failure must not skip finalization.
+                        let _ = runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into());
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
+                        let _ = logger.finish(&format!("error logging wait timeout: {e}"));
+                        return Err(e);
+                    }
                     // Best-effort for the same reason as the delivery branch
                     // above: a dead client must not skip finalization.
                     if runtime

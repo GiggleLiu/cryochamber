@@ -787,6 +787,23 @@ fn test_mock_interactive_two_rounds_in_one_session() {
     let archived = cryochamber::message::read_inbox_archive(dir.path()).unwrap();
     assert_eq!(archived.len(), 1, "delivered batch must be archived");
 
+    // Regression for Finding 2: the round-2 message's create event (queued on
+    // the watcher channel before the parked wait claimed and archived it)
+    // must not be replayed as a fresh wake once the session ends and the
+    // idle loop resumes.
+    assert!(
+        wait_for_log_content(dir.path(), "hibernate:", Duration::from_secs(15)),
+        "agent should hibernate after round 2"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert_eq!(
+        log.matches("--- CRYO SESSION").count(),
+        1,
+        "stale inbox watcher events must not spawn a spurious session after \
+         the interactive conversation ends; log:\n{log}"
+    );
+
     cancel_and_wait(dir.path());
 }
 

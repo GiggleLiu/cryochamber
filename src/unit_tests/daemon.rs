@@ -4050,3 +4050,100 @@ fn test_parked_delivery_finalizes_session_even_when_respond_parked_fails() {
         "{log}"
     );
 }
+
+// --- should_ignore_inbox_wake (Finding 2: stale watcher events after an
+// interactive conversation must not spawn a spurious session) ---
+
+#[test]
+fn test_should_ignore_inbox_wake_empty_paths_never_ignored() {
+    // SIGUSR1 / `cryo wake` forward empty paths and must always wake,
+    // regardless of inbox contents.
+    let inbox_dir = Path::new("/chamber/messages/inbox");
+    assert!(!should_ignore_inbox_wake(&[], inbox_dir, true));
+    assert!(!should_ignore_inbox_wake(&[], inbox_dir, false));
+}
+
+#[test]
+fn test_should_ignore_inbox_wake_all_inbox_paths_and_empty_inbox_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox_dir = dir.path().join("messages").join("inbox");
+    fs::create_dir_all(&inbox_dir).unwrap();
+    let stale = inbox_dir.join("archived-away.md");
+    assert!(should_ignore_inbox_wake(&[stale], &inbox_dir, true));
+}
+
+#[test]
+fn test_should_ignore_inbox_wake_all_inbox_paths_but_nonempty_inbox_wakes() {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox_dir = dir.path().join("messages").join("inbox");
+    fs::create_dir_all(&inbox_dir).unwrap();
+    let path = inbox_dir.join("new.md");
+    assert!(!should_ignore_inbox_wake(&[path], &inbox_dir, false));
+}
+
+#[test]
+fn test_should_ignore_inbox_wake_mixed_paths_wakes_even_if_inbox_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox_dir = dir.path().join("messages").join("inbox");
+    fs::create_dir_all(&inbox_dir).unwrap();
+    let other_dir = dir.path().join("elsewhere");
+    fs::create_dir_all(&other_dir).unwrap();
+    let inside = inbox_dir.join("archived-away.md");
+    let outside = other_dir.join("watched-file.md");
+    assert!(!should_ignore_inbox_wake(
+        &[inside, outside],
+        &inbox_dir,
+        true
+    ));
+}
+
+// --- SessionWaitState.timed_out (Finding 3: post-timeout re-wait must not
+// bypass max_session_duration) ---
+
+#[test]
+fn test_receive_wait_refused_after_previous_wait_timed_out() {
+    // ReceiveWait(Some(1)) parks and times out (~12 empty 100ms ticks cover
+    // the 1s deadline), then a second ReceiveWait(None) must be refused
+    // rather than parking again, and the agent must be able to hibernate
+    // cleanly afterward.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut requests = vec![receive_wait_request(Some(1))];
+    requests.extend((0..12).map(|_| Ok(None)));
+    requests.push(receive_wait_request(None));
+    requests.push(Ok(Some(crate::socket::Request::Hibernate {
+        complete: true,
+        exit_code: 0,
+        summary: None,
+    })));
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..14).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 3600, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    let responses = runtime.responses();
+    let refusal = responses
+        .iter()
+        .find(|(_, msg)| msg.contains("already timed out"))
+        .expect("second ReceiveWait must be refused with an already-timed-out message");
+    assert!(!refusal.0, "refusal must be ok=false: {responses:?}");
+}
