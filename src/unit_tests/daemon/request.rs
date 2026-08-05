@@ -1,6 +1,6 @@
 use crate::daemon::request::{
-    handle_dialog_request, handle_todo_request, FileMessageEffects, MessageEffects, TodoEffects,
-    TodoOperationError, TodoRequest,
+    effective_wait_timeout, handle_dialog_request, handle_todo_request, FileMessageEffects,
+    MessageEffects, TodoEffects, TodoOperationError, TodoRequest,
 };
 use crate::message::Message;
 use crate::socket::DialogFilter;
@@ -316,4 +316,44 @@ fn dialog_since_iso_filters() {
     assert!(out.ok);
     assert!(!out.message.contains("old"));
     assert!(out.message.contains("fresh"));
+}
+
+#[test]
+fn effective_wait_timeout_uses_request_value() {
+    assert_eq!(effective_wait_timeout(Some(300), 14400), 300);
+}
+
+#[test]
+fn effective_wait_timeout_falls_back_to_default() {
+    assert_eq!(effective_wait_timeout(None, 7200), 7200);
+}
+
+#[test]
+fn effective_wait_timeout_clamps_to_cap() {
+    assert_eq!(
+        effective_wait_timeout(Some(999_999), 14400),
+        crate::config::MAX_WAIT_TIMEOUT_SECS
+    );
+    assert_eq!(
+        effective_wait_timeout(None, 999_999),
+        crate::config::MAX_WAIT_TIMEOUT_SECS
+    );
+}
+
+#[test]
+fn effective_wait_timeout_zero_becomes_one_second() {
+    assert_eq!(effective_wait_timeout(Some(0), 14400), 1);
+}
+
+#[test]
+fn receive_wait_socket_request_maps_to_daemon_request() {
+    let mapped = crate::daemon::request::DaemonRequest::from(crate::socket::Request::ReceiveWait {
+        timeout_secs: Some(60),
+    });
+    assert_eq!(
+        mapped,
+        crate::daemon::request::DaemonRequest::ReceiveWait {
+            timeout_secs: Some(60)
+        }
+    );
 }

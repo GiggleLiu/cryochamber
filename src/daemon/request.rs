@@ -610,3 +610,13 @@ fn parse_dialog_since(input: &str) -> Option<chrono::NaiveDateTime> {
         .ok()
         .and_then(|date| date.and_hms_opt(0, 0, 0))
 }
+
+/// Resolve the wait timeout for a `ReceiveWait` request: the request's value
+/// if given, else the chamber default, clamped into [1, MAX_WAIT_TIMEOUT_SECS].
+#[allow(dead_code)]
+pub(super) fn effective_wait_timeout(requested: Option<u64>, default_secs: u64) -> u64 {
+    // used by the session loop in a follow-up commit
+    requested
+        .unwrap_or(default_secs)
+        .clamp(1, crate::config::MAX_WAIT_TIMEOUT_SECS)
+}
