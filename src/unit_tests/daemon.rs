@@ -178,6 +178,7 @@ struct FakeSessionRuntime {
     responses: Mutex<Vec<(bool, String)>>,
     respond_results: Mutex<VecDeque<anyhow::Result<()>>>,
     terminated: AtomicBool,
+    parked: AtomicBool,
 }
 
 impl FakeSessionRuntime {
@@ -191,6 +192,7 @@ impl FakeSessionRuntime {
             responses: Mutex::new(Vec::new()),
             respond_results: Mutex::new(VecDeque::new()),
             terminated: AtomicBool::new(false),
+            parked: AtomicBool::new(false),
         }
     }
 
@@ -205,6 +207,7 @@ impl FakeSessionRuntime {
             responses: Mutex::new(Vec::new()),
             respond_results: Mutex::new(respond_results.into()),
             terminated: AtomicBool::new(false),
+            parked: AtomicBool::new(false),
         }
     }
 
@@ -214,6 +217,10 @@ impl FakeSessionRuntime {
 
     fn terminated(&self) -> bool {
         self.terminated.load(Ordering::Relaxed)
+    }
+
+    fn parked(&self) -> bool {
+        self.parked.load(Ordering::Relaxed)
     }
 }
 
@@ -230,6 +237,23 @@ impl SessionRuntime for FakeSessionRuntime {
     }
 
     fn respond(&mut self, ok: bool, message: String) -> Result<()> {
+        self.responses.lock().unwrap().push((ok, message));
+        self.respond_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(()))
+    }
+
+    fn park(&mut self) -> Result<()> {
+        anyhow::ensure!(!self.parked.load(Ordering::Relaxed), "already parked");
+        self.parked.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn respond_parked(&mut self, ok: bool, message: String) -> Result<()> {
+        anyhow::ensure!(self.parked.load(Ordering::Relaxed), "nothing parked");
+        self.parked.store(false, Ordering::Relaxed);
         self.responses.lock().unwrap().push((ok, message));
         self.respond_results
             .lock()
@@ -3359,5 +3383,21 @@ fn test_idle_dialog_refuses_without_archiving_inbox() {
         remaining,
         vec!["human-1.md".to_string()],
         "idle dialog must leave the inbox untouched (not archive it)"
+    );
+}
+
+#[test]
+fn fake_runtime_park_then_respond_parked_records_response() {
+    let mut runtime = FakeSessionRuntime::new(vec![], vec![]);
+    assert!(!runtime.parked());
+    runtime.park().unwrap();
+    assert!(runtime.parked());
+    assert!(runtime.park().is_err(), "double park must be rejected");
+    runtime.respond_parked(true, "delivered".into()).unwrap();
+    assert!(!runtime.parked());
+    assert_eq!(runtime.responses(), vec![(true, "delivered".into())]);
+    assert!(
+        runtime.respond_parked(true, "again".into()).is_err(),
+        "respond_parked without a parked wait must be rejected"
     );
 }
