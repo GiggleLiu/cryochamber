@@ -5,6 +5,15 @@ use std::time::Duration;
 
 use crate::message::Message;
 
+/// Chamber-relative directory where pulled Zulip attachments are stored.
+/// Deliberately outside `messages/inbox/` so attachment writes never trigger
+/// the daemon's inbox watcher.
+pub const ATTACHMENTS_SUBDIR: &str = "messages/attachments";
+
+/// Cap on a single attachment download. Matches Zulip's stock server upload
+/// limit; anything larger fails the fetch and the link is left remote.
+const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
+
 /// Global timeout bounding an entire HTTP call (DNS -> connect -> read body).
 /// Without it, a stalled connection blocks the single-threaded sync daemon
 /// forever. ureq treats `timeout_global` as an end-to-end cap covering all
@@ -240,6 +249,38 @@ impl ZulipClient {
         Ok(msg_id)
     }
 
+    /// GET a `/user_uploads/...` file with API authentication.
+    /// Zulip may answer with a redirect to a signed URL (S3 backend); ureq
+    /// follows it. The read is capped at `MAX_ATTACHMENT_BYTES`.
+    pub fn download_upload(&self, server_path: &str) -> Result<Vec<u8>> {
+        anyhow::ensure!(
+            server_path.starts_with("/user_uploads/"),
+            "not a user_uploads path: {server_path}"
+        );
+        // This request carries the bot's Basic auth, so a crafted link must
+        // not be able to steer it outside /user_uploads/ (dot segments) or
+        // smuggle query/fragment parts onto another endpoint.
+        anyhow::ensure!(
+            server_path.split('/').all(|seg| seg != ".." && seg != ".")
+                && !server_path.contains('?')
+                && !server_path.contains('#'),
+            "unsafe user_uploads path: {server_path}"
+        );
+        let url = format!("{}{}", self.creds.site.trim_end_matches('/'), server_path);
+        let bytes = self
+            .agent
+            .get(&url)
+            .header("Authorization", &self.basic_auth())
+            .call()
+            .with_context(|| format!("GET {server_path} failed"))?
+            .body_mut()
+            .with_config()
+            .limit(MAX_ATTACHMENT_BYTES)
+            .read_to_vec()
+            .with_context(|| format!("Failed to read attachment body for {server_path}"))?;
+        Ok(bytes)
+    }
+
     /// Pull all messages since last_message_id.
     /// This performs remote transport and response filtering only; callers own
     /// local inbox persistence and sync-state cursor updates.
@@ -388,6 +429,172 @@ pub fn parse_get_messages_response(
     }
 
     Ok((messages, found_newest, raw_max_id))
+}
+
+// --- Attachment localization ---
+
+/// A `/user_uploads/` markdown link destination found in a Zulip message body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadLink {
+    /// Byte range of the destination inside the body — exactly the text to
+    /// splice when rewriting, leaving link text and any title untouched.
+    pub span: std::ops::Range<usize>,
+    /// Server path beginning with `/user_uploads/`.
+    pub server_path: String,
+    /// Sanitized filename derived from the last path segment.
+    pub filename: String,
+}
+
+/// Extract `/user_uploads/` markdown link destinations from a raw Zulip
+/// message body. Accepts both site-relative destinations and absolute ones on
+/// `site`. Handles balanced parentheses in the destination and an optional
+/// CommonMark title (`[a](/url "title")`). Every occurrence is returned, in
+/// order, each with its own span; deduplication of downloads is the caller's
+/// job.
+pub fn extract_upload_links(body: &str, site: &str) -> Vec<UploadLink> {
+    let site = site.trim_end_matches('/');
+    let mut links = Vec::new();
+    let mut pos = 0;
+    while let Some(open) = body[pos..].find("](") {
+        let content_start = pos + open + 2;
+        // Find the matching close paren, allowing balanced pairs inside the
+        // destination (CommonMark permits them unescaped).
+        let mut depth = 1u32;
+        let mut content_end = None;
+        for (i, c) in body[content_start..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        content_end = Some(content_start + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(content_end) = content_end else {
+            break;
+        };
+        pos = content_end + 1;
+
+        // The destination is the first whitespace-delimited token; anything
+        // after it (a quoted title) stays outside the rewrite span.
+        let content = &body[content_start..content_end];
+        let dest_start = content_start + (content.len() - content.trim_start().len());
+        let dest = &body[dest_start..content_end];
+        let dest_end = dest_start + dest.find(char::is_whitespace).unwrap_or(dest.len());
+        let target = &body[dest_start..dest_end];
+
+        let server_path = if target.starts_with("/user_uploads/") {
+            target.to_string()
+        } else if let Some(path) = target.strip_prefix(site) {
+            if !path.starts_with("/user_uploads/") {
+                continue;
+            }
+            path.to_string()
+        } else {
+            continue;
+        };
+
+        links.push(UploadLink {
+            span: dest_start..dest_end,
+            filename: sanitize_filename(server_path.rsplit('/').next().unwrap_or("")),
+            server_path,
+        });
+    }
+    links
+}
+
+/// Keep only filesystem-safe characters so a hostile upload name cannot
+/// escape the attachments directory.
+fn sanitize_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches('.').to_string();
+    if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Download every `/user_uploads/` link in `body` into
+/// `<dir>/messages/attachments/` and rewrite the links to chamber-relative
+/// local paths, so the agent can read the files directly.
+///
+/// Files are named `<msg_id>-<idx>_<filename>` with one download per unique
+/// server path; an already-present file is not re-downloaded, which makes
+/// re-pulls idempotent. A failed download leaves its links untouched. Only
+/// the parsed destination spans are rewritten, so identical text elsewhere in
+/// the body is never touched. Returns the (possibly rewritten) body plus
+/// human-readable warnings for the caller to log; this function never fails
+/// the pull.
+pub fn localize_upload_links(
+    body: &str,
+    site: &str,
+    msg_id: &str,
+    dir: &Path,
+    mut fetch: impl FnMut(&str) -> Result<Vec<u8>>,
+) -> (String, Vec<String>) {
+    let links = extract_upload_links(body, site);
+    let mut warnings = Vec::new();
+    let attach_dir = dir.join(ATTACHMENTS_SUBDIR);
+
+    // One download per unique server path, indexed in first-appearance order.
+    // A path maps to Some(local relative path) on success, None on failure.
+    let mut resolved: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut next_idx = 0usize;
+    for link in &links {
+        if resolved.contains_key(&link.server_path) {
+            continue;
+        }
+        let local_name = format!("{msg_id}-{next_idx}_{}", link.filename);
+        next_idx += 1;
+        let local_abs = attach_dir.join(&local_name);
+        if !local_abs.exists() {
+            // Write to a temp name and rename: a file at the final name is
+            // always a complete download, which is what makes the exists()
+            // skip above safe across crashes and re-pulls.
+            let tmp_abs = attach_dir.join(format!("{local_name}.part"));
+            let write_result = fetch(&link.server_path).and_then(|bytes| {
+                std::fs::create_dir_all(&attach_dir)?;
+                std::fs::write(&tmp_abs, bytes)?;
+                std::fs::rename(&tmp_abs, &local_abs)?;
+                Ok(())
+            });
+            if let Err(e) = write_result {
+                warnings.push(format!(
+                    "attachment download failed for {}: {e}",
+                    link.server_path
+                ));
+                resolved.insert(link.server_path.clone(), None);
+                continue;
+            }
+        }
+        resolved.insert(
+            link.server_path.clone(),
+            Some(format!("{ATTACHMENTS_SUBDIR}/{local_name}")),
+        );
+    }
+
+    // Splice destination spans back-to-front so earlier offsets stay valid.
+    let mut new_body = body.to_string();
+    for link in links.iter().rev() {
+        if let Some(Some(local_rel)) = resolved.get(&link.server_path) {
+            new_body.replace_range(link.span.clone(), local_rel);
+        }
+    }
+    (new_body, warnings)
 }
 
 const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

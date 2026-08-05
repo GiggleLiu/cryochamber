@@ -405,7 +405,24 @@ fn pull_zulip_messages_into_inbox(
     )?;
 
     for msg in &result.messages {
-        store.send_in(msg)?;
+        let msg_id = msg
+            .metadata
+            .get("zulip_message_id")
+            .map(String::as_str)
+            .unwrap_or("0");
+        let (body, warnings) = cryochamber::channel::zulip::localize_upload_links(
+            &msg.body,
+            &client.credentials().site,
+            msg_id,
+            dir,
+            |path| client.download_upload(path),
+        );
+        for warning in warnings {
+            eprintln!("Zulip sync: {warning}");
+        }
+        let mut msg = msg.clone();
+        msg.body = body;
+        store.send_in(&msg)?;
     }
 
     let new_last_id = cryochamber::zulip_sync::remember_seen_message_id(

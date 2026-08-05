@@ -80,7 +80,7 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
 | `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, handles SIGUSR1 for forced wake, enforces session timeout, `EventLogger` for structured logs, consumes past-due TODOs before each session, re-injects them with a `(attempt k)` suffix and `2^k`-minute delay (capped at 1 day) on crash, detects delayed wakes (e.g. after machine suspend), and coordinates the active-session inbox claim/send/fallback lifecycle. It notices when inbox messages exist but never previews bodies in the wake prompt. |
 | `message` | File-based inbox/outbox message system. Agent-side `cryo-agent receive` goes through daemon IPC and archives the current inbox batch into `messages/inbox/archive/` immediately via `MessageStore`. Any “awaiting reply” state for that batch lives only in the daemon's current session. Operator `cryo receive` is separate: it reads messages from `messages/outbox/`. |
-| `channel` | Channel abstraction. Submodules: `store` (local inbox/outbox), `zulip` (Zulip REST API). |
+| `channel` | Channel abstraction. Submodules: `store` (local inbox/outbox), `zulip` (Zulip REST API). On pull, `cryo-zulip` localizes `/user_uploads/` links: attachments are downloaded (authenticated, 25 MB cap) into `messages/attachments/` and inbox links rewritten to those local paths, so vision agents can read uploaded images; failed downloads keep the remote link and never fail the pull. |
 | `registry` | User chamber registry for Cryohub discovery. Uses `$XDG_STATE_HOME/cryo/chambers/` (fallback `~/.cryo/chambers/`), keeps stopped chambers, clears stale PIDs, and prunes entries whose chamber disappeared. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-zulip sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
 | `todo` | Per-project TODO list persistence (`todo.json`). `TodoItem`/`TodoFile` structs plus retry rescheduling logic for crashed sessions. Mutated through daemon IPC so scheduling changes are serialized with the session lifecycle. |
@@ -208,6 +208,7 @@ and needs an explicit justification.
 - `messages/inbox/` — incoming messages for the agent
 - `messages/outbox/` — outgoing messages (agent replies, daemon stand-in replies)
 - `messages/inbox/archive/` — processed inbox messages
+- `messages/attachments/` — files downloaded from remote uploads (e.g. Zulip images); inbox message links are rewritten to point here
 - `.cryo/cryo.sock` — Unix domain socket for agent-daemon IPC
 - `zulip-sync.json` — Zulip sync state (if configured)
 - `.cryo/zuliprc` — Zulip credentials copied from user's zuliprc (if configured). **Never sync, commit, or push this file** — it holds API credentials. Already gitignored; the `cryo-zulip` sync channel must never include it in any payload.
