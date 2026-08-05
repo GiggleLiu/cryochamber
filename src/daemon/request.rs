@@ -29,6 +29,9 @@ pub(super) enum DaemonRequest {
         summary: Option<String>,
     },
     Receive,
+    ReceiveWait {
+        timeout_secs: Option<u64>,
+    },
     Todo(TodoRequest),
 }
 
@@ -49,6 +52,9 @@ impl From<crate::socket::Request> for DaemonRequest {
                 summary,
             },
             crate::socket::Request::Receive => Self::Receive,
+            crate::socket::Request::ReceiveWait { timeout_secs } => {
+                Self::ReceiveWait { timeout_secs }
+            }
             crate::socket::Request::TodoAdd { text, at } => {
                 Self::Todo(TodoRequest::Add { text, at })
             }

@@ -654,7 +654,9 @@ impl Daemon {
             // no such state, so claiming + archiving a batch here would
             // terminally consume it with nobody on the hook to answer —
             // violating invariant 2. Refuse without touching the inbox.
-            DaemonRequest::Receive | DaemonRequest::Dialog { .. } => {
+            DaemonRequest::Receive
+            | DaemonRequest::ReceiveWait { .. }
+            | DaemonRequest::Dialog { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
                     message:
@@ -1102,6 +1104,9 @@ impl Daemon {
                 if let Some(event) = log_event {
                     state.logger.log_event(&event)?;
                 }
+            }
+            DaemonRequest::ReceiveWait { .. } => {
+                runtime.respond(false, "receive --wait not yet supported".into())?;
             }
             DaemonRequest::Dialog { filter } => {
                 let outcome =

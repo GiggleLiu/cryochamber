@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 7;
+pub const IPC_PROTOCOL_VERSION: u32 = 8;
 
 /// Read/write timeout applied to each accepted client connection. Bounds how
 /// long a single request poll may block on a slow or silent client so the
@@ -46,6 +46,11 @@ pub enum Request {
         question: bool,
     },
     Receive,
+    ReceiveWait {
+        /// `None` = agent passed no --timeout; daemon applies the cryo.toml
+        /// `wait_timeout` value or the built-in default.
+        timeout_secs: Option<u64>,
+    },
     Dialog {
         filter: DialogFilter,
     },
