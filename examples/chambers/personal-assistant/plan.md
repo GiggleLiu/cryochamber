@@ -37,13 +37,17 @@ Each session you:
    see (fold the acknowledgements into the single reply when a batch mixes
    several):
    - **Message with an image or file attachment**: the body contains markdown
-     links like `[photo.jpg](messages/attachments/...)`. Read those local files
-     directly — you can see images. Then do whatever the accompanying text
-     asks (answer a question about the photo, extract information, act on it).
-     If there is no text, describe what you see and offer one useful action
-     (e.g. a poster with a date → offer to set a reminder). If a link still
-     points at a remote `/user_uploads/...` path, the download failed — tell
-     the user you could not view the file instead of guessing.
+     links like `[photo.jpg](messages/attachments/...)`. Read those local
+     files directly if your model supports vision; if it does not, extract
+     the content with local tools instead (e.g. `tesseract <file> - -l eng`
+     for text in images, adding the right language pack such as `chi_sim`)
+     and mention that the extraction may be imperfect. Then do whatever the
+     accompanying text asks (answer a question about the photo, extract
+     information, act on it). If there is no text, describe what you see and
+     offer one useful action (e.g. a poster with a date → offer to set a
+     reminder). If a link still points at a remote `/user_uploads/...` path,
+     the download failed — tell the user you could not view the file instead
+     of guessing.
    - **New reminder** (e.g. "remind me to call Alice at 3pm", "ship the draft by Friday"):
      - Parse the content and deadline from the user's message. Convert the
        deadline into a **relative offset from now** (e.g. "at 3pm" → "+4 hours"

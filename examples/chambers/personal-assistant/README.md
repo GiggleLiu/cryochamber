@@ -48,7 +48,8 @@ Cryochamber supports external messaging channels that sync between a remote serv
 Upload a photo in the Zulip stream (drag & drop or the paperclip button),
 optionally with a question ("what's this plant?"). `cryo-zulip` downloads the
 file into `messages/attachments/` and rewrites the link in the inbox message to
-that local path, so the agent can view the image directly and answer.
+that local path, so the agent can view the image directly and answer (with a
+vision-capable model; otherwise it falls back to local OCR for text in images).
 
 ### Chatting
 
