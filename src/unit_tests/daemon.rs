@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::VecDeque;
+use std::fs;
 use std::sync::Mutex;
 
 #[test]
@@ -279,6 +280,7 @@ struct FakeSessionEffects {
     archived_outbox: Vec<(String, crate::message::Message)>,
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
+    scripted_claims: VecDeque<Vec<(String, crate::message::Message)>>,
 }
 
 impl FakeSessionEffects {
@@ -291,7 +293,32 @@ impl FakeSessionEffects {
             archived_outbox: Vec::new(),
             todos: Vec::new(),
             next_todo_id: 1,
+            scripted_claims: VecDeque::new(),
         }
+    }
+
+    /// Script future `claim_inbox_batch` results: each call pops one entry
+    /// (empty vec = "inbox still empty"). Falls back to draining
+    /// `inbox_messages` when the script is exhausted.
+    fn push_scripted_claim(&mut self, batch: Vec<(String, crate::message::Message)>) {
+        self.scripted_claims.push_back(batch);
+    }
+
+    fn make_inbox_message(filename: &str, body: &str) -> (String, crate::message::Message) {
+        (
+            filename.to_string(),
+            crate::message::Message {
+                from: "human".to_string(),
+                subject: "Question".to_string(),
+                body: body.to_string(),
+                timestamp: chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap(),
+                metadata: Default::default(),
+                is_question: false,
+            },
+        )
     }
 
     /// Pre-populate with a far-future pending TODO so hibernate is not rejected.
@@ -348,7 +375,10 @@ impl FakeSessionEffects {
 
 impl SessionEffects for FakeSessionEffects {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
-        let claimed = std::mem::take(&mut self.inbox_messages);
+        let claimed = match self.scripted_claims.pop_front() {
+            Some(batch) => batch,
+            None => std::mem::take(&mut self.inbox_messages),
+        };
         self.archived_inbox.extend(claimed.iter().cloned());
         Ok(claimed)
     }
@@ -584,6 +614,28 @@ fn test_session_context_with_inbox<'a>(
     ActiveSessionContext {
         cryo_state,
         timeout_secs,
+        wait_timeout_secs: crate::config::DEFAULT_WAIT_TIMEOUT_SECS,
+        spawn_time,
+    }
+}
+
+/// Like `test_session_context`, but lets the caller control the chamber's
+/// default `receive --wait` timeout instead of hard-coding
+/// `DEFAULT_WAIT_TIMEOUT_SECS`. No test in this task's suite needs a
+/// non-default chamber timeout (the scripted tests instead vary the
+/// request's own `--timeout`), so this is forward infrastructure for a
+/// later task; keep the `#[allow(dead_code)]` until something calls it.
+#[allow(dead_code)]
+fn test_session_context_with_wait(
+    cryo_state: &CryoState,
+    timeout_secs: u64,
+    spawn_time: Instant,
+    wait_timeout_secs: u64,
+) -> ActiveSessionContext<'_> {
+    ActiveSessionContext {
+        cryo_state,
+        timeout_secs,
+        wait_timeout_secs,
         spawn_time,
     }
 }
@@ -3400,4 +3452,333 @@ fn fake_runtime_park_then_respond_parked_records_response() {
         runtime.respond_parked(true, "again".into()).is_err(),
         "respond_parked without a parked wait must be rejected"
     );
+}
+
+fn receive_wait_request(
+    timeout_secs: Option<u64>,
+) -> anyhow::Result<Option<crate::socket::Request>> {
+    Ok(Some(crate::socket::Request::ReceiveWait { timeout_secs }))
+}
+
+#[test]
+fn test_receive_wait_with_pending_inbox_claims_immediately() {
+    // ReceiveWait with a non-empty inbox behaves exactly like Receive: no park.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            receive_wait_request(None),
+            Ok(Some(crate::socket::Request::Send {
+                text: "ack".into(),
+                question: false,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: None,
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("q1.md", "hello");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    assert!(!runtime.parked());
+    let responses = runtime.responses();
+    assert!(
+        responses[0].0 && responses[0].1.contains("hello"),
+        "{responses:?}"
+    );
+}
+
+#[test]
+fn test_receive_wait_parks_then_delivers_new_message_in_same_session() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Tick 1: ReceiveWait (inbox empty -> park). Tick 2: poll finds nothing.
+    // Tick 3: poll claims the new batch -> respond_parked. Then Send + Hibernate.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            receive_wait_request(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(crate::socket::Request::Send {
+                text: "round 2 ack".into(),
+                question: false,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: None,
+            })),
+        ],
+        (0..6)
+            .map(|_| Ok(None))
+            .chain([Ok(Some(ChildExitStatus { code: Some(0) }))])
+            .collect(),
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // ReceiveWait's own claim: empty -> park
+    effects.push_scripted_claim(vec![]); // first poll tick: still empty
+    effects.push_scripted_claim(vec![FakeSessionEffects::make_inbox_message(
+        "r2.md",
+        "second round",
+    )]);
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    let responses = runtime.responses();
+    // Response 0 is the parked delivery, then "Message sent", then hibernate ack.
+    assert!(
+        responses[0].0 && responses[0].1.contains("second round"),
+        "{responses:?}"
+    );
+    assert!(!runtime.parked());
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("wait: parked"), "{log}");
+    assert!(
+        log.contains("wait: delivered 1 message(s) [r2.md]"),
+        "{log}"
+    );
+}
+
+#[test]
+fn test_receive_wait_times_out_and_tells_agent_to_hibernate() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // 1s wait timeout = 10 ticks of 100ms. Give enough empty accepts, then hibernate.
+    let mut requests = vec![receive_wait_request(Some(1))];
+    requests.extend((0..12).map(|_| Ok(None)));
+    requests.push(Ok(Some(crate::socket::Request::Hibernate {
+        complete: true,
+        exit_code: 0,
+        summary: None,
+    })));
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..14).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 3600, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    let responses = runtime.responses();
+    assert!(
+        responses[0].0 && responses[0].1.contains("No new messages"),
+        "{responses:?}"
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("wait: timed out"), "{log}");
+}
+
+#[test]
+fn test_session_deadline_suspended_while_parked_and_reset_on_delivery() {
+    // Session timeout is 1s; the wait parks for ~2s; the session must survive.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // 20 empty poll ticks (2s virtual) past the 1s session deadline, then delivery.
+    let mut requests = vec![receive_wait_request(Some(3600))];
+    requests.extend((0..21).map(|_| Ok(None)));
+    requests.push(Ok(Some(crate::socket::Request::Send {
+        text: "late ack".into(),
+        question: false,
+    })));
+    requests.push(Ok(Some(crate::socket::Request::Hibernate {
+        complete: true,
+        exit_code: 0,
+        summary: None,
+    })));
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..24).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // park
+    for _ in 0..20 {
+        effects.push_scripted_claim(vec![]); // parked polls while deadline passes
+    }
+    effects.push_scripted_claim(vec![FakeSessionEffects::make_inbox_message(
+        "late.md",
+        "still there?",
+    )]);
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 1, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        SessionLoopOutcome::PlanComplete,
+        "session must not be timeout-killed while parked"
+    );
+    assert!(!runtime.terminated());
+}
+
+#[test]
+fn test_receive_wait_refused_with_unresolved_claimed_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Receive)), // claims q1.md
+            receive_wait_request(None),                // refused: batch unresolved
+            Ok(Some(crate::socket::Request::Send {
+                text: "ack".into(),
+                question: false,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: None,
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("q1.md", "hello");
+
+    daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    let responses = runtime.responses();
+    assert!(!responses[1].0, "{responses:?}");
+    assert!(
+        responses[1]
+            .1
+            .contains("send a message for the current inbox batch"),
+        "{responses:?}"
+    );
+    assert!(!runtime.parked());
+}
+
+#[test]
+fn test_agent_exit_while_parked_releases_wait() {
+    // The agent process dies while its receive --wait is parked. The daemon
+    // must release the parked responder (best-effort) before finalizing.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Tick 1: ReceiveWait parks (empty claim). Tick 2: child has exited.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![receive_wait_request(None)],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(1) }))],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // park
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        SessionLoopOutcome::ValidationFailed { .. }
+    ));
+    assert!(
+        !runtime.parked(),
+        "child exit must release the parked responder"
+    );
+    let responses = runtime.responses();
+    assert!(
+        responses
+            .iter()
+            .any(|(_, m)| m.contains("Session is ending")),
+        "{responses:?}"
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("wait: interrupted"), "{log}");
 }

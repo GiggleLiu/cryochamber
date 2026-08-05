@@ -204,8 +204,9 @@ use schedule::{detect_delayed_wake, WAKE_TIME_FMT};
 #[cfg(test)]
 use request::TodoRequest;
 use request::{
-    handle_dialog_request, handle_receive_request, handle_todo_request, resolve_hibernate_request,
-    DaemonRequest, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
+    effective_wait_timeout, handle_dialog_request, handle_receive_request, handle_todo_request,
+    resolve_hibernate_request, DaemonRequest, FileTodoEffects, ReceiveRequestOutcome,
+    TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;
@@ -239,6 +240,9 @@ enum LoopControl {
 struct ActiveSessionContext<'a> {
     cryo_state: &'a CryoState,
     timeout_secs: u64,
+    /// Chamber default (secs) for a `receive --wait` that omits `--timeout`,
+    /// resolved by the launcher as `config.wait_timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT_SECS)`.
+    wait_timeout_secs: u64,
     spawn_time: Instant,
 }
 
@@ -246,6 +250,19 @@ struct ActiveRequestState<'a> {
     logger: &'a mut crate::log::EventLogger,
     hibernate_outcome: &'a mut Option<SessionLoopOutcome>,
     inbox_state: &'a mut SessionInboxState,
+    wait: &'a mut SessionWaitState,
+}
+
+/// Parked-wait bookkeeping for `cryo-agent receive --wait`. In-memory only,
+/// like `SessionInboxState`: a parked wait never survives the session.
+struct SessionWaitState {
+    /// Monotonic deadline of the currently parked wait, if any.
+    parked_deadline: Option<Instant>,
+    /// Chamber default (secs) when a request omits --timeout.
+    default_timeout_secs: u64,
+    /// Set when a wait resolves; the loop consumes it to re-arm the session
+    /// deadline so each conversation round gets a fresh work budget.
+    reset_session_deadline: bool,
 }
 
 struct EventLoopMutations<'a> {
@@ -267,6 +284,16 @@ fn daemon_missing_outbound_text(clean_hibernate: bool) -> &'static str {
         "(daemon: agent crashed before sending)"
     }
 }
+
+/// Response released to a parked `receive --wait` when the timeout expires.
+pub(super) const WAIT_TIMEOUT_RESPONSE: &str =
+    "No new messages arrived while waiting. Wrap up now: make sure a TODO schedules your next \
+     wake (`cryo-agent todo add \"<task>\" --at <time>`), then run `cryo-agent hibernate`.";
+
+/// Response released to a parked `receive --wait` when the session is ending
+/// for another reason (shutdown, agent exit, internal error).
+pub(super) const WAIT_INTERRUPTED_RESPONSE: &str =
+    "Session is ending; the wait was interrupted. Do not start new work.";
 
 fn ipc_protocol_response(protocol_version: u32) -> crate::socket::Response {
     let daemon_version = crate::socket::IPC_PROTOCOL_VERSION;
@@ -1105,8 +1132,45 @@ impl Daemon {
                     state.logger.log_event(&event)?;
                 }
             }
-            DaemonRequest::ReceiveWait { .. } => {
-                runtime.respond(false, "receive --wait not yet supported".into())?;
+            DaemonRequest::ReceiveWait { timeout_secs } => {
+                if state.inbox_state.has_claimed_batch() {
+                    runtime.respond(
+                        false,
+                        "receive refused: send a message for the current inbox batch before receiving again."
+                            .into(),
+                    )?;
+                    return Ok(());
+                }
+                if state.wait.parked_deadline.is_some() {
+                    runtime.respond(
+                        false,
+                        "a receive --wait is already parked for this session.".into(),
+                    )?;
+                    return Ok(());
+                }
+                let outcome = handle_receive_request(effects);
+                if !outcome.ok {
+                    runtime.respond(false, outcome.message)?;
+                    return Ok(());
+                }
+                if outcome.claimed_filenames.is_empty() {
+                    let secs =
+                        effective_wait_timeout(timeout_secs, state.wait.default_timeout_secs);
+                    runtime.park()?;
+                    state.wait.parked_deadline =
+                        Some(self.clock.monotonic_now() + Duration::from_secs(secs));
+                    state.logger.log_event(&format!("wait: parked ({secs}s)"))?;
+                } else {
+                    let response = runtime.respond(true, outcome.message);
+                    state
+                        .inbox_state
+                        .record_claimed_batch(&outcome.claimed_filenames);
+                    state.wait.reset_session_deadline = true;
+                    response?;
+                    if let Some(event) = outcome.log_event {
+                        state.logger.log_event(&event)?;
+                    }
+                }
             }
             DaemonRequest::Dialog { filter } => {
                 let outcome =
@@ -1200,6 +1264,20 @@ impl Daemon {
         }
     }
 
+    /// Best-effort release of a parked `receive --wait` when the session ends
+    /// for reasons other than delivery/timeout. Never fails the caller: the
+    /// blocked cryo-agent may already be dead.
+    fn release_parked_wait(
+        runtime: &mut impl SessionRuntime,
+        wait_state: &mut SessionWaitState,
+        logger: &mut crate::log::EventLogger,
+    ) {
+        if wait_state.parked_deadline.take().is_some() {
+            let _ = runtime.respond_parked(true, WAIT_INTERRUPTED_RESPONSE.into());
+            let _ = logger.log_event("wait: interrupted");
+        }
+    }
+
     fn drive_active_session(
         &self,
         runtime: &mut impl SessionRuntime,
@@ -1207,10 +1285,15 @@ impl Daemon {
         context: ActiveSessionContext<'_>,
         mut logger: crate::log::EventLogger,
     ) -> Result<SessionLoopOutcome> {
-        let deadline = if context.timeout_secs > 0 {
+        let mut deadline = if context.timeout_secs > 0 {
             Some(context.spawn_time + Duration::from_secs(context.timeout_secs))
         } else {
             None
+        };
+        let mut wait_state = SessionWaitState {
+            parked_deadline: None,
+            default_timeout_secs: context.wait_timeout_secs,
+            reset_session_deadline: false,
         };
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
@@ -1219,6 +1302,7 @@ impl Daemon {
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
+                Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                 runtime.terminate();
                 let clean_hibernate = hibernate_outcome.is_some();
                 let decision = resolve_interrupted_session(
@@ -1235,26 +1319,29 @@ impl Daemon {
                 return Ok(decision.outcome);
             }
 
-            if let Some(d) = deadline {
-                if self.clock.monotonic_now() >= d {
-                    eprintln!(
-                        "Daemon: session timeout ({}s) — killing agent",
-                        context.timeout_secs
-                    );
-                    runtime.terminate();
-                    let clean_hibernate = hibernate_outcome.is_some();
-                    let decision = resolve_interrupted_session(
-                        SessionInterruption::Timeout,
-                        hibernate_outcome.take(),
-                    );
-                    self.finalize_human_replies(
-                        effects,
-                        &mut logger,
-                        &mut inbox_state,
-                        clean_hibernate,
-                    );
-                    logger.finish(decision.finish_reason)?;
-                    return Ok(decision.outcome);
+            if wait_state.parked_deadline.is_none() {
+                if let Some(d) = deadline {
+                    if self.clock.monotonic_now() >= d {
+                        eprintln!(
+                            "Daemon: session timeout ({}s) — killing agent",
+                            context.timeout_secs
+                        );
+                        Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
+                        runtime.terminate();
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        let decision = resolve_interrupted_session(
+                            SessionInterruption::Timeout,
+                            hibernate_outcome.take(),
+                        );
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
+                        logger.finish(decision.finish_reason)?;
+                        return Ok(decision.outcome);
+                    }
                 }
             }
 
@@ -1268,8 +1355,10 @@ impl Daemon {
                             logger: &mut logger,
                             hibernate_outcome: &mut hibernate_outcome,
                             inbox_state: &mut inbox_state,
+                            wait: &mut wait_state,
                         },
                     ) {
+                        Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                         let clean_hibernate = hibernate_outcome.is_some();
                         self.finalize_human_replies(
                             effects,
@@ -1315,6 +1404,7 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
+                    Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                     self.finalize_human_replies(
                         effects,
                         &mut logger,
@@ -1326,6 +1416,7 @@ impl Daemon {
                 }
                 Ok(None) => {}
                 Err(e) => {
+                    Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                     let clean_hibernate = hibernate_outcome.is_some();
                     self.finalize_human_replies(
                         effects,
@@ -1336,6 +1427,38 @@ impl Daemon {
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
                 }
+            }
+
+            if let Some(wait_deadline) = wait_state.parked_deadline {
+                let outcome = handle_receive_request(effects);
+                if !outcome.claimed_filenames.is_empty() {
+                    let response = runtime.respond_parked(true, outcome.message);
+                    inbox_state.record_claimed_batch(&outcome.claimed_filenames);
+                    wait_state.parked_deadline = None;
+                    wait_state.reset_session_deadline = true;
+                    logger.log_event(&format!(
+                        "wait: delivered {} message(s) [{}]",
+                        outcome.claimed_filenames.len(),
+                        outcome.claimed_filenames.join(", ")
+                    ))?;
+                    response?;
+                } else if self.clock.monotonic_now() >= wait_deadline {
+                    wait_state.parked_deadline = None;
+                    wait_state.reset_session_deadline = true;
+                    logger.log_event("wait: timed out")?;
+                    runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())?;
+                }
+                // Empty claim + deadline not reached: keep waiting. A claim
+                // error surfaces as ok=false with no filenames — also keep
+                // waiting; the next tick retries.
+            }
+            if wait_state.reset_session_deadline {
+                wait_state.reset_session_deadline = false;
+                deadline = if context.timeout_secs > 0 {
+                    Some(self.clock.monotonic_now() + Duration::from_secs(context.timeout_secs))
+                } else {
+                    None
+                };
             }
 
             if hibernate_outcome.is_some() {

@@ -15,7 +15,6 @@ pub(super) struct ChildExitStatus {
     pub(super) code: Option<i32>,
 }
 
-#[allow(dead_code)]
 pub(super) trait SessionRuntime {
     fn accept_request(
         &mut self,
@@ -36,7 +35,6 @@ struct ProcessSessionRuntime<'a> {
     child: &'a mut std::process::Child,
     clock: Arc<dyn Clock>,
     pending_responder: Option<crate::socket::Responder>,
-    #[allow(dead_code)]
     parked_responder: Option<crate::socket::Responder>,
 }
 
@@ -250,6 +248,9 @@ impl SessionLauncher for ProcessSessionLauncher {
         let context = ActiveSessionContext {
             cryo_state,
             timeout_secs,
+            wait_timeout_secs: config
+                .wait_timeout
+                .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
             spawn_time,
         };
         let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);
