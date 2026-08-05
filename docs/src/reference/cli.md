@@ -51,6 +51,7 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 | `cryo-agent send --stdin` | Read the outbox message body from stdin exactly, including trailing newlines; use for multi-line or shell-sensitive text. |
 | `cryo-agent send --question "msg"` | Mark the message as a question awaiting a human reply. |
 | `cryo-agent receive` | Claim the current inbox batch from the human. |
+| `cryo-agent receive --wait [--timeout <secs>]` | If the inbox already has a pending batch, claim it immediately like plain `receive`. Otherwise block: the daemon parks the request in the live session and delivers the operator's next message into it. On timeout, prints a "No new messages" notice instead — treat that as a cue to hibernate. `--timeout` defaults to `wait_timeout` from `cryo.toml` (else 14400 s / 4 h) and is capped at 86400 s (24 h). You must `send` a reply before calling `receive --wait` again. |
 | `cryo-agent dialog [--last N \| --all \| --since <iso>]` | Render the conversation transcript (default: last 20 messages). `--last N` shows the last N, `--all` shows every archived message, `--since <iso>` shows messages at or after an ISO 8601 time; the three are mutually exclusive. Also archives any pending inbox batch as a side effect, satisfying the same reply obligation as `receive`. |
 | `cryo-agent time` | Print the current local time in ISO 8601 format. |
 | `cryo-agent time "+30 minutes"` | Compute a relative offset. Units: `minutes`, `hours`, `days`, `weeks`. |

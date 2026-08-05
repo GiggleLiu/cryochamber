@@ -10,6 +10,7 @@ agent = "opencode"               # Agent command (opencode, claude, codex, ...)
 max_session_duration = 3600      # Session timeout in seconds (0 = no timeout)
 watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
 zulip_poll_interval = 5          # Zulip sync poll interval in seconds
+wait_timeout = 14400             # Default `cryo-agent receive --wait` timeout in seconds (cap 86400)
 
 # Provider environment injected into every agent session (optional).
 [provider]
@@ -23,6 +24,7 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # Env vars set when spawning the age
 | `max_session_duration` | `3600` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
 | `zulip_poll_interval` | `5` | How often `cryo-zulip sync` polls Zulip, in seconds. `cryo-zulip sync --interval N` overrides it for one run. |
+| `wait_timeout` | `14400` | Optional. Default timeout in seconds for `cryo-agent receive --wait` when the agent doesn't pass `--timeout`. The daemon caps any value at `86400` (24 h). |
 
 ## `[provider]`
 

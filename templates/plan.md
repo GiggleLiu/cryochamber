@@ -21,6 +21,8 @@ cryo-agent send "Greetings, I am your interstellar traveler, what is my mission 
 
 Add a long-tail check-in TODO (e.g. `+1 day`) so the chamber re-arms if the operator stays silent. The inbox watcher will wake you sooner if they reply.
 
+If you expect the operator to answer within hours (e.g. you just asked a question), you may run `cryo-agent receive --wait` to hold the conversation in this session instead of hibernating; on a "No new messages" timeout, hibernate as usual.
+
 Once the operator gives you a mission, **rewrite this file** to encode it as standing rules, then derive concrete TODOs from those rules.
 
 Use `cryo-agent dialog` when you need the full conversation history before updating the plan or replying.
