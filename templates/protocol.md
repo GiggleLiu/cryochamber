@@ -109,7 +109,7 @@ message
 EOF
 cryo-agent send --question "what should I do?"  # Send a question (rail shows ? until human replies)
 cryo-agent receive                                               # Claim current inbox batch from human
-cryo-agent receive --wait [--timeout <secs>]                     # Block for the operator's next message (default 4h, cap 24h); times out with a "No new messages" notice
+cryo-agent receive --wait [--timeout <secs>]                     # Block for the operator's next message (default 4h, clamped to 1s-24h); times out with a "No new messages" notice
 cryo-agent dialog [--last N | --all]                             # Render full sent+received transcript; also claims any pending inbox batch
 cryo-agent todo add "text" --at <TIME>                           # Schedule a task — ONLY way to set next wake; --at takes "+30 minutes", ISO8601, or date-only
 cryo-agent todo list                                             # List all TODO items

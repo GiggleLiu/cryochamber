@@ -7,7 +7,7 @@ agent = "{{agent}}"
 max_session_duration = 3600
 
 # Default timeout in seconds for `cryo-agent receive --wait` (interactive
-# mode). The daemon caps any value at 86400 (24 hours).
+# mode). The daemon clamps any value to 1-86400 seconds (24 hours).
 # wait_timeout = 14400
 
 # Directories the daemon watches for new files to wake the agent reactively.
