@@ -1326,7 +1326,6 @@ impl Daemon {
                             "Daemon: session timeout ({}s) — killing agent",
                             context.timeout_secs
                         );
-                        Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                         runtime.terminate();
                         let clean_hibernate = hibernate_outcome.is_some();
                         let decision = resolve_interrupted_session(
@@ -1432,7 +1431,6 @@ impl Daemon {
             if let Some(wait_deadline) = wait_state.parked_deadline {
                 let outcome = handle_receive_request(effects);
                 if !outcome.claimed_filenames.is_empty() {
-                    let response = runtime.respond_parked(true, outcome.message);
                     inbox_state.record_claimed_batch(&outcome.claimed_filenames);
                     wait_state.parked_deadline = None;
                     wait_state.reset_session_deadline = true;
@@ -1441,12 +1439,27 @@ impl Daemon {
                         outcome.claimed_filenames.len(),
                         outcome.claimed_filenames.join(", ")
                     ))?;
-                    response?;
+                    // Best-effort: the batch is already recorded in
+                    // inbox_state, so if the blocked client is gone
+                    // (EPIPE/EOF) the next tick's child-exit detection still
+                    // runs finalize_human_replies, which writes the fallback
+                    // reply. Propagating this error would skip finalization
+                    // for an already-delivered batch (chamber invariant 2).
+                    if runtime.respond_parked(true, outcome.message).is_err() {
+                        let _ = logger.log_event("wait: parked respond failed after delivery");
+                    }
                 } else if self.clock.monotonic_now() >= wait_deadline {
                     wait_state.parked_deadline = None;
                     wait_state.reset_session_deadline = true;
                     logger.log_event("wait: timed out")?;
-                    runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())?;
+                    // Best-effort for the same reason as the delivery branch
+                    // above: a dead client must not skip finalization.
+                    if runtime
+                        .respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())
+                        .is_err()
+                    {
+                        let _ = logger.log_event("wait: parked respond failed after timeout");
+                    }
                 }
                 // Empty claim + deadline not reached: keep waiting. A claim
                 // error surfaces as ok=false with no filenames — also keep

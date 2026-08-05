@@ -634,11 +634,7 @@ fn test_session_context_with_inbox<'a>(
 
 /// Like `test_session_context`, but lets the caller control the chamber's
 /// default `receive --wait` timeout instead of hard-coding
-/// `DEFAULT_WAIT_TIMEOUT_SECS`. No test in this task's suite needs a
-/// non-default chamber timeout (the scripted tests instead vary the
-/// request's own `--timeout`), so this is forward infrastructure for a
-/// later task; keep the `#[allow(dead_code)]` until something calls it.
-#[allow(dead_code)]
+/// `DEFAULT_WAIT_TIMEOUT_SECS`.
 fn test_session_context_with_wait(
     cryo_state: &CryoState,
     timeout_secs: u64,
@@ -3936,4 +3932,121 @@ fn test_try_wait_error_while_parked_releases_wait() {
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert!(log.contains("wait: interrupted"), "{log}");
     assert!(log.contains("error checking agent"), "{log}");
+}
+
+#[test]
+fn test_receive_wait_uses_chamber_default_timeout_when_request_omits_one() {
+    // The request itself omits `--timeout`; only the chamber's configured
+    // `wait_timeout_secs` (here 1s, via `test_session_context_with_wait`)
+    // should govern how long the parked wait lasts. If the daemon fell back
+    // to some other default instead, the wait would still be parked after
+    // the 1s-equivalent tick budget below and the session would need to be
+    // ended a different way.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // 1s chamber default = 10 ticks of 100ms. Give enough empty accepts, then hibernate.
+    let mut requests = vec![receive_wait_request(None)];
+    requests.extend((0..12).map(|_| Ok(None)));
+    requests.push(Ok(Some(crate::socket::Request::Hibernate {
+        complete: true,
+        exit_code: 0,
+        summary: None,
+    })));
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..14).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_wait(&cryo_state, 3600, clock.monotonic_now(), 1),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    let responses = runtime.responses();
+    assert!(
+        responses[0].0 && responses[0].1.contains("No new messages"),
+        "{responses:?}"
+    );
+}
+
+#[test]
+fn test_parked_delivery_finalizes_session_even_when_respond_parked_fails() {
+    // Regression for the finding that a failed `respond_parked` on the
+    // delivery path (e.g. the blocked `cryo-agent receive --wait` client is
+    // already gone: EPIPE/EOF) must not skip session finalization. The batch
+    // is already recorded in `inbox_state` by the time `respond_parked` is
+    // attempted, so a dead client must not strand it unanswered — the next
+    // tick's child-exit detection must still run `finalize_human_replies`
+    // and write the daemon fallback reply (chamber invariant 2).
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Iteration 1: ReceiveWait parks (its own claim is empty), and the same
+    // iteration's trailing poll also finds nothing yet. Iteration 2: the
+    // poll claims a new batch and attempts `respond_parked`, which fails.
+    // Iteration 3: the child has exited, driving finalization.
+    let mut runtime = FakeSessionRuntime::with_respond_results(
+        vec![receive_wait_request(None)],
+        [Ok(None), Ok(None)]
+            .into_iter()
+            .chain([Ok(Some(ChildExitStatus { code: Some(1) }))])
+            .collect(),
+        std::iter::once(Err(anyhow::anyhow!(
+            "simulated respond_parked failure (EPIPE)"
+        )))
+        .collect(),
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // ReceiveWait's own claim: empty -> park
+    effects.push_scripted_claim(vec![]); // same-iteration poll: still empty
+    effects.push_scripted_claim(vec![FakeSessionEffects::make_inbox_message(
+        "late.md",
+        "anyone there?",
+    )]); // next poll: delivers, respond_parked fails
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .expect("a failed respond_parked must not propagate as an error");
+
+    assert!(matches!(
+        outcome,
+        SessionLoopOutcome::ValidationFailed { .. }
+    ));
+    assert!(
+        effects
+            .replies
+            .iter()
+            .any(|(author, _, _, _)| *author == ReplyAuthor::Daemon),
+        "finalize_human_replies must still write the daemon fallback reply: {:?}",
+        effects.replies
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("wait: parked respond failed after delivery"),
+        "{log}"
+    );
 }
