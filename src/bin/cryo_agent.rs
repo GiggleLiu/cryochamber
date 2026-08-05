@@ -43,7 +43,16 @@ enum Commands {
         question: bool,
     },
     /// Read inbox messages from human
-    Receive,
+    Receive {
+        /// Block until the operator's next message arrives (delivered into
+        /// this same session) or the wait times out.
+        #[arg(long)]
+        wait: bool,
+        /// Wait timeout in seconds (requires --wait). Default: cryo.toml
+        /// `wait_timeout`, else 14400 (4 h). Daemon caps at 86400 (24 h).
+        #[arg(long, requires = "wait")]
+        timeout: Option<u64>,
+    },
     /// Read the conversation transcript and claim any pending inbox batch
     Dialog(DialogArgs),
     /// Print current time, compute a future time, or validate an ISO8601 timestamp
@@ -137,7 +146,7 @@ fn main() -> Result<()> {
             let text = resolve_send_text(text, stdin)?;
             send(&dir, &Request::Send { text, question })
         }
-        Commands::Receive => send(&dir, &Request::Receive),
+        Commands::Receive { wait, timeout } => send(&dir, &receive_request(wait, timeout)),
         Commands::Dialog(args) => {
             let filter = dialog_filter_from_args(args)?;
             send(&dir, &Request::Dialog { filter })
@@ -181,6 +190,16 @@ fn dialog_filter_from_args(args: DialogArgs) -> Result<cryochamber::socket::Dial
         anyhow::bail!("--last must be at least 1");
     }
     Ok(DialogFilter::LastN { count })
+}
+
+fn receive_request(wait: bool, timeout: Option<u64>) -> Request {
+    if wait {
+        Request::ReceiveWait {
+            timeout_secs: timeout,
+        }
+    } else {
+        Request::Receive
+    }
 }
 
 fn cmd_time(offset: Option<&str>) -> Result<()> {
