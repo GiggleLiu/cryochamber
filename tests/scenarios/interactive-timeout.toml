@@ -1,0 +1,19 @@
+description = "receive --wait times out with no operator message, then hibernates."
+
+[[actions]]
+kind = "send"
+message = "anyone there?"
+
+[[actions]]
+kind = "receive_wait"
+timeout = 2
+contains = ["No new messages"]
+
+[[actions]]
+kind = "todo_add"
+text = "follow up"
+at = "+1h"
+
+[[actions]]
+kind = "hibernate"
+summary = "wait timed out"

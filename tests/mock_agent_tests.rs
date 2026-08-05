@@ -742,3 +742,74 @@ fn test_inbox_wake_no_delayed_wake_notice() {
         "Inbox-triggered wake should NOT produce delayed wake notice: {log}"
     );
 }
+
+// --- Interactive mode (receive --wait) tests ---
+
+#[test]
+fn test_mock_interactive_two_rounds_in_one_session() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "interactive.toml");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "60"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Round 1: agent asks and parks.
+    wait_for_outbox_message(dir.path(), "what is my mission?", Duration::from_secs(15))
+        .expect("agent should send the round-1 message");
+    assert!(
+        wait_for_log_content(dir.path(), "wait: parked", Duration::from_secs(10)),
+        "daemon should park the wait"
+    );
+
+    // Operator replies while the session is live.
+    write_inbox_message(dir.path(), "round2.md", "second round");
+
+    // Round 2 answered inside the same session.
+    wait_for_outbox_message(dir.path(), "ack: second round", Duration::from_secs(15))
+        .expect("agent should reply to the delivered round-2 message");
+    assert!(wait_for_log_content(
+        dir.path(),
+        "wait: delivered 1 message(s)",
+        Duration::from_secs(5)
+    ));
+
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert_eq!(
+        log.matches("--- CRYO SESSION").count(),
+        1,
+        "both rounds must run inside a single session; log:\n{log}"
+    );
+
+    let archived = cryochamber::message::read_inbox_archive(dir.path()).unwrap();
+    assert_eq!(archived.len(), 1, "delivered batch must be archived");
+
+    cancel_and_wait(dir.path());
+}
+
+#[test]
+fn test_mock_interactive_wait_timeout_hibernates() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scenario(dir.path(), "interactive-timeout.toml");
+
+    cryo_bin()
+        .args(["start", "--agent", "mock", "--max-session-duration", "60"])
+        .env("CRYO_NO_SERVICE", "1")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(
+        wait_for_log_content(dir.path(), "wait: timed out", Duration::from_secs(20)),
+        "the 2s wait should time out"
+    );
+    assert!(
+        wait_for_log_content(dir.path(), "hibernate:", Duration::from_secs(15)),
+        "agent should hibernate after the timeout notice"
+    );
+
+    cancel_and_wait(dir.path());
+}
