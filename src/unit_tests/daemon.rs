@@ -274,6 +274,7 @@ impl SessionRuntime for FakeSessionRuntime {
 
 struct FakeSessionEffects {
     reply_failure: Option<String>,
+    claim_failure: Option<String>,
     replies: Vec<(ReplyAuthor, String, NaiveDateTime, bool)>,
     inbox_messages: Vec<(String, crate::message::Message)>,
     archived_inbox: Vec<(String, crate::message::Message)>,
@@ -287,6 +288,7 @@ impl FakeSessionEffects {
     fn new() -> Self {
         Self {
             reply_failure: None,
+            claim_failure: None,
             replies: Vec::new(),
             inbox_messages: Vec::new(),
             archived_inbox: Vec::new(),
@@ -295,6 +297,14 @@ impl FakeSessionEffects {
             next_todo_id: 1,
             scripted_claims: VecDeque::new(),
         }
+    }
+
+    /// Make the next (and only the next) `claim_inbox_batch` call fail, to
+    /// exercise the `ReceiveRequestOutcome { ok: false, .. }` path.
+    fn with_claim_failure(message: &str) -> Self {
+        let mut effects = Self::new();
+        effects.claim_failure = Some(message.to_string());
+        effects
     }
 
     /// Script future `claim_inbox_batch` results: each call pops one entry
@@ -375,6 +385,9 @@ impl FakeSessionEffects {
 
 impl SessionEffects for FakeSessionEffects {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
+        if let Some(message) = self.claim_failure.take() {
+            anyhow::bail!("{message}");
+        }
         let claimed = match self.scripted_claims.pop_front() {
             Some(batch) => batch,
             None => std::mem::take(&mut self.inbox_messages),
@@ -3679,6 +3692,97 @@ fn test_session_deadline_suspended_while_parked_and_reset_on_delivery() {
 }
 
 #[test]
+fn test_receive_wait_refused_while_already_parked() {
+    // A second `receive --wait` arriving while one is already parked for
+    // this session must be refused outright, not silently double-park.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            receive_wait_request(None), // parks (inbox is empty)
+            receive_wait_request(None), // refused: already parked
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: None,
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    // `park()` doesn't itself call `respond()`, so response 0 is the
+    // refusal of the second (rejected) ReceiveWait; the eventual
+    // `respond_parked` release for the first (still-parked) wait comes
+    // later, at child exit.
+    let responses = runtime.responses();
+    assert!(
+        !responses[0].0 && responses[0].1.contains("already parked"),
+        "{responses:?}"
+    );
+    assert!(!runtime.parked());
+}
+
+#[test]
+fn test_receive_wait_refused_when_inbox_claim_fails() {
+    // If the underlying inbox read itself fails, ReceiveWait must surface the
+    // failure and refuse, not park on top of a broken claim.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![receive_wait_request(None)],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::with_claim_failure("disk on fire");
+
+    daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    let responses = runtime.responses();
+    assert!(
+        !responses[0].0 && responses[0].1.contains("disk on fire"),
+        "{responses:?}"
+    );
+    assert!(!runtime.parked(), "a failed claim must not leave a park");
+}
+
+#[test]
 fn test_receive_wait_refused_with_unresolved_claimed_batch() {
     let dir = tempfile::tempdir().unwrap();
     crate::message::ensure_dirs(dir.path()).unwrap();
@@ -3781,4 +3885,55 @@ fn test_agent_exit_while_parked_releases_wait() {
     );
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert!(log.contains("wait: interrupted"), "{log}");
+}
+
+#[test]
+fn test_try_wait_error_while_parked_releases_wait() {
+    // `try_wait` itself errors (e.g. an OS-level failure polling the child)
+    // while a receive --wait is parked. The daemon must still release the
+    // parked responder before propagating the error and finalizing the
+    // session, exactly like the clean agent-exit case.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Tick 1: ReceiveWait parks (empty claim). Tick 2: try_wait errors.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![receive_wait_request(None)],
+        vec![
+            Ok(None),
+            Err(std::io::Error::other("simulated try_wait failure")),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // park
+
+    let outcome = daemon.drive_active_session(
+        &mut runtime,
+        &mut effects,
+        test_session_context(&cryo_state, 60, clock.monotonic_now()),
+        begin_test_logger(dir.path()),
+    );
+
+    let err = outcome.expect_err("try_wait error must propagate");
+    assert!(err.to_string().contains("simulated try_wait failure"));
+    assert!(
+        !runtime.parked(),
+        "try_wait error must release the parked responder"
+    );
+    let responses = runtime.responses();
+    assert!(
+        responses
+            .iter()
+            .any(|(_, m)| m.contains("Session is ending")),
+        "{responses:?}"
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("wait: interrupted"), "{log}");
+    assert!(log.contains("error checking agent"), "{log}");
 }
