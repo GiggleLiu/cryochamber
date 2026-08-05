@@ -29,6 +29,9 @@ pub(super) enum DaemonRequest {
         summary: Option<String>,
     },
     Receive,
+    ReceiveWait {
+        timeout_secs: Option<u64>,
+    },
     Todo(TodoRequest),
 }
 
@@ -49,6 +52,9 @@ impl From<crate::socket::Request> for DaemonRequest {
                 summary,
             },
             crate::socket::Request::Receive => Self::Receive,
+            crate::socket::Request::ReceiveWait { timeout_secs } => {
+                Self::ReceiveWait { timeout_secs }
+            }
             crate::socket::Request::TodoAdd { text, at } => {
                 Self::Todo(TodoRequest::Add { text, at })
             }
@@ -603,4 +609,12 @@ fn parse_dialog_since(input: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDate::parse_from_str(input, "%Y-%m-%d")
         .ok()
         .and_then(|date| date.and_hms_opt(0, 0, 0))
+}
+
+/// Resolve the wait timeout for a `ReceiveWait` request: the request's value
+/// if given, else the chamber default, clamped into [1, MAX_WAIT_TIMEOUT_SECS].
+pub(super) fn effective_wait_timeout(requested: Option<u64>, default_secs: u64) -> u64 {
+    requested
+        .unwrap_or(default_secs)
+        .clamp(1, crate::config::MAX_WAIT_TIMEOUT_SECS)
 }

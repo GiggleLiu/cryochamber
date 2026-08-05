@@ -409,3 +409,17 @@ fn test_accept_one_large_request_round_trips() {
 
     handle.join().unwrap();
 }
+
+#[test]
+fn receive_wait_request_round_trips_through_serde() {
+    for timeout_secs in [None, Some(300u64)] {
+        let request = Request::ReceiveWait { timeout_secs };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"cmd\":\"receive_wait\""));
+        let back: Request = serde_json::from_str(&json).unwrap();
+        match back {
+            Request::ReceiveWait { timeout_secs: t } => assert_eq!(t, timeout_secs),
+            other => panic!("expected ReceiveWait, got {other:?}"),
+        }
+    }
+}

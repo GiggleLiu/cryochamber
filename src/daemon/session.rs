@@ -21,6 +21,11 @@ pub(super) trait SessionRuntime {
         expected_instance_id: Option<&str>,
     ) -> Result<Option<crate::socket::Request>>;
     fn respond(&mut self, ok: bool, message: String) -> Result<()>;
+    /// Move the pending responder into a parked slot without responding.
+    /// The parked client stays blocked until `respond_parked`.
+    fn park(&mut self) -> Result<()>;
+    /// Respond from the parked slot and clear it.
+    fn respond_parked(&mut self, ok: bool, message: String) -> Result<()>;
     fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>>;
     fn terminate(&mut self);
 }
@@ -30,6 +35,7 @@ struct ProcessSessionRuntime<'a> {
     child: &'a mut std::process::Child,
     clock: Arc<dyn Clock>,
     pending_responder: Option<crate::socket::Responder>,
+    parked_responder: Option<crate::socket::Responder>,
 }
 
 impl<'a> ProcessSessionRuntime<'a> {
@@ -43,6 +49,7 @@ impl<'a> ProcessSessionRuntime<'a> {
             child,
             clock,
             pending_responder: None,
+            parked_responder: None,
         }
     }
 }
@@ -74,6 +81,28 @@ impl SessionRuntime for ProcessSessionRuntime<'_> {
             .pending_responder
             .take()
             .context("Missing pending session responder")?;
+        responder.respond(&crate::socket::Response { ok, message })?;
+        Ok(())
+    }
+
+    fn park(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            self.parked_responder.is_none(),
+            "a wait is already parked for this session"
+        );
+        let responder = self
+            .pending_responder
+            .take()
+            .context("Missing pending session responder to park")?;
+        self.parked_responder = Some(responder);
+        Ok(())
+    }
+
+    fn respond_parked(&mut self, ok: bool, message: String) -> Result<()> {
+        let responder = self
+            .parked_responder
+            .take()
+            .context("Missing parked responder")?;
         responder.respond(&crate::socket::Response { ok, message })?;
         Ok(())
     }
@@ -219,6 +248,9 @@ impl SessionLauncher for ProcessSessionLauncher {
         let context = ActiveSessionContext {
             cryo_state,
             timeout_secs,
+            wait_timeout_secs: config
+                .wait_timeout
+                .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
             spawn_time,
         };
         let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);

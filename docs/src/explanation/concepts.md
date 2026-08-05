@@ -40,6 +40,12 @@ TODOs are the agent's way to schedule its own future wakeups.
 3. **The session finishes.** On success, claimed TODOs become done. On crash, the daemon still marks the claimed items done and creates fresh retry items instead of reopening the originals.
 4. **Retries back off visibly.** Each retry gets a new ID, a ` (attempt k)` suffix, and a `2^k`-minute delay capped at one day, so the retry state survives restarts and stays visible to the operator.
 
+## Interactive mode
+
+`cryo-agent receive --wait` turns a single wake into a live back-and-forth. Instead of hibernating between messages, the agent parks inside the daemon and the operator's next message is delivered straight into the same session — no re-spawn, no lost context. The agent decides per wake whether to activate it (it's just another command in the protocol), and the conversation ends the same way any session does: the agent calls `hibernate` once it judges the exchange complete, either on its own initiative or after a wait times out with a "No new messages" notice.
+
+Because the session-duration clock would otherwise punish a slow-replying human, it is suspended while parked and reset at the start of each round, so every round of the conversation gets a full work budget. Parked state lives only in the daemon's memory for that session — it does not survive a daemon restart — and none of the four chamber invariants change: a parked wait still ends in a visible message, a claimed batch still gets answered, and claim/consumption stays terminal.
+
 ## Chamber invariants
 
 **Every agent spawn produces at least one visible message.** A session is not allowed to disappear silently. If the agent exits without calling `cryo-agent send`, the daemon writes a fallback message from `cryochamber` so the operator always sees a result for that wake.

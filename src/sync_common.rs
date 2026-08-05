@@ -92,6 +92,53 @@ pub enum SyncCycleStatus {
     Halt { reason: String },
 }
 
+/// Rate limiter for logging repeated transient sync errors. A sync daemon
+/// polling every 30 s against a dead network otherwise writes one identical
+/// log line per cycle — thousands over a long outage. This logs the first
+/// failure, then every `LOG_EVERY`-th consecutive one (with the running
+/// count), and one recovery line when the operation succeeds again. Methods
+/// return the line to log (`None` = stay quiet) so callers own the printing
+/// and tests need no I/O.
+pub struct TransientErrorLog {
+    operation: &'static str,
+    consecutive: u64,
+}
+
+impl TransientErrorLog {
+    const LOG_EVERY: u64 = 20;
+
+    pub fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            consecutive: 0,
+        }
+    }
+
+    pub fn failed(&mut self, err: &anyhow::Error) -> Option<String> {
+        self.consecutive += 1;
+        if self.consecutive == 1 || self.consecutive.is_multiple_of(Self::LOG_EVERY) {
+            Some(format!(
+                "{} error (transient, {} consecutive): {err:#}",
+                self.operation, self.consecutive
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub fn recovered(&mut self) -> Option<String> {
+        if self.consecutive == 0 {
+            return None;
+        }
+        let line = format!(
+            "{} recovered after {} consecutive error(s)",
+            self.operation, self.consecutive
+        );
+        self.consecutive = 0;
+        Some(line)
+    }
+}
+
 /// Classification of a sync backend error. Used to decide whether a failure
 /// is worth halting the loop over (`AuthOrConfig` — misconfiguration that
 /// won't self-heal) or whether the loop should keep going (`Transient` —

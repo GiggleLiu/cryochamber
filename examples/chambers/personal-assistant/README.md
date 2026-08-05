@@ -43,6 +43,20 @@ Cryochamber supports external messaging channels that sync between a remote serv
 | Hub (Web UI) | `cryohub` | Built-in HTTP server | [Cryohub](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#cryohub-primary-recommended) |
 | Zulip | `cryo-zulip` | Zulip REST API | [Zulip](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#zulip-remote) |
 
+### Sending images
+
+Upload a photo in the Zulip stream (drag & drop or the paperclip button),
+optionally with a question ("what's this plant?"). `cryo-zulip` downloads the
+file into `messages/attachments/` and rewrites the link in the inbox message to
+that local path, so the agent can view the image directly and answer (with a
+vision-capable model; otherwise it falls back to local OCR for text in images).
+
+### Chatting
+
+Reply within an hour of the assistant's last message and the conversation
+continues in the same live session (interactive mode). After an hour of
+silence the assistant hibernates; the next message wakes it again.
+
 ## Troubleshooting
 
 If the agent crashes or doesn't hibernate, check the logs:
@@ -71,3 +85,4 @@ If the agent exits immediately or shows API errors in `cryo-agent.log`, check yo
 | `cryo-agent.log` | Raw agent stdout/stderr output |
 | `messages/inbox/` | Incoming messages for the agent |
 | `messages/outbox/` | Outgoing messages from the agent |
+| `messages/attachments/` | Files/images downloaded from Zulip uploads |

@@ -133,6 +133,52 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     deduped
 }
 
+/// True if a `WakeFromInbox` event should be dropped instead of spawning a
+/// new session.
+///
+/// The notify watcher forwards every fs event under `messages/inbox`,
+/// including the removals caused by `MessageStore` archiving a batch a
+/// parked `receive --wait` already delivered mid-session. Those events sit
+/// queued on the channel while the session is active and would otherwise
+/// look like a fresh wake once the idle loop resumes, even though the inbox
+/// is empty. Ignore the wake iff all three hold:
+///   (a) `paths` is non-empty — SIGUSR1 / `cryo wake` send empty paths and
+///       must always wake regardless of inbox state.
+///   (b) every path lies inside `inbox_dir` — a mixed batch (e.g. some other
+///       watched dir) must still wake.
+///   (c) the caller has already determined the inbox is empty. A listing
+///       error must be treated as non-empty (fail open — wake rather than
+///       risk stranding a message unread).
+fn should_ignore_inbox_wake(paths: &[PathBuf], inbox_dir: &Path, inbox_empty: bool) -> bool {
+    if paths.is_empty() || !inbox_empty {
+        return false;
+    }
+    paths.iter().all(|path| path_is_within(inbox_dir, path))
+}
+
+/// Canonicalize-or-fallback containment check. A stale watcher path usually
+/// no longer exists (it was archived away), so canonicalizing it directly
+/// fails; canonicalizing only the raw path while the root resolves symlinks
+/// (e.g. macOS `/var` → `/private/var` temp dirs) would make the two sides
+/// disagree. Resolve the path's parent directory instead — for inbox events
+/// that is the inbox dir itself, which still exists — and re-attach the file
+/// name. Any residual mismatch returns false, which fails open into a wake.
+fn path_is_within(root: &Path, path: &Path) -> bool {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if let Ok(path) = path.canonicalize() {
+        return path.starts_with(&root);
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            parent.join(name).starts_with(&root)
+        }
+        _ => path.starts_with(&root),
+    }
+}
+
 /// Watches one or more directories for new files and sends events to a
 /// channel. Historically this only watched `messages/inbox/`, but it now
 /// accepts an arbitrary list of paths configured via `watch_dirs`.
@@ -204,8 +250,9 @@ use schedule::{detect_delayed_wake, WAKE_TIME_FMT};
 #[cfg(test)]
 use request::TodoRequest;
 use request::{
-    handle_dialog_request, handle_receive_request, handle_todo_request, resolve_hibernate_request,
-    DaemonRequest, FileTodoEffects, ReceiveRequestOutcome, TodoRequestOutcome,
+    effective_wait_timeout, handle_dialog_request, handle_receive_request, handle_todo_request,
+    resolve_hibernate_request, DaemonRequest, FileTodoEffects, ReceiveRequestOutcome,
+    TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;
@@ -239,6 +286,9 @@ enum LoopControl {
 struct ActiveSessionContext<'a> {
     cryo_state: &'a CryoState,
     timeout_secs: u64,
+    /// Chamber default (secs) for a `receive --wait` that omits `--timeout`,
+    /// resolved by the launcher as `config.wait_timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT_SECS)`.
+    wait_timeout_secs: u64,
     spawn_time: Instant,
 }
 
@@ -246,10 +296,138 @@ struct ActiveRequestState<'a> {
     logger: &'a mut crate::log::EventLogger,
     hibernate_outcome: &'a mut Option<SessionLoopOutcome>,
     inbox_state: &'a mut SessionInboxState,
+    wait: &'a mut SessionWaitState,
+}
+
+/// Parked-wait bookkeeping for `cryo-agent receive --wait`. In-memory only,
+/// like `SessionInboxState`: a parked wait never survives the session.
+struct SessionWaitState {
+    /// Monotonic deadline of the currently parked wait, if any.
+    parked_deadline: Option<Instant>,
+    /// Chamber default (secs) when a request omits --timeout.
+    default_timeout_secs: u64,
+    /// Set when a wait resolves; the loop consumes it to re-arm the session
+    /// deadline so each conversation round gets a fresh work budget.
+    reset_session_deadline: bool,
+    /// Set once a parked wait resolves via timeout (never via delivery).
+    /// The protocol's contract is timeout -> wrap up and hibernate, so once
+    /// set, `ReceiveWait` requests are refused for the rest of the session —
+    /// otherwise a buggy agent looping `receive --wait --timeout 1` could
+    /// keep resetting the session deadline forever.
+    timed_out: bool,
 }
 
 struct EventLoopMutations<'a> {
     next_wake: &'a mut Option<NaiveDateTime>,
+}
+
+/// Number of trailing agent-log lines included in crash fallback messages.
+const AGENT_LOG_TAIL_LINES: usize = 10;
+/// Cap per included line so one giant line can't bloat the message.
+const AGENT_LOG_TAIL_LINE_CHARS: usize = 200;
+/// Read at most this many bytes from the end of cryo-agent.log.
+const AGENT_LOG_TAIL_READ_BYTES: u64 = 16 * 1024;
+
+/// Strip ANSI escape sequences (CSI/OSC) and control characters from one raw
+/// agent-log line so it renders cleanly in an operator-facing message.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    // CSI sequence: parameters end at a final byte in @..~.
+                    for c2 in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&c2) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    // OSC sequence: runs to BEL or ESC \.
+                    while let Some(c2) = chars.next() {
+                        if c2 == '\u{7}' {
+                            break;
+                        }
+                        if c2 == '\u{1b}' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    chars.next();
+                }
+            }
+        } else if c == '\t' {
+            out.push(' ');
+        } else if !c.is_control() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Extract the last `AGENT_LOG_TAIL_LINES` non-empty, sanitized lines from raw
+/// agent-log content.
+fn agent_log_tail(content: &str) -> Vec<String> {
+    let cleaned: Vec<String> = content
+        .lines()
+        .map(strip_ansi)
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    cleaned
+        .into_iter()
+        .rev()
+        .take(AGENT_LOG_TAIL_LINES)
+        .map(|l| {
+            if l.chars().count() > AGENT_LOG_TAIL_LINE_CHARS {
+                let mut cut: String = l.chars().take(AGENT_LOG_TAIL_LINE_CHARS).collect();
+                cut.push('…');
+                cut
+            } else {
+                l
+            }
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// Debugging suffix appended to crash fallback messages: the tail of
+/// cryo-agent.log in a code fence (a 4-backtick fence survives ``` inside the
+/// log). Empty when the log is missing, unreadable, or has no usable lines —
+/// the fallback must never get worse because diagnostics are unavailable.
+fn crash_debug_suffix(agent_log_path: &Path) -> String {
+    let Some(content) = read_file_tail(agent_log_path, AGENT_LOG_TAIL_READ_BYTES) else {
+        return String::new();
+    };
+    let lines = agent_log_tail(&content);
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n\nLast agent log output (`cryo-agent.log`):\n````\n{}\n````",
+        lines.join("\n")
+    )
+}
+
+/// Read up to `max_bytes` from the end of a file, lossily decoded.
+fn read_file_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64))).ok()?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn daemon_unanswered_reply_text(clean_hibernate: bool) -> &'static str {
@@ -267,6 +445,16 @@ fn daemon_missing_outbound_text(clean_hibernate: bool) -> &'static str {
         "(daemon: agent crashed before sending)"
     }
 }
+
+/// Response released to a parked `receive --wait` when the timeout expires.
+pub(super) const WAIT_TIMEOUT_RESPONSE: &str =
+    "No new messages arrived while waiting. Wrap up now: make sure a TODO schedules your next \
+     wake (`cryo-agent todo add \"<task>\" --at <time>`), then run `cryo-agent hibernate`.";
+
+/// Response released to a parked `receive --wait` when the session is ending
+/// for another reason (shutdown, agent exit, internal error).
+pub(super) const WAIT_INTERRUPTED_RESPONSE: &str =
+    "Session is ending; the wait was interrupted. Do not start new work.";
 
 fn ipc_protocol_response(protocol_version: u32) -> crate::socket::Response {
     let daemon_version = crate::socket::IPC_PROTOCOL_VERSION;
@@ -654,7 +842,9 @@ impl Daemon {
             // no such state, so claiming + archiving a batch here would
             // terminally consume it with nobody on the hook to answer —
             // violating invariant 2. Refuse without touching the inbox.
-            DaemonRequest::Receive | DaemonRequest::Dialog { .. } => {
+            DaemonRequest::Receive
+            | DaemonRequest::ReceiveWait { .. }
+            | DaemonRequest::Dialog { .. } => {
                 let _ = responder.respond(&crate::socket::Response {
                     ok: false,
                     message:
@@ -963,10 +1153,19 @@ impl Daemon {
 
             match wait_for_idle_event(rx, timeout, next_wake, || self.clock.local_now()) {
                 IdleWaitOutcome::WakeFromInbox { paths } => {
-                    eprintln!("Daemon: inbox changed, waking up");
-                    run_now = true;
-                    inbox_wake = true;
-                    inbox_wake_sources = paths;
+                    let inbox_dir = self.dir.join("messages").join("inbox");
+                    let inbox_empty = crate::channel::store::MessageStore::new(self.dir.clone())
+                        .list_inbox_filenames()
+                        .map(|files| files.is_empty())
+                        .unwrap_or(false);
+                    if should_ignore_inbox_wake(&paths, &inbox_dir, inbox_empty) {
+                        eprintln!("Daemon: ignoring stale inbox events (inbox empty)");
+                    } else {
+                        eprintln!("Daemon: inbox changed, waking up");
+                        run_now = true;
+                        inbox_wake = true;
+                        inbox_wake_sources = paths;
+                    }
                 }
                 IdleWaitOutcome::WakeFromSchedule => {
                     eprintln!("Daemon: scheduled wake time reached");
@@ -1047,7 +1246,12 @@ impl Daemon {
                         } else {
                             state.inbox_state.record_status_send();
                         }
-                        state.logger.log_event(&format!("send: \"{text}\""))?;
+                        // `send --stdin` bodies end with the heredoc's final
+                        // newline; trim it so the log line doesn't render a
+                        // meaningless trailing ⏎ inside the quotes.
+                        state
+                            .logger
+                            .log_event(&format!("send: \"{}\"", text.trim_end()))?;
                         runtime.respond(true, "Message sent".into())?;
                     }
                     Err(e) => {
@@ -1103,6 +1307,56 @@ impl Daemon {
                     state.logger.log_event(&event)?;
                 }
             }
+            DaemonRequest::ReceiveWait { timeout_secs } => {
+                if state.wait.timed_out {
+                    runtime.respond(
+                        false,
+                        "receive --wait refused: a previous wait already timed out this \
+                         session. Send any final message, ensure a TODO schedules the next \
+                         wake, then run `cryo-agent hibernate`."
+                            .into(),
+                    )?;
+                    return Ok(());
+                }
+                if state.inbox_state.has_claimed_batch() {
+                    runtime.respond(
+                        false,
+                        "receive refused: send a message for the current inbox batch before receiving again."
+                            .into(),
+                    )?;
+                    return Ok(());
+                }
+                if state.wait.parked_deadline.is_some() {
+                    runtime.respond(
+                        false,
+                        "a receive --wait is already parked for this session.".into(),
+                    )?;
+                    return Ok(());
+                }
+                let outcome = handle_receive_request(effects);
+                if !outcome.ok {
+                    runtime.respond(false, outcome.message)?;
+                    return Ok(());
+                }
+                if outcome.claimed_filenames.is_empty() {
+                    let secs =
+                        effective_wait_timeout(timeout_secs, state.wait.default_timeout_secs);
+                    runtime.park()?;
+                    state.wait.parked_deadline =
+                        Some(self.clock.monotonic_now() + Duration::from_secs(secs));
+                    state.logger.log_event(&format!("wait: parked ({secs}s)"))?;
+                } else {
+                    let response = runtime.respond(true, outcome.message);
+                    state
+                        .inbox_state
+                        .record_claimed_batch(&outcome.claimed_filenames);
+                    state.wait.reset_session_deadline = true;
+                    response?;
+                    if let Some(event) = outcome.log_event {
+                        state.logger.log_event(&event)?;
+                    }
+                }
+            }
             DaemonRequest::Dialog { filter } => {
                 let outcome =
                     handle_dialog_request(filter, state.inbox_state.claimed_filenames(), effects);
@@ -1139,11 +1393,22 @@ impl Daemon {
         inbox_state: &mut SessionInboxState,
         clean_hibernate: bool,
     ) {
+        // On a crash, attach the agent-log tail so the operator sees *why*
+        // without shelling into the chamber. A clean hibernate that merely
+        // forgot to reply gets no log dump — nothing crashed.
+        let debug_suffix = if clean_hibernate {
+            String::new()
+        } else {
+            crash_debug_suffix(&crate::log::agent_log_path(&self.dir))
+        };
         let mut daemon_wrote_reply = false;
         let message_count = inbox_state.claimed_message_count();
         if message_count > 0 {
-            let text = daemon_unanswered_reply_text(clean_hibernate);
-            match effects.write_reply(ReplyAuthor::Daemon, text, self.clock.local_now(), false) {
+            let text = format!(
+                "{}{debug_suffix}",
+                daemon_unanswered_reply_text(clean_hibernate)
+            );
+            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now(), false) {
                 Ok(()) => {
                     if let Err(e) = logger.log_event(&format!(
                         "daemon reply: {} unanswered inbox message{} [{}]",
@@ -1170,7 +1435,10 @@ impl Daemon {
         if message_count == 0 && !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
             match effects.write_reply(
                 ReplyAuthor::Daemon,
-                daemon_missing_outbound_text(clean_hibernate),
+                &format!(
+                    "{}{debug_suffix}",
+                    daemon_missing_outbound_text(clean_hibernate)
+                ),
                 self.clock.local_now(),
                 false,
             ) {
@@ -1195,6 +1463,20 @@ impl Daemon {
         }
     }
 
+    /// Best-effort release of a parked `receive --wait` when the session ends
+    /// for reasons other than delivery/timeout. Never fails the caller: the
+    /// blocked cryo-agent may already be dead.
+    fn release_parked_wait(
+        runtime: &mut impl SessionRuntime,
+        wait_state: &mut SessionWaitState,
+        logger: &mut crate::log::EventLogger,
+    ) {
+        if wait_state.parked_deadline.take().is_some() {
+            let _ = runtime.respond_parked(true, WAIT_INTERRUPTED_RESPONSE.into());
+            let _ = logger.log_event("wait: interrupted");
+        }
+    }
+
     fn drive_active_session(
         &self,
         runtime: &mut impl SessionRuntime,
@@ -1202,10 +1484,16 @@ impl Daemon {
         context: ActiveSessionContext<'_>,
         mut logger: crate::log::EventLogger,
     ) -> Result<SessionLoopOutcome> {
-        let deadline = if context.timeout_secs > 0 {
+        let mut deadline = if context.timeout_secs > 0 {
             Some(context.spawn_time + Duration::from_secs(context.timeout_secs))
         } else {
             None
+        };
+        let mut wait_state = SessionWaitState {
+            parked_deadline: None,
+            default_timeout_secs: context.wait_timeout_secs,
+            reset_session_deadline: false,
+            timed_out: false,
         };
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
@@ -1214,6 +1502,7 @@ impl Daemon {
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
+                Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                 runtime.terminate();
                 let clean_hibernate = hibernate_outcome.is_some();
                 let decision = resolve_interrupted_session(
@@ -1230,26 +1519,28 @@ impl Daemon {
                 return Ok(decision.outcome);
             }
 
-            if let Some(d) = deadline {
-                if self.clock.monotonic_now() >= d {
-                    eprintln!(
-                        "Daemon: session timeout ({}s) — killing agent",
-                        context.timeout_secs
-                    );
-                    runtime.terminate();
-                    let clean_hibernate = hibernate_outcome.is_some();
-                    let decision = resolve_interrupted_session(
-                        SessionInterruption::Timeout,
-                        hibernate_outcome.take(),
-                    );
-                    self.finalize_human_replies(
-                        effects,
-                        &mut logger,
-                        &mut inbox_state,
-                        clean_hibernate,
-                    );
-                    logger.finish(decision.finish_reason)?;
-                    return Ok(decision.outcome);
+            if wait_state.parked_deadline.is_none() {
+                if let Some(d) = deadline {
+                    if self.clock.monotonic_now() >= d {
+                        eprintln!(
+                            "Daemon: session timeout ({}s) — killing agent",
+                            context.timeout_secs
+                        );
+                        runtime.terminate();
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        let decision = resolve_interrupted_session(
+                            SessionInterruption::Timeout,
+                            hibernate_outcome.take(),
+                        );
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
+                        logger.finish(decision.finish_reason)?;
+                        return Ok(decision.outcome);
+                    }
                 }
             }
 
@@ -1263,8 +1554,10 @@ impl Daemon {
                             logger: &mut logger,
                             hibernate_outcome: &mut hibernate_outcome,
                             inbox_state: &mut inbox_state,
+                            wait: &mut wait_state,
                         },
                     ) {
+                        Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                         let clean_hibernate = hibernate_outcome.is_some();
                         self.finalize_human_replies(
                             effects,
@@ -1310,6 +1603,7 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
+                    Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                     self.finalize_human_replies(
                         effects,
                         &mut logger,
@@ -1321,6 +1615,7 @@ impl Daemon {
                 }
                 Ok(None) => {}
                 Err(e) => {
+                    Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
                     let clean_hibernate = hibernate_outcome.is_some();
                     self.finalize_human_replies(
                         effects,
@@ -1331,6 +1626,83 @@ impl Daemon {
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
                 }
+            }
+
+            if let Some(wait_deadline) = wait_state.parked_deadline {
+                let outcome = handle_receive_request(effects);
+                if !outcome.claimed_filenames.is_empty() {
+                    inbox_state.record_claimed_batch(&outcome.claimed_filenames);
+                    wait_state.parked_deadline = None;
+                    wait_state.reset_session_deadline = true;
+                    if let Err(e) = logger.log_event(&format!(
+                        "wait: delivered {} message(s) [{}]",
+                        outcome.claimed_filenames.len(),
+                        outcome.claimed_filenames.join(", ")
+                    )) {
+                        // The batch is already recorded in inbox_state above,
+                        // so a log failure here must not skip finalization —
+                        // mirror the handle_active_request error arm: best-
+                        // effort respond so the blocked client isn't left
+                        // hanging, then finalize (writes the fallback reply
+                        // per chamber invariant 2), then best-effort finish.
+                        let _ = runtime.respond_parked(true, outcome.message);
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
+                        let _ = logger.finish(&format!("error logging wait delivery: {e}"));
+                        return Err(e);
+                    }
+                    // Best-effort: the batch is already recorded in
+                    // inbox_state, so if the blocked client is gone
+                    // (EPIPE/EOF) the next tick's child-exit detection still
+                    // runs finalize_human_replies, which writes the fallback
+                    // reply. Propagating this error would skip finalization
+                    // for an already-delivered batch (chamber invariant 2).
+                    if runtime.respond_parked(true, outcome.message).is_err() {
+                        let _ = logger.log_event("wait: parked respond failed after delivery");
+                    }
+                } else if self.clock.monotonic_now() >= wait_deadline {
+                    wait_state.parked_deadline = None;
+                    wait_state.reset_session_deadline = true;
+                    wait_state.timed_out = true;
+                    if let Err(e) = logger.log_event("wait: timed out") {
+                        // Same reasoning as the delivery branch above: a log
+                        // failure must not skip finalization.
+                        let _ = runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into());
+                        let clean_hibernate = hibernate_outcome.is_some();
+                        self.finalize_human_replies(
+                            effects,
+                            &mut logger,
+                            &mut inbox_state,
+                            clean_hibernate,
+                        );
+                        let _ = logger.finish(&format!("error logging wait timeout: {e}"));
+                        return Err(e);
+                    }
+                    // Best-effort for the same reason as the delivery branch
+                    // above: a dead client must not skip finalization.
+                    if runtime
+                        .respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())
+                        .is_err()
+                    {
+                        let _ = logger.log_event("wait: parked respond failed after timeout");
+                    }
+                }
+                // Empty claim + deadline not reached: keep waiting. A claim
+                // error surfaces as ok=false with no filenames — also keep
+                // waiting; the next tick retries.
+            }
+            if wait_state.reset_session_deadline {
+                wait_state.reset_session_deadline = false;
+                deadline = if context.timeout_secs > 0 {
+                    Some(self.clock.monotonic_now() + Duration::from_secs(context.timeout_secs))
+                } else {
+                    None
+                };
             }
 
             if hibernate_outcome.is_some() {

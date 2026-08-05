@@ -34,9 +34,12 @@ fn line_anchored_indices(contents: &str, marker: &str) -> Vec<usize> {
 /// always exactly one physical line. Without this, multi-line text (e.g. from
 /// `cryo-agent send --stdin`) could plant `--- CRYO SESSION/END ---`, `task:`,
 /// or `hibernate:` lines and forge session blocks or rewrite the next session's
-/// task. The `⏎` glyph keeps the original line breaks visible in the log.
+/// task. Interior line breaks stay visible as the `⏎` glyph; trailing ones
+/// carry no information and are dropped.
 fn sanitize_event(text: &str) -> String {
-    text.replace("\r\n", "⏎").replace(['\r', '\n'], "⏎")
+    text.trim_end_matches(['\r', '\n'])
+        .replace("\r\n", "⏎")
+        .replace(['\r', '\n'], "⏎")
 }
 
 pub fn read_latest_session(log_path: &Path) -> Result<Option<String>> {

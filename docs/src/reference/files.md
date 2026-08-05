@@ -18,6 +18,7 @@ Every file a running chamber creates, where it lives, and whether it is safe to 
 | `messages/inbox/archive/` | daemon on receive | no | no | Processed inbox messages. |
 | `messages/outbox/` | agent and daemon | no | no | Outgoing messages waiting for delivery. |
 | `messages/outbox/archive/` | sync daemons | no | no | Outbox messages already delivered remotely. |
+| `messages/attachments/` | sync daemons | no | no | Files downloaded from remote uploads (e.g. Zulip images); inbox links point here. |
 | `.cryo/cryo.sock` | daemon | no | no | Unix domain socket for agent-daemon IPC. |
 
 ## Sync-channel state files

@@ -323,6 +323,8 @@ struct ZulipSyncLoopBackend {
     dir: PathBuf,
     sync_path: PathBuf,
     sync_state: Option<(ZulipClient, cryochamber::zulip_sync::ZulipSyncState)>,
+    pull_errors: cryochamber::sync_common::TransientErrorLog,
+    push_errors: cryochamber::sync_common::TransientErrorLog,
 }
 
 impl SyncLoopBackend for ZulipSyncLoopBackend {
@@ -344,6 +346,9 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
         // Pull: Zulip -> inbox
         match pull_zulip_messages_into_inbox(&self.dir, &client, &mut sync_state) {
             Ok(cursor_changed) => {
+                if let Some(line) = self.pull_errors.recovered() {
+                    eprintln!("Zulip sync: {line}");
+                }
                 if cursor_changed {
                     if let Err(e) =
                         cryochamber::zulip_sync::save_sync_state(&self.sync_path, &sync_state)
@@ -359,7 +364,9 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
                     });
                 }
                 cryochamber::sync_common::SyncErrorKind::Transient => {
-                    eprintln!("Zulip sync: pull error (transient): {e}");
+                    if let Some(line) = self.pull_errors.failed(&e) {
+                        eprintln!("Zulip sync: {line}");
+                    }
                 }
             },
         }
@@ -374,17 +381,24 @@ impl SyncLoopBackend for ZulipSyncLoopBackend {
         };
 
         // Push: outbox -> Zulip
-        if let Err(e) = push_outbox(&self.dir, &client, &sync_state) {
-            match cryochamber::sync_common::classify_sync_error(&e) {
+        match push_outbox(&self.dir, &client, &sync_state) {
+            Ok(()) => {
+                if let Some(line) = self.push_errors.recovered() {
+                    eprintln!("Zulip sync: {line}");
+                }
+            }
+            Err(e) => match cryochamber::sync_common::classify_sync_error(&e) {
                 cryochamber::sync_common::SyncErrorKind::AuthOrConfig => {
                     return Ok(cryochamber::sync_common::SyncCycleStatus::Halt {
                         reason: format!("zulip sync push auth/config error: {e:#}"),
                     });
                 }
                 cryochamber::sync_common::SyncErrorKind::Transient => {
-                    eprintln!("Zulip sync: push error (transient): {e}");
+                    if let Some(line) = self.push_errors.failed(&e) {
+                        eprintln!("Zulip sync: {line}");
+                    }
                 }
-            }
+            },
         }
 
         Ok(cryochamber::sync_common::SyncCycleStatus::Continue)
@@ -405,7 +419,24 @@ fn pull_zulip_messages_into_inbox(
     )?;
 
     for msg in &result.messages {
-        store.send_in(msg)?;
+        let msg_id = msg
+            .metadata
+            .get("zulip_message_id")
+            .map(String::as_str)
+            .unwrap_or("0");
+        let (body, warnings) = cryochamber::channel::zulip::localize_upload_links(
+            &msg.body,
+            &client.credentials().site,
+            msg_id,
+            dir,
+            |path| client.download_upload(path),
+        );
+        for warning in warnings {
+            eprintln!("Zulip sync: {warning}");
+        }
+        let mut msg = msg.clone();
+        msg.body = body;
+        store.send_in(&msg)?;
     }
 
     let new_last_id = cryochamber::zulip_sync::remember_seen_message_id(
@@ -447,6 +478,8 @@ fn cmd_sync_daemon(interval_override: Option<u64>) -> Result<()> {
         dir: dir.clone(),
         sync_path,
         sync_state: None,
+        pull_errors: cryochamber::sync_common::TransientErrorLog::new("pull"),
+        push_errors: cryochamber::sync_common::TransientErrorLog::new("push"),
     };
 
     cryochamber::sync_common::run_sync_loop(

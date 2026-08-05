@@ -72,6 +72,15 @@ Optional flags for `init`: `--topic <name>`, default `cryochamber`, and `--histo
 
 Post a message in the configured topic and it appears in `messages/inbox/` within the poll interval. The bot's own messages are filtered to avoid echo loops. Outbox messages from the agent appear in the topic within seconds.
 
+### Images and file attachments
+
+Files uploaded to the topic (photos, screenshots, documents) are downloaded on pull into `messages/attachments/`, and the upload links in the inbox message are rewritten to those local paths — so an agent with vision can read an uploaded image directly. Details:
+
+- Downloads are authenticated with the bot's API key and capped at 25 MB per file.
+- If a download fails, the pull still succeeds: the original `/user_uploads/...` link is kept and the error is logged to `cryo-zulip-sync.log`.
+- Attachment files are kept forever, like the message archives. Delete old files manually if disk space matters.
+- Sending images from the agent back to Zulip is not supported; agent replies are text.
+
 ### Stop
 
 ```bash

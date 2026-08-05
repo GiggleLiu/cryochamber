@@ -431,3 +431,48 @@ fn sync_loop_halts_when_send_reports_halt() {
 
     assert_eq!(*log.lock().unwrap(), vec!["receive", "send"]);
 }
+
+#[test]
+fn transient_error_log_logs_first_and_every_20th_failure() {
+    let mut log = TransientErrorLog::new("pull");
+    let err = anyhow::anyhow!("GET /messages failed").context("network down");
+
+    let first = log.failed(&err).expect("first failure must log");
+    assert!(first.contains("pull error (transient, 1 consecutive)"));
+    // `{err:#}` must include the cause chain, not just the top message.
+    assert!(first.contains("network down"));
+    assert!(first.contains("GET /messages failed"));
+
+    let mut logged = Vec::new();
+    for _ in 1..60 {
+        if let Some(line) = log.failed(&err) {
+            logged.push(line);
+        }
+    }
+    assert_eq!(
+        logged.len(),
+        3,
+        "only the 20th/40th/60th should log: {logged:?}"
+    );
+    assert!(logged[0].contains("20 consecutive"));
+    assert!(logged[2].contains("60 consecutive"));
+}
+
+#[test]
+fn transient_error_log_reports_recovery_once() {
+    let mut log = TransientErrorLog::new("push");
+    assert!(
+        log.recovered().is_none(),
+        "no recovery line without failures"
+    );
+
+    let err = anyhow::anyhow!("boom");
+    log.failed(&err);
+    log.failed(&err);
+    let line = log.recovered().expect("recovery after failures must log");
+    assert!(line.contains("push recovered after 2 consecutive error(s)"));
+    assert!(log.recovered().is_none(), "recovery must reset the counter");
+
+    // A fresh failure after recovery logs immediately again.
+    assert!(log.failed(&err).is_some());
+}
