@@ -321,6 +321,115 @@ struct EventLoopMutations<'a> {
     next_wake: &'a mut Option<NaiveDateTime>,
 }
 
+/// Number of trailing agent-log lines included in crash fallback messages.
+const AGENT_LOG_TAIL_LINES: usize = 10;
+/// Cap per included line so one giant line can't bloat the message.
+const AGENT_LOG_TAIL_LINE_CHARS: usize = 200;
+/// Read at most this many bytes from the end of cryo-agent.log.
+const AGENT_LOG_TAIL_READ_BYTES: u64 = 16 * 1024;
+
+/// Strip ANSI escape sequences (CSI/OSC) and control characters from one raw
+/// agent-log line so it renders cleanly in an operator-facing message.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    // CSI sequence: parameters end at a final byte in @..~.
+                    for c2 in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&c2) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    // OSC sequence: runs to BEL or ESC \.
+                    while let Some(c2) = chars.next() {
+                        if c2 == '\u{7}' {
+                            break;
+                        }
+                        if c2 == '\u{1b}' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    chars.next();
+                }
+            }
+        } else if c == '\t' {
+            out.push(' ');
+        } else if !c.is_control() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Extract the last `AGENT_LOG_TAIL_LINES` non-empty, sanitized lines from raw
+/// agent-log content.
+fn agent_log_tail(content: &str) -> Vec<String> {
+    let cleaned: Vec<String> = content
+        .lines()
+        .map(strip_ansi)
+        .map(|l| l.trim_end().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    cleaned
+        .into_iter()
+        .rev()
+        .take(AGENT_LOG_TAIL_LINES)
+        .map(|l| {
+            if l.chars().count() > AGENT_LOG_TAIL_LINE_CHARS {
+                let mut cut: String = l.chars().take(AGENT_LOG_TAIL_LINE_CHARS).collect();
+                cut.push('…');
+                cut
+            } else {
+                l
+            }
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// Debugging suffix appended to crash fallback messages: the tail of
+/// cryo-agent.log in a code fence (a 4-backtick fence survives ``` inside the
+/// log). Empty when the log is missing, unreadable, or has no usable lines —
+/// the fallback must never get worse because diagnostics are unavailable.
+fn crash_debug_suffix(agent_log_path: &Path) -> String {
+    let Some(content) = read_file_tail(agent_log_path, AGENT_LOG_TAIL_READ_BYTES) else {
+        return String::new();
+    };
+    let lines = agent_log_tail(&content);
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n\nLast agent log output (`cryo-agent.log`):\n````\n{}\n````",
+        lines.join("\n")
+    )
+}
+
+/// Read up to `max_bytes` from the end of a file, lossily decoded.
+fn read_file_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64))).ok()?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
 fn daemon_unanswered_reply_text(clean_hibernate: bool) -> &'static str {
     if clean_hibernate {
         "(daemon: agent hibernated without replying)"
@@ -1284,11 +1393,22 @@ impl Daemon {
         inbox_state: &mut SessionInboxState,
         clean_hibernate: bool,
     ) {
+        // On a crash, attach the agent-log tail so the operator sees *why*
+        // without shelling into the chamber. A clean hibernate that merely
+        // forgot to reply gets no log dump — nothing crashed.
+        let debug_suffix = if clean_hibernate {
+            String::new()
+        } else {
+            crash_debug_suffix(&crate::log::agent_log_path(&self.dir))
+        };
         let mut daemon_wrote_reply = false;
         let message_count = inbox_state.claimed_message_count();
         if message_count > 0 {
-            let text = daemon_unanswered_reply_text(clean_hibernate);
-            match effects.write_reply(ReplyAuthor::Daemon, text, self.clock.local_now(), false) {
+            let text = format!(
+                "{}{debug_suffix}",
+                daemon_unanswered_reply_text(clean_hibernate)
+            );
+            match effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now(), false) {
                 Ok(()) => {
                     if let Err(e) = logger.log_event(&format!(
                         "daemon reply: {} unanswered inbox message{} [{}]",
@@ -1315,7 +1435,10 @@ impl Daemon {
         if message_count == 0 && !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
             match effects.write_reply(
                 ReplyAuthor::Daemon,
-                daemon_missing_outbound_text(clean_hibernate),
+                &format!(
+                    "{}{debug_suffix}",
+                    daemon_missing_outbound_text(clean_hibernate)
+                ),
                 self.clock.local_now(),
                 false,
             ) {

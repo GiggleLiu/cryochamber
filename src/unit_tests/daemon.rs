@@ -4218,3 +4218,163 @@ fn test_send_log_line_trims_trailing_newline_from_stdin_body() {
         "no ⏎ should appear for a trailing-only newline: {log}"
     );
 }
+
+#[test]
+fn test_strip_ansi_removes_escape_sequences_and_control_chars() {
+    assert_eq!(
+        strip_ansi("\u{1b}[91m\u{1b}[1mError: \u{1b}[0mboom"),
+        "Error: boom"
+    );
+    assert_eq!(strip_ansi("\u{1b}]0;title\u{7}text"), "text");
+    assert_eq!(strip_ansi("a\tb\u{8}c"), "a bc");
+    assert_eq!(strip_ansi("plain"), "plain");
+}
+
+#[test]
+fn test_agent_log_tail_keeps_last_ten_nonempty_lines_capped() {
+    let mut content = String::new();
+    for i in 1..=15 {
+        content.push_str(&format!("line {i}\n\n"));
+    }
+    content.push_str(&"x".repeat(300));
+    content.push('\n');
+
+    let tail = agent_log_tail(&content);
+    assert_eq!(tail.len(), AGENT_LOG_TAIL_LINES);
+    // Order preserved: oldest of the kept lines first, giant line last.
+    assert_eq!(tail[0], "line 7");
+    assert_eq!(tail[8], "line 15");
+    let last = &tail[9];
+    assert_eq!(last.chars().count(), AGENT_LOG_TAIL_LINE_CHARS + 1);
+    assert!(last.ends_with('…'));
+}
+
+#[test]
+fn test_crash_debug_suffix_empty_when_log_missing_or_blank() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(crash_debug_suffix(&dir.path().join("cryo-agent.log")), "");
+
+    let blank = dir.path().join("blank.log");
+    std::fs::write(&blank, "\n\n\u{1b}[0m\n").unwrap();
+    assert_eq!(crash_debug_suffix(&blank), "");
+}
+
+#[test]
+fn test_crash_debug_suffix_fences_sanitized_tail() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("cryo-agent.log");
+    std::fs::write(
+        &log,
+        "\u{1b}[91mError:\u{1b}[0m permission rejected\ncode ``` fence\n",
+    )
+    .unwrap();
+
+    let suffix = crash_debug_suffix(&log);
+    assert!(suffix.starts_with("\n\nLast agent log output (`cryo-agent.log`):\n````\n"));
+    assert!(suffix.contains("Error: permission rejected"));
+    assert!(suffix.contains("code ``` fence"));
+    assert!(suffix.ends_with("\n````"));
+    assert!(!suffix.contains('\u{1b}'));
+}
+
+#[test]
+fn test_crash_fallback_reply_includes_agent_log_tail() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("cryo-agent.log"),
+        "starting up\n\u{1b}[93m! \u{1b}[0mpermission requested: external_directory (/tmp/*); auto-rejecting\n",
+    )
+    .unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Agent claims the batch, then exits without send/hibernate → crash
+    // fallback must carry the log tail so the operator sees why.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Receive))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.push_inbox_message("human-1.md", "please review");
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_inbox(
+                &cryo_state,
+                vec!["human-1.md".into()],
+                60,
+                clock.monotonic_now(),
+            ),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        SessionLoopOutcome::ValidationFailed { .. }
+    ));
+
+    let (author, text, _, _) = effects
+        .replies
+        .iter()
+        .find(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
+        .expect("daemon fallback reply must be written");
+    assert_eq!(*author, ReplyAuthor::Daemon);
+    assert!(text.contains("daemon: agent crashed before replying"));
+    assert!(text.contains("Last agent log output"));
+    assert!(text.contains("permission requested: external_directory (/tmp/*); auto-rejecting"));
+    assert!(
+        !text.contains('\u{1b}'),
+        "ANSI codes must be stripped: {text:?}"
+    );
+}
+
+#[test]
+fn test_clean_hibernate_fallback_has_no_log_dump() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo-agent.log"), "some agent output\n").unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Agent hibernates cleanly but never sends → status fallback, no crash,
+    // so no log dump belongs in the operator's mailbox.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: Some("quiet".into()),
+        }))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+
+    let (_, text, _, _) = effects
+        .replies
+        .iter()
+        .find(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
+        .expect("daemon status fallback must be written");
+    assert!(text.contains("hibernated without sending"));
+    assert!(
+        !text.contains("Last agent log output"),
+        "no log dump on clean hibernate: {text:?}"
+    );
+}
