@@ -485,6 +485,19 @@ pub fn install(
         anyhow::bail!("systemctl daemon-reload failed");
     }
 
+    // Capture whether the unit is running BEFORE touching it: only a service
+    // that was already active needs a follow-up `try-restart` to pick up the
+    // freshly written unit (`enable --now` does not restart a running
+    // service). Restarting unconditionally would SIGTERM a daemon that
+    // `enable --now` itself just started — it can claim TODOs and spawn an
+    // agent within that window, turning every install into a crashed first
+    // session with a spurious "agent crashed" message to the operator.
+    let was_active = std::process::Command::new("systemctl")
+        .args(["--user", "--quiet", "is-active", &label])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
     let status = std::process::Command::new("systemctl")
         .args(["--user", "enable", "--now", &label])
         .status()?;
@@ -492,15 +505,14 @@ pub fn install(
         anyhow::bail!("systemctl enable --now failed");
     }
 
-    // `enable --now` starts a stopped service but does NOT restart one that was
-    // already running, so a changed unit (new PATH, args, log path) would not
-    // take effect until the next reboot. `try-restart` restarts it only if it
-    // is currently active (a no-op otherwise), applying the new unit now.
-    // Best-effort: the service is already enabled+started above, so a
-    // try-restart hiccup must not fail the whole install.
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "try-restart", &label])
-        .status();
+    if was_active {
+        // Apply the new unit (new PATH, args, log path) to the already-running
+        // service. Best-effort: it is already enabled+started above, so a
+        // try-restart hiccup must not fail the whole install.
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "try-restart", &label])
+            .status();
+    }
 
     Ok(())
 }
