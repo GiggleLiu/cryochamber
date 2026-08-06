@@ -478,3 +478,51 @@ fn externalize_local_links_ignores_other_links_on_same_site() {
     assert_eq!(new_body, body);
     assert!(warnings.is_empty());
 }
+
+#[test]
+fn externalize_local_links_is_idempotent_and_utf8_safe() {
+    let dir = tempfile::tempdir().unwrap();
+    let attach = dir.path().join("messages/attachments");
+    std::fs::create_dir_all(&attach).unwrap();
+    std::fs::write(attach.join("t.png"), b"png").unwrap();
+    // Multi-byte text on both sides of the link exercises span arithmetic.
+    let body = "画好了！这是图：![图](messages/attachments/t.png)，源码在后面。";
+    let (once, w1) = externalize_local_links(body, dir.path(), SITE, |_| {
+        Ok("/user_uploads/1/x/t.png".to_string())
+    });
+    assert!(w1.is_empty());
+    let (twice, w2) = externalize_local_links(&once, dir.path(), SITE, |_| {
+        panic!("second pass must not upload again")
+    });
+    assert!(w2.is_empty());
+    assert_eq!(once, twice, "rewriting must be idempotent");
+    assert!(once.contains("画好了！这是图："));
+    assert!(once.contains("，源码在后面。"));
+    assert!(!once.contains("!["));
+}
+
+#[test]
+fn resolve_local_attachment_refuses_symlink_escape() {
+    // A symlink inside the chamber pointing at the credentials file (or
+    // anywhere outside) must not become uploadable.
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("chamber");
+    std::fs::create_dir_all(chamber.join(".cryo")).unwrap();
+    std::fs::write(chamber.join(".cryo/zuliprc"), b"[api]\nkey=secret\n").unwrap();
+    let secret = dir.path().join("outside-secret.txt");
+    std::fs::write(&secret, b"top secret").unwrap();
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&secret, chamber.join("link-out.txt")).unwrap();
+        std::os::unix::fs::symlink(chamber.join(".cryo/zuliprc"), chamber.join("link-rc")).unwrap();
+        assert!(
+            resolve_local_attachment(&chamber, "link-out.txt").is_none(),
+            "symlink out of the chamber must be refused"
+        );
+        assert!(
+            resolve_local_attachment(&chamber, "link-rc").is_none(),
+            "symlink to the bot API key must be refused"
+        );
+    }
+}
