@@ -272,9 +272,29 @@ impl SessionLauncher for ProcessSessionLauncher {
     }
 }
 
-fn format_wake_sources(chamber_dir: &Path, wake_sources: &[PathBuf]) -> Vec<String> {
+/// True for paths the watcher sees only because of someone else's atomic
+/// write. `message::write_message` stages every inbox file as `.<name>.tmp`
+/// before renaming it into place, so the watcher reports a path that is gone
+/// by the time the agent wakes. Naming it as a wake source sends the agent
+/// chasing a file that does not exist — a real session was lost that way.
+/// Dotfiles are never canonical chamber messages, so skipping all of them
+/// covers editor swap files and similar noise too.
+pub(crate) fn is_transient_write_artifact(source: &Path) -> bool {
+    source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'))
+}
+
+/// Render wake-source paths for the prompt, dropping transient write
+/// artifacts. If that leaves nothing, the caller falls back to naming the
+/// inbox directory itself, so the agent still learns where to look.
+pub(crate) fn format_wake_sources(chamber_dir: &Path, wake_sources: &[PathBuf]) -> Vec<String> {
     let mut formatted = Vec::new();
     for source in wake_sources {
+        if is_transient_write_artifact(source) {
+            continue;
+        }
         let display = display_source_path(chamber_dir, source);
         if !formatted.iter().any(|existing| existing == &display) {
             formatted.push(display);

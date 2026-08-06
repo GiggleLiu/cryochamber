@@ -1789,5 +1789,9 @@ mod dialog_tests;
 mod request_tests;
 
 #[cfg(test)]
+#[path = "unit_tests/daemon/session.rs"]
+mod session_tests;
+
+#[cfg(test)]
 #[path = "unit_tests/daemon_properties.rs"]
 mod property_tests;
