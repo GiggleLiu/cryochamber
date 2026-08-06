@@ -22,7 +22,7 @@ cryo start -> spawn daemon -> run agent -> agent hibernates -> sleep
 
 ## Message lifecycle
 
-Messages and TODOs share two rules: work is consumed at most once, and every wake produces something visible to the operator. For messages that means archive-on-receive is terminal, and if the agent exits without sending a reply the daemon writes a `from: cryochamber` fallback so the session is never silent.
+Messages and TODOs share two rules: work is consumed at most once, and every wake produces something visible to the operator. For messages that means archive-on-receive is terminal, and if the agent exits without sending a reply the daemon writes a `from: cryochamber` fallback so the session is never silent. Retryable agent-runner failures before the agent sends anything or claims an inbox batch are retried first, with increasing gaps, before that fallback is surfaced.
 
 ![Message and TODO lifecycles inside a chamber](../images/lifecycles.svg)
 
@@ -48,7 +48,7 @@ Because the session-duration clock would otherwise punish a slow-replying human,
 
 ## Chamber invariants
 
-**Every agent spawn produces at least one visible message.** A session is not allowed to disappear silently. If the agent exits without calling `cryo-agent send`, the daemon writes a fallback message from `cryochamber` so the operator always sees a result for that wake.
+**Every wake produces at least one visible message.** A wake is not allowed to disappear silently. If the agent exits without calling `cryo-agent send`, the daemon writes a fallback message from `cryochamber` so the operator always sees a result. Retryable runner failures before any agent-visible work is consumed may be deferred across the bounded retry loop; the final exhausted attempt still writes the fallback.
 
 **Every inbox message is answered.** The agent may crash while handling a message, but the sender still gets a reply. If a session ends after claiming an inbox batch without producing a response, the daemon writes the fallback reply for that batch.
 

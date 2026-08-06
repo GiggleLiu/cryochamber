@@ -18,7 +18,12 @@ fn hibernate_outcome_strategy() -> impl Strategy<Value = SessionLoopOutcome> {
     prop_oneof![
         Just(SessionLoopOutcome::PlanComplete),
         Just(SessionLoopOutcome::Hibernate),
-        any::<bool>().prop_map(|q| SessionLoopOutcome::ValidationFailed { quick_exit: q }),
+        (any::<bool>(), any::<bool>()).prop_map(|(quick_exit, retryable)| {
+            SessionLoopOutcome::ValidationFailed {
+                quick_exit,
+                retryable,
+            }
+        }),
     ]
 }
 
@@ -85,7 +90,10 @@ proptest! {
         if exit_code != 0 {
             prop_assert_eq!(
                 decision.outcome,
-                Some(SessionLoopOutcome::ValidationFailed { quick_exit: false })
+                Some(SessionLoopOutcome::ValidationFailed {
+                    quick_exit: false,
+                    retryable: false,
+                })
             );
             prop_assert!(decision.response_ok, "failure path still ACKs the agent");
         } else if complete {
@@ -125,7 +133,10 @@ proptest! {
         let decision = resolve_interrupted_session(kind, None);
         prop_assert_eq!(
             decision.outcome,
-            SessionLoopOutcome::ValidationFailed { quick_exit: false }
+            SessionLoopOutcome::ValidationFailed {
+                quick_exit: false,
+                retryable: false,
+            }
         );
     }
 }
@@ -144,17 +155,23 @@ proptest! {
     ) {
         let elapsed = Duration::from_millis(elapsed_ms);
         let hib_outcome = if hibernated { Some(outcome.clone()) } else { None };
-        let decision = resolve_child_exit(hib_outcome, elapsed);
+        let decision = resolve_child_exit(hib_outcome, elapsed, Some(0));
 
         if hibernated {
             prop_assert_eq!(decision.outcome, outcome);
             prop_assert!(!decision.quick_exit, "hibernate path must suppress quick_exit");
+            prop_assert!(!decision.retryable, "hibernate path must suppress retryable");
         } else {
             let should_be_quick = elapsed < Duration::from_secs(5);
+            let should_be_retryable = should_be_quick;
             prop_assert_eq!(decision.quick_exit, should_be_quick);
+            prop_assert_eq!(decision.retryable, should_be_retryable);
             prop_assert_eq!(
                 decision.outcome,
-                SessionLoopOutcome::ValidationFailed { quick_exit: should_be_quick }
+                SessionLoopOutcome::ValidationFailed {
+                    quick_exit: should_be_quick,
+                    retryable: should_be_retryable,
+                }
             );
         }
     }
