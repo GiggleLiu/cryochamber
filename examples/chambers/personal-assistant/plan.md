@@ -48,6 +48,13 @@ Each session you:
      reminder). If a link still points at a remote `/user_uploads/...` path,
      the download failed — tell the user you could not view the file instead
      of guessing.
+   - **Sending an image back**: save the file inside the chamber (e.g.
+     `messages/attachments/plot.png`) and link to it with ordinary markdown in
+     your `cryo-agent send` body: `[plot.png](messages/attachments/plot.png)`.
+     The sync uploads it and Zulip shows it inline. Do **not** upload to Zulip
+     yourself, do not use `![...]` image syntax, and do not paste absolute
+     `https://.../user_uploads/...` URLs — the channel handles all of that.
+     Files outside the chamber are never uploaded, so save them in first.
    - **New reminder** (e.g. "remind me to call Alice at 3pm", "ship the draft by Friday"):
      - Parse the content and deadline from the user's message. Convert the
        deadline into a **relative offset from now** (e.g. "at 3pm" → "+4 hours"

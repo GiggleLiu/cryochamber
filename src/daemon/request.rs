@@ -85,9 +85,12 @@ pub(super) fn resolve_hibernate_request(
     let summary = summary.unwrap_or("(no summary)");
     if exit_code != 0 {
         return HibernateDecision {
-            outcome: Some(SessionLoopOutcome::ValidationFailed { quick_exit: false }),
+            outcome: Some(SessionLoopOutcome::ValidationFailed {
+                quick_exit: false,
+                retryable: false,
+            }),
             response_ok: true,
-            response_message: "Failure recorded. Daemon will retry.",
+            response_message: "Failure recorded.",
             log_event: format!("hibernate failed: exit={exit_code}, summary=\"{summary}\""),
         };
     }

@@ -140,6 +140,7 @@ pub(super) trait SessionLauncher: Send + Sync {
         wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
+        retry_remaining: bool,
     ) -> Result<SessionLoopOutcome>;
 }
 
@@ -159,6 +160,7 @@ impl SessionLauncher for ProcessSessionLauncher {
         wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
+        retry_remaining: bool,
     ) -> Result<SessionLoopOutcome> {
         let agent_cmd = config.agent.clone();
 
@@ -234,8 +236,13 @@ impl SessionLauncher for ProcessSessionLauncher {
             .append(true)
             .open(crate::log::agent_log_path(&daemon.dir))?;
 
-        let mut child =
-            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
+        let mut child = crate::agent::spawn_agent_in_dir(
+            &agent_cmd,
+            &prompt,
+            Some(agent_log_file),
+            provider_env,
+            &daemon.dir,
+        )?;
         let child_pid = child.id();
         let spawn_time = daemon.clock.monotonic_now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
@@ -252,6 +259,7 @@ impl SessionLauncher for ProcessSessionLauncher {
                 .wait_timeout
                 .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
             spawn_time,
+            retry_remaining,
         };
         let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);
 
@@ -272,9 +280,29 @@ impl SessionLauncher for ProcessSessionLauncher {
     }
 }
 
-fn format_wake_sources(chamber_dir: &Path, wake_sources: &[PathBuf]) -> Vec<String> {
+/// True for paths the watcher sees only because of someone else's atomic
+/// write. `message::write_message` stages every inbox file as `.<name>.tmp`
+/// before renaming it into place, so the watcher reports a path that is gone
+/// by the time the agent wakes. Naming it as a wake source sends the agent
+/// chasing a file that does not exist — a real session was lost that way.
+/// Dotfiles are never canonical chamber messages, so skipping all of them
+/// covers editor swap files and similar noise too.
+pub(crate) fn is_transient_write_artifact(source: &Path) -> bool {
+    source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'))
+}
+
+/// Render wake-source paths for the prompt, dropping transient write
+/// artifacts. If that leaves nothing, the caller falls back to naming the
+/// inbox directory itself, so the agent still learns where to look.
+pub(crate) fn format_wake_sources(chamber_dir: &Path, wake_sources: &[PathBuf]) -> Vec<String> {
     let mut formatted = Vec::new();
     for source in wake_sources {
+        if is_transient_write_artifact(source) {
+            continue;
+        }
         let display = display_source_path(chamber_dir, source);
         if !formatted.iter().any(|existing| existing == &display) {
             formatted.push(display);

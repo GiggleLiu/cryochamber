@@ -503,8 +503,19 @@ fn push_outbox(
         dir,
         |filename| format!("Zulip sync: posted outbox/{filename}"),
         |body| {
+            // Upload any chamber-local files the message links to, and fix up
+            // image syntax Zulip would otherwise render as literal text.
+            let (body, warnings) = cryochamber::channel::zulip::externalize_local_links(
+                body,
+                dir,
+                &client.credentials().site,
+                |path| client.upload_file(path),
+            );
+            for warning in warnings {
+                eprintln!("Zulip sync: {warning}");
+            }
             client
-                .send_message(sync_state.stream_id, topic, body)
+                .send_message(sync_state.stream_id, topic, &body)
                 .map(|_| ())
         },
     )

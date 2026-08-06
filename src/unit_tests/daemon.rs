@@ -629,6 +629,7 @@ fn test_session_context_with_inbox<'a>(
         timeout_secs,
         wait_timeout_secs: crate::config::DEFAULT_WAIT_TIMEOUT_SECS,
         spawn_time,
+        retry_remaining: false,
     }
 }
 
@@ -646,6 +647,7 @@ fn test_session_context_with_wait(
         timeout_secs,
         wait_timeout_secs,
         spawn_time,
+        retry_remaining: false,
     }
 }
 
@@ -1025,18 +1027,19 @@ fn test_next_wake_from_todos_all_invalid_returns_none() {
 
 #[test]
 fn test_resolve_hibernate_request_failure_retries() {
-    // Failure path does not require a pending TODO — daemon will retry.
+    // Failure path does not require a pending TODO. Claimed TODO retry is
+    // handled by the outer session-finalization path, not by this response.
     let decision = resolve_hibernate_request(false, 7, Some("provider failed"), false);
 
     assert_eq!(
         decision.outcome,
-        Some(SessionLoopOutcome::ValidationFailed { quick_exit: false })
+        Some(SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false,
+        })
     );
     assert!(decision.response_ok);
-    assert_eq!(
-        decision.response_message,
-        "Failure recorded. Daemon will retry."
-    );
+    assert_eq!(decision.response_message, "Failure recorded.");
     assert_eq!(
         decision.log_event,
         "hibernate failed: exit=7, summary=\"provider failed\""
@@ -1224,7 +1227,10 @@ fn test_decide_next_step_validation_failed_hibernates_without_retry() {
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
-    let outcome = SessionLoopOutcome::ValidationFailed { quick_exit: false };
+    let outcome = SessionLoopOutcome::ValidationFailed {
+        quick_exit: false,
+        retryable: false,
+    };
 
     let step = decide_next_step(SessionRunResult::Outcome(&outcome), Some(next_wake));
     assert_eq!(
@@ -1246,7 +1252,10 @@ fn test_legacy_rotate_on_does_not_rotate_provider_in_event_loop() {
     let clock = Arc::new(TestClock::new(now));
 
     let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false,
+        },
     ]));
 
     let daemon = Daemon::new_with_clock_and_launcher(
@@ -1303,8 +1312,16 @@ fn test_session_loop_outcome_is_crash() {
     // single source of truth and must cover every outcome variant.
     assert!(!SessionLoopOutcome::PlanComplete.is_crash());
     assert!(!SessionLoopOutcome::Hibernate.is_crash());
-    assert!(SessionLoopOutcome::ValidationFailed { quick_exit: false }.is_crash());
-    assert!(SessionLoopOutcome::ValidationFailed { quick_exit: true }.is_crash());
+    assert!(SessionLoopOutcome::ValidationFailed {
+        quick_exit: false,
+        retryable: false
+    }
+    .is_crash());
+    assert!(SessionLoopOutcome::ValidationFailed {
+        quick_exit: true,
+        retryable: true
+    }
+    .is_crash());
 }
 
 #[test]
@@ -1334,12 +1351,18 @@ fn test_resolve_interrupted_session_without_hibernate_fails() {
 
     assert_eq!(
         shutdown.outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: false }
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false,
+        }
     );
     assert_eq!(shutdown.finish_reason, "daemon shutdown — agent terminated");
     assert_eq!(
         timeout.outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: false }
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false,
+        }
     );
     assert_eq!(timeout.finish_reason, "session timeout — agent killed");
 }
@@ -1349,31 +1372,56 @@ fn test_resolve_child_exit_after_hibernate_returns_outcome() {
     let decision = resolve_child_exit(
         Some(SessionLoopOutcome::PlanComplete),
         Duration::from_secs(1),
+        Some(0),
     );
 
     assert_eq!(decision.outcome, SessionLoopOutcome::PlanComplete);
     assert_eq!(decision.finish_reason, "session complete");
     assert!(!decision.quick_exit);
+    assert!(!decision.retryable);
 }
 
 #[test]
 fn test_resolve_child_exit_without_hibernate_marks_quick_exit() {
-    let quick = resolve_child_exit(None, Duration::from_secs(2));
-    let slow = resolve_child_exit(None, Duration::from_secs(8));
+    let quick = resolve_child_exit(None, Duration::from_secs(2), Some(0));
+    let slow = resolve_child_exit(None, Duration::from_secs(8), Some(0));
 
     assert_eq!(
         quick.outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: true }
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: true
+        }
     );
     assert_eq!(quick.finish_reason, "agent exited without hibernate");
     assert!(quick.quick_exit);
+    assert!(quick.retryable);
 
     assert_eq!(
         slow.outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: false }
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false
+        }
     );
     assert_eq!(slow.finish_reason, "agent exited without hibernate");
     assert!(!slow.quick_exit);
+    assert!(!slow.retryable);
+}
+
+#[test]
+fn test_resolve_child_exit_nonzero_exit_is_retryable_after_quick_exit_window() {
+    let decision = resolve_child_exit(None, Duration::from_secs(8), Some(1));
+
+    assert_eq!(
+        decision.outcome,
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: true
+        }
+    );
+    assert!(!decision.quick_exit);
+    assert!(decision.retryable);
 }
 
 #[test]
@@ -1436,7 +1484,10 @@ fn test_drive_active_session_quick_exit_without_hibernate() {
 
     assert_eq!(
         outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: true }
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: true,
+        }
     );
     assert!(!runtime.terminated());
     assert!(runtime.responses().is_empty());
@@ -1905,7 +1956,10 @@ fn test_run_event_loop_reschedules_claimed_todo_after_crash() {
         .unwrap();
     let clock = Arc::new(TestClock::new(now));
     let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
-        SessionLoopOutcome::ValidationFailed { quick_exit: false },
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false,
+        },
     ]));
     let daemon =
         Daemon::new_with_clock_and_launcher(dir.path().to_path_buf(), clock.clone(), launcher);
@@ -2036,7 +2090,10 @@ fn test_drive_active_session_receive_then_crash_uses_crash_fallback() {
 
     assert_eq!(
         outcome,
-        SessionLoopOutcome::ValidationFailed { quick_exit: true }
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: false,
+        }
     );
     assert_eq!(runtime.responses().len(), 1);
     assert!(runtime.responses()[0].0);
@@ -2051,6 +2108,51 @@ fn test_drive_active_session_receive_then_crash_uses_crash_fallback() {
         "daemon fallback reply should name the crash path: {:?}",
         effects.replies
     );
+}
+
+#[test]
+fn test_drive_active_session_send_then_crash_is_not_retryable() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Send {
+            question: false,
+            text: "Working on it".into(),
+        }))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(1) }))],
+    );
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            ActiveSessionContext {
+                retry_remaining: true,
+                ..test_session_context(&cryo_state, 60, clock.monotonic_now())
+            },
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: false,
+        }
+    );
+    assert_eq!(effects.replies.len(), 1);
+    assert_eq!(effects.replies[0].0, ReplyAuthor::Agent);
+    assert_eq!(effects.replies[0].1, "Working on it");
 }
 
 #[test]
@@ -2537,6 +2639,7 @@ struct ScriptedStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScriptedInvocation {
     session: u32,
+    previous_session_crashed: bool,
     provider: Option<String>,
     wake_sources: Vec<PathBuf>,
 }
@@ -2588,6 +2691,15 @@ impl ScriptedSessionLauncher {
             .collect()
     }
 
+    fn previous_session_crashed_flags(&self) -> Vec<bool> {
+        self.invocations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| i.previous_session_crashed)
+            .collect()
+    }
+
     fn wake_sources(&self) -> Vec<Vec<PathBuf>> {
         self.invocations
             .lock()
@@ -2609,9 +2721,11 @@ impl SessionLauncher for ScriptedSessionLauncher {
         wake_sources: &[PathBuf],
         _provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
+        _retry_remaining: bool,
     ) -> Result<SessionLoopOutcome> {
         self.invocations.lock().unwrap().push(ScriptedInvocation {
             session: cryo_state.session_number,
+            previous_session_crashed: cryo_state.previous_session_crashed,
             provider: provider_name.map(str::to_string),
             wake_sources: wake_sources.to_vec(),
         });
@@ -2641,6 +2755,7 @@ impl SessionLauncher for ErrorSessionLauncher {
         _wake_sources: &[PathBuf],
         _provider_env: &std::collections::HashMap<String, String>,
         _provider_name: Option<&str>,
+        _retry_remaining: bool,
     ) -> Result<SessionLoopOutcome> {
         anyhow::bail!("injected launcher failure");
     }
@@ -2654,6 +2769,74 @@ fn seed_past_todo(dir: &Path) {
     crate::todo::TodoFile::new(dir.join("todo.json"))
         .add("keep going".into(), "2026-01-01T00:00".into())
         .unwrap();
+}
+
+fn seed_todo_at(dir: &Path, text: &str, at: &str) {
+    crate::todo::TodoFile::new(dir.join("todo.json"))
+        .add(text.into(), at.into())
+        .unwrap();
+}
+
+struct ShutdownAfterRetryableCrashLauncher {
+    invocations: Mutex<u32>,
+}
+
+impl ShutdownAfterRetryableCrashLauncher {
+    fn new() -> Self {
+        Self {
+            invocations: Mutex::new(0),
+        }
+    }
+
+    fn invocations(&self) -> u32 {
+        *self.invocations.lock().unwrap()
+    }
+}
+
+impl SessionLauncher for ShutdownAfterRetryableCrashLauncher {
+    #[allow(clippy::too_many_arguments)]
+    fn run_session(
+        &self,
+        daemon: &Daemon,
+        config: &CryoConfig,
+        cryo_state: &CryoState,
+        _server: &crate::socket::SocketServer,
+        _delayed_wake: Option<&str>,
+        _wake_sources: &[PathBuf],
+        _provider_env: &std::collections::HashMap<String, String>,
+        _provider_name: Option<&str>,
+        retry_remaining: bool,
+    ) -> Result<SessionLoopOutcome> {
+        *self.invocations.lock().unwrap() += 1;
+        let mut logger = crate::log::EventLogger::begin(
+            &daemon.log_path,
+            cryo_state.session_number,
+            "test task",
+            "mock-agent",
+            &[],
+        )?;
+        logger.log_event("agent started (pid 123)")?;
+
+        let mut runtime =
+            FakeSessionRuntime::new(vec![], vec![Ok(Some(ChildExitStatus { code: Some(1) }))]);
+        let mut effects = effects::FsSessionEffects::new(&daemon.dir);
+        let outcome = daemon.drive_active_session(
+            &mut runtime,
+            &mut effects,
+            ActiveSessionContext {
+                cryo_state,
+                timeout_secs: config.max_session_duration,
+                wait_timeout_secs: config
+                    .wait_timeout
+                    .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
+                spawn_time: daemon.clock.monotonic_now(),
+                retry_remaining,
+            },
+            logger,
+        );
+        daemon.shutdown.store(true, Ordering::Relaxed);
+        outcome
+    }
 }
 
 #[test]
@@ -3111,14 +3294,11 @@ fn test_run_event_loop_does_not_abort_on_mid_loop_state_save_failure() {
 }
 
 #[test]
-fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
-    // A ValidationFailed outcome used to trigger an in-loop backoff/retry.
-    // With the retry plumbing removed, the session is treated like a
-    // hibernate: the next wake is determined solely by the TODO list (or by
-    // external inbox/wake events). With a past TODO seeded, the scheduler
-    // does still re-fire on the next loop iteration, but there is no
-    // dedicated backoff path — the launcher is drained purely via scheduled
-    // wakes, and the run ends once the queue empties.
+fn test_run_event_loop_non_retryable_validation_failures_follow_schedule() {
+    // Non-retryable ValidationFailed outcomes are treated like hibernates:
+    // the next wake is determined solely by the TODO list (or by external
+    // inbox/wake events). With a past TODO seeded, the scheduler still
+    // re-fires on the next loop iteration, but there is no retry backoff path.
     let dir = tempfile::tempdir().unwrap();
     seed_past_todo(dir.path());
     crate::message::ensure_dirs(dir.path()).unwrap();
@@ -3132,14 +3312,20 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
     let dir_path = dir.path().to_path_buf();
     let launcher = Arc::new(ScriptedSessionLauncher::with_steps(vec![
         ScriptedStep::with_hook(
-            SessionLoopOutcome::ValidationFailed { quick_exit: false },
+            SessionLoopOutcome::ValidationFailed {
+                quick_exit: false,
+                retryable: false,
+            },
             {
                 let dir_path = dir_path.clone();
                 move || seed_past_todo(&dir_path)
             },
         ),
         ScriptedStep::with_hook(
-            SessionLoopOutcome::ValidationFailed { quick_exit: false },
+            SessionLoopOutcome::ValidationFailed {
+                quick_exit: false,
+                retryable: false,
+            },
             {
                 let dir_path = dir_path.clone();
                 move || seed_past_todo(&dir_path)
@@ -3181,6 +3367,314 @@ fn test_run_event_loop_validation_failures_no_longer_auto_retry() {
     assert!(
         invocations.len() >= 3,
         "expected 2 failures + 1 plan-complete = 3 invocations, got {invocations:?}"
+    );
+}
+
+#[test]
+fn test_run_event_loop_retries_retryable_failure_with_unread_inbox() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    crate::message::write_message(
+        dir.path(),
+        "inbox",
+        &crate::message::Message {
+            from: "user".into(),
+            subject: "retry".into(),
+            body: "please try this".into(),
+            timestamp: now,
+            metadata: Default::default(),
+            is_question: false,
+        },
+    )
+    .unwrap();
+
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: true,
+        },
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_wake: None,
+        run_now: false,
+        watch_dirs: Vec::new(),
+    };
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(
+        launcher.session_numbers(),
+        vec![1, 2],
+        "retryable startup failure should be retried before the unread inbox is left idle"
+    );
+    assert_eq!(
+        launcher.previous_session_crashed_flags(),
+        vec![false, false],
+        "in-daemon retries must not show the previous-session-crashed notice before retries are exhausted"
+    );
+    assert_eq!(
+        clock.local_now(),
+        now + chrono::Duration::seconds(1),
+        "first retry should wait for the first backoff gap"
+    );
+}
+
+#[test]
+fn test_run_event_loop_does_not_claim_new_todos_during_retry_backoff() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_todo_at(dir.path(), "initial wake", "2026-03-01T11:59:00");
+    seed_todo_at(dir.path(), "due during retry gap", "2026-03-01T12:00:01");
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: true,
+        },
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_wake: None,
+        run_now: true,
+        watch_dirs: Vec::new(),
+    };
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(launcher.session_numbers(), vec![1, 2]);
+    let items = crate::todo::TodoFile::new(dir.path().join("todo.json"))
+        .items()
+        .unwrap();
+    let initial = items
+        .iter()
+        .find(|item| item.text == "initial wake")
+        .unwrap();
+    let became_due = items
+        .iter()
+        .find(|item| item.text == "due during retry gap")
+        .unwrap();
+    assert!(initial.done);
+    assert!(!initial.claimed);
+    assert!(!became_due.done);
+    assert!(!became_due.claimed);
+}
+
+#[test]
+fn test_run_event_loop_writes_deferred_fallback_when_shutdown_interrupts_retry_backoff() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ShutdownAfterRetryableCrashLauncher::new());
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_wake: None,
+        run_now: true,
+        watch_dirs: Vec::new(),
+    };
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    assert_eq!(launcher.invocations(), 1);
+    let outbox = crate::message::read_outbox(dir.path()).unwrap();
+    assert_eq!(outbox.len(), 1, "deferred fallback should be made visible");
+    assert!(
+        outbox[0]
+            .1
+            .body
+            .contains("daemon: agent crashed before sending"),
+        "{outbox:?}"
+    );
+}
+
+#[test]
+fn test_agent_retry_backoff_increases_exponentially() {
+    let gaps: Vec<_> = (1..=MAX_AGENT_RETRIES).map(agent_retry_backoff).collect();
+
+    assert_eq!(
+        gaps,
+        vec![
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(4),
+            Duration::from_secs(8),
+            Duration::from_secs(16),
+            Duration::from_secs(32),
+            Duration::from_secs(64),
+            Duration::from_secs(128),
+            Duration::from_secs(256),
+            Duration::from_secs(512),
+        ]
+    );
+}
+
+#[test]
+fn test_run_event_loop_stops_after_ten_retryable_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    crate::message::write_message(
+        dir.path(),
+        "inbox",
+        &crate::message::Message {
+            from: "user".into(),
+            subject: "retry".into(),
+            body: "please try this".into(),
+            timestamp: now,
+            metadata: Default::default(),
+            is_question: false,
+        },
+    )
+    .unwrap();
+
+    let clock = Arc::new(TestClock::new(now));
+    let mut outcomes = vec![
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: true,
+        };
+        MAX_AGENT_RETRIES + 1
+    ];
+    outcomes.push(SessionLoopOutcome::PlanComplete);
+    let launcher = Arc::new(ScriptedSessionLauncher::new(outcomes));
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+
+    let bootstrap = DaemonBootstrapState {
+        next_wake: None,
+        run_now: false,
+        watch_dirs: Vec::new(),
+    };
+
+    let (tx, rx) = mpsc::channel();
+    drop(tx);
+
+    daemon
+        .run_event_loop(
+            &CryoConfig::default(),
+            &mut cryo_state,
+            bootstrap,
+            &server,
+            &rx,
+        )
+        .unwrap();
+
+    let expected_attempts = MAX_AGENT_RETRIES + 1;
+    assert_eq!(launcher.session_numbers().len(), expected_attempts);
+    assert_eq!(
+        clock.local_now(),
+        now + chrono::Duration::from_std(
+            (1..=MAX_AGENT_RETRIES)
+                .map(agent_retry_backoff)
+                .sum::<Duration>()
+        )
+        .unwrap()
+    );
+    assert!(
+        cryo_state.previous_session_crashed,
+        "the final exhausted retryable failure should be recorded as a crash"
     );
 }
 

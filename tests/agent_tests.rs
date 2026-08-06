@@ -254,6 +254,30 @@ fn test_spawn_agent_with_empty_env_vars() {
 }
 
 #[test]
+fn test_spawn_agent_in_dir_sets_working_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("agent.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let env = std::collections::HashMap::new();
+
+    let mut child = cryochamber::agent::spawn_agent_in_dir(
+        "sh -c 'pwd'",
+        "ignored",
+        Some(log_file),
+        &env,
+        dir.path(),
+    )
+    .unwrap();
+    let status = child.wait().unwrap();
+    assert!(status.success());
+
+    let output = std::fs::read_to_string(&log_path).unwrap();
+    let reported_dir = std::fs::canonicalize(output.trim()).unwrap();
+    let expected_dir = std::fs::canonicalize(dir.path()).unwrap();
+    assert_eq!(reported_dir, expected_dir);
+}
+
+#[test]
 fn test_resolve_mock_agent() {
     let cmd = cryochamber::agent::build_command("mock", "test prompt").unwrap();
     let program = format!("{cmd:?}");

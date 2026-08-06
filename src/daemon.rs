@@ -218,7 +218,7 @@ impl InboxWatcher {
 pub enum SessionLoopOutcome {
     PlanComplete,
     Hibernate,
-    ValidationFailed { quick_exit: bool },
+    ValidationFailed { quick_exit: bool, retryable: bool },
 }
 
 impl SessionLoopOutcome {
@@ -228,6 +228,28 @@ impl SessionLoopOutcome {
     /// handled separately because there is no outcome to ask.
     fn is_crash(&self) -> bool {
         matches!(self, SessionLoopOutcome::ValidationFailed { .. })
+    }
+
+    fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            SessionLoopOutcome::ValidationFailed {
+                retryable: true,
+                ..
+            }
+        )
+    }
+
+    fn without_retry(self) -> Self {
+        match self {
+            SessionLoopOutcome::ValidationFailed { quick_exit, .. } => {
+                SessionLoopOutcome::ValidationFailed {
+                    quick_exit,
+                    retryable: false,
+                }
+            }
+            other => other,
+        }
     }
 }
 
@@ -275,6 +297,7 @@ struct ChildExitDecision {
     outcome: SessionLoopOutcome,
     finish_reason: &'static str,
     quick_exit: bool,
+    retryable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,6 +313,7 @@ struct ActiveSessionContext<'a> {
     /// resolved by the launcher as `config.wait_timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT_SECS)`.
     wait_timeout_secs: u64,
     spawn_time: Instant,
+    retry_remaining: bool,
 }
 
 struct ActiveRequestState<'a> {
@@ -446,6 +470,10 @@ fn daemon_missing_outbound_text(clean_hibernate: bool) -> &'static str {
     }
 }
 
+fn session_has_retry_blocking_side_effects(inbox_state: &SessionInboxState) -> bool {
+    inbox_state.has_claimed_batch() || inbox_state.has_agent_outbound_message()
+}
+
 /// Response released to a parked `receive --wait` when the timeout expires.
 pub(super) const WAIT_TIMEOUT_RESPONSE: &str =
     "No new messages arrived while waiting. Wrap up now: make sure a TODO schedules your next \
@@ -455,6 +483,15 @@ pub(super) const WAIT_TIMEOUT_RESPONSE: &str =
 /// for another reason (shutdown, agent exit, internal error).
 pub(super) const WAIT_INTERRUPTED_RESPONSE: &str =
     "Session is ending; the wait was interrupted. Do not start new work.";
+
+/// Retry transient agent-runner failures before surfacing a final daemon
+/// fallback. The count is retries after the initial attempt.
+const MAX_AGENT_RETRIES: usize = 10;
+
+fn agent_retry_backoff(retry_number: usize) -> Duration {
+    debug_assert!(retry_number >= 1);
+    Duration::from_secs(1_u64 << retry_number.saturating_sub(1).min(63))
+}
 
 fn ipc_protocol_response(protocol_version: u32) -> crate::socket::Response {
     let daemon_version = crate::socket::IPC_PROTOCOL_VERSION;
@@ -597,33 +634,48 @@ fn resolve_interrupted_session(
             finish_reason: "session timeout — using agent's hibernate outcome",
         },
         (SessionInterruption::Shutdown, None) => InterruptedSessionDecision {
-            outcome: SessionLoopOutcome::ValidationFailed { quick_exit: false },
+            outcome: SessionLoopOutcome::ValidationFailed {
+                quick_exit: false,
+                retryable: false,
+            },
             finish_reason: "daemon shutdown — agent terminated",
         },
         (SessionInterruption::Timeout, None) => InterruptedSessionDecision {
-            outcome: SessionLoopOutcome::ValidationFailed { quick_exit: false },
+            outcome: SessionLoopOutcome::ValidationFailed {
+                quick_exit: false,
+                retryable: false,
+            },
             finish_reason: "session timeout — agent killed",
         },
     }
 }
 
+const QUICK_EXIT_THRESHOLD: Duration = Duration::from_secs(5);
+
 fn resolve_child_exit(
     hibernate_outcome: Option<SessionLoopOutcome>,
     elapsed: Duration,
+    exit_code: Option<i32>,
 ) -> ChildExitDecision {
     if let Some(outcome) = hibernate_outcome {
         return ChildExitDecision {
             outcome,
             finish_reason: "session complete",
             quick_exit: false,
+            retryable: false,
         };
     }
 
-    let quick_exit = elapsed < Duration::from_secs(5);
+    let quick_exit = elapsed < QUICK_EXIT_THRESHOLD;
+    let retryable = exit_code.is_some_and(|code| code != 0) || quick_exit;
     ChildExitDecision {
-        outcome: SessionLoopOutcome::ValidationFailed { quick_exit },
+        outcome: SessionLoopOutcome::ValidationFailed {
+            quick_exit,
+            retryable,
+        },
         finish_reason: "agent exited without hibernate",
         quick_exit,
+        retryable,
     }
 }
 
@@ -914,6 +966,19 @@ impl Daemon {
         }
     }
 
+    fn sleep_agent_retry_backoff(&self, duration: Duration) -> bool {
+        let mut remaining = duration;
+        while remaining > Duration::ZERO {
+            if self.shutdown.load(Ordering::Relaxed) {
+                return false;
+            }
+            let step = remaining.min(Duration::from_millis(250));
+            self.clock.sleep(step);
+            remaining = remaining.saturating_sub(step);
+        }
+        !self.shutdown.load(Ordering::Relaxed)
+    }
+
     /// Run the daemon event loop. Blocks until SIGTERM or plan completion.
     pub fn run(&self) -> Result<()> {
         let mut cryo_state =
@@ -1076,9 +1141,6 @@ impl Daemon {
                 // the user's message without a spurious delay warning.
                 let delayed_wake =
                     delayed_wake_notice(is_inbox_wake, next_wake, self.clock.local_now());
-                cryo_state.session_number += 1;
-                cryo_state.session_active = true;
-                self.save_state_or_log(cryo_state, "persist session-active state");
 
                 // Build provider env for this session
                 let active_provider = config.active_provider();
@@ -1086,41 +1148,82 @@ impl Daemon {
                     active_provider.map(|p| p.env.clone()).unwrap_or_default();
                 let provider_name = active_provider.map(|p| p.name.as_str());
 
-                // Claim past-due TODOs before spawning the agent so the
-                // prompt shows exactly what triggered the wake while the
-                // scheduler ignores those items until this session ends.
+                // Claim the wake's due TODOs once for the whole retry
+                // campaign. TODOs that become due during retry backoff belong
+                // to the next wake, not this failed attempt sequence.
                 self.claim_past_due_todos();
 
-                let session_result = match self.run_one_session(
-                    config,
-                    cryo_state,
-                    server,
-                    delayed_wake.as_deref(),
-                    &wake_sources,
-                    &provider_env,
-                    provider_name,
-                ) {
-                    Ok(outcome) => {
-                        // Single source of truth: outcome decides crash-status.
-                        cryo_state.previous_session_crashed = outcome.is_crash();
-                        cryo_state.session_active = false;
-                        if outcome.is_crash() {
-                            self.reschedule_claimed_after_crash();
-                        } else {
-                            self.complete_claimed_todos();
+                let mut retries_used = 0usize;
+                let session_result = loop {
+                    cryo_state.session_number += 1;
+                    cryo_state.session_active = true;
+                    self.save_state_or_log(cryo_state, "persist session-active state");
+
+                    let retry_remaining = retries_used < MAX_AGENT_RETRIES;
+                    match self.run_one_session(
+                        config,
+                        cryo_state,
+                        server,
+                        delayed_wake.as_deref(),
+                        &wake_sources,
+                        &provider_env,
+                        provider_name,
+                        retry_remaining,
+                    ) {
+                        Ok(outcome) if outcome.is_retryable() && retry_remaining => {
+                            cryo_state.previous_session_crashed = false;
+                            cryo_state.session_active = false;
+                            self.save_state_or_log(
+                                cryo_state,
+                                "persist retryable failed session state",
+                            );
+
+                            retries_used += 1;
+                            let delay = agent_retry_backoff(retries_used);
+                            eprintln!(
+                                "Daemon: retryable agent failure; retrying in {}s ({}/{})",
+                                delay.as_secs(),
+                                retries_used,
+                                MAX_AGENT_RETRIES
+                            );
+                            if !self.sleep_agent_retry_backoff(delay) {
+                                eprintln!("Daemon: received shutdown signal");
+                                self.write_deferred_retry_failure_reply();
+                                cryo_state.previous_session_crashed = outcome.is_crash();
+                                if outcome.is_crash() {
+                                    self.reschedule_claimed_after_crash();
+                                } else {
+                                    self.complete_claimed_todos();
+                                }
+                                self.save_state_or_log(
+                                    cryo_state,
+                                    "persist interrupted retry state",
+                                );
+                                break Ok(outcome);
+                            }
                         }
-                        // Persist session number only after successful completion
-                        self.save_state_or_log(cryo_state, "persist completed session state");
-                        Ok(outcome)
-                    }
-                    Err(e) => {
-                        cryo_state.session_number -= 1;
-                        cryo_state.session_active = false;
-                        cryo_state.previous_session_crashed = true;
-                        self.reschedule_claimed_after_crash();
-                        self.save_state_or_log(cryo_state, "persist failed session state");
-                        eprintln!("Daemon: session failed: {e}");
-                        Err(())
+                        Ok(outcome) => {
+                            // Single source of truth: outcome decides crash-status.
+                            cryo_state.previous_session_crashed = outcome.is_crash();
+                            cryo_state.session_active = false;
+                            if outcome.is_crash() {
+                                self.reschedule_claimed_after_crash();
+                            } else {
+                                self.complete_claimed_todos();
+                            }
+                            // Persist session number only after successful completion
+                            self.save_state_or_log(cryo_state, "persist completed session state");
+                            break Ok(outcome);
+                        }
+                        Err(e) => {
+                            cryo_state.session_number -= 1;
+                            cryo_state.session_active = false;
+                            cryo_state.previous_session_crashed = true;
+                            self.reschedule_claimed_after_crash();
+                            self.save_state_or_log(cryo_state, "persist failed session state");
+                            eprintln!("Daemon: session failed: {e}");
+                            break Err(());
+                        }
                     }
                 };
 
@@ -1204,6 +1307,7 @@ impl Daemon {
         wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
+        retry_remaining: bool,
     ) -> Result<SessionLoopOutcome> {
         self.launcher.run_session(
             self,
@@ -1214,6 +1318,7 @@ impl Daemon {
             wake_sources,
             provider_env,
             provider_name,
+            retry_remaining,
         )
     }
 
@@ -1392,6 +1497,7 @@ impl Daemon {
         logger: &mut crate::log::EventLogger,
         inbox_state: &mut SessionInboxState,
         clean_hibernate: bool,
+        suppress_missing_outbound: bool,
     ) {
         // On a crash, attach the agent-log tail so the operator sees *why*
         // without shelling into the chamber. A clean hibernate that merely
@@ -1432,7 +1538,11 @@ impl Daemon {
             }
         }
 
-        if message_count == 0 && !inbox_state.has_agent_outbound_message() && !daemon_wrote_reply {
+        if message_count == 0
+            && !inbox_state.has_agent_outbound_message()
+            && !daemon_wrote_reply
+            && !suppress_missing_outbound
+        {
             match effects.write_reply(
                 ReplyAuthor::Daemon,
                 &format!(
@@ -1460,6 +1570,20 @@ impl Daemon {
                     }
                 }
             }
+        }
+    }
+
+    fn write_deferred_retry_failure_reply(&self) {
+        let text = format!(
+            "{}{}",
+            daemon_missing_outbound_text(false),
+            crash_debug_suffix(&crate::log::agent_log_path(&self.dir))
+        );
+        let mut effects = effects::FsSessionEffects::new(&self.dir);
+        if let Err(e) =
+            effects.write_reply(ReplyAuthor::Daemon, &text, self.clock.local_now(), false)
+        {
+            eprintln!("Daemon: failed to write deferred retry failure reply: {e:#}");
         }
     }
 
@@ -1514,6 +1638,7 @@ impl Daemon {
                     &mut logger,
                     &mut inbox_state,
                     clean_hibernate,
+                    false,
                 );
                 logger.finish(decision.finish_reason)?;
                 return Ok(decision.outcome);
@@ -1537,6 +1662,7 @@ impl Daemon {
                             &mut logger,
                             &mut inbox_state,
                             clean_hibernate,
+                            false,
                         );
                         logger.finish(decision.finish_reason)?;
                         return Ok(decision.outcome);
@@ -1564,6 +1690,7 @@ impl Daemon {
                             &mut logger,
                             &mut inbox_state,
                             clean_hibernate,
+                            false,
                         );
                         logger.finish(&format!("error handling agent request: {e}"))?;
                         return Err(e);
@@ -1581,16 +1708,16 @@ impl Daemon {
                         .clock
                         .monotonic_now()
                         .saturating_duration_since(context.spawn_time);
+                    let exit_code = status.code;
                     logger.log_event(&format!(
                         "agent exited (code {})",
-                        status
-                            .code
+                        exit_code
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| "signal".into())
                     ))?;
 
                     let clean_hibernate = hibernate_outcome.is_some();
-                    let decision = resolve_child_exit(hibernate_outcome.take(), elapsed);
+                    let decision = resolve_child_exit(hibernate_outcome.take(), elapsed, exit_code);
                     if decision.quick_exit {
                         let elapsed_s = format!("{:.1}s", elapsed.as_secs_f32());
                         eprintln!(
@@ -1604,14 +1731,31 @@ impl Daemon {
                         ))?;
                     }
                     Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
+                    let mut outcome = decision.outcome;
+                    if decision.retryable && session_has_retry_blocking_side_effects(&inbox_state) {
+                        logger.log_event(
+                            "retry disabled: session already sent or received messages",
+                        )?;
+                        outcome = outcome.without_retry();
+                    }
+                    let suppress_missing_outbound = context.retry_remaining
+                        && outcome.is_retryable()
+                        && !inbox_state.has_claimed_batch()
+                        && !inbox_state.has_agent_outbound_message();
+                    if suppress_missing_outbound {
+                        logger.log_event(
+                            "daemon reply deferred: retryable agent failure, retry remains",
+                        )?;
+                    }
                     self.finalize_human_replies(
                         effects,
                         &mut logger,
                         &mut inbox_state,
                         clean_hibernate,
+                        suppress_missing_outbound,
                     );
                     logger.finish(decision.finish_reason)?;
-                    return Ok(decision.outcome);
+                    return Ok(outcome);
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -1622,6 +1766,7 @@ impl Daemon {
                         &mut logger,
                         &mut inbox_state,
                         clean_hibernate,
+                        false,
                     );
                     logger.finish(&format!("error checking agent: {e}"))?;
                     return Err(e.into());
@@ -1652,6 +1797,7 @@ impl Daemon {
                             &mut logger,
                             &mut inbox_state,
                             clean_hibernate,
+                            false,
                         );
                         let _ = logger.finish(&format!("error logging wait delivery: {e}"));
                         return Err(e);
@@ -1679,6 +1825,7 @@ impl Daemon {
                             &mut logger,
                             &mut inbox_state,
                             clean_hibernate,
+                            false,
                         );
                         let _ = logger.finish(&format!("error logging wait timeout: {e}"));
                         return Err(e);
@@ -1787,6 +1934,10 @@ mod dialog_tests;
 #[cfg(test)]
 #[path = "unit_tests/daemon/request.rs"]
 mod request_tests;
+
+#[cfg(test)]
+#[path = "unit_tests/daemon/session.rs"]
+mod session_tests;
 
 #[cfg(test)]
 #[path = "unit_tests/daemon_properties.rs"]

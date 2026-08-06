@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::message::Message;
@@ -10,8 +10,9 @@ use crate::message::Message;
 /// the daemon's inbox watcher.
 pub const ATTACHMENTS_SUBDIR: &str = "messages/attachments";
 
-/// Cap on a single attachment download. Matches Zulip's stock server upload
-/// limit; anything larger fails the fetch and the link is left remote.
+/// Cap on a single attachment transfer, in both directions. Matches Zulip's
+/// stock server upload limit; anything larger fails the transfer, leaving a
+/// pulled link remote or an outbound link un-uploaded.
 const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 
 /// Global timeout bounding an entire HTTP call (DNS -> connect -> read body).
@@ -281,6 +282,61 @@ impl ZulipClient {
         Ok(bytes)
     }
 
+    /// POST /api/v1/user_uploads -- upload a local file, returning its
+    /// server path (`/user_uploads/...`). Zulip renders a link to such a path
+    /// as an inline image preview on every supported server version.
+    pub fn upload_file(&self, path: &Path) -> Result<String> {
+        // Check the size before reading: an agent can link an arbitrarily
+        // large file, and Zulip's stock limit would reject it anyway. Failing
+        // here avoids buffering it in the sync daemon just to lose the round
+        // trip. Mirrors the download cap.
+        let size = std::fs::metadata(path)
+            .with_context(|| format!("Failed to stat attachment {}", path.display()))?
+            .len();
+        anyhow::ensure!(
+            size <= MAX_ATTACHMENT_BYTES,
+            "attachment {} is {size} bytes, over the {MAX_ATTACHMENT_BYTES}-byte limit",
+            path.display()
+        );
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("Failed to read attachment {}", path.display()))?;
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(sanitize_filename)
+            .unwrap_or_else(|| "file".to_string());
+        let boundary = multipart_boundary(&bytes);
+
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n")
+                .as_bytes(),
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(&bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        let url = self.api_url("/user_uploads");
+        let resp_str = self
+            .agent
+            .post(&url)
+            .header("Authorization", &self.basic_auth())
+            .header(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            )
+            .send(&body[..])
+            .with_context(|| format!("POST /user_uploads failed for {}", path.display()))?
+            .body_mut()
+            .read_to_string()
+            .context("Failed to read upload response body")?;
+        let json: serde_json::Value =
+            serde_json::from_str(&resp_str).context("Failed to parse upload response JSON")?;
+        self.check_result(&json, "/user_uploads")?;
+        parse_upload_response(&json)
+    }
+
     /// Pull all messages since last_message_id.
     /// This performs remote transport and response filtering only; callers own
     /// local inbox persistence and sync-state cursor updates.
@@ -431,32 +487,53 @@ pub fn parse_get_messages_response(
     Ok((messages, found_newest, raw_max_id))
 }
 
-// --- Attachment localization ---
+// --- Markdown link parsing ---
 
-/// A `/user_uploads/` markdown link destination found in a Zulip message body.
+/// One inline markdown link destination located in a message body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UploadLink {
-    /// Byte range of the destination inside the body — exactly the text to
-    /// splice when rewriting, leaving link text and any title untouched.
+pub struct MarkdownLink {
+    /// Byte range of the destination alone — exactly the text to splice when
+    /// rewriting, leaving link text and any title untouched.
     pub span: std::ops::Range<usize>,
-    /// Server path beginning with `/user_uploads/`.
-    pub server_path: String,
-    /// Sanitized filename derived from the last path segment.
-    pub filename: String,
+    /// Byte offset of the `!` that makes this CommonMark image syntax, if
+    /// present. Zulip renders `![alt](url)` literally before server version
+    /// 12.0 (feature level 437), so the sync layer strips it.
+    pub bang_at: Option<usize>,
 }
 
-/// Extract `/user_uploads/` markdown link destinations from a raw Zulip
-/// message body. Accepts both site-relative destinations and absolute ones on
-/// `site`. Handles balanced parentheses in the destination and an optional
-/// CommonMark title (`[a](/url "title")`). Every occurrence is returned, in
-/// order, each with its own span; deduplication of downloads is the caller's
-/// job.
-pub fn extract_upload_links(body: &str, site: &str) -> Vec<UploadLink> {
-    let site = site.trim_end_matches('/');
+/// Byte offset of the `[` matching the `]` at `close`, scanning backwards and
+/// tracking bracket depth. `None` if the brackets are unbalanced.
+fn matching_open_bracket(body: &str, close: usize) -> Option<usize> {
+    let mut depth = 1u32;
+    for (i, c) in body[..close].char_indices().rev() {
+        match c {
+            ']' => depth += 1,
+            '[' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Locate inline markdown link destinations (`[text](dest)` and
+/// `![text](dest)`), in order. Handles balanced parentheses inside the
+/// destination and an optional CommonMark title (`[a](/url "title")`), both of
+/// which stay outside the returned span.
+pub fn markdown_links(body: &str) -> Vec<MarkdownLink> {
     let mut links = Vec::new();
     let mut pos = 0;
     while let Some(open) = body[pos..].find("](") {
-        let content_start = pos + open + 2;
+        let bracket_close = pos + open;
+        let content_start = bracket_close + 2;
+        let Some(open_bracket) = matching_open_bracket(body, bracket_close) else {
+            pos = content_start;
+            continue;
+        };
         // Find the matching close paren, allowing balanced pairs inside the
         // destination (CommonMark permits them unescaped).
         let mut depth = 1u32;
@@ -485,8 +562,50 @@ pub fn extract_upload_links(body: &str, site: &str) -> Vec<UploadLink> {
         let dest_start = content_start + (content.len() - content.trim_start().len());
         let dest = &body[dest_start..content_end];
         let dest_end = dest_start + dest.find(char::is_whitespace).unwrap_or(dest.len());
-        let target = &body[dest_start..dest_end];
 
+        // Image syntax is `![alt](dest)`: find the `[` that *matches* this
+        // link's `]` and check for a `!` immediately before it. Matching by
+        // depth rather than the nearest `[` matters for nested links like
+        // `[![alt](thumb.png)](full.png)`, where the nearest one belongs to
+        // the inner image — attributing its `!` to the outer link would queue
+        // two deletions of the same byte and mangle the message.
+        let bang_at = body[..open_bracket]
+            .ends_with('!')
+            .then(|| open_bracket - 1);
+
+        links.push(MarkdownLink {
+            span: dest_start..dest_end,
+            bang_at,
+        });
+    }
+    links
+}
+
+// --- Attachment localization ---
+
+/// A `/user_uploads/` markdown link destination found in a Zulip message body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadLink {
+    /// Byte range of the destination inside the body — exactly the text to
+    /// splice when rewriting, leaving link text and any title untouched.
+    pub span: std::ops::Range<usize>,
+    /// Server path beginning with `/user_uploads/`.
+    pub server_path: String,
+    /// Sanitized filename derived from the last path segment.
+    pub filename: String,
+}
+
+/// Extract `/user_uploads/` markdown link destinations from a raw Zulip
+/// message body. Accepts both site-relative destinations and absolute ones on
+/// `site`. Handles balanced parentheses in the destination and an optional
+/// CommonMark title (`[a](/url "title")`). Every occurrence is returned, in
+/// order, each with its own span; deduplication of downloads is the caller's
+/// job.
+pub fn extract_upload_links(body: &str, site: &str) -> Vec<UploadLink> {
+    let site = site.trim_end_matches('/');
+    let mut links = Vec::new();
+    for link in markdown_links(body) {
+        let target = &body[link.span.clone()];
         let server_path = if target.starts_with("/user_uploads/") {
             target.to_string()
         } else if let Some(path) = target.strip_prefix(site) {
@@ -499,7 +618,7 @@ pub fn extract_upload_links(body: &str, site: &str) -> Vec<UploadLink> {
         };
 
         links.push(UploadLink {
-            span: dest_start..dest_end,
+            span: link.span,
             filename: sanitize_filename(server_path.rsplit('/').next().unwrap_or("")),
             server_path,
         });
@@ -593,6 +712,158 @@ pub fn localize_upload_links(
         if let Some(Some(local_rel)) = resolved.get(&link.server_path) {
             new_body.replace_range(link.span.clone(), local_rel);
         }
+    }
+    (new_body, warnings)
+}
+
+// --- Outbound attachment upload ---
+
+/// Pick a multipart boundary that does not occur in the payload. Randomness is
+/// unavailable (and unnecessary): the only requirement is absence from the
+/// body, so extend a fixed marker until that holds.
+fn multipart_boundary(payload: &[u8]) -> String {
+    let mut boundary = "cryochamberBoundary7MA4YWxkTrZu0gW".to_string();
+    while payload
+        .windows(boundary.len())
+        .any(|w| w == boundary.as_bytes())
+    {
+        boundary.push('X');
+    }
+    boundary
+}
+
+/// Extract the server path from a `POST /user_uploads` response. Zulip returns
+/// `uri` on older servers and `url` on newer ones; accept either.
+pub fn parse_upload_response(json: &serde_json::Value) -> Result<String> {
+    json["url"]
+        .as_str()
+        .or_else(|| json["uri"].as_str())
+        .map(|s| s.to_string())
+        .context("upload response missing 'url'/'uri'")
+}
+
+/// Decide whether a markdown link destination names a chamber-local file this
+/// sync may upload, returning its absolute path.
+///
+/// Refuses anything that is not a plain relative path to an existing regular
+/// file inside the chamber. In particular `.cryo/` is never uploadable — it
+/// holds `zuliprc`, i.e. the bot's API key, which must never leave the machine.
+/// Symlinks are resolved before the containment and `.cryo` checks, so neither
+/// can be used to escape.
+///
+/// This guards against an agent *accidentally* linking something sensitive,
+/// not against a determined one: the agent runs as the same user and can read
+/// `.cryo/zuliprc` (or hard-link it under an innocent name) directly. The
+/// trust boundary is the agent, not this function.
+pub fn resolve_local_attachment(dir: &Path, target: &str) -> Option<PathBuf> {
+    if target.is_empty()
+        || target.contains("://")
+        || target.starts_with('/')
+        || target.starts_with('#')
+        || target.starts_with("mailto:")
+    {
+        return None;
+    }
+    let candidate = dir.join(target);
+    if !candidate.is_file() {
+        return None;
+    }
+    let root = dir.canonicalize().ok()?;
+    let resolved = candidate.canonicalize().ok()?;
+    if !resolved.starts_with(&root) {
+        return None;
+    }
+    if resolved
+        .strip_prefix(&root)
+        .ok()?
+        .components()
+        .any(|c| c.as_os_str() == ".cryo")
+    {
+        return None;
+    }
+    Some(resolved)
+}
+
+/// Prepare an outbox body for Zulip so linked images actually render inline:
+/// upload chamber-local files referenced by markdown links, rewrite those
+/// links to absolute upload URLs on `site`, and drop the `!` from image
+/// syntax.
+///
+/// Both edits are required. Verified against a live Zulip 11.4 server:
+///
+/// - `[text](/user_uploads/...)` (relative) renders as a bare link, no preview.
+/// - `[text](https://site/user_uploads/...)` renders the link *and* an inline
+///   image preview — absolute is what the preview pass matches on.
+/// - `![text](...)` additionally leaves a literal `![text](` in the message,
+///   because Zulip only implements CommonMark image syntax from server 12.0
+///   (feature level 437).
+///
+/// Returns the rewritten body plus warnings for the caller to log. A failed
+/// upload leaves its link untouched and never fails the push — the message
+/// still reaches the operator, just without the inline image.
+pub fn externalize_local_links(
+    body: &str,
+    dir: &Path,
+    site: &str,
+    mut upload: impl FnMut(&Path) -> Result<String>,
+) -> (String, Vec<String>) {
+    let links = markdown_links(body);
+    let mut warnings = Vec::new();
+    // One upload per distinct local file, keyed by resolved path.
+    let mut uploaded: BTreeMap<PathBuf, Option<String>> = BTreeMap::new();
+    // Edits as (range, replacement); applied back-to-front so offsets hold.
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+
+    let site = site.trim_end_matches('/');
+    for link in &links {
+        let target = &body[link.span.clone()];
+        // Resolve this link to an upload path, uploading a local file when
+        // needed. Skipping means the link is not an attachment: leave it be.
+        let server_path = if let Some(local) = resolve_local_attachment(dir, target) {
+            let entry = uploaded
+                .entry(local.clone())
+                .or_insert_with(|| match upload(&local) {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        warnings.push(format!("attachment upload failed for {target}: {e:#}"));
+                        None
+                    }
+                });
+            let Some(path) = entry.clone() else { continue };
+            path
+        } else if let Some(rest) = target.strip_prefix(site) {
+            // Already absolute on this server (e.g. the agent uploaded it
+            // itself); only the `!` may still need stripping.
+            if !rest.starts_with("/user_uploads/") {
+                continue;
+            }
+            rest.to_string()
+        } else if target.starts_with("/user_uploads/") {
+            target.to_string()
+        } else {
+            continue;
+        };
+
+        if !server_path.starts_with("/user_uploads/") {
+            continue;
+        }
+        let absolute = format!("{site}{server_path}");
+        if absolute != target {
+            edits.push((link.span.clone(), absolute));
+        }
+        if let Some(bang) = link.bang_at {
+            edits.push((bang..bang + 1, String::new()));
+        }
+    }
+
+    let mut new_body = body.to_string();
+    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    // Applying two edits to the same range would splice the replacement twice
+    // and eat neighbouring bytes. Nothing should queue duplicates, but a
+    // corrupted message reaches the operator silently, so drop them here too.
+    edits.dedup_by(|(a, _), (b, _)| a == b);
+    for (range, replacement) in edits {
+        new_body.replace_range(range, &replacement);
     }
     (new_body, warnings)
 }

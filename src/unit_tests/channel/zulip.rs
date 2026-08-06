@@ -291,3 +291,301 @@ fn download_upload_rejects_unsafe_paths() {
         );
     }
 }
+
+// --- Outbound attachment upload ---
+
+#[test]
+fn markdown_links_detects_image_syntax_bang() {
+    let body = "text [a](/one) then ![b](/two)";
+    let links = markdown_links(body);
+    assert_eq!(links.len(), 2);
+    assert_eq!(&body[links[0].span.clone()], "/one");
+    assert_eq!(links[0].bang_at, None);
+    assert_eq!(&body[links[1].span.clone()], "/two");
+    assert_eq!(body.as_bytes()[links[1].bang_at.unwrap()], b'!');
+}
+
+#[test]
+fn resolve_local_attachment_accepts_chamber_files_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let attach = dir.path().join("messages/attachments");
+    std::fs::create_dir_all(&attach).unwrap();
+    std::fs::write(attach.join("qubit.png"), b"png").unwrap();
+
+    assert!(resolve_local_attachment(dir.path(), "messages/attachments/qubit.png").is_some());
+    // Not files / not local.
+    assert!(resolve_local_attachment(dir.path(), "messages/attachments").is_none());
+    assert!(resolve_local_attachment(dir.path(), "missing.png").is_none());
+    assert!(resolve_local_attachment(dir.path(), "https://example.com/a.png").is_none());
+    assert!(resolve_local_attachment(dir.path(), "/user_uploads/1/x/a.png").is_none());
+    assert!(resolve_local_attachment(dir.path(), "").is_none());
+}
+
+#[test]
+fn resolve_local_attachment_never_exposes_credentials_or_escapes_chamber() {
+    let dir = tempfile::tempdir().unwrap();
+    let cryo = dir.path().join(".cryo");
+    std::fs::create_dir_all(&cryo).unwrap();
+    std::fs::write(cryo.join("zuliprc"), b"[api]\nkey=secret\n").unwrap();
+    let outside = dir.path().join("outside.txt");
+    std::fs::write(&outside, b"nope").unwrap();
+    let chamber = dir.path().join("chamber");
+    std::fs::create_dir_all(&chamber).unwrap();
+
+    // The bot's API key must never be uploadable.
+    assert!(resolve_local_attachment(dir.path(), ".cryo/zuliprc").is_none());
+    // Traversal out of the chamber is refused.
+    assert!(resolve_local_attachment(&chamber, "../outside.txt").is_none());
+}
+
+#[test]
+fn externalize_local_links_uploads_and_strips_image_bang() {
+    let dir = tempfile::tempdir().unwrap();
+    let attach = dir.path().join("messages/attachments");
+    std::fs::create_dir_all(&attach).unwrap();
+    std::fs::write(attach.join("qubit.png"), b"png").unwrap();
+
+    let body = "画好了！\n\n![qubit](messages/attachments/qubit.png)\n\n源码在后面。";
+    let mut uploads = 0;
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |path| {
+        uploads += 1;
+        assert!(path.ends_with("qubit.png"));
+        Ok("/user_uploads/2/b2/abc/qubit.png".to_string())
+    });
+
+    assert_eq!(uploads, 1);
+    assert!(warnings.is_empty());
+    // The `!` is gone (Zulip < 12 renders image syntax literally) and the
+    // destination is absolute (relative URLs get no inline preview).
+    assert_eq!(
+        new_body,
+        "画好了！\n\n[qubit](https://chat.example.com/user_uploads/2/b2/abc/qubit.png)\n\n源码在后面。"
+    );
+}
+
+#[test]
+fn externalize_local_links_strips_bang_on_preuploaded_paths() {
+    // Reproduces the field bug: the agent uploaded the file itself and wrote
+    // image syntax, which Zulip 11.4 rendered as literal text.
+    let dir = tempfile::tempdir().unwrap();
+    let body = "![qubit](/user_uploads/2/b2/Y5q/qubit.png)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |_| {
+        unreachable!("nothing to upload")
+    });
+
+    assert!(warnings.is_empty());
+    assert_eq!(
+        new_body,
+        "[qubit](https://chat.example.com/user_uploads/2/b2/Y5q/qubit.png)"
+    );
+}
+
+#[test]
+fn externalize_local_links_uploads_each_file_once() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.png"), b"png").unwrap();
+
+    let body = "[one](a.png) and again [two](a.png)";
+    let mut uploads = 0;
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |_| {
+        uploads += 1;
+        Ok("/user_uploads/1/x/a.png".to_string())
+    });
+
+    assert_eq!(uploads, 1, "same file must upload once");
+    assert!(warnings.is_empty());
+    assert_eq!(
+        new_body,
+        "[one](https://chat.example.com/user_uploads/1/x/a.png) and again [two](https://chat.example.com/user_uploads/1/x/a.png)"
+    );
+}
+
+#[test]
+fn externalize_local_links_keeps_message_when_upload_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.png"), b"png").unwrap();
+
+    let body = "see ![a](a.png)";
+    let (new_body, warnings) =
+        externalize_local_links(body, dir.path(), SITE, |_| anyhow::bail!("network down"));
+
+    // Body untouched: the operator still gets the text, just no inline image.
+    assert_eq!(new_body, body);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("a.png"));
+    assert!(warnings[0].contains("network down"));
+}
+
+#[test]
+fn externalize_local_links_leaves_plain_messages_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = "no links here, and a [doc](https://example.com/page) too";
+    let (new_body, warnings) =
+        externalize_local_links(body, dir.path(), SITE, |_| unreachable!("nothing local"));
+    assert_eq!(new_body, body);
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn externalize_local_links_ignores_malformed_link_without_opener() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.png"), b"png").unwrap();
+
+    let body = "literal text, not markdown: ](a.png)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |_| {
+        panic!("malformed text must not upload local files")
+    });
+
+    assert_eq!(new_body, body);
+    assert!(warnings.is_empty());
+    assert!(markdown_links(body).is_empty());
+}
+
+#[test]
+fn multipart_boundary_avoids_colliding_with_payload() {
+    let plain = multipart_boundary(b"some png bytes");
+    assert!(!plain.is_empty());
+    // A payload that literally contains the marker forces a longer boundary.
+    let collide = multipart_boundary(plain.as_bytes());
+    assert!(collide.len() > plain.len());
+    assert!(!collide.contains("XX") || collide.starts_with(&plain));
+}
+
+#[test]
+fn parse_upload_response_accepts_url_and_legacy_uri() {
+    let new = serde_json::json!({"result": "success", "url": "/user_uploads/1/x/a.png"});
+    assert_eq!(
+        parse_upload_response(&new).unwrap(),
+        "/user_uploads/1/x/a.png"
+    );
+    let old = serde_json::json!({"result": "success", "uri": "/user_uploads/2/y/b.png"});
+    assert_eq!(
+        parse_upload_response(&old).unwrap(),
+        "/user_uploads/2/y/b.png"
+    );
+    let bad = serde_json::json!({"result": "success"});
+    assert!(parse_upload_response(&bad).is_err());
+}
+
+#[test]
+fn externalize_local_links_leaves_already_absolute_uploads_but_strips_bang() {
+    // Exactly the field bug: agent uploaded the file itself and wrote image
+    // syntax with an absolute URL. Only the `!` should change.
+    let dir = tempfile::tempdir().unwrap();
+    let body = "![qubit](https://chat.example.com/user_uploads/2/b2/Y5q/qubit.png)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |_| {
+        unreachable!("nothing to upload")
+    });
+    assert!(warnings.is_empty());
+    assert_eq!(
+        new_body,
+        "[qubit](https://chat.example.com/user_uploads/2/b2/Y5q/qubit.png)"
+    );
+}
+
+#[test]
+fn externalize_local_links_ignores_other_links_on_same_site() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = "see [help](https://chat.example.com/help/topic)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |_| {
+        unreachable!("nothing to upload")
+    });
+    assert_eq!(new_body, body);
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn externalize_local_links_is_idempotent_and_utf8_safe() {
+    let dir = tempfile::tempdir().unwrap();
+    let attach = dir.path().join("messages/attachments");
+    std::fs::create_dir_all(&attach).unwrap();
+    std::fs::write(attach.join("t.png"), b"png").unwrap();
+    // Multi-byte text on both sides of the link exercises span arithmetic.
+    let body = "画好了！这是图：![图](messages/attachments/t.png)，源码在后面。";
+    let (once, w1) = externalize_local_links(body, dir.path(), SITE, |_| {
+        Ok("/user_uploads/1/x/t.png".to_string())
+    });
+    assert!(w1.is_empty());
+    let (twice, w2) = externalize_local_links(&once, dir.path(), SITE, |_| {
+        panic!("second pass must not upload again")
+    });
+    assert!(w2.is_empty());
+    assert_eq!(once, twice, "rewriting must be idempotent");
+    assert!(once.contains("画好了！这是图："));
+    assert!(once.contains("，源码在后面。"));
+    assert!(!once.contains("!["));
+}
+
+#[test]
+fn resolve_local_attachment_refuses_symlink_escape() {
+    // A symlink inside the chamber pointing at the credentials file (or
+    // anywhere outside) must not become uploadable.
+    let dir = tempfile::tempdir().unwrap();
+    let chamber = dir.path().join("chamber");
+    std::fs::create_dir_all(chamber.join(".cryo")).unwrap();
+    std::fs::write(chamber.join(".cryo/zuliprc"), b"[api]\nkey=secret\n").unwrap();
+    let secret = dir.path().join("outside-secret.txt");
+    std::fs::write(&secret, b"top secret").unwrap();
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&secret, chamber.join("link-out.txt")).unwrap();
+        std::os::unix::fs::symlink(chamber.join(".cryo/zuliprc"), chamber.join("link-rc")).unwrap();
+        assert!(
+            resolve_local_attachment(&chamber, "link-out.txt").is_none(),
+            "symlink out of the chamber must be refused"
+        );
+        assert!(
+            resolve_local_attachment(&chamber, "link-rc").is_none(),
+            "symlink to the bot API key must be refused"
+        );
+    }
+}
+
+#[test]
+fn externalize_local_links_handles_nested_image_link() {
+    // Clickable-thumbnail pattern: an image inside a link's text. The outer
+    // link is NOT an image, so its `!` attribution must not latch onto the
+    // inner link's `!` — doing so deletes the inner `[` and corrupts the
+    // message that gets posted to the operator.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("thumb.png"), b"png").unwrap();
+    std::fs::write(dir.path().join("full.png"), b"png").unwrap();
+
+    let body = "[![alt](thumb.png)](full.png)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |path| {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        Ok(format!("/user_uploads/1/x/{name}"))
+    });
+
+    assert!(warnings.is_empty());
+    assert_eq!(
+        new_body,
+        "[[alt](https://chat.example.com/user_uploads/1/x/thumb.png)]\
+(https://chat.example.com/user_uploads/1/x/full.png)"
+    );
+}
+
+#[test]
+fn matching_open_bracket_pairs_by_depth() {
+    let body = "[![alt](thumb.png)](full.png)";
+    // The outer `]` at 18 matches the `[` at 0, not the inner one at 2.
+    assert_eq!(matching_open_bracket(body, 18), Some(0));
+    assert_eq!(matching_open_bracket(body, 6), Some(2));
+    assert_eq!(matching_open_bracket("no brackets]", 11), None);
+}
+
+#[test]
+fn upload_file_refuses_oversized_attachment() {
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("big.bin");
+    let f = std::fs::File::create(&big).unwrap();
+    f.set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+    drop(f);
+
+    let err = client_for_test().upload_file(&big).unwrap_err();
+    assert!(
+        err.to_string().contains("over the"),
+        "expected size-limit error, got: {err}"
+    );
+}
