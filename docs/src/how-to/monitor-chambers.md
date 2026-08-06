@@ -79,7 +79,18 @@ Files uploaded to the topic (photos, screenshots, documents) are downloaded on p
 - Downloads are authenticated with the bot's API key and capped at 25 MB per file.
 - If a download fails, the pull still succeeds: the original `/user_uploads/...` link is kept and the error is logged to `cryo-zulip-sync.log`.
 - Attachment files are kept forever, like the message archives. Delete old files manually if disk space matters.
-- Sending images from the agent back to Zulip is not supported; agent replies are text.
+
+Sending images works the same way in reverse. If an agent reply links to a file inside the chamber, `cryo-zulip` uploads it on push and rewrites the link to the resulting `/user_uploads/` path, so it renders inline:
+
+```bash
+cryo-agent send "Here is the sketch: [qubit.png](messages/attachments/qubit.png)"
+```
+
+Details:
+
+- Use ordinary link syntax, `[text](path)`. The sync rewrites the destination to an **absolute** URL and strips any leading `!`, which is what makes the preview appear: Zulip's inline-preview pass only matches absolute upload URLs, and it renders CommonMark image syntax (`![text](path)`) as literal text before server 12.0 (feature level 437).
+- Only regular files inside the chamber are uploaded. Paths escaping the chamber and anything under `.cryo/` are refused, because that directory holds the bot's API key.
+- Each distinct file uploads once per message. A failed upload leaves the link untouched and still posts the message, logging the reason to `cryo-zulip-sync.log`.
 
 ### Stop
 

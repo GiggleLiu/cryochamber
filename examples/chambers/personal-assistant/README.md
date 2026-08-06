@@ -51,6 +51,10 @@ file into `messages/attachments/` and rewrites the link in the inbox message to
 that local path, so the agent can view the image directly and answer (with a
 vision-capable model; otherwise it falls back to local OCR for text in images).
 
+The assistant can send images back the same way: it saves a file inside the
+chamber and links to it, and `cryo-zulip` uploads it on push so it renders
+inline in the stream.
+
 ### Chatting
 
 Reply within an hour of the assistant's last message and the conversation
