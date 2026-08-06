@@ -1171,7 +1171,7 @@ impl Daemon {
                         retry_remaining,
                     ) {
                         Ok(outcome) if outcome.is_retryable() && retry_remaining => {
-                            cryo_state.previous_session_crashed = true;
+                            cryo_state.previous_session_crashed = false;
                             cryo_state.session_active = false;
                             self.save_state_or_log(
                                 cryo_state,
@@ -1189,6 +1189,7 @@ impl Daemon {
                             if !self.sleep_agent_retry_backoff(delay) {
                                 eprintln!("Daemon: received shutdown signal");
                                 self.write_deferred_retry_failure_reply();
+                                cryo_state.previous_session_crashed = outcome.is_crash();
                                 if outcome.is_crash() {
                                     self.reschedule_claimed_after_crash();
                                 } else {

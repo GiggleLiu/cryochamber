@@ -2639,6 +2639,7 @@ struct ScriptedStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScriptedInvocation {
     session: u32,
+    previous_session_crashed: bool,
     provider: Option<String>,
     wake_sources: Vec<PathBuf>,
 }
@@ -2690,6 +2691,15 @@ impl ScriptedSessionLauncher {
             .collect()
     }
 
+    fn previous_session_crashed_flags(&self) -> Vec<bool> {
+        self.invocations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| i.previous_session_crashed)
+            .collect()
+    }
+
     fn wake_sources(&self) -> Vec<Vec<PathBuf>> {
         self.invocations
             .lock()
@@ -2715,6 +2725,7 @@ impl SessionLauncher for ScriptedSessionLauncher {
     ) -> Result<SessionLoopOutcome> {
         self.invocations.lock().unwrap().push(ScriptedInvocation {
             session: cryo_state.session_number,
+            previous_session_crashed: cryo_state.previous_session_crashed,
             provider: provider_name.map(str::to_string),
             wake_sources: wake_sources.to_vec(),
         });
@@ -3426,6 +3437,11 @@ fn test_run_event_loop_retries_retryable_failure_with_unread_inbox() {
         launcher.session_numbers(),
         vec![1, 2],
         "retryable startup failure should be retried before the unread inbox is left idle"
+    );
+    assert_eq!(
+        launcher.previous_session_crashed_flags(),
+        vec![false, false],
+        "in-daemon retries must not show the previous-session-crashed notice before retries are exhausted"
     );
     assert_eq!(
         clock.local_now(),
