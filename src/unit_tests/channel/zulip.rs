@@ -427,6 +427,21 @@ fn externalize_local_links_leaves_plain_messages_alone() {
 }
 
 #[test]
+fn externalize_local_links_ignores_malformed_link_without_opener() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.png"), b"png").unwrap();
+
+    let body = "literal text, not markdown: ](a.png)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |_| {
+        panic!("malformed text must not upload local files")
+    });
+
+    assert_eq!(new_body, body);
+    assert!(warnings.is_empty());
+    assert!(markdown_links(body).is_empty());
+}
+
+#[test]
 fn multipart_boundary_avoids_colliding_with_payload() {
     let plain = multipart_boundary(b"some png bytes");
     assert!(!plain.is_empty());

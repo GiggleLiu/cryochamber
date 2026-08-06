@@ -530,6 +530,10 @@ pub fn markdown_links(body: &str) -> Vec<MarkdownLink> {
     while let Some(open) = body[pos..].find("](") {
         let bracket_close = pos + open;
         let content_start = bracket_close + 2;
+        let Some(open_bracket) = matching_open_bracket(body, bracket_close) else {
+            pos = content_start;
+            continue;
+        };
         // Find the matching close paren, allowing balanced pairs inside the
         // destination (CommonMark permits them unescaped).
         let mut depth = 1u32;
@@ -565,9 +569,9 @@ pub fn markdown_links(body: &str) -> Vec<MarkdownLink> {
         // `[![alt](thumb.png)](full.png)`, where the nearest one belongs to
         // the inner image — attributing its `!` to the outer link would queue
         // two deletions of the same byte and mangle the message.
-        let bang_at = matching_open_bracket(body, bracket_close)
-            .filter(|lb| body[..*lb].ends_with('!'))
-            .map(|lb| lb - 1);
+        let bang_at = body[..open_bracket]
+            .ends_with('!')
+            .then(|| open_bracket - 1);
 
         links.push(MarkdownLink {
             span: dest_start..dest_end,
