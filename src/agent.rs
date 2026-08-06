@@ -2,6 +2,7 @@
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::Command;
 
 /// Supported agent types.
@@ -231,7 +232,37 @@ pub fn spawn_agent(
     agent_log: Option<std::fs::File>,
     provider_env: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<std::process::Child> {
+    spawn_agent_with_dir(agent_command, prompt, agent_log, provider_env, None)
+}
+
+pub fn spawn_agent_in_dir(
+    agent_command: &str,
+    prompt: &str,
+    agent_log: Option<std::fs::File>,
+    provider_env: &std::collections::HashMap<String, String>,
+    working_dir: &Path,
+) -> anyhow::Result<std::process::Child> {
+    spawn_agent_with_dir(
+        agent_command,
+        prompt,
+        agent_log,
+        provider_env,
+        Some(working_dir),
+    )
+}
+
+fn spawn_agent_with_dir(
+    agent_command: &str,
+    prompt: &str,
+    agent_log: Option<std::fs::File>,
+    provider_env: &std::collections::HashMap<String, String>,
+    working_dir: Option<&Path>,
+) -> anyhow::Result<std::process::Child> {
     let mut cmd = build_command(agent_command, prompt)?;
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
 
     if let Some(log) = agent_log {
         let err = log.try_clone()?;

@@ -140,6 +140,7 @@ pub(super) trait SessionLauncher: Send + Sync {
         wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
+        retry_remaining: bool,
     ) -> Result<SessionLoopOutcome>;
 }
 
@@ -159,6 +160,7 @@ impl SessionLauncher for ProcessSessionLauncher {
         wake_sources: &[PathBuf],
         provider_env: &std::collections::HashMap<String, String>,
         provider_name: Option<&str>,
+        retry_remaining: bool,
     ) -> Result<SessionLoopOutcome> {
         let agent_cmd = config.agent.clone();
 
@@ -234,8 +236,13 @@ impl SessionLauncher for ProcessSessionLauncher {
             .append(true)
             .open(crate::log::agent_log_path(&daemon.dir))?;
 
-        let mut child =
-            crate::agent::spawn_agent(&agent_cmd, &prompt, Some(agent_log_file), provider_env)?;
+        let mut child = crate::agent::spawn_agent_in_dir(
+            &agent_cmd,
+            &prompt,
+            Some(agent_log_file),
+            provider_env,
+            &daemon.dir,
+        )?;
         let child_pid = child.id();
         let spawn_time = daemon.clock.monotonic_now();
         logger.log_event(&format!("agent started (pid {child_pid})"))?;
@@ -252,6 +259,7 @@ impl SessionLauncher for ProcessSessionLauncher {
                 .wait_timeout
                 .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
             spawn_time,
+            retry_remaining,
         };
         let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);
 

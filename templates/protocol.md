@@ -87,10 +87,10 @@ The daemon cannot archive messages, save state, or start the next session until 
 ```
 cryo-agent hibernate --summary "what I did, what's next"            # more work to do (Step 4 left a pending TODO)
 cryo-agent hibernate --complete --summary "All tasks finished"      # plan's success condition is genuinely met — never as a shortcut
-cryo-agent hibernate --exit 1 --summary "Failure: why to retry"     # retryable failure
+cryo-agent hibernate --exit 1 --summary "Failure: what broke"       # report failed session
 ```
 
-If you exit without calling `cryo-agent hibernate`, the daemon marks each claimed TODO done and creates a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). The daemon also writes a stand-in `from: cryochamber` outbox message if you never sent a human-visible message this session — don't make the human read a crash notice instead of your words.
+If you exit without calling `cryo-agent hibernate`, the daemon may retry transient runner failures before making the failure visible. Once retries are exhausted, or once you have already sent or received messages in the session, the daemon marks each claimed TODO done and creates a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). The daemon also writes a stand-in `from: cryochamber` outbox message if you never sent a human-visible message this session — don't make the human read a crash notice instead of your words.
 
 ## Wake Time Guidelines
 
