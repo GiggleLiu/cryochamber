@@ -272,7 +272,9 @@ fn test_spawn_agent_in_dir_sets_working_directory() {
     assert!(status.success());
 
     let output = std::fs::read_to_string(&log_path).unwrap();
-    assert_eq!(output.trim(), dir.path().to_string_lossy());
+    let reported_dir = std::fs::canonicalize(output.trim()).unwrap();
+    let expected_dir = std::fs::canonicalize(dir.path()).unwrap();
+    assert_eq!(reported_dir, expected_dir);
 }
 
 #[test]
