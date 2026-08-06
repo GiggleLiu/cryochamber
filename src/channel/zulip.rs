@@ -10,8 +10,9 @@ use crate::message::Message;
 /// the daemon's inbox watcher.
 pub const ATTACHMENTS_SUBDIR: &str = "messages/attachments";
 
-/// Cap on a single attachment download. Matches Zulip's stock server upload
-/// limit; anything larger fails the fetch and the link is left remote.
+/// Cap on a single attachment transfer, in both directions. Matches Zulip's
+/// stock server upload limit; anything larger fails the transfer, leaving a
+/// pulled link remote or an outbound link un-uploaded.
 const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 
 /// Global timeout bounding an entire HTTP call (DNS -> connect -> read body).
@@ -285,6 +286,18 @@ impl ZulipClient {
     /// server path (`/user_uploads/...`). Zulip renders a link to such a path
     /// as an inline image preview on every supported server version.
     pub fn upload_file(&self, path: &Path) -> Result<String> {
+        // Check the size before reading: an agent can link an arbitrarily
+        // large file, and Zulip's stock limit would reject it anyway. Failing
+        // here avoids buffering it in the sync daemon just to lose the round
+        // trip. Mirrors the download cap.
+        let size = std::fs::metadata(path)
+            .with_context(|| format!("Failed to stat attachment {}", path.display()))?
+            .len();
+        anyhow::ensure!(
+            size <= MAX_ATTACHMENT_BYTES,
+            "attachment {} is {size} bytes, over the {MAX_ATTACHMENT_BYTES}-byte limit",
+            path.display()
+        );
         let bytes = std::fs::read(path)
             .with_context(|| format!("Failed to read attachment {}", path.display()))?;
         let filename = path
@@ -488,6 +501,25 @@ pub struct MarkdownLink {
     pub bang_at: Option<usize>,
 }
 
+/// Byte offset of the `[` matching the `]` at `close`, scanning backwards and
+/// tracking bracket depth. `None` if the brackets are unbalanced.
+fn matching_open_bracket(body: &str, close: usize) -> Option<usize> {
+    let mut depth = 1u32;
+    for (i, c) in body[..close].char_indices().rev() {
+        match c {
+            ']' => depth += 1,
+            '[' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Locate inline markdown link destinations (`[text](dest)` and
 /// `![text](dest)`), in order. Handles balanced parentheses inside the
 /// destination and an optional CommonMark title (`[a](/url "title")`), both of
@@ -527,10 +559,13 @@ pub fn markdown_links(body: &str) -> Vec<MarkdownLink> {
         let dest = &body[dest_start..content_end];
         let dest_end = dest_start + dest.find(char::is_whitespace).unwrap_or(dest.len());
 
-        // Image syntax is `![alt](dest)`: find this link's opening bracket and
-        // check for a `!` immediately before it.
-        let bang_at = body[..bracket_close]
-            .rfind('[')
+        // Image syntax is `![alt](dest)`: find the `[` that *matches* this
+        // link's `]` and check for a `!` immediately before it. Matching by
+        // depth rather than the nearest `[` matters for nested links like
+        // `[![alt](thumb.png)](full.png)`, where the nearest one belongs to
+        // the inner image — attributing its `!` to the outer link would queue
+        // two deletions of the same byte and mangle the message.
+        let bang_at = matching_open_bracket(body, bracket_close)
             .filter(|lb| body[..*lb].ends_with('!'))
             .map(|lb| lb - 1);
 
@@ -709,6 +744,13 @@ pub fn parse_upload_response(json: &serde_json::Value) -> Result<String> {
 /// Refuses anything that is not a plain relative path to an existing regular
 /// file inside the chamber. In particular `.cryo/` is never uploadable — it
 /// holds `zuliprc`, i.e. the bot's API key, which must never leave the machine.
+/// Symlinks are resolved before the containment and `.cryo` checks, so neither
+/// can be used to escape.
+///
+/// This guards against an agent *accidentally* linking something sensitive,
+/// not against a determined one: the agent runs as the same user and can read
+/// `.cryo/zuliprc` (or hard-link it under an innocent name) directly. The
+/// trust boundary is the agent, not this function.
 pub fn resolve_local_attachment(dir: &Path, target: &str) -> Option<PathBuf> {
     if target.is_empty()
         || target.contains("://")
@@ -812,6 +854,10 @@ pub fn externalize_local_links(
 
     let mut new_body = body.to_string();
     edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    // Applying two edits to the same range would splice the replacement twice
+    // and eat neighbouring bytes. Nothing should queue duplicates, but a
+    // corrupted message reaches the operator silently, so drop them here too.
+    edits.dedup_by(|(a, _), (b, _)| a == b);
     for (range, replacement) in edits {
         new_body.replace_range(range, &replacement);
     }

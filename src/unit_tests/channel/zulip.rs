@@ -526,3 +526,51 @@ fn resolve_local_attachment_refuses_symlink_escape() {
         );
     }
 }
+
+#[test]
+fn externalize_local_links_handles_nested_image_link() {
+    // Clickable-thumbnail pattern: an image inside a link's text. The outer
+    // link is NOT an image, so its `!` attribution must not latch onto the
+    // inner link's `!` — doing so deletes the inner `[` and corrupts the
+    // message that gets posted to the operator.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("thumb.png"), b"png").unwrap();
+    std::fs::write(dir.path().join("full.png"), b"png").unwrap();
+
+    let body = "[![alt](thumb.png)](full.png)";
+    let (new_body, warnings) = externalize_local_links(body, dir.path(), SITE, |path| {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        Ok(format!("/user_uploads/1/x/{name}"))
+    });
+
+    assert!(warnings.is_empty());
+    assert_eq!(
+        new_body,
+        "[[alt](https://chat.example.com/user_uploads/1/x/thumb.png)]\
+(https://chat.example.com/user_uploads/1/x/full.png)"
+    );
+}
+
+#[test]
+fn matching_open_bracket_pairs_by_depth() {
+    let body = "[![alt](thumb.png)](full.png)";
+    // The outer `]` at 18 matches the `[` at 0, not the inner one at 2.
+    assert_eq!(matching_open_bracket(body, 18), Some(0));
+    assert_eq!(matching_open_bracket(body, 6), Some(2));
+    assert_eq!(matching_open_bracket("no brackets]", 11), None);
+}
+
+#[test]
+fn upload_file_refuses_oversized_attachment() {
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("big.bin");
+    let f = std::fs::File::create(&big).unwrap();
+    f.set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
+    drop(f);
+
+    let err = client_for_test().upload_file(&big).unwrap_err();
+    assert!(
+        err.to_string().contains("over the"),
+        "expected size-limit error, got: {err}"
+    );
+}
