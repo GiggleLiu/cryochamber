@@ -26,6 +26,11 @@ pub(super) trait SessionRuntime {
     fn park(&mut self) -> Result<()>;
     /// Respond from the parked slot and clear it.
     fn respond_parked(&mut self, ok: bool, message: String) -> Result<()>;
+    /// If the parked client has closed its connection (e.g. the agent
+    /// runner's shell timeout killed `cryo-agent receive --wait`), drop the
+    /// dead responder and return true. Returns false when nothing is parked
+    /// or the client is still alive.
+    fn reclaim_parked_if_disconnected(&mut self) -> bool;
     fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>>;
     fn terminate(&mut self);
 }
@@ -105,6 +110,17 @@ impl SessionRuntime for ProcessSessionRuntime<'_> {
             .context("Missing parked responder")?;
         responder.respond(&crate::socket::Response { ok, message })?;
         Ok(())
+    }
+
+    fn reclaim_parked_if_disconnected(&mut self) -> bool {
+        let disconnected = self
+            .parked_responder
+            .as_ref()
+            .is_some_and(|responder| responder.peer_disconnected());
+        if disconnected {
+            self.parked_responder = None;
+        }
+        disconnected
     }
 
     fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>> {
@@ -192,7 +208,7 @@ impl SessionLauncher for ProcessSessionLauncher {
         }
 
         let todo_path = daemon.dir.join("todo.json");
-        let todo_display = match crate::todo::TodoFile::new(&todo_path).display() {
+        let todo_display = match crate::todo::TodoFile::new(&todo_path).display_for_prompt() {
             Ok(display) => display,
             Err(err) => {
                 eprintln!(

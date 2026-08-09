@@ -346,3 +346,47 @@ fn prompt_static_prefix_precedes_all_per_session_variables() {
         "shared prefix must span the protocol body, got {common} bytes"
     );
 }
+
+#[test]
+fn spawn_agent_in_dir_exports_chamber_dir_env() {
+    // The agent's shell may run commands from any cwd (opencode does), so the
+    // spawned session must carry the chamber location in the environment for
+    // cryo-agent to resolve — cwd alone routed real sessions to the wrong
+    // chamber's socket.
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = cryochamber::agent::spawn_agent_in_dir(
+        "sh -c \"printenv CRYO_CHAMBER_DIR > probe.txt\"",
+        "unused prompt",
+        None,
+        &Default::default(),
+        dir.path(),
+    )
+    .unwrap();
+    child.wait().unwrap();
+    let probe = std::fs::read_to_string(dir.path().join("probe.txt")).unwrap();
+    assert_eq!(probe.trim(), dir.path().to_string_lossy());
+}
+
+#[test]
+fn provider_env_cannot_override_chamber_dir() {
+    // Provider env comes from user-editable cryo.toml; the chamber identity
+    // comes from the daemon. If the provider map could shadow
+    // CRYO_CHAMBER_DIR, replies and TODOs would route to another chamber.
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider_env = std::collections::HashMap::new();
+    provider_env.insert(
+        "CRYO_CHAMBER_DIR".to_string(),
+        "/tmp/other-chamber".to_string(),
+    );
+    let mut child = cryochamber::agent::spawn_agent_in_dir(
+        "sh -c \"printenv CRYO_CHAMBER_DIR > probe.txt\"",
+        "unused prompt",
+        None,
+        &provider_env,
+        dir.path(),
+    )
+    .unwrap();
+    child.wait().unwrap();
+    let probe = std::fs::read_to_string(dir.path().join("probe.txt")).unwrap();
+    assert_eq!(probe.trim(), dir.path().to_string_lossy());
+}

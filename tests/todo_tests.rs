@@ -252,6 +252,7 @@ fn test_cli_todo_add_requires_at() {
 #[test]
 fn test_cli_todo_add_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo.toml"), "agent = \"opencode\"\n").unwrap();
     agent_cmd()
         .args(["todo", "add", "Submit paper", "--at", "2026-03-05T14:00"])
         .current_dir(dir.path())
@@ -263,6 +264,7 @@ fn test_cli_todo_add_no_daemon() {
 #[test]
 fn test_cli_todo_list_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo.toml"), "agent = \"opencode\"\n").unwrap();
     agent_cmd()
         .args(["todo", "list"])
         .current_dir(dir.path())
@@ -285,6 +287,7 @@ fn test_cli_todo_pop_is_not_a_command() {
 #[test]
 fn test_cli_todo_done_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo.toml"), "agent = \"opencode\"\n").unwrap();
     agent_cmd()
         .args(["todo", "done", "1"])
         .current_dir(dir.path())
@@ -296,6 +299,7 @@ fn test_cli_todo_done_no_daemon() {
 #[test]
 fn test_cli_todo_remove_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo.toml"), "agent = \"opencode\"\n").unwrap();
     agent_cmd()
         .args(["todo", "remove", "1"])
         .current_dir(dir.path())

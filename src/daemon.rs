@@ -328,6 +328,12 @@ struct ActiveRequestState<'a> {
 struct SessionWaitState {
     /// Monotonic deadline of the currently parked wait, if any.
     parked_deadline: Option<Instant>,
+    /// When the current wait parked. On a disconnect-reclaim the session
+    /// deadline is shifted by the parked duration — pause semantics — rather
+    /// than reset, so a repeatedly-killed wait client cannot mint fresh
+    /// session budgets forever. Delivery/timeout keep their documented
+    /// fresh-budget reset.
+    parked_since: Option<Instant>,
     /// Chamber default (secs) when a request omits --timeout.
     default_timeout_secs: u64,
     /// Set when a wait resolves; the loop consumes it to re-arm the session
@@ -344,6 +350,12 @@ struct SessionWaitState {
 struct EventLoopMutations<'a> {
     next_wake: &'a mut Option<NaiveDateTime>,
 }
+
+/// Retry cadence when `todo.json` shows a past-due pending TODO that
+/// `claim_due` could not claim (an I/O failure, e.g. disk full): the wake
+/// stays due on disk, so without a pause the event loop would retry the
+/// failing write hot.
+const TODO_CLAIM_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 /// Number of trailing agent-log lines included in crash fallback messages.
 const AGENT_LOG_TAIL_LINES: usize = 10;
@@ -1105,6 +1117,7 @@ impl Daemon {
         let mut run_now = bootstrap.run_now;
         let mut inbox_wake = false;
         let mut inbox_wake_sources = Vec::new();
+        let mut scheduled_wake = false;
 
         // Inbox messages delivered while the daemon was down (after `cryo
         // restart`, a service auto-restart, or a crash-restart) were never seen
@@ -1133,6 +1146,8 @@ impl Daemon {
                 run_now = false;
                 let is_inbox_wake = inbox_wake;
                 inbox_wake = false;
+                let is_scheduled_wake = scheduled_wake;
+                scheduled_wake = false;
                 let wake_sources = std::mem::take(&mut inbox_wake_sources);
 
                 // Detect delayed wake: if the scheduled wake time has long passed
@@ -1151,7 +1166,55 @@ impl Daemon {
                 // Claim the wake's due TODOs once for the whole retry
                 // campaign. TODOs that become due during retry backoff belong
                 // to the next wake, not this failed attempt sequence.
-                self.claim_past_due_todos();
+                let claimed_due = match self.claim_past_due_todos() {
+                    Ok(count) => count,
+                    Err(e) if is_scheduled_wake => {
+                        // todo.json unreadable/unwritable at wake time. Keep
+                        // the stale `next_wake` armed so this wake refires,
+                        // paced, until the file heals — resyncing from the
+                        // same broken file would yield None and silently
+                        // park the chamber forever.
+                        eprintln!(
+                            "Daemon: failed to claim due TODOs ({e:#}); retrying in {}s",
+                            TODO_CLAIM_RETRY_DELAY.as_secs()
+                        );
+                        self.sleep_agent_retry_backoff(TODO_CLAIM_RETRY_DELAY);
+                        continue;
+                    }
+                    Err(e) => {
+                        // Inbox/forced/bootstrap wakes carry their own work;
+                        // run the session even though no TODO could be
+                        // claimed, so the message still gets answered.
+                        eprintln!("Daemon: failed to claim TODO list: {e:#}");
+                        0
+                    }
+                };
+
+                // Scheduled wakes are demand-driven: the cached `next_wake`
+                // only decides when to re-check `todo.json`; whether a
+                // session runs is decided by what this wake actually claimed
+                // (or by inbox files awaiting a receive). A stale cache —
+                // however it came to disagree with disk — therefore costs a
+                // file read, never an agent session. Bootstrap and
+                // inbox/forced wakes are explicit demand and run regardless.
+                if is_scheduled_wake && claimed_due == 0 {
+                    // Fail open on a listing error: skipping is only safe
+                    // when the inbox is *known* empty (invariant 2).
+                    let inbox_has_files = crate::message::list_inbox(&self.dir)
+                        .map(|files| !files.is_empty())
+                        .unwrap_or(true);
+                    if !inbox_has_files {
+                        next_wake = next_wake_from_todos(&self.dir);
+                        eprintln!(
+                            "Daemon: scheduled wake found no due TODO and an empty inbox — \
+                             nothing to run; next wake: {}",
+                            next_wake
+                                .map(|t| t.to_string())
+                                .unwrap_or_else(|| "none".into()),
+                        );
+                        continue;
+                    }
+                }
 
                 let mut retries_used = 0usize;
                 let session_result = loop {
@@ -1273,6 +1336,7 @@ impl Daemon {
                 IdleWaitOutcome::WakeFromSchedule => {
                     eprintln!("Daemon: scheduled wake time reached");
                     run_now = true;
+                    scheduled_wake = true;
                 }
                 IdleWaitOutcome::Shutdown => break,
                 IdleWaitOutcome::StayIdle => {}
@@ -1447,8 +1511,9 @@ impl Daemon {
                     let secs =
                         effective_wait_timeout(timeout_secs, state.wait.default_timeout_secs);
                     runtime.park()?;
-                    state.wait.parked_deadline =
-                        Some(self.clock.monotonic_now() + Duration::from_secs(secs));
+                    let now = self.clock.monotonic_now();
+                    state.wait.parked_deadline = Some(now + Duration::from_secs(secs));
+                    state.wait.parked_since = Some(now);
                     state.logger.log_event(&format!("wait: parked ({secs}s)"))?;
                 } else {
                     let response = runtime.respond(true, outcome.message);
@@ -1615,6 +1680,7 @@ impl Daemon {
         };
         let mut wait_state = SessionWaitState {
             parked_deadline: None,
+            parked_since: None,
             default_timeout_secs: context.wait_timeout_secs,
             reset_session_deadline: false,
             timed_out: false,
@@ -1774,23 +1840,28 @@ impl Daemon {
             }
 
             if let Some(wait_deadline) = wait_state.parked_deadline {
-                let outcome = handle_receive_request(effects);
-                if !outcome.claimed_filenames.is_empty() {
-                    inbox_state.record_claimed_batch(&outcome.claimed_filenames);
+                // Check liveness BEFORE claiming: a batch claimed for a dead
+                // client would be swallowed (archived, never seen by the
+                // agent) and answered by the daemon fallback instead of the
+                // agent's own words. Releasing the slot leaves the inbox
+                // untouched for normal delivery and lets the agent — whose
+                // process is still alive; only its `receive --wait` CLI call
+                // died — park a fresh wait later in the same session.
+                if runtime.reclaim_parked_if_disconnected() {
                     wait_state.parked_deadline = None;
-                    wait_state.reset_session_deadline = true;
-                    if let Err(e) = logger.log_event(&format!(
-                        "wait: delivered {} message(s) [{}]",
-                        outcome.claimed_filenames.len(),
-                        outcome.claimed_filenames.join(", ")
-                    )) {
-                        // The batch is already recorded in inbox_state above,
-                        // so a log failure here must not skip finalization —
-                        // mirror the handle_active_request error arm: best-
-                        // effort respond so the blocked client isn't left
-                        // hanging, then finalize (writes the fallback reply
-                        // per chamber invariant 2), then best-effort finish.
-                        let _ = runtime.respond_parked(true, outcome.message);
+                    // Pause, don't reset: the agent resumes with the work
+                    // budget it had when it parked. A fresh budget here would
+                    // let a repeatedly-killed wait client (too-short shell
+                    // timeout) extend one session forever.
+                    if let (Some(d), Some(since)) = (deadline, wait_state.parked_since.take()) {
+                        deadline =
+                            Some(d + self.clock.monotonic_now().saturating_duration_since(since));
+                    }
+                    if let Err(e) = logger.log_event(
+                        "wait: client disconnected — parked wait released, inbox left unclaimed",
+                    ) {
+                        // Mirror the delivery/timeout arms: a log failure must
+                        // not skip finalization of already-claimed batches.
                         let clean_hibernate = hibernate_outcome.is_some();
                         self.finalize_human_replies(
                             effects,
@@ -1799,49 +1870,81 @@ impl Daemon {
                             clean_hibernate,
                             false,
                         );
-                        let _ = logger.finish(&format!("error logging wait delivery: {e}"));
+                        let _ = logger.finish(&format!("error logging wait release: {e}"));
                         return Err(e);
                     }
-                    // Best-effort: the batch is already recorded in
-                    // inbox_state, so if the blocked client is gone
-                    // (EPIPE/EOF) the next tick's child-exit detection still
-                    // runs finalize_human_replies, which writes the fallback
-                    // reply. Propagating this error would skip finalization
-                    // for an already-delivered batch (chamber invariant 2).
-                    if runtime.respond_parked(true, outcome.message).is_err() {
-                        let _ = logger.log_event("wait: parked respond failed after delivery");
+                } else {
+                    let outcome = handle_receive_request(effects);
+                    if !outcome.claimed_filenames.is_empty() {
+                        inbox_state.record_claimed_batch(&outcome.claimed_filenames);
+                        wait_state.parked_deadline = None;
+                        wait_state.parked_since = None;
+                        wait_state.reset_session_deadline = true;
+                        if let Err(e) = logger.log_event(&format!(
+                            "wait: delivered {} message(s) [{}]",
+                            outcome.claimed_filenames.len(),
+                            outcome.claimed_filenames.join(", ")
+                        )) {
+                            // The batch is already recorded in inbox_state above,
+                            // so a log failure here must not skip finalization —
+                            // mirror the handle_active_request error arm: best-
+                            // effort respond so the blocked client isn't left
+                            // hanging, then finalize (writes the fallback reply
+                            // per chamber invariant 2), then best-effort finish.
+                            let _ = runtime.respond_parked(true, outcome.message);
+                            let clean_hibernate = hibernate_outcome.is_some();
+                            self.finalize_human_replies(
+                                effects,
+                                &mut logger,
+                                &mut inbox_state,
+                                clean_hibernate,
+                                false,
+                            );
+                            let _ = logger.finish(&format!("error logging wait delivery: {e}"));
+                            return Err(e);
+                        }
+                        // Best-effort: the batch is already recorded in
+                        // inbox_state, so if the blocked client is gone
+                        // (EPIPE/EOF) the next tick's child-exit detection still
+                        // runs finalize_human_replies, which writes the fallback
+                        // reply. Propagating this error would skip finalization
+                        // for an already-delivered batch (chamber invariant 2).
+                        if runtime.respond_parked(true, outcome.message).is_err() {
+                            let _ = logger.log_event("wait: parked respond failed after delivery");
+                        }
+                    } else if self.clock.monotonic_now() >= wait_deadline {
+                        wait_state.parked_deadline = None;
+                        wait_state.parked_since = None;
+                        wait_state.reset_session_deadline = true;
+                        wait_state.timed_out = true;
+                        if let Err(e) = logger.log_event("wait: timed out") {
+                            // Same reasoning as the delivery branch above: a log
+                            // failure must not skip finalization.
+                            let _ = runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into());
+                            let clean_hibernate = hibernate_outcome.is_some();
+                            self.finalize_human_replies(
+                                effects,
+                                &mut logger,
+                                &mut inbox_state,
+                                clean_hibernate,
+                                false,
+                            );
+                            let _ = logger.finish(&format!("error logging wait timeout: {e}"));
+                            return Err(e);
+                        }
+                        // Best-effort for the same reason as the delivery branch
+                        // above: a dead client must not skip finalization.
+                        if runtime
+                            .respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())
+                            .is_err()
+                        {
+                            let _ = logger.log_event("wait: parked respond failed after timeout");
+                        }
                     }
-                } else if self.clock.monotonic_now() >= wait_deadline {
-                    wait_state.parked_deadline = None;
-                    wait_state.reset_session_deadline = true;
-                    wait_state.timed_out = true;
-                    if let Err(e) = logger.log_event("wait: timed out") {
-                        // Same reasoning as the delivery branch above: a log
-                        // failure must not skip finalization.
-                        let _ = runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into());
-                        let clean_hibernate = hibernate_outcome.is_some();
-                        self.finalize_human_replies(
-                            effects,
-                            &mut logger,
-                            &mut inbox_state,
-                            clean_hibernate,
-                            false,
-                        );
-                        let _ = logger.finish(&format!("error logging wait timeout: {e}"));
-                        return Err(e);
-                    }
-                    // Best-effort for the same reason as the delivery branch
-                    // above: a dead client must not skip finalization.
-                    if runtime
-                        .respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())
-                        .is_err()
-                    {
-                        let _ = logger.log_event("wait: parked respond failed after timeout");
-                    }
+                    // Empty claim + deadline not reached: keep waiting. A claim
+                    // error surfaces as ok=false with no filenames — also keep
+                    // waiting; the next tick retries.
                 }
-                // Empty claim + deadline not reached: keep waiting. A claim
-                // error surfaces as ok=false with no filenames — also keep
-                // waiting; the next tick retries.
             }
             if wait_state.reset_session_deadline {
                 wait_state.reset_session_deadline = false;
@@ -1870,17 +1973,17 @@ impl Daemon {
     /// Claim past-due pending TODOs so the prompt can show them as in-flight
     /// while the scheduler ignores them. Load/save failures are swallowed and
     /// reported to stderr — TODO bookkeeping must never abort the session loop.
-    fn claim_past_due_todos(&self) {
+    /// Claim all past-due TODOs for the upcoming session and return how many
+    /// were claimed. Errors propagate: the caller must distinguish "nothing
+    /// due" (a valid skip for a scheduled wake) from "cannot read/write
+    /// todo.json" (must not silently drop the wake).
+    fn claim_past_due_todos(&self) -> Result<usize> {
         let now = self.clock.local_now();
-        match crate::todo::TodoFile::new(self.dir.join("todo.json")).claim_due(&now) {
-            Ok(items) if !items.is_empty() => {
-                eprintln!("Daemon: claimed {} due TODO(s)", items.len());
-            }
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Daemon: failed to claim TODO list: {e}");
-            }
+        let items = crate::todo::TodoFile::new(self.dir.join("todo.json")).claim_due(&now)?;
+        if !items.is_empty() {
+            eprintln!("Daemon: claimed {} due TODO(s)", items.len());
         }
+        Ok(items.len())
     }
 
     /// Mark all claimed TODOs as done after a successful session. The claim is

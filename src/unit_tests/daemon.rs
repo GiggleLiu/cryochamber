@@ -68,6 +68,19 @@ fn daemon_session_runtime_and_effects_live_in_submodules() {
 }
 
 #[test]
+fn wake_prompt_uses_bounded_todo_display() {
+    // The per-session prompt must use the prompt-bounded TODO rendering, not
+    // the unbounded full list: done items are never deleted, so the full list
+    // grows with chamber age and is re-injected on every single wake.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let session_src = std::fs::read_to_string(root.join("src/daemon/session.rs")).unwrap();
+    assert!(
+        session_src.contains("display_for_prompt()"),
+        "run_session should build the prompt TODO section via TodoFile::display_for_prompt"
+    );
+}
+
+#[test]
 fn daemon_scheduling_and_bootstrap_live_in_schedule_module() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let schedule_src = std::fs::read_to_string(root.join("src/daemon/schedule.rs"))
@@ -180,6 +193,9 @@ struct FakeSessionRuntime {
     respond_results: Mutex<VecDeque<anyhow::Result<()>>>,
     terminated: AtomicBool,
     parked: AtomicBool,
+    /// Scripted results for `reclaim_parked_if_disconnected`, one per poll
+    /// tick while parked; empty queue means "client still alive".
+    parked_disconnects: Mutex<VecDeque<bool>>,
 }
 
 impl FakeSessionRuntime {
@@ -194,6 +210,7 @@ impl FakeSessionRuntime {
             respond_results: Mutex::new(VecDeque::new()),
             terminated: AtomicBool::new(false),
             parked: AtomicBool::new(false),
+            parked_disconnects: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -209,7 +226,12 @@ impl FakeSessionRuntime {
             respond_results: Mutex::new(respond_results.into()),
             terminated: AtomicBool::new(false),
             parked: AtomicBool::new(false),
+            parked_disconnects: Mutex::new(VecDeque::new()),
         }
+    }
+
+    fn script_parked_disconnects(&self, values: Vec<bool>) {
+        *self.parked_disconnects.lock().unwrap() = values.into();
     }
 
     fn responses(&self) -> Vec<(bool, String)> {
@@ -261,6 +283,23 @@ impl SessionRuntime for FakeSessionRuntime {
             .unwrap()
             .pop_front()
             .unwrap_or(Ok(()))
+    }
+
+    fn reclaim_parked_if_disconnected(&mut self) -> bool {
+        let disconnected = self
+            .parked_disconnects
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(false);
+        if disconnected {
+            assert!(
+                self.parked.load(Ordering::Relaxed),
+                "reclaim with nothing parked"
+            );
+            self.parked.store(false, Ordering::Relaxed);
+        }
+        disconnected
     }
 
     fn try_wait(&mut self) -> std::io::Result<Option<ChildExitStatus>> {
@@ -4871,4 +4910,390 @@ fn test_clean_hibernate_fallback_has_no_log_dump() {
         !text.contains("Last agent log output"),
         "no log dump on clean hibernate: {text:?}"
     );
+}
+
+#[test]
+fn test_parked_client_death_releases_wait_without_claiming_inbox() {
+    // The cryo-agent `receive --wait` client can be killed (e.g. by the agent
+    // runner's shell timeout) while parked. The daemon must notice, free the
+    // parked slot, and — critically — stop claiming inbox batches for the
+    // dead client: a message claimed here would be swallowed and answered by
+    // a fallback reply instead of the agent.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // Tick 1: park. Tick 2: client found dead -> released. Then the agent
+    // process itself (still alive) sends and hibernates normally.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            receive_wait_request(None),
+            Ok(None),
+            Ok(Some(crate::socket::Request::Send {
+                text: "wrapping up".into(),
+                question: false,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: None,
+            })),
+        ],
+        (0..5)
+            .map(|_| Ok(None))
+            .chain([Ok(Some(ChildExitStatus { code: Some(0) }))])
+            .collect(),
+    );
+    runtime.script_parked_disconnects(vec![false, true]);
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // ReceiveWait's own claim: empty -> park
+    effects.push_scripted_claim(vec![]); // tick 1 poll: still empty, client alive
+    effects.push_scripted_claim(vec![FakeSessionEffects::make_inbox_message(
+        "late.md",
+        "anyone there?",
+    )]); // must NOT be consumed: the wait was released before this tick
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    assert!(!runtime.parked());
+    // The inbox batch scripted for after the disconnect stayed unclaimed.
+    assert_eq!(
+        effects.scripted_claims.len(),
+        1,
+        "batch must stay unclaimed"
+    );
+    let responses = runtime.responses();
+    assert!(
+        responses.iter().all(|(_, m)| !m.contains("anyone there?")),
+        "nothing may be delivered to the dead client: {responses:?}"
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("wait: parked"), "{log}");
+    assert!(log.contains("wait: client disconnected"), "{log}");
+    assert!(!log.contains("wait: delivered"), "{log}");
+}
+
+#[test]
+fn test_receive_wait_can_repark_after_parked_client_died() {
+    // After a dead parked client is reclaimed, the agent must be able to run
+    // `receive --wait` again in the same session (regression: the stale slot
+    // used to refuse every later wait with "already parked").
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            receive_wait_request(None), // parks
+            Ok(None),                   // tick where the client dies
+            receive_wait_request(None), // re-park must be allowed
+            Ok(Some(crate::socket::Request::Send {
+                text: "round 2 ack".into(),
+                question: false,
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: None,
+            })),
+        ],
+        (0..6)
+            .map(|_| Ok(None))
+            .chain([Ok(Some(ChildExitStatus { code: Some(0) }))])
+            .collect(),
+    );
+    runtime.script_parked_disconnects(vec![false, true]);
+    let mut effects = FakeSessionEffects::new();
+    effects.push_scripted_claim(vec![]); // wait #1 claim: empty -> park
+    effects.push_scripted_claim(vec![]); // tick 1 poll: empty, client alive
+    effects.push_scripted_claim(vec![]); // wait #2 claim: empty -> park again
+    effects.push_scripted_claim(vec![FakeSessionEffects::make_inbox_message(
+        "r2.md",
+        "second round",
+    )]); // delivered to the live second wait
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    let responses = runtime.responses();
+    assert!(
+        !responses.iter().any(|(_, m)| m.contains("already parked")),
+        "second wait must not be refused: {responses:?}"
+    );
+    assert!(
+        responses[0].0 && responses[0].1.contains("second round"),
+        "{responses:?}"
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert_eq!(log.matches("wait: parked").count(), 2, "{log}");
+    assert!(log.contains("wait: client disconnected"), "{log}");
+    assert!(
+        log.contains("wait: delivered 1 message(s) [r2.md]"),
+        "{log}"
+    );
+}
+
+#[test]
+fn test_event_loop_bootstrap_workless_wake_still_runs_session() {
+    // Only *scheduled* wakes are demand-driven. The bootstrap wake after
+    // `cryo start` is explicit operator demand and must run even with no
+    // due TODO and an empty inbox (the chamber's first orientation session).
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::Hibernate,
+    ]));
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+    // No TODOs, empty inbox: the initial session is a workless wake.
+    let bootstrap = DaemonBootstrapState {
+        next_wake: None,
+        run_now: true,
+        watch_dirs: Vec::new(),
+    };
+    let config: CryoConfig = toml::from_str(r#"agent = "opencode""#).unwrap();
+    let (tx, rx) = mpsc::channel::<DaemonEvent>();
+    drop(tx);
+
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+
+    assert_eq!(
+        launcher.session_numbers(),
+        vec![1],
+        "the initial workless wake must still run a session"
+    );
+}
+
+#[test]
+fn test_stale_scheduled_wake_with_no_due_work_skips_session_and_resyncs() {
+    // The April 2026 runaway signature: the in-memory `next_wake` says "due"
+    // while todo.json disagrees. A scheduled wake must derive its decision
+    // from disk — claim a due TODO or find inbox files — not from the cache;
+    // with neither, no session may spawn.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::Hibernate,
+    ]));
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+    // Disk truth: the only pending TODO is tomorrow. Cache: an hour overdue.
+    seed_todo_at(dir.path(), "tomorrow's work", "2026-03-02T09:00");
+    let stale = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(11, 0, 0)
+        .unwrap();
+    let bootstrap = DaemonBootstrapState {
+        next_wake: Some(stale),
+        run_now: false,
+        watch_dirs: Vec::new(),
+    };
+    let config: CryoConfig = toml::from_str(r#"agent = "opencode""#).unwrap();
+    let (tx, rx) = mpsc::channel::<DaemonEvent>();
+    // The stale cache fires WakeFromSchedule immediately; after the daemon
+    // resyncs, the loop idles until this shutdown event ends the test.
+    let stopper = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        let _ = tx.send(DaemonEvent::Shutdown);
+    });
+
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+    stopper.join().unwrap();
+
+    assert!(
+        launcher.session_numbers().is_empty(),
+        "a scheduled wake with no due TODO and an empty inbox must not spawn a session: {:?}",
+        launcher.session_numbers()
+    );
+}
+
+#[test]
+fn test_scheduled_wake_with_unreadable_todos_keeps_retrying_until_healed() {
+    // Codex review finding: mapping a claim *error* to "0 claimed" made the
+    // demand-driven skip resync against the same unreadable todo.json,
+    // getting None and silently parking the chamber forever. A claim error
+    // must instead keep the stale wake armed and retry on a paced cadence,
+    // so the chamber self-heals the moment todo.json is readable again.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let launcher = Arc::new(ScriptedSessionLauncher::new(vec![
+        SessionLoopOutcome::PlanComplete,
+    ]));
+    let daemon = Daemon::new_with_clock_and_launcher(
+        dir.path().to_path_buf(),
+        clock.clone(),
+        launcher.clone(),
+    );
+    let sock_path = dir.path().join("test.sock");
+    let server = crate::socket::SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(true).unwrap();
+    let mut cryo_state = test_cryo_state();
+    cryo_state.session_number = 0;
+    cryo_state.pid = Some(std::process::id());
+    // todo.json is corrupt at wake time; the cached wake is already due.
+    std::fs::write(dir.path().join("todo.json"), "{ not json ]").unwrap();
+    let stale = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(11, 0, 0)
+        .unwrap();
+    let bootstrap = DaemonBootstrapState {
+        next_wake: Some(stale),
+        run_now: false,
+        watch_dirs: Vec::new(),
+    };
+    let config: CryoConfig = toml::from_str(r#"agent = "opencode""#).unwrap();
+    let (tx, rx) = mpsc::channel::<DaemonEvent>();
+    let todo_path = dir.path().join("todo.json");
+    let healer = std::thread::spawn(move || {
+        // Heal the file while the daemon is mid-retry; a due pending TODO
+        // appears. (Far-past `at` so it stays due however far the virtual
+        // clock has advanced across paced retries.) Atomic rename: the
+        // daemon reads concurrently and must never observe a half-written
+        // file.
+        std::thread::sleep(Duration::from_millis(400));
+        let tmp = todo_path.with_extension("json.tmp");
+        std::fs::write(
+            &tmp,
+            r#"[{"id":1,"text":"recovered work","done":false,"claimed":false,"at":"2026-01-01T00:00","created":"2026-01-01T00:00:00"}]"#,
+        )
+        .unwrap();
+        std::fs::rename(&tmp, &todo_path).unwrap();
+        // Safety net: end the loop even if the fix regresses and no session
+        // (with its PlanComplete exit) ever runs.
+        std::thread::sleep(Duration::from_millis(1500));
+        let _ = tx.send(DaemonEvent::Shutdown);
+    });
+
+    daemon
+        .run_event_loop(&config, &mut cryo_state, bootstrap, &server, &rx)
+        .unwrap();
+    healer.join().unwrap();
+
+    assert_eq!(
+        launcher.session_numbers(),
+        vec![1],
+        "the chamber must recover and run the due TODO once todo.json heals"
+    );
+}
+
+#[test]
+fn test_parked_client_death_pauses_session_deadline_instead_of_resetting_it() {
+    // Codex review finding: granting a fresh session budget on every
+    // disconnect-reclaim would let an agent under a too-short shell timeout
+    // extend one session forever (park -> shell kills client -> reclaim ->
+    // fresh budget -> repeat). The documented semantics are "the clock
+    // pauses while you wait": after a reclaim the agent resumes with the
+    // budget it had when it parked.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    // 1 s session budget = 10 ticks. Burn 9 ticks, park on tick 10 (0.1 s of
+    // budget left), stay parked ~1.8 s, then the client dies. The agent then
+    // idles; its Hibernate would arrive 5 ticks after the reclaim — but with
+    // pause semantics only ~1 tick of budget remains, so the session must
+    // time out first. (A reset would grant 10 fresh ticks and let the
+    // hibernate land.)
+    let mut requests: Vec<anyhow::Result<Option<crate::socket::Request>>> =
+        (0..9).map(|_| Ok(None)).collect();
+    requests.push(receive_wait_request(Some(3600)));
+    requests.extend((0..22).map(|_| Ok(None)));
+    requests.push(Ok(Some(crate::socket::Request::Hibernate {
+        complete: true,
+        exit_code: 0,
+        summary: None,
+    })));
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..33).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut disconnects = vec![false; 18];
+    disconnects.push(true);
+    runtime.script_parked_disconnects(disconnects);
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 1, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_ne!(
+        outcome,
+        SessionLoopOutcome::PlanComplete,
+        "the session must not gain a fresh budget from a dead wait client"
+    );
+    assert!(runtime.terminated(), "session should have been timed out");
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(log.contains("wait: client disconnected"), "{log}");
 }

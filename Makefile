@@ -352,7 +352,7 @@ endif
 	@echo "Releasing v$(V)..."
 	perl -i -pe 's/^version = ".*"/version = "$(V)"/' Cargo.toml
 	cargo check
-	git add Cargo.toml
+	git add Cargo.toml Cargo.lock
 	git commit -m "release: v$(V)"
 	git tag -a "v$(V)" -m "Release v$(V)"
 	git push origin main --tags

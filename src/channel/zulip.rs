@@ -112,21 +112,32 @@ impl ZulipClient {
     }
 
     /// Make an authenticated GET request, return parsed JSON.
+    ///
+    /// A transport-level failure (connection torn down between poll cycles,
+    /// EOF before any HTTP response) is retried once: GET is idempotent, and
+    /// without the retry every such routine blip surfaces as a logged
+    /// transient sync error. HTTP status errors are real server answers and
+    /// are never retried.
     fn get(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<serde_json::Value> {
         let url = self.api_url(endpoint);
-        let mut req = self
-            .agent
-            .get(&url)
-            .header("Authorization", &self.basic_auth());
-        for &(key, value) in params {
-            req = req.query(key, value);
+        let call = || {
+            let mut req = self
+                .agent
+                .get(&url)
+                .header("Authorization", &self.basic_auth());
+            for &(key, value) in params {
+                req = req.query(key, value);
+            }
+            req.call()
+        };
+        let resp_str = match call() {
+            Err(e) if !matches!(e, ureq::Error::StatusCode(_)) => call(),
+            other => other,
         }
-        let resp_str = req
-            .call()
-            .with_context(|| format!("GET {endpoint} failed"))?
-            .body_mut()
-            .read_to_string()
-            .context("Failed to read response body")?;
+        .with_context(|| format!("GET {endpoint} failed"))?
+        .body_mut()
+        .read_to_string()
+        .context("Failed to read response body")?;
         let body: serde_json::Value =
             serde_json::from_str(&resp_str).context("Failed to parse response JSON")?;
         self.check_result(&body, endpoint)?;

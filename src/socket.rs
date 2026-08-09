@@ -131,6 +131,39 @@ pub struct Responder {
 }
 
 impl Responder {
+    /// Best-effort liveness probe: true when the peer has closed its end of
+    /// the connection. A parked `cryo-agent receive --wait` client blocks on
+    /// its response and never writes again, so a readable stream that yields
+    /// EOF (or a hard error) means the client process is gone. `WouldBlock`
+    /// means the peer is alive with nothing to say. Errors arming the probe
+    /// report "alive" — the safe default, since a false "gone" would drop a
+    /// live client's response.
+    pub fn peer_disconnected(&self) -> bool {
+        use std::os::fd::AsRawFd;
+        let mut buf = [0u8; 1];
+        // MSG_PEEK: don't consume; MSG_DONTWAIT: never block, regardless of
+        // the stream's blocking mode. (`UnixStream::peek` is still unstable.)
+        let n = unsafe {
+            libc::recv(
+                self.stream.as_raw_fd(),
+                buf.as_mut_ptr() as *mut libc::c_void,
+                1,
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        match n {
+            0 => true,    // orderly EOF: peer closed
+            1.. => false, // stray bytes: peer alive
+            _ => {
+                let err = std::io::Error::last_os_error();
+                !matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                )
+            }
+        }
+    }
+
     pub fn respond(mut self, response: &Response) -> anyhow::Result<()> {
         let mut payload = serde_json::to_string(response)?;
         payload.push('\n');

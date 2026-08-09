@@ -423,3 +423,25 @@ fn receive_wait_request_round_trips_through_serde() {
         }
     }
 }
+
+#[test]
+fn test_responder_peer_disconnected_detects_dead_client() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+    let server = SocketServer::bind(&sock_path).unwrap();
+    server.set_nonblocking(false).unwrap();
+
+    let mut client = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
+    use std::io::Write;
+    client
+        .write_all(b"{\"cmd\":\"receive_wait\",\"timeout_secs\":null}\n")
+        .unwrap();
+    let (_req, responder) = server.accept_one(None).unwrap().unwrap();
+
+    // Client is alive and blocked on its response: not disconnected.
+    assert!(!responder.peer_disconnected());
+
+    // Client process dies (shell timeout kills cryo-agent): detected.
+    drop(client);
+    assert!(responder.peer_disconnected());
+}
