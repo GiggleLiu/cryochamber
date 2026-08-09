@@ -1,6 +1,6 @@
 # cryo.toml — Cryochamber project configuration
 
-# Agent command (e.g. "opencode", "claude", "codex")
+# Agent command (e.g. "opencode", "claude", "codex", "pi")
 agent = "{{agent}}"
 
 # Session timeout in seconds (0 = no timeout)

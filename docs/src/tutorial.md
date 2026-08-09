@@ -7,7 +7,7 @@ You only need this tutorial. Reference and how-to pages are linked at the end.
 ## Prerequisites
 
 - The Rust toolchain. Install from [rustup.rs](https://rustup.rs).
-- An AI coding agent on your `PATH`: [OpenCode](https://github.com/opencode-ai/opencode), default, [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or [Codex](https://github.com/openai/codex).
+- An AI coding agent on your `PATH`: [OpenCode](https://github.com/opencode-ai/opencode), default, [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), or [Pi](https://pi.dev).
 - macOS or Linux. Windows is not supported.
 
 ## Step 1: Install cryochamber

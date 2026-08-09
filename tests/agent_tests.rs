@@ -294,6 +294,37 @@ fn test_mock_agent_program() {
 }
 
 #[test]
+fn test_build_command_pi_injects_print_flag() {
+    let cmd = cryochamber::agent::build_command("pi", "test prompt").unwrap();
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(program, "pi");
+    assert_eq!(args, vec!["-p", "test prompt"]);
+}
+
+#[test]
+fn test_build_command_pi_print_flag_is_idempotent() {
+    let cmd = cryochamber::agent::build_command("pi --name nightly -p", "test prompt").unwrap();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(args.iter().filter(|arg| arg.as_str() == "-p").count(), 1);
+    assert_eq!(args.last().map(String::as_str), Some("test prompt"));
+}
+
+#[test]
+fn test_pi_agent_program() {
+    let program = cryochamber::agent::agent_program("pi").unwrap();
+    assert_eq!(program, "pi");
+}
+
+#[test]
 fn test_build_command_claude_p_flag_is_idempotent() {
     let cmd = cryochamber::agent::build_command("claude -p", "test prompt").unwrap();
     let args: Vec<String> = cmd
