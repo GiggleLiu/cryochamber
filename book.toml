@@ -10,6 +10,7 @@ default-theme = "navy"
 git-repository-url = "https://github.com/GiggleLiu/cryochamber"
 edit-url-template = "https://github.com/GiggleLiu/cryochamber/edit/main/{path}"
 no-section-label = false
+additional-css = ["docs/css/custom.css"]
 
 [output.html.fold]
 enable = true

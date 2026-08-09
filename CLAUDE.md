@@ -232,7 +232,7 @@ and needs an explicit justification.
 Main documentation lives in the mdbook at `docs/src/` (published to [giggleliu.github.io/cryochamber](https://giggleliu.github.io/cryochamber/)). Keep `README.md` lean — detailed guides belong in the mdbook.
 
 - `README.md` — Project overview and quickstart only
-- `docs/src/` — mdbook source: user guide, command reference, sync channels, examples, architecture
+- `docs/src/` — mdbook source: introduction (pitch + quickstart), CLI reference, configuration
 - `Makefile` — Dev targets (`check`, `build`, `test`, `run-plan`, `check-round-trip`, etc.)
 - `templates/` — Single source of truth for agent protocol, template plan, and cryo.toml config template
 - `docs/plans/` — Design documents (key design decisions only)
