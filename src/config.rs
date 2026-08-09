@@ -28,7 +28,7 @@ pub struct ProviderConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CryoConfig {
-    /// Agent command (e.g. "opencode", "claude", "codex", "pi")
+    /// Agent command (e.g. "opencode", "claude", "codex", "pi", "kimi")
     #[serde(default = "default_agent")]
     pub agent: String,
 

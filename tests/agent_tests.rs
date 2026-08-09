@@ -325,6 +325,68 @@ fn test_pi_agent_program() {
 }
 
 #[test]
+fn test_build_command_kimi_injects_prompt_flag() {
+    let cmd = cryochamber::agent::build_command("kimi", "test prompt").unwrap();
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(program, "kimi");
+    assert_eq!(args, vec!["-p", "test prompt"]);
+}
+
+#[test]
+fn test_build_command_kimi_matches_path_basename() {
+    let cmd = cryochamber::agent::build_command("/opt/kimi/bin/kimi", "test prompt").unwrap();
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(program, "/opt/kimi/bin/kimi");
+    assert_eq!(args, vec!["-p", "test prompt"]);
+}
+
+#[test]
+fn test_build_command_kimi_prompt_flag_is_idempotent() {
+    let cmd =
+        cryochamber::agent::build_command("kimi -m kimi-code/kimi-for-coding -p", "test prompt")
+            .unwrap();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(args.iter().filter(|arg| arg.as_str() == "-p").count(), 1);
+    assert_eq!(args.last().map(String::as_str), Some("test prompt"));
+}
+
+#[test]
+fn test_build_command_kimi_long_prompt_flag_is_idempotent() {
+    let cmd = cryochamber::agent::build_command("kimi --prompt", "test prompt").unwrap();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+
+    assert!(!args.iter().any(|arg| arg == "-p"));
+    assert_eq!(
+        args.iter().filter(|arg| arg.as_str() == "--prompt").count(),
+        1
+    );
+    assert_eq!(args.last().map(String::as_str), Some("test prompt"));
+}
+
+#[test]
+fn test_kimi_agent_program() {
+    let program = cryochamber::agent::agent_program("kimi").unwrap();
+    assert_eq!(program, "kimi");
+}
+
+#[test]
 fn test_build_command_claude_p_flag_is_idempotent() {
     let cmd = cryochamber::agent::build_command("claude -p", "test prompt").unwrap();
     let args: Vec<String> = cmd

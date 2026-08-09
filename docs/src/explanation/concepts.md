@@ -6,7 +6,7 @@
 
 **Daemon.** The daemon owns lifecycle. It sleeps until the next wake, watches the inbox for reactive wakeups, enforces the session timeout, claims due TODOs before each run, and handles fallback replies when the agent does not finish the communication loop cleanly.
 
-**Agent.** The agent is the AI process you configure for the chamber, such as OpenCode, Claude Code, Codex, or Pi. It reads the plan, does the work, decides when to wake next, and talks back to the daemon through `cryo-agent` commands.
+**Agent.** The agent is the AI process you configure for the chamber, such as OpenCode, Claude Code, Codex, Pi, or Kimi Code. It reads the plan, does the work, decides when to wake next, and talks back to the daemon through `cryo-agent` commands.
 
 **Session.** A session is one wake, one agent run, and one return to hibernation. Each session gets chamber context, can read pending inbox messages, can schedule future TODOs, and must either hibernate for another wake or complete the plan.
 

@@ -15,6 +15,8 @@ enum AgentKind {
     Codex,
     /// Pi: `pi [flags] -p <prompt>`
     Pi,
+    /// Kimi Code: `kimi [flags] -p <prompt>`
+    Kimi,
     /// Mock agent: invokes the `cryo-mock` binary, which reads
     /// `./scenario.toml` and dispatches the declarative action list.
     Mock,
@@ -29,6 +31,7 @@ enum AgentKind {
 ///   "codex"     → "codex exec"     (bare codex starts interactive TUI)
 ///   "claude"    → "claude -p"      (needs -p flag for non-interactive mode)
 ///   "pi"        → "pi -p"          (needs -p flag for non-interactive mode)
+///   "kimi"      → "kimi -p"        (needs -p flag for non-interactive mode)
 ///
 /// Unknown programs are treated as custom agents (prompt passed as positional arg).
 fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
@@ -62,6 +65,7 @@ fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
             Ok((AgentKind::Codex, program.clone(), full_args))
         }
         "pi" => Ok((AgentKind::Pi, program.clone(), args)),
+        "kimi" => Ok((AgentKind::Kimi, program.clone(), args)),
         "mock" => Ok((AgentKind::Mock, "cryo-mock".to_string(), vec![])),
         _ => Ok((AgentKind::Custom, program.clone(), args)),
     }
@@ -217,6 +221,11 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
         }
         AgentKind::Pi => {
             if !args.iter().any(|arg| arg == "-p") {
+                cmd.arg("-p");
+            }
+        }
+        AgentKind::Kimi => {
+            if !args.iter().any(|arg| arg == "-p" || arg == "--prompt") {
                 cmd.arg("-p");
             }
         }

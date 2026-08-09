@@ -118,6 +118,8 @@ Only switch when the user names a different agent.
 - **opencode** (default, recommended) — headless coding agent
 - **claude** — Anthropic's Claude CLI
 - **codex** — OpenAI's Codex CLI
+- **pi** — Pi CLI
+- **kimi** — Kimi Code CLI
 - **custom** — any command
 
 Then: API key configuration. The agent process inherits one provider's env via a `[provider]` block in `cryo.toml`:
