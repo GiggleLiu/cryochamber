@@ -294,6 +294,69 @@ fn test_mock_agent_program() {
 }
 
 #[test]
+fn test_build_command_opencode_disables_filewatcher() {
+    let cmd = cryochamber::agent::build_command("opencode", "test prompt").unwrap();
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+    let env: std::collections::HashMap<String, Option<String>> = cmd
+        .get_envs()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().to_string(),
+                value.map(|v| v.to_string_lossy().to_string()),
+            )
+        })
+        .collect();
+
+    assert_eq!(program, "opencode");
+    assert_eq!(args, vec!["run", "test prompt"]);
+    assert_eq!(
+        env.get("OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER"),
+        Some(&Some("1".to_string()))
+    );
+}
+
+#[test]
+fn test_spawn_agent_opencode_filewatcher_env_cannot_be_overridden_by_provider_env() {
+    use std::collections::HashMap;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let opencode_path = dir.path().join("opencode");
+    std::fs::write(
+        &opencode_path,
+        "#!/bin/sh\nprintenv OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER > opencode-env.txt\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&opencode_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&opencode_path, permissions).unwrap();
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert(
+        "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER".to_string(),
+        "0".to_string(),
+    );
+
+    let mut child = cryochamber::agent::spawn_agent_in_dir(
+        opencode_path.to_str().unwrap(),
+        "unused prompt",
+        None,
+        &provider_env,
+        dir.path(),
+    )
+    .unwrap();
+    let status = child.wait().unwrap();
+    assert!(status.success());
+
+    let output = std::fs::read_to_string(dir.path().join("opencode-env.txt")).unwrap();
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
 fn test_build_command_pi_injects_print_flag() {
     let cmd = cryochamber::agent::build_command("pi", "test prompt").unwrap();
     let program = cmd.get_program().to_string_lossy();

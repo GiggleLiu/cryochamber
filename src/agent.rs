@@ -5,6 +5,8 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 
+const OPENCODE_DISABLE_FILEWATCHER_ENV: &str = "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER";
+
 /// Supported agent types.
 enum AgentKind {
     /// Claude Code: `claude [flags] -p <prompt>`
@@ -229,7 +231,12 @@ pub fn build_command(agent_command: &str, prompt: &str) -> Result<Command> {
                 cmd.arg("-p");
             }
         }
-        AgentKind::Opencode | AgentKind::Codex | AgentKind::Custom | AgentKind::Mock => {}
+        AgentKind::Opencode => {
+            // OpenCode's experimental file watcher can hang non-interactive
+            // one-shot runs on larger git worktrees before any model request.
+            cmd.env(OPENCODE_DISABLE_FILEWATCHER_ENV, "1");
+        }
+        AgentKind::Codex | AgentKind::Custom | AgentKind::Mock => {}
     }
     cmd.arg(prompt);
 
@@ -276,6 +283,7 @@ fn spawn_agent_with_dir(
     provider_env: &std::collections::HashMap<String, String>,
     working_dir: Option<&Path>,
 ) -> anyhow::Result<std::process::Child> {
+    let (kind, _, _) = resolve_agent(agent_command)?;
     let mut cmd = build_command(agent_command, prompt)?;
 
     if let Some(dir) = working_dir {
@@ -298,6 +306,13 @@ fn spawn_agent_with_dir(
     // Inject provider-specific environment variables
     if !provider_env.is_empty() {
         cmd.envs(provider_env);
+    }
+
+    // Provider env is for user-selected model/provider credentials. The
+    // OpenCode watcher override is part of cryochamber's non-interactive
+    // launch contract, so keep it authoritative for spawned sessions.
+    if matches!(kind, AgentKind::Opencode) {
+        cmd.env(OPENCODE_DISABLE_FILEWATCHER_ENV, "1");
     }
 
     // The agent's shell tool may run commands from any cwd; this keeps
