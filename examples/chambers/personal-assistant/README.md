@@ -40,8 +40,8 @@ Cryochamber supports external messaging channels that sync between a remote serv
 
 | Channel | Binary | Backend | Docs |
 |---------|--------|---------|------|
-| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Cryohub](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#cryohub-primary-recommended) |
-| Zulip | `cryo-zulip` | Zulip REST API | [Zulip](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html#zulip-remote) |
+| Hub (Web UI) | `cryohub` | Built-in HTTP server | [Cryohub](https://giggleliu.github.io/cryochamber/reference/cli.html#hub-cryohub) |
+| Zulip | `cryo-zulip` | Zulip REST API | [Zulip](https://giggleliu.github.io/cryochamber/reference/cli.html#zulip-sync-cryo-zulip) |
 
 ### Sending images
 

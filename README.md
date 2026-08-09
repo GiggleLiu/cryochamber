@@ -25,19 +25,16 @@ Install Cryochamber:
 cargo install cryochamber
 ```
 
-Create a chamber directory:
+Create and start a chamber:
 ```bash
 mkdir my-chamber && cd my-chamber
+cryo init          # scaffold plan.md and cryo.toml — edit plan.md to describe the goal
+cryo start
 ```
 
-Then start Claude Code, Codex, OpenCode, Pi, or Kimi Code in that directory and ask:
+If your AI agent supports custom skills, you can skip the manual `plan.md` step: open the agent in the chamber directory and ask it to invoke the [make-plan skill](.claude/skills/make-plan/SKILL.md), which walks you through setup interactively.
 
-```text
-Follow the make-plan skill at https://github.com/GiggleLiu/cryochamber/blob/main/.claude/skills/make-plan/SKILL.md to create a new cryochamber project here.
-```
-
-The skill walks you through setup and can launch the chamber when ready.
-Start Cryohub to monitor it in your browser:
+Start Cryohub to monitor the chamber in your browser:
 ```bash
 cryohub start
 ```
@@ -46,7 +43,7 @@ Cryohub is the local web dashboard for Cryochamber. It runs once per user,
 discovers chambers on this machine, and gives you a browser UI for status,
 logs, messages, TODOs, notes, and lifecycle controls.
 
-→ **Full tutorial:** <https://giggleliu.github.io/cryochamber/tutorial.html>
+→ **CLI reference:** <https://giggleliu.github.io/cryochamber/reference/cli.html>
 
 ## Features
 
@@ -54,7 +51,7 @@ logs, messages, TODOs, notes, and lifecycle controls.
 - **Folder watching**: configure `watch_dirs` to wake the agent when a folder changes, such as `messages/inbox/` or another project directory.
 - **Crash recovery and reboot persistence**: `cryo start` installs a launchd/systemd service by default, so scheduled sessions survive machine reboots; failed TODO sessions are rescheduled as visible retry attempts with backoff.
 - **Configurable agents**: run OpenCode, Claude Code, Codex, Pi, Kimi Code, or another command from `cryo.toml`.
-- **Local and remote monitoring**: use the Cryohub dashboard to monitor chamber status, logs, messages, TODOs, notes, and lifecycle controls in a local browser UI, or talk to a chamber from anywhere via Zulip with `cryo-zulip`. See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
+- **Local and remote monitoring**: use the Cryohub dashboard to monitor chamber status, logs, messages, TODOs, notes, and lifecycle controls in a local browser UI, or talk to a chamber from anywhere via Zulip with `cryo-zulip`. See the [CLI reference](https://giggleliu.github.io/cryochamber/reference/cli.html).
 
 ## License
 
