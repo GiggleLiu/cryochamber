@@ -43,7 +43,8 @@ Cryohub is the local web dashboard for Cryochamber. It runs once per user,
 discovers chambers on this machine, and gives you a browser UI for status,
 logs, messages, TODOs, notes, and lifecycle controls.
 
-→ **CLI reference:** <https://giggleliu.github.io/cryochamber/reference/cli.html>
+→ **CLI reference:** <https://giggleliu.github.io/cryochamber/reference/cli.html>  
+→ **中文文档:** <https://giggleliu.github.io/cryochamber/zh/>
 
 ## Features
 

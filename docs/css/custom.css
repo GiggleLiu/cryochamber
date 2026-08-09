@@ -34,3 +34,38 @@ table tr.group td {
 table tbody tr:nth-child(2n) {
   background: transparent;
 }
+
+/* Hide the prev/next chapter arrows at the page corners. The book is small
+   enough that the sidebar table of contents covers navigation. */
+.nav-chapters,
+.mobile-nav-chapters {
+  display: none;
+}
+
+/* Hide the print and "Suggest an edit" header buttons. The Git repository
+   link stays. */
+.right-buttons a[href$="print.html"],
+.right-buttons a[rel="edit"] {
+  display: none;
+}
+
+/* Language switcher (EN <-> 中文), injected by docs/js/languages.js into
+   the header bar. Matches the surrounding icon-button styling. */
+.right-buttons .lang-switch {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  margin-right: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--icons);
+  border: 1px solid var(--icons);
+  border-radius: 3px;
+  background: transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.right-buttons .lang-switch:hover {
+  color: var(--icons-hover);
+  border-color: var(--icons-hover);
+}

@@ -30,8 +30,10 @@ help:
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
 	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
-	@echo "  book         - Build mdbook documentation"
-	@echo "  book-serve   - Serve mdbook locally with live reload"
+	@echo "  book         - Build mdbook documentation (en + zh)"
+	@echo "  book-serve   - Build and serve the full book (en + zh) at :3000"
+	@echo "  book-serve-live - mdbook serve with live reload (English book only; zh links 404 here)"
+	@echo "  book-serve-zh - Serve the Chinese book locally with live reload"
 	@echo "  book-deploy  - Deploy mdbook to GitHub Pages (gh-pages branch)"
 	@echo "  copilot-review - Request Copilot code review on current PR"
 	@echo "  release V=x.y.z - Tag and push a release (triggers CI publish)"
@@ -318,15 +320,35 @@ check-service: build
 check-mock:
 	cargo test --test mock_agent_tests -- --nocapture --test-threads=1
 
-# Build mdbook documentation
+# Build mdbook documentation (English at book/, Chinese at book/zh/)
 book:
 	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
 	mdbook build
+	MDBOOK_BOOK__LANGUAGE=zh \
+	MDBOOK_BOOK__SRC=docs/zh \
+	MDBOOK_OUTPUT__HTML__EDIT_URL_TEMPLATE="https://github.com/GiggleLiu/cryochamber/edit/main/{path}" \
+	MDBOOK_OUTPUT__HTML__SEARCH__ENABLE=false \
+	mdbook build -d book/zh
 
-# Serve mdbook locally with live reload
-book-serve:
+# Build and serve the full book (en + zh) so the language switcher works
+# end-to-end locally. A static server is used because mdbook serve only
+# serves the book it is running, at the root path — the zh pages at /zh/
+# would 404 under it.
+book-serve: book
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 is required to serve the book; run \`make book\` and serve book/ yourself, or use \`make book-serve-live\` (en only)"; exit 1; }
+	@echo "Serving the full book at http://127.0.0.1:3000/ (Ctrl-C to stop)"
+	@cd book && python3 -m http.server 3000
+
+# mdbook serve with live reload (English book only; the zh pages at /zh/
+# are not served by mdbook, so the language switcher will 404 on them)
+book-serve-live:
 	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
 	mdbook serve --open
+
+# Serve the Chinese book locally with live reload
+book-serve-zh:
+	@command -v mdbook >/dev/null 2>&1 || { echo "Installing mdbook..."; cargo install mdbook; }
+	MDBOOK_BOOK__LANGUAGE=zh MDBOOK_BOOK__SRC=docs/zh MDBOOK_OUTPUT__HTML__SEARCH__ENABLE=false mdbook serve -d book/zh --open
 
 # Deploy mdbook to GitHub Pages (gh-pages branch)
 book-deploy: book

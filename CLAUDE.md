@@ -37,8 +37,9 @@ make check-agent    # quick agent smoke test (AGENT=opencode|claude)
 make check-round-trip # full round-trip test with mr-lazy
 make check-service  # verify OS service install/uninstall lifecycle (launchd/systemd)
 make check-mock     # run mock agent integration tests (no external agent required)
-make book           # build mdbook documentation (auto-installs mdbook)
-make book-serve     # serve mdbook locally with live reload
+make book           # build mdbook documentation (English + Chinese)
+make book-serve     # serve the built book (both languages) at :3000
+make book-serve-live # mdbook serve with live reload (English only)
 make book-deploy    # deploy mdbook to GitHub Pages (gh-pages branch)
 make copilot-review # request Copilot code review on current PR
 make release V=x.y.z # tag and push a release (triggers CI publish to crates.io)
