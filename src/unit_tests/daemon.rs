@@ -5298,13 +5298,21 @@ fn test_parked_client_death_pauses_session_deadline_instead_of_resetting_it() {
     assert!(log.contains("wait: client disconnected"), "{log}");
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn inbox_watcher_fires_on_atomic_tmp_rename() {
     // Atomic writers create `.{name}.tmp` and rename it into place; the
-    // rename produces no Create event, only Modify(Name(...)). The wake may
-    // legitimately carry the tmp path (macOS FSEvents) or the final path
-    // (Linux inotify pairs the rename) — the daemon re-lists the inbox
-    // either way, so the contract is "some inbox-contained path wakes".
+    // rename produces no Create event, only Modify(Name(...)). inotify
+    // delivers both sides in real time, so pre-fix the only signal was
+    // the tmp create, which lost the race against should_ignore_inbox_
+    // wake's empty-inbox check. Post-fix the paired rename reports the
+    // final path deterministically.
+    //
+    // Gated off macOS: FSEvents delivers events post-hoc (after the
+    // rename has landed), so the pre-existing tmp create event already
+    // wakes the daemon reliably there — and its coalescing of quick
+    // create+rename sequences does not guarantee any event for the
+    // final path within a test-sized window.
     let dir = tempfile::tempdir().unwrap();
     let inbox = dir.path().join("inbox");
     fs::create_dir(&inbox).unwrap();
@@ -5320,15 +5328,9 @@ fn inbox_watcher_fires_on_atomic_tmp_rename() {
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(200)) {
             Ok(DaemonEvent::InboxChanged { paths }) => {
-                // Linux must pair the rename and report the final path
-                // (pre-fix only the tmp create fired, which is the bug);
-                // macOS FSEvents can't pair renames, so the tmp path is
-                // the only signal — fine, the daemon re-lists the inbox.
-                #[cfg(not(target_os = "macos"))]
-                let woke = paths.iter().any(|p| p == &final_path);
-                #[cfg(target_os = "macos")]
-                let woke = paths.iter().any(|p| p.starts_with(&inbox));
-                if woke {
+                // Pre-fix only the tmp create fired, which is the bug;
+                // the paired rename must report the final path.
+                if paths.iter().any(|p| p == &final_path) {
                     return; // the atomic write woke the daemon
                 }
             }
