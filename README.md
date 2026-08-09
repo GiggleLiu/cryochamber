@@ -7,7 +7,7 @@
   <img src="docs/logo/logo.svg" alt="cryochamber logo" width="500">
 </p>
 
-**Cryochamber** is a hibernation chamber for AI agents (Claude, OpenCode, Codex). It hibernates an AI agent between sessions and wakes it at the right time, not on a fixed schedule. The agent reads its plan, completes a task, and decides when to wake next. Cryochamber empowers AI agents to run tasks that span days, weeks, or even years, like interstellar travelers in stasis.
+**Cryochamber** is a hibernation chamber for AI agents (Claude, OpenCode, Codex, Pi, Kimi Code). It hibernates an AI agent between sessions and wakes it at the right time, not on a fixed schedule. The agent reads its plan, completes a task, and decides when to wake next. Cryochamber empowers AI agents to run tasks that span days, weeks, or even years, like interstellar travelers in stasis.
 
 The goal is to automate long-running activities that are too irregular for cron. A conference deadline slips because submissions are low. A space probe's next burn window depends on orbital mechanics. A code review depends on when the author pushes fixes. Cryochamber lets an AI agent reason about *when* to wake and *what* to do next, with a persistent daemon that manages the lifecycle.
 
@@ -30,7 +30,7 @@ Create a chamber directory:
 mkdir my-chamber && cd my-chamber
 ```
 
-Then start Claude Code, Codex, or OpenCode in that directory and ask:
+Then start Claude Code, Codex, OpenCode, Pi, or Kimi Code in that directory and ask:
 
 ```text
 Follow the make-plan skill at https://github.com/GiggleLiu/cryochamber/blob/main/.claude/skills/make-plan/SKILL.md to create a new cryochamber project here.
@@ -53,7 +53,7 @@ logs, messages, TODOs, notes, and lifecycle controls.
 - **Agent-guided hibernation**: the agent decides when to wake next instead of running on a fixed cron schedule.
 - **Folder watching**: configure `watch_dirs` to wake the agent when a folder changes, such as `messages/inbox/` or another project directory.
 - **Crash recovery and reboot persistence**: `cryo start` installs a launchd/systemd service by default, so scheduled sessions survive machine reboots; failed TODO sessions are rescheduled as visible retry attempts with backoff.
-- **Configurable agents**: run OpenCode, Claude Code, Codex, or another command from `cryo.toml`.
+- **Configurable agents**: run OpenCode, Claude Code, Codex, Pi, Kimi Code, or another command from `cryo.toml`.
 - **Local and remote monitoring**: use the Cryohub dashboard to monitor chamber status, logs, messages, TODOs, notes, and lifecycle controls in a local browser UI, or talk to a chamber from anywhere via Zulip with `cryo-zulip`. See [Monitor and message a chamber](https://giggleliu.github.io/cryochamber/how-to/monitor-chambers.html).
 
 ## License
