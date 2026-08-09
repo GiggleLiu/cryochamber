@@ -1,0 +1,544 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Cryochamber</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Hibernation chamber for AI agents">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-3771cd84.svg">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="docs/css/custom-85deb550.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-900f0af1.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-1880c356.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Cryochamber</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/GiggleLiu/cryochamber" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cryochamber"><a class="header" href="#cryochamber">Cryochamber</a></h1>
+<p><strong>Cryochamber is a hibernation chamber for AI agents</strong> (Claude, OpenCode, Codex, Pi, Kimi Code). It hibernates an agent between sessions and wakes it at the right time — not on a fixed schedule. The agent reads its plan, completes a task, and decides for itself when to wake next. That lets AI agents run tasks that span days, weeks, or even years, like interstellar travelers in stasis.</p>
+<p><img src="images/cryochamber-concept.jpg" alt="An agent makes a plan, hibernates, wakes at the right time, and chooses its next wake"></p>
+<h2 id="why-not-cron"><a class="header" href="#why-not-cron">Why not cron?</a></h2>
+<p>Cron wakes on a fixed schedule, whether or not there is anything to do. Cryochamber hands the scheduling decision to the agent:</p>
+<ul>
+<li><strong>It saves tokens.</strong> A cron-driven agent burns a full session on every tick, even when nothing has changed. A cryochamber agent sleeps until there is a reason to wake — a TODO it scheduled, or a message in its inbox.</li>
+<li><strong>It saves your brain.</strong> With cron, a human has to guess the right schedule up front: too fast wastes money, too slow misses things. Here the agent reasons about the situation — a deadline that slipped, a review waiting on the author, a chess opponent’s pace — and picks its own next wake.</li>
+<li><strong>It handles emergencies.</strong> When something demands attention, the agent can schedule a wake minutes out, and an inbox message can wake it immediately. Cron cannot speed up when it matters.</li>
+</ul>
+<h2 id="get-running-in-two-minutes"><a class="header" href="#get-running-in-two-minutes">Get running in two minutes</a></h2>
+<blockquote>
+<p><strong>Platform support:</strong> macOS and Linux only.</p>
+</blockquote>
+<pre><code class="language-bash">cargo install cryochamber
+mkdir my-chamber &amp;&amp; cd my-chamber
+cryo init          # scaffold plan.md and cryo.toml (or let the make-plan skill guide you)
+cryo start         # start the daemon, installed as an OS service
+cryohub start      # open the printed dashboard URL in your browser
+</code></pre>
+<p>Then edit <code>plan.md</code> to describe the agent’s goal and tasks. Runnable example chambers (<code>mr-lazy</code>, <code>chess-by-mail</code>, and more) live in <a href="https://github.com/GiggleLiu/cryochamber/tree/main/examples/chambers"><code>examples/chambers/</code></a> on GitHub.</p>
+<h2 id="watch-it-work"><a class="header" href="#watch-it-work">Watch it work</a></h2>
+<pre><code class="language-bash">cryohub start    # prints the local dashboard URL — open it in your browser
+</code></pre>
+<p><img src="images/cryohub-dashboard.png" alt="The cryohub dashboard showing a chamber’s status, messages, and log tail"></p>
+<p><a href="#hub-cryohub">Cryohub</a> is the local web dashboard: chamber status, message history, TODOs, notes, log tail, and lifecycle controls, plus a send widget to talk to the agent. For remote messaging from the web or your phone, bridge the chamber to Zulip with <a href="#zulip-sync-cryo-zulip"><code>cryo-zulip</code></a>.</p>
+<h2 id="what-a-chamber-guarantees"><a class="header" href="#what-a-chamber-guarantees">What a chamber guarantees</a></h2>
+<ul>
+<li><strong>Every wake produces a visible message.</strong> If the agent exits without replying, the daemon writes a fallback message — a session is never silent.</li>
+<li><strong>Every inbox message is answered.</strong> Even if the agent crashes mid-session, the sender still gets a reply.</li>
+<li><strong>Every TODO is honoured.</strong> Failed sessions are rescheduled as visible retry attempts with exponential backoff.</li>
+<li><strong>Nothing is consumed twice.</strong> Claimed messages and TODOs never silently become pending again.</li>
+</ul>
+<h2 id="next"><a class="header" href="#next">Next</a></h2>
+<ul>
+<li><a href="#how-it-works">How it works</a> — a five-minute walkthrough: the chamber files and the session loop.</li>
+<li><a href="#cli-reference">CLI reference</a> — every <code>cryo</code>, <code>cryohub</code>, <code>cryo-agent</code>, and <code>cryo-zulip</code> command.</li>
+<li><a href="#configuration">Configuration</a> — every <code>cryo.toml</code> and <code>cryohub.toml</code> field.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h1>
+<p>A five-minute walkthrough of a chamber’s moving parts.</p>
+<h2 id="a-chamber-is-just-a-directory"><a class="header" href="#a-chamber-is-just-a-directory">A chamber is just a directory</a></h2>
+<p><code>cryo init</code> creates three files:</p>
+<ul>
+<li><strong><code>plan.md</code></strong> — the agent’s mission: goal, tasks, and rules. The agent re-reads it at the start of every session.</li>
+<li><strong><code>cryo.toml</code></strong> — chamber configuration: which agent command to run, session timeout, inbox watching. See <a href="#configuration">Configuration</a>.</li>
+<li><strong><code>NOTES.md</code></strong> — the agent’s memory across sessions. It reads and appends to this file directly.</li>
+</ul>
+<p>While the daemon runs, runtime state appears alongside them: logs, <code>todo.json</code>, and <code>messages/inbox/</code> + <code>messages/outbox/</code>.</p>
+<h2 id="the-plan-is-plain-markdown"><a class="header" href="#the-plan-is-plain-markdown">The plan is plain markdown</a></h2>
+<p>A chamber that watches a GitHub repo for new releases:</p>
+<pre><code class="language-markdown"># Release watcher
+
+## Goal
+Tell me when acme/widgets publishes a new release.
+
+## Tasks
+1. Run `gh release list --repo acme/widgets --limit 1` and compare
+   the version with the one recorded in NOTES.md.
+2. If it changed: send me the release notes with `cryo-agent send`,
+   then record the new version in NOTES.md.
+3. Schedule the next check with `cryo-agent todo add` — every 2 hours
+   on weekdays, once a day on weekends.
+4. Hibernate with `cryo-agent hibernate --summary "..."`.
+</code></pre>
+<p>No code, no cron expression — the agent reads the situation (weekday vs. weekend here) and decides the next wake itself.</p>
+<h2 id="the-session-loop"><a class="header" href="#the-session-loop">The session loop</a></h2>
+<pre><code class="language-text">daemon wakes agent        &lt;- earliest TODO due, or inbox message
+    │
+    v
+agent reads plan.md + NOTES.md
+    │
+    v
+does the work
+    │
+    v
+cryo-agent send "..."                    &lt;- a visible message, never silent
+    │
+    v
+cryo-agent todo add "..." --at &lt;when&gt;    &lt;- declares the next wake
+    │
+    v
+cryo-agent hibernate                     &lt;- daemon sleeps until that wake
+    │
+    └────────────── back to the top ──────────────┘
+</code></pre>
+<p>One wake, one agent run, one return to sleep — that is a <strong>session</strong>:</p>
+<ol>
+<li>The daemon wakes the agent when the earliest pending TODO comes due, or immediately when an inbox message arrives.</li>
+<li>The agent reads <code>plan.md</code> and <code>NOTES.md</code>, then does the work.</li>
+<li>It sends at least one visible message with <code>cryo-agent send</code>. If it exits without sending, the daemon writes a fallback message — a session is never silent.</li>
+<li>It declares its own next wake with <code>cryo-agent todo add "..." --at &lt;time&gt;</code>. The daemon’s next wake is always the earliest pending TODO — no TODO, no wake.</li>
+<li>It calls <code>cryo-agent hibernate</code> and exits. The daemon sleeps until the next trigger. <code>hibernate --complete</code> ends the plan for good.</li>
+</ol>
+<h2 id="talking-to-the-agent"><a class="header" href="#talking-to-the-agent">Talking to the agent</a></h2>
+<p>Send a message from the terminal (<code>cryo send "..."</code>) or the Cryohub dashboard. It lands in <code>messages/inbox/</code> and — with the default <code>watch_dirs</code> — wakes the agent immediately. The agent’s replies appear in <code>messages/outbox/</code> and in the dashboard’s message history.</p>
+<h2 id="next-1"><a class="header" href="#next-1">Next</a></h2>
+<ul>
+<li><a href="#cli-reference">CLI reference</a> — every <code>cryo</code>, <code>cryohub</code>, <code>cryo-agent</code>, and <code>cryo-zulip</code> command.</li>
+<li><a href="#configuration">Configuration</a> — every <code>cryo.toml</code> and <code>cryohub.toml</code> field.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-reference"><a class="header" href="#cli-reference">CLI reference</a></h1>
+<p>All cryochamber binaries and their commands. For <code>cryo.toml</code> and <code>cryohub.toml</code> fields, see <a href="#configuration">Configuration</a>.</p>
+<p>Every binary accepts <code>--version</code> (print the version and exit) and <code>--help</code>.</p>
+<h2 id="operator-cli-cryo"><a class="header" href="#operator-cli-cryo">Operator CLI (<code>cryo</code>)</a></h2>
+<p>Run these from inside a chamber directory unless noted otherwise.</p>
+<table>
+<thead>
+<tr><th>Category</th><th>Command</th><th>What it does</th></tr>
+
+</thead>
+
+<tbody>
+<tr class="group"><td rowspan="7">Lifecycle</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>Initialize the directory: write <code>cryo.toml</code>, <code>plan.md</code>, <code>NOTES.md</code>, and <code>README.md</code>. Existing files are kept.</td></tr>
+
+<tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>Start the daemon. Reads <code>cryo.toml</code> and writes overrides to <code>timer.json</code>.</td></tr>
+
+<tr><td><code>cryo start --max-session-duration 3600</code></td><td>Override the session timeout for this run.</td></tr>
+
+<tr><td><code>cryo status</code></td><td>Show whether the daemon is running, the current session number, and the next wake time.</td></tr>
+
+<tr><td><code>cryo restart</code></td><td>Restart the running daemon. When it is installed as an OS service, restart the existing service without rewriting or removing it.</td></tr>
+
+<tr><td><code>cryo cancel</code></td><td>Stop the daemon and remove the runtime state.</td></tr>
+
+<tr><td><code>cryo wake ["message"]</code></td><td>Wake the daemon immediately, optionally with a message.</td></tr>
+
+<tr class="group"><td rowspan="2">Logs</td><td><code>cryo watch [--all] [--viewpoint cryo|agent]</code></td><td>Follow a log in real time. <code>--all</code> shows the log from the beginning. <code>--viewpoint cryo</code> (default) follows the structured event log; <code>--viewpoint agent</code> follows raw agent output (<code>cryo-agent.log</code>).</td></tr>
+
+<tr><td><code>cryo log</code></td><td>Print the full session log.</td></tr>
+
+<tr class="group"><td rowspan="2">Messaging</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;] [--wake]</code></td><td>Send a message to the agent's inbox. <code>--from</code> sets the sender (default <code>human</code>), <code>--subject</code> sets the subject (default: derived from the body), <code>--wake</code> wakes the agent immediately after sending.</td></tr>
+
+<tr><td><code>cryo receive</code></td><td>Read messages the agent sent to the outbox.</td></tr>
+
+<tr class="group"><td rowspan="2">Housekeeping</td><td><code>cryo clean [--force]</code></td><td>Remove runtime files such as logs, state, and messages.</td></tr>
+
+<tr><td><code>cryo ps [--kill-all]</code></td><td>List, or kill, every running cryo daemon on this machine. Run from anywhere.</td></tr>
+
+</tbody>
+
+</table>
+
+<h2 id="hub-cryohub"><a class="header" href="#hub-cryohub">Hub (<code>cryohub</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryohub start [--host &lt;ip&gt;] [--port &lt;n&gt;]</code></td><td>Install a service that survives reboot. <code>--host</code> and <code>--port</code> also update the saved hub config.</td></tr>
+<tr><td><code>cryohub start --foreground</code></td><td>Run the hub in the current terminal instead of installing a service.</td></tr>
+<tr><td><code>cryohub stop</code></td><td>Uninstall the global hub service.</td></tr>
+<tr><td><code>cryohub restart</code></td><td>Restart the installed global hub service without reinstalling it.</td></tr>
+<tr><td><code>cryohub status</code></td><td>Show the global hub URL, chamber root, config path, log path, and service status. Also lists legacy cwd-scoped hub services from older versions.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="agent-ipc-cryo-agent"><a class="header" href="#agent-ipc-cryo-agent">Agent IPC (<code>cryo-agent</code>)</a></h2>
+<p>These commands are used by the spawned AI agent to communicate with the daemon over a Unix socket. They are not the operator interface.</p>
+<table>
+<thead>
+<tr><th>Category</th><th>Command</th><th>What it does</th></tr>
+
+</thead>
+
+<tbody>
+<tr class="group"><td rowspan="3">Hibernating</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>End the session; more work remains.</td></tr>
+
+<tr><td><code>cryo-agent hibernate --complete</code></td><td>End the session; the plan is done.</td></tr>
+
+<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>Report a failed session. The daemon marks consumed TODOs done and adds a fresh numbered retry TODO.</td></tr>
+
+<tr class="group"><td rowspan="4">TODOs</td><td><code>cryo-agent todo add "text" --at &lt;TIME&gt;</code></td><td>Schedule the next wake via a TODO. <code>--at</code> accepts a relative offset (<code>+30 minutes</code>), an ISO 8601 timestamp (<code>2026-04-25T10:00</code>; seconds and a space separator are tolerated), or a date only (<code>2026-04-25</code>, meaning midnight).</td></tr>
+
+<tr><td><code>cryo-agent todo list</code></td><td>List all TODO items.</td></tr>
+
+<tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>Mark a TODO item as done.</td></tr>
+
+<tr><td><code>cryo-agent todo remove &lt;id&gt;</code></td><td>Remove a TODO item.</td></tr>
+
+<tr class="group"><td rowspan="6">Messaging</td><td><code>cryo-agent send "message"</code></td><td>Write a message to the outbox for the human.</td></tr>
+
+<tr><td><code>cryo-agent send --stdin</code></td><td>Read the outbox message body from stdin exactly, including trailing newlines; use for multi-line or shell-sensitive text.</td></tr>
+
+<tr><td><code>cryo-agent send --question "msg"</code></td><td>Mark the message as a question awaiting a human reply.</td></tr>
+
+<tr><td><code>cryo-agent receive</code></td><td>Claim the current inbox batch from the human.</td></tr>
+
+<tr><td><code>cryo-agent receive --wait [--timeout &lt;secs&gt;]</code></td><td>If the inbox already has a pending batch, claim it immediately like plain <code>receive</code>. Otherwise block: the daemon parks the request in the live session and delivers the operator's next message into it. On timeout, prints a "No new messages" notice instead — treat that as a cue to hibernate. <code>--timeout</code> defaults to <code>wait_timeout</code> from <code>cryo.toml</code> (else 14400 s / 4 h) and is clamped to 1-86400 s (24 h cap; <code>0</code> waits 1 s, not 0). You must <code>send</code> a reply before calling <code>receive --wait</code> again.</td></tr>
+
+<tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>Render the conversation transcript (default: last 20 messages). <code>--last N</code> shows the last N, <code>--all</code> shows every archived message, <code>--since &lt;iso&gt;</code> shows messages at or after an ISO 8601 time; the three are mutually exclusive. Also archives any pending inbox batch as a side effect, satisfying the same reply obligation as <code>receive</code>.</td></tr>
+
+<tr class="group"><td rowspan="3">Time</td><td><code>cryo-agent time</code></td><td>Print the current local time in ISO 8601 format.</td></tr>
+
+<tr><td><code>cryo-agent time "+30 minutes"</code></td><td>Compute a relative offset. Units: <code>minutes</code>, <code>hours</code>, <code>days</code>, <code>weeks</code>.</td></tr>
+
+<tr><td><code>cryo-agent time "2026-04-25T10:00"</code></td><td>Validate and normalize an ISO 8601 timestamp.</td></tr>
+
+</tbody>
+
+</table>
+
+<h2 id="zulip-sync-cryo-zulip"><a class="header" href="#zulip-sync-cryo-zulip">Zulip Sync (<code>cryo-zulip</code>)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryo-zulip init --config &lt;zuliprc&gt; --stream &lt;name&gt; [--topic &lt;topic&gt;] [--history]</code></td><td>Validate credentials, resolve the stream, and write <code>zulip-sync.json</code>.</td></tr>
+<tr><td><code>cryo-zulip sync [--interval N]</code></td><td>Start the background sync daemon. Default interval comes from <code>cryo.toml</code> or falls back to 5 seconds.</td></tr>
+<tr><td><code>cryo-zulip unsync</code></td><td>Stop the sync daemon.</td></tr>
+<tr><td><code>cryo-zulip pull</code></td><td>One-shot pull.</td></tr>
+<tr><td><code>cryo-zulip push</code></td><td>One-shot push.</td></tr>
+<tr><td><code>cryo-zulip status</code></td><td>Show sync configuration.</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
+<p>Each chamber is configured through a <code>cryo.toml</code> file in its directory. <code>cryo init</code> creates one with sensible defaults.</p>
+<h2 id="cryotoml"><a class="header" href="#cryotoml"><code>cryo.toml</code></a></h2>
+<pre><code class="language-toml"># cryo.toml — cryochamber project configuration
+agent = "opencode"               # Agent command (opencode, claude, codex, pi, kimi, ...)
+max_session_duration = 3600      # Session timeout in seconds (0 = no timeout)
+watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
+zulip_poll_interval = 5          # Zulip sync poll interval in seconds
+wait_timeout = 14400             # Default `cryo-agent receive --wait` timeout in seconds (clamped to 1-86400)
+
+# Provider environment injected into every agent session (optional).
+[provider]
+name = "anthropic"               # Display name, shown in `cryo status`
+env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # Env vars set when spawning the agent
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>agent</code></td><td><code>"opencode"</code></td><td>Agent command to run. Use <code>"claude"</code> for Claude Code, <code>"codex"</code> for Codex, <code>"pi"</code> for Pi, <code>"kimi"</code> for Kimi Code, or any executable on <code>PATH</code>.</td></tr>
+<tr><td><code>max_session_duration</code></td><td><code>3600</code></td><td>Session timeout in seconds. <code>0</code> disables the timeout.</td></tr>
+<tr><td><code>watch_dirs</code></td><td><code>["messages/inbox"]</code></td><td>List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to <code>[]</code> to disable reactive wake entirely.</td></tr>
+<tr><td><code>zulip_poll_interval</code></td><td><code>5</code></td><td>How often <code>cryo-zulip sync</code> polls Zulip, in seconds. <code>cryo-zulip sync --interval N</code> overrides it for one run.</td></tr>
+<tr><td><code>wait_timeout</code></td><td><code>14400</code></td><td>Optional. Default timeout in seconds for <code>cryo-agent receive --wait</code> when the agent doesn’t pass <code>--timeout</code>. The daemon clamps any value to <code>1</code>-<code>86400</code> (so <code>0</code> waits 1 s, not 0; the upper bound is 24 h).</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="provider"><a class="header" href="#provider"><code>[provider]</code></a></h2>
+<p>Cryochamber supports a single active provider profile. The <code>[provider]</code> table
+carries a display <code>name</code> and an <code>env</code> map of environment variables that are
+injected into every spawned agent session — this is where API keys for the
+agent’s model belong.</p>
+<pre><code class="language-toml">[provider]
+name = "anthropic"
+env = { ANTHROPIC_API_KEY = "sk-ant-...", OPENCODE_MODEL = "claude-sonnet-4-20250514" }
+</code></pre>
+<p><code>cryo status</code> shows the provider name once one is configured.</p>
+<blockquote>
+<p><strong>Security</strong>: values under <code>[provider].env</code> are secrets. <code>cryo init</code> writes a
+chamber <code>.gitignore</code> that ignores <code>.cryo/</code>, but <code>cryo.toml</code> itself is <em>not</em>
+gitignored — if you commit or push the chamber, keep API keys out of version
+control. Either add <code>cryo.toml</code> to your own <code>.gitignore</code>, or leave the keys
+out of <code>cryo.toml</code> and export them in the environment before <code>cryo start</code>
+instead.</p>
+</blockquote>
+<h3 id="legacy-providers-deprecated"><a class="header" href="#legacy-providers-deprecated">Legacy <code>[[providers]]</code> (deprecated)</a></h3>
+<p>Older configs used a <code>[[providers]]</code> array. It is still accepted for backward
+compatibility, but only the first entry is used — provider rotation was removed.
+Loading a config that uses <code>[[providers]]</code> prints a deprecation warning, and the
+next <code>save</code> rewrites it to the canonical single <code>[provider]</code> form. Migrate to
+<code>[provider]</code>.</p>
+<p>See <a href="#cryohubtoml"><code>cryohub.toml</code></a> below.</p>
+<h2 id="cryohubtoml"><a class="header" href="#cryohubtoml"><code>cryohub.toml</code></a></h2>
+<p>Cryohub settings live in <code>$XDG_CONFIG_HOME/cryo/cryohub.toml</code>, or <code>~/.config/cryo/cryohub.toml</code> if <code>XDG_CONFIG_HOME</code> is unset. The default local dashboard URL is <code>http://127.0.0.1:8765</code>. The dashboard’s New Chamber button creates chambers under the configured <code>chamber_root</code>, which defaults to <code>~/.cryo/chambers</code>.</p>
+<pre><code class="language-toml">host = "127.0.0.1"
+port = 8765
+chamber_root = "/Users/alice/.cryo/chambers"
+</code></pre>
+<p>For project-owned chamber collections, set <code>chamber_root</code> to a project path such as <code>/path/to/project/.cryo/chambers</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>host</code></td><td><code>"127.0.0.1"</code></td><td>Bind address for the global dashboard service.</td></tr>
+<tr><td><code>port</code></td><td><code>8765</code></td><td>TCP port for the global dashboard service.</td></tr>
+<tr><td><code>chamber_root</code></td><td><code>~/.cryo/chambers</code></td><td>Default location for chambers created from the dashboard UI.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="override-config-from-the-command-line"><a class="header" href="#override-config-from-the-command-line">Override config from the command line</a></h2>
+<p>Flags passed to <code>cryo start</code> override <code>cryo.toml</code> for that session. The overrides are stored in <code>timer.json</code> (runtime state) and do not modify <code>cryo.toml</code>.</p>
+<pre><code class="language-bash">cryo start --agent claude
+cryo start --max-session-duration 3600
+</code></pre>
+<h2 id="config-vs-state"><a class="header" href="#config-vs-state">Config vs. state</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Purpose</th><th>Persists across runs</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryo.toml</code></td><td>Project configuration. Check into git.</td><td>Yes</td></tr>
+<tr><td><code>timer.json</code></td><td>Runtime state: session number, PID lock, CLI overrides.</td><td>No</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="docs/js/languages-20972354.js"></script>
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>

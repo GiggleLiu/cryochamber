@@ -1,0 +1,57 @@
+/* Cryochamber book customizations */
+
+/* Soften screenshots and diagrams on content pages. */
+.content img {
+  border-radius: 6px;
+}
+
+/* Give raster screenshots a subtle frame; SVG diagrams stay flat. */
+.content img[src$=".png"],
+.content img[src$=".jpg"],
+.content img[src$=".jpeg"] {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+/* Tables: separate rows with spacing instead of grid lines. */
+table td,
+table th {
+  border: none;
+  padding: 8px 14px;
+}
+
+/* Keep one rule under the header, and a thin line only where a new
+   command group begins (rows marked class="group"). */
+table thead th {
+  border-bottom: 2px solid rgba(140, 140, 140, 0.5);
+}
+
+table tr.group td {
+  border-top: 1px solid rgba(140, 140, 140, 0.35);
+  padding-top: 14px;
+}
+
+/* No zebra striping — spacing and group rules carry the structure. */
+table tbody tr:nth-child(2n) {
+  background: transparent;
+}
+
+/* Language switcher (EN <-> 中文), injected by docs/js/languages.js into
+   the header bar. Matches the surrounding icon-button styling. */
+.right-buttons .lang-switch {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  margin-right: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--icons);
+  border: 1px solid var(--icons);
+  border-radius: 3px;
+  background: transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.right-buttons .lang-switch:hover {
+  color: var(--icons-hover);
+  border-color: var(--icons-hover);
+}

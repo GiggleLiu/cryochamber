@@ -1,0 +1,509 @@
+<!DOCTYPE HTML>
+<html lang="zh" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Cryochamber</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Hibernation chamber for AI agents">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-3771cd84.svg">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="docs/css/custom-85deb550.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-14780658.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                    </div>
+
+                    <h1 class="menu-title">Cryochamber</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/GiggleLiu/cryochamber" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cryochamber"><a class="header" href="#cryochamber">Cryochamber</a></h1>
+<p><strong>Cryochamber 是 AI 智能体（Claude、OpenCode、Codex、Pi、Kimi Code）的休眠舱。</strong> 它在两次会话之间让智能体休眠，并在合适的时机唤醒它——而不是按照固定的时间表。智能体阅读自己的计划，完成任务，然后自行决定下一次何时唤醒。这让 AI 智能体可以运行跨越数天、数周甚至数年的任务，就像星际旅行者在冷冻休眠中一样。</p>
+<p><img src="images/cryochamber-concept.jpg" alt="智能体制定计划、休眠、在合适的时间被唤醒，并选择下一次唤醒时机"></p>
+<h2 id="为什么不用-cron"><a class="header" href="#为什么不用-cron">为什么不用 cron？</a></h2>
+<p>Cron 按固定时间表唤醒，不管有没有事情要做。Cryochamber 把调度决定交给智能体：</p>
+<ul>
+<li><strong>省 token。</strong> 由 cron 驱动的智能体每次 tick 都会烧掉一整次会话，即使什么都没变化。Cryochamber 的智能体会一直休眠，直到有理由唤醒——它自己安排的 TODO，或收件箱里的一条消息。</li>
+<li><strong>省心。</strong> 使用 cron 时，人类必须预先猜对时间表：太快浪费钱，太慢错过事情。在这里，智能体根据实际情况推理——推迟的截止日期、等待作者推送修复的评审、国际象棋对手的节奏——然后选择自己的下一次唤醒时间。</li>
+<li><strong>应对紧急情况。</strong> 当有事情需要关注时，智能体可以把唤醒安排在几分钟后，而收件箱消息可以立即唤醒它。Cron 在关键时刻无法加速。</li>
+</ul>
+<h2 id="两分钟上手"><a class="header" href="#两分钟上手">两分钟上手</a></h2>
+<blockquote>
+<p><strong>平台支持：</strong> 仅支持 macOS 和 Linux。</p>
+</blockquote>
+<pre><code class="language-bash">cargo install cryochamber
+mkdir my-chamber &amp;&amp; cd my-chamber
+cryo init          # 生成 plan.md 和 cryo.toml（或让 make-plan 技能引导你）
+cryo start         # 启动守护进程，安装为操作系统服务
+cryohub start      # 在浏览器中打开打印出的仪表盘 URL
+</code></pre>
+<p>然后编辑 <code>plan.md</code> 来描述智能体的目标和任务。可运行的示例 chamber（<code>mr-lazy</code>、<code>chess-by-mail</code> 等）位于 GitHub 上的 <a href="https://github.com/GiggleLiu/cryochamber/tree/main/examples/chambers"><code>examples/chambers/</code></a>。</p>
+<h2 id="亲眼看看它如何工作"><a class="header" href="#亲眼看看它如何工作">亲眼看看它如何工作</a></h2>
+<pre><code class="language-bash">cryohub start    # 打印本地仪表盘 URL——在浏览器中打开
+</code></pre>
+<p><img src="images/cryohub-dashboard.png" alt="Cryohub 仪表盘显示 chamber 的状态、消息和日志尾部"></p>
+<p><a href="#hub-cryohub">Cryohub</a> 是本地 Web 仪表盘：chamber 状态、消息历史、TODO、笔记、日志尾部，以及生命周期控制，还有向智能体发送消息的输入框。若要从网页或手机远程收发消息，可以用 <a href="#zulip-sync-cryo-zulip"><code>cryo-zulip</code></a> 把 chamber 桥接到 Zulip。</p>
+<h2 id="chamber-的保证"><a class="header" href="#chamber-的保证">Chamber 的保证</a></h2>
+<ul>
+<li><strong>每次唤醒都会产生一条可见消息。</strong> 如果智能体未回复就退出，守护进程会写入一条兜底消息——会话绝不会静默。</li>
+<li><strong>每条收件箱消息都会得到回复。</strong> 即使智能体会话中途崩溃，发送方仍会收到回复。</li>
+<li><strong>每个 TODO 都会被兑现。</strong> 失败的会话会被重新安排为带指数退避的可见重试。</li>
+<li><strong>任何内容都不会被消费两次。</strong> 已被领取的消息和 TODO 绝不会悄悄回到待处理状态。</li>
+</ul>
+<h2 id="下一步"><a class="header" href="#下一步">下一步</a></h2>
+<ul>
+<li><a href="#工作原理">工作原理</a>——五分钟讲解：chamber 文件和会话循环。</li>
+<li><a href="#cli-参考">CLI 参考</a>——所有 <code>cryo</code>、<code>cryohub</code>、<code>cryo-agent</code> 和 <code>cryo-zulip</code> 命令。</li>
+<li><a href="#配置">配置</a>——所有 <code>cryo.toml</code> 和 <code>cryohub.toml</code> 字段。</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="工作原理"><a class="header" href="#工作原理">工作原理</a></h1>
+<p>五分钟了解 chamber 的各个部件。</p>
+<h2 id="chamber-就是一个目录"><a class="header" href="#chamber-就是一个目录">Chamber 就是一个目录</a></h2>
+<p><code>cryo init</code> 会创建三个文件：</p>
+<ul>
+<li><strong><code>plan.md</code></strong> —— 智能体的使命：目标、任务和规则。智能体在每次会话开始时都会重新阅读它。</li>
+<li><strong><code>cryo.toml</code></strong> —— chamber 配置：运行哪个智能体命令、会话超时、收件箱监听。参见 <a href="#配置">配置</a>。</li>
+<li><strong><code>NOTES.md</code></strong> —— 智能体跨会话的记忆。它直接读取并向该文件追加内容。</li>
+</ul>
+<p>守护进程运行时，旁边会出现运行时状态：日志、<code>todo.json</code>，以及 <code>messages/inbox/</code> 和 <code>messages/outbox/</code>。</p>
+<h2 id="计划就是纯-markdown"><a class="header" href="#计划就是纯-markdown">计划就是纯 Markdown</a></h2>
+<p>一个监听 GitHub 仓库新版本的 chamber：</p>
+<pre><code class="language-markdown"># Release watcher
+
+## Goal
+Tell me when acme/widgets publishes a new release.
+
+## Tasks
+1. Run `gh release list --repo acme/widgets --limit 1` and compare
+   the version with the one recorded in NOTES.md.
+2. If it changed: send me the release notes with `cryo-agent send`,
+   then record the new version in NOTES.md.
+3. Schedule the next check with `cryo-agent todo add` — every 2 hours
+   on weekdays, once a day on weekends.
+4. Hibernate with `cryo-agent hibernate --summary "..."`.
+</code></pre>
+<p>不需要代码，也不需要 cron 表达式——智能体自己判断情况（这里是工作日还是周末）并决定下一次唤醒时机。</p>
+<h2 id="会话循环"><a class="header" href="#会话循环">会话循环</a></h2>
+<pre><code class="language-text">daemon wakes agent        &lt;- earliest TODO due, or inbox message
+    │
+    v
+agent reads plan.md + NOTES.md
+    │
+    v
+does the work
+    │
+    v
+cryo-agent send "..."                    &lt;- a visible message, never silent
+    │
+    v
+cryo-agent todo add "..." --at &lt;when&gt;    &lt;- declares the next wake
+    │
+    v
+cryo-agent hibernate                     &lt;- daemon sleeps until that wake
+    │
+    └────────────── back to the top ──────────────┘
+</code></pre>
+<p>一次唤醒、一次智能体运行、再回到休眠——这就是一个<strong>会话</strong>：</p>
+<ol>
+<li>当最早到期（due）的 TODO 到来时，守护进程唤醒智能体；若有收件箱消息到达，则立即唤醒。</li>
+<li>智能体阅读 <code>plan.md</code> 和 <code>NOTES.md</code>，然后开始干活。</li>
+<li>它用 <code>cryo-agent send</code> 至少发送一条可见消息。如果它在发送前退出，守护进程会写入一条兜底消息——会话绝不会静默。</li>
+<li>它用 <code>cryo-agent todo add "..." --at &lt;time&gt;</code> 声明自己的下一次唤醒。守护进程的下一次唤醒永远是「最早到期的 TODO」——没有 TODO，就不唤醒。</li>
+<li>它调用 <code>cryo-agent hibernate</code> 并退出。守护进程一直休眠到下一个触发时机。<code>hibernate --complete</code> 则彻底结束计划。</li>
+</ol>
+<h2 id="与智能体对话"><a class="header" href="#与智能体对话">与智能体对话</a></h2>
+<p>从终端（<code>cryo send "..."</code>）或 Cryohub 仪表盘发送消息。消息会落入 <code>messages/inbox/</code>，并在默认的 <code>watch_dirs</code> 配置下立即唤醒智能体。智能体的回复会出现在 <code>messages/outbox/</code> 以及仪表盘的消息历史中。</p>
+<h2 id="下一步-1"><a class="header" href="#下一步-1">下一步</a></h2>
+<ul>
+<li><a href="#cli-参考">CLI 参考</a>——所有 <code>cryo</code>、<code>cryohub</code>、<code>cryo-agent</code> 和 <code>cryo-zulip</code> 命令。</li>
+<li><a href="#配置">配置</a>——所有 <code>cryo.toml</code> 和 <code>cryohub.toml</code> 字段。</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-参考"><a class="header" href="#cli-参考">CLI 参考</a></h1>
+<p>所有 cryochamber 二进制及其命令。<code>cryo.toml</code> 和 <code>cryohub.toml</code> 的字段见 <a href="#配置">配置</a>。</p>
+<p>每个二进制都接受 <code>--version</code>（打印版本并退出）和 <code>--help</code>。</p>
+<h2 id="操作员-clicryo"><a class="header" href="#操作员-clicryo">操作员 CLI（<code>cryo</code>）</a></h2>
+<p>除非另有说明，请在 chamber 目录内运行这些命令。</p>
+<table>
+<thead>
+<tr><th>类别</th><th>命令</th><th>作用</th></tr>
+
+</thead>
+
+<tbody>
+<tr class="group"><td rowspan="7">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。</td></tr>
+
+<tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>启动守护进程。读取 <code>cryo.toml</code> 并把覆盖项写入 <code>timer.json</code>。</td></tr>
+
+<tr><td><code>cryo start --max-session-duration 3600</code></td><td>为本次运行覆盖会话超时时间。</td></tr>
+
+<tr><td><code>cryo status</code></td><td>显示守护进程是否在运行、当前会话编号以及下一次唤醒时间。</td></tr>
+
+<tr><td><code>cryo restart</code></td><td>重启正在运行的守护进程。若它已安装为操作系统服务，则重启现有服务而不重写或移除它。</td></tr>
+
+<tr><td><code>cryo cancel</code></td><td>停止守护进程并移除运行时状态。</td></tr>
+
+<tr><td><code>cryo wake ["message"]</code></td><td>立即唤醒守护进程，可附带一条消息。</td></tr>
+
+<tr class="group"><td rowspan="2">日志</td><td><code>cryo watch [--all] [--viewpoint cryo|agent]</code></td><td>实时跟踪日志。<code>--all</code> 从头显示日志。<code>--viewpoint cryo</code>（默认）跟踪结构化事件日志；<code>--viewpoint agent</code> 跟踪智能体原始输出（<code>cryo-agent.log</code>）。</td></tr>
+
+<tr><td><code>cryo log</code></td><td>打印完整会话日志。</td></tr>
+
+<tr class="group"><td rowspan="2">消息</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;] [--wake]</code></td><td>向智能体的收件箱发送消息。<code>--from</code> 设置发送者（默认 <code>human</code>），<code>--subject</code> 设置主题（默认根据正文生成），<code>--wake</code> 在发送后立即唤醒智能体。</td></tr>
+
+<tr><td><code>cryo receive</code></td><td>读取智能体发送到发件箱（outbox）的消息。</td></tr>
+
+<tr class="group"><td rowspan="2">维护</td><td><code>cryo clean [--force]</code></td><td>移除日志、状态、消息等运行时文件。</td></tr>
+
+<tr><td><code>cryo ps [--kill-all]</code></td><td>列出（或终止）本机上所有正在运行的 cryo 守护进程。可从任意目录运行。</td></tr>
+
+</tbody>
+
+</table>
+
+<h2 id="hub-cryohub"><a class="header" href="#hub-cryohub">Hub（<code>cryohub</code>）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>命令</th><th>作用</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryohub start [--host &lt;ip&gt;] [--port &lt;n&gt;]</code></td><td>安装一个重启后依然存活的服务。<code>--host</code> 和 <code>--port</code> 同时更新已保存的 hub 配置。</td></tr>
+<tr><td><code>cryohub start --foreground</code></td><td>在当前终端运行 hub，而不是安装服务。</td></tr>
+<tr><td><code>cryohub stop</code></td><td>卸载全局 hub 服务。</td></tr>
+<tr><td><code>cryohub restart</code></td><td>重启已安装的全局 hub 服务，无需重新安装。</td></tr>
+<tr><td><code>cryohub status</code></td><td>显示全局 hub 的 URL、chamber 根目录、配置文件路径、日志路径和服务状态。同时列出旧版本遗留的、以当前目录为作用域的 hub 服务。</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="智能体-ipccryo-agent"><a class="header" href="#智能体-ipccryo-agent">智能体 IPC（<code>cryo-agent</code>）</a></h2>
+<p>这些命令由被派生的 AI 智能体用来通过 Unix socket 与守护进程通信。它们不是操作员接口。</p>
+<table>
+<thead>
+<tr><th>类别</th><th>命令</th><th>作用</th></tr>
+
+</thead>
+
+<tbody>
+<tr class="group"><td rowspan="3">休眠</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>结束会话；还有更多工作要做。</td></tr>
+
+<tr><td><code>cryo-agent hibernate --complete</code></td><td>结束会话；计划已完成。</td></tr>
+
+<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>报告失败的会话。守护进程会把已消费的 TODO 标记为完成，并新增一个带编号的重试 TODO。</td></tr>
+
+<tr class="group"><td rowspan="4">TODO</td><td><code>cryo-agent todo add "text" --at &lt;TIME&gt;</code></td><td>通过 TODO 安排下一次唤醒。<code>--at</code> 接受相对偏移（<code>+30 minutes</code>）、ISO 8601 时间戳（<code>2026-04-25T10:00</code>；容忍秒和空格分隔符），或仅日期（<code>2026-04-25</code>，表示午夜）。</td></tr>
+
+<tr><td><code>cryo-agent todo list</code></td><td>列出所有 TODO 项。</td></tr>
+
+<tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>将某个 TODO 项标记为完成。</td></tr>
+
+<tr><td><code>cryo-agent todo remove &lt;id&gt;</code></td><td>移除某个 TODO 项。</td></tr>
+
+<tr class="group"><td rowspan="6">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。</td></tr>
+
+<tr><td><code>cryo-agent send --stdin</code></td><td>从 stdin 原样读取发件箱消息正文，包括末尾换行；适用于多行或对 shell 敏感的文字。</td></tr>
+
+<tr><td><code>cryo-agent send --question "msg"</code></td><td>将该消息标记为等待人类回复的问题。</td></tr>
+
+<tr><td><code>cryo-agent receive</code></td><td>领取（claim）当前来自人类的收件箱批次。</td></tr>
+
+<tr><td><code>cryo-agent receive --wait [--timeout &lt;secs&gt;]</code></td><td>如果收件箱已有待处理批次，则像普通 <code>receive</code> 一样立即领取。否则阻塞：守护进程把请求停放在活动会话中，并把操作员的下一条消息送入该会话。超时时打印「No new messages」提示——把它当作应休眠的信号。<code>--timeout</code> 默认为 <code>cryo.toml</code> 中的 <code>wait_timeout</code>（否则为 14400 秒 / 4 小时），并被限制在 1–86400 秒（上限 24 小时；<code>0</code> 等待 1 秒，而不是 0）。再次调用 <code>receive --wait</code> 之前，必须先 <code>send</code> 一条回复。</td></tr>
+
+<tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>渲染对话记录（默认：最近 20 条消息）。<code>--last N</code> 显示最近 N 条，<code>--all</code> 显示所有已归档消息，<code>--since &lt;iso&gt;</code> 显示某个 ISO 8601 时刻之后的消息；三者互斥。副作用是会归档任何待处理的收件箱批次，与 <code>receive</code> 一样履行回复义务。</td></tr>
+
+<tr class="group"><td rowspan="3">时间</td><td><code>cryo-agent time</code></td><td>以 ISO 8601 格式打印当前本地时间。</td></tr>
+
+<tr><td><code>cryo-agent time "+30 minutes"</code></td><td>计算相对偏移。单位：<code>minutes</code>、<code>hours</code>、<code>days</code>、<code>weeks</code>。</td></tr>
+
+<tr><td><code>cryo-agent time "2026-04-25T10:00"</code></td><td>校验并规范化 ISO 8601 时间戳。</td></tr>
+
+</tbody>
+
+</table>
+
+<h2 id="zulip-sync-cryo-zulip"><a class="header" href="#zulip-sync-cryo-zulip">Zulip 同步（<code>cryo-zulip</code>）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>命令</th><th>作用</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryo-zulip init --config &lt;zuliprc&gt; --stream &lt;name&gt; [--topic &lt;topic&gt;] [--history]</code></td><td>校验凭据、解析 stream，并写入 <code>zulip-sync.json</code>。</td></tr>
+<tr><td><code>cryo-zulip sync [--interval N]</code></td><td>启动后台同步守护进程。默认间隔来自 <code>cryo.toml</code>，否则回退为 5 秒。</td></tr>
+<tr><td><code>cryo-zulip unsync</code></td><td>停止同步守护进程。</td></tr>
+<tr><td><code>cryo-zulip pull</code></td><td>单次拉取。</td></tr>
+<tr><td><code>cryo-zulip push</code></td><td>单次推送。</td></tr>
+<tr><td><code>cryo-zulip status</code></td><td>显示同步配置。</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="配置"><a class="header" href="#配置">配置</a></h1>
+<p>每个 chamber 都通过其目录下的 <code>cryo.toml</code> 文件进行配置。<code>cryo init</code> 会创建一个带合理默认值的配置。</p>
+<h2 id="cryotoml"><a class="header" href="#cryotoml"><code>cryo.toml</code></a></h2>
+<pre><code class="language-toml"># cryo.toml — cryochamber 项目配置
+agent = "opencode"               # 智能体命令 (opencode, claude, codex, pi, kimi, ...)
+max_session_duration = 3600      # 会话超时秒数 (0 = 不超时)
+watch_dirs = ["messages/inbox"]  # 监听以实现响应式唤醒的目录 ([] 表示禁用)
+zulip_poll_interval = 5          # Zulip 同步轮询间隔（秒）
+wait_timeout = 14400             # `cryo-agent receive --wait` 的默认超时秒数（限制为 1-86400）
+
+# 注入到每个智能体会话的 Provider 环境变量（可选）。
+[provider]
+name = "anthropic"               # 显示名称，在 `cryo status` 中展示
+env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # 派生智能体时设置的环境变量
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>字段</th><th>默认值</th><th>说明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>agent</code></td><td><code>"opencode"</code></td><td>要运行的智能体命令。使用 <code>"claude"</code> 表示 Claude Code，<code>"codex"</code> 表示 Codex，<code>"pi"</code> 表示 Pi，<code>"kimi"</code> 表示 Kimi Code，或 <code>PATH</code> 上的任何可执行文件。</td></tr>
+<tr><td><code>max_session_duration</code></td><td><code>3600</code></td><td>会话超时秒数。<code>0</code> 表示禁用超时。</td></tr>
+<tr><td><code>watch_dirs</code></td><td><code>["messages/inbox"]</code></td><td>守护进程监听新文件的目录列表，用于响应式唤醒智能体。路径相对于 chamber 目录解释，除非是绝对路径。设为 <code>[]</code> 可完全禁用响应式唤醒。</td></tr>
+<tr><td><code>zulip_poll_interval</code></td><td><code>5</code></td><td><code>cryo-zulip sync</code> 轮询 Zulip 的间隔（秒）。<code>cryo-zulip sync --interval N</code> 可单次覆盖它。</td></tr>
+<tr><td><code>wait_timeout</code></td><td><code>14400</code></td><td>可选。当智能体未传 <code>--timeout</code> 时，<code>cryo-agent receive --wait</code> 的默认超时秒数。守护进程会把任何值限制到 <code>1</code>–<code>86400</code>（因此 <code>0</code> 等待 1 秒而非 0；上限为 24 小时）。</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="provider"><a class="header" href="#provider"><code>[provider]</code></a></h2>
+<p>Cryochamber 只支持一个活动的 provider 配置。<code>[provider]</code> 表携带一个显示用 <code>name</code> 和一个 <code>env</code> 映射，包含注入到每个派生智能体会话的环境变量——智能体模型的 API 密钥就放在这里。</p>
+<pre><code class="language-toml">[provider]
+name = "anthropic"
+env = { ANTHROPIC_API_KEY = "sk-ant-...", OPENCODE_MODEL = "claude-sonnet-4-20250514" }
+</code></pre>
+<p>配置好之后，<code>cryo status</code> 会显示 provider 名称。</p>
+<blockquote>
+<p><strong>安全提示</strong>：<code>[provider].env</code> 下的值是机密。<code>cryo init</code> 会写入一个忽略 <code>.cryo/</code> 的 chamber <code>.gitignore</code>，但 <code>cryo.toml</code> 本身<strong>不会</strong>被 gitignore——如果你提交或推送这个 chamber，请让 API 密钥远离版本控制。要么把 <code>cryo.toml</code> 加入你自己的 <code>.gitignore</code>，要么不把密钥写进 <code>cryo.toml</code>，而是在 <code>cryo start</code> 之前把它们导出到环境变量中。</p>
+</blockquote>
+<h3 id="遗留-providers已弃用"><a class="header" href="#遗留-providers已弃用">遗留 <code>[[providers]]</code>（已弃用）</a></h3>
+<p>旧配置使用 <code>[[providers]]</code> 数组。出于向后兼容它仍会被接受，但只会使用第一项——provider 轮换已被移除。加载使用 <code>[[providers]]</code> 的配置会打印弃用警告，下一次 <code>save</code> 会把它重写为规范的单一 <code>[provider]</code> 形式。请迁移到 <code>[provider]</code>。</p>
+<p>见下文 <a href="#cryohubtoml"><code>cryohub.toml</code></a>。</p>
+<h2 id="cryohubtoml"><a class="header" href="#cryohubtoml"><code>cryohub.toml</code></a></h2>
+<p>Cryohub 设置位于 <code>$XDG_CONFIG_HOME/cryo/cryohub.toml</code>；若未设置 <code>XDG_CONFIG_HOME</code>，则位于 <code>~/.config/cryo/cryohub.toml</code>。默认的本地仪表盘 URL 是 <code>http://127.0.0.1:8765</code>。仪表盘的「新建 Chamber」按钮会在配置的 <code>chamber_root</code> 下创建 chamber，默认是 <code>~/.cryo/chambers</code>。</p>
+<pre><code class="language-toml">host = "127.0.0.1"
+port = 8765
+chamber_root = "/Users/alice/.cryo/chambers"
+</code></pre>
+<p>对于项目自有的 chamber 集合，把 <code>chamber_root</code> 设为项目路径，例如 <code>/path/to/project/.cryo/chambers</code>。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>字段</th><th>默认值</th><th>说明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>host</code></td><td><code>"127.0.0.1"</code></td><td>全局仪表盘服务的绑定地址。</td></tr>
+<tr><td><code>port</code></td><td><code>8765</code></td><td>全局仪表盘服务的 TCP 端口。</td></tr>
+<tr><td><code>chamber_root</code></td><td><code>~/.cryo/chambers</code></td><td>从仪表盘 UI 创建的 chamber 的默认位置。</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="从命令行覆盖配置"><a class="header" href="#从命令行覆盖配置">从命令行覆盖配置</a></h2>
+<p>传给 <code>cryo start</code> 的旗标会覆盖本次会话的 <code>cryo.toml</code>。这些覆盖项存储在 <code>timer.json</code>（运行时状态）中，不会修改 <code>cryo.toml</code>。</p>
+<pre><code class="language-bash">cryo start --agent claude
+cryo start --max-session-duration 3600
+</code></pre>
+<h2 id="配置与状态"><a class="header" href="#配置与状态">配置与状态</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>文件</th><th>用途</th><th>跨运行保留</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cryo.toml</code></td><td>项目配置。提交进 git。</td><td>是</td></tr>
+<tr><td><code>timer.json</code></td><td>运行时状态：会话编号、PID 锁、CLI 覆盖项。</td><td>否</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="docs/js/languages-20972354.js"></script>
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>
