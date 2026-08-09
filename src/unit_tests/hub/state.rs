@@ -1,5 +1,50 @@
 use super::*;
 
+fn chamber_entry(id: &str, path: std::path::PathBuf, archived: bool) -> ChamberEntry {
+    ChamberEntry {
+        id: id.to_string(),
+        name: id.to_string(),
+        path,
+        path_hint: None,
+        config_error: None,
+        running: false,
+        agent_running: false,
+        session: None,
+        next_wake: None,
+        next_wake_display: None,
+        wake_imminent: false,
+        has_open_question: false,
+        task: None,
+        last_message_preview: None,
+        completed: false,
+        archived,
+        sync: Vec::new(),
+    }
+}
+
+#[test]
+fn watcher_targets_skip_archived_chambers() {
+    let active_path = std::path::PathBuf::from("/tmp/active");
+    let archived_path = std::path::PathBuf::from("/tmp/archived");
+    let mut idx = ChamberIndex::new();
+    idx.insert(
+        "active".to_string(),
+        chamber_entry("active", active_path.clone(), false),
+    );
+    idx.insert(
+        "archived".to_string(),
+        chamber_entry("archived", archived_path, true),
+    );
+
+    let (paths, entries) = watcher_targets(&idx);
+
+    assert_eq!(
+        paths,
+        std::collections::BTreeSet::from([active_path.clone()])
+    );
+    assert_eq!(entries, vec![("active".to_string(), active_path)]);
+}
+
 #[test]
 fn resolve_finds_known_chamber() {
     let dir = tempfile::tempdir().unwrap();

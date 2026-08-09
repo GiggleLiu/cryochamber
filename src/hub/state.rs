@@ -1,10 +1,8 @@
 //! Shared application state for the web server.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-
-#[cfg(not(test))]
-use std::collections::BTreeSet;
 
 use crate::hub::discovery::{ChamberEntry, ChamberIndex, DiscoveryOptions};
 
@@ -39,6 +37,16 @@ pub struct AppState {
     pub chambers: Arc<RwLock<ChamberIndex>>,
     pub tx: tokio::sync::broadcast::Sender<SseEvent>,
     pub watchers: crate::hub::watchers::WatcherRegistry,
+}
+
+fn watcher_targets(idx: &ChamberIndex) -> (BTreeSet<PathBuf>, Vec<(String, PathBuf)>) {
+    let entries: Vec<(String, PathBuf)> = idx
+        .values()
+        .filter(|entry| !entry.archived)
+        .map(|entry| (entry.id.clone(), entry.path.clone()))
+        .collect();
+    let paths = entries.iter().map(|(_, path)| path.clone()).collect();
+    (paths, entries)
 }
 
 impl AppState {
@@ -119,12 +127,7 @@ impl AppState {
     pub fn wire_watchers(&self) {
         let (paths, entries): (BTreeSet<PathBuf>, Vec<(String, PathBuf)>) = {
             let idx = self.chambers.read().unwrap();
-            let paths: BTreeSet<PathBuf> = idx.values().map(|e| e.path.clone()).collect();
-            let entries: Vec<(String, PathBuf)> = idx
-                .values()
-                .map(|e| (e.id.clone(), e.path.clone()))
-                .collect();
-            (paths, entries)
+            watcher_targets(&idx)
         };
         for (id, path) in entries {
             self.watchers.ensure_watching(id, &path, self.tx.clone());
