@@ -136,9 +136,11 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 /// True if a `WakeFromInbox` event should be dropped instead of spawning a
 /// new session.
 ///
-/// The notify watcher forwards every fs event under `messages/inbox`,
-/// including the removals caused by `MessageStore` archiving a batch a
-/// parked `receive --wait` already delivered mid-session. Those events sit
+/// The notify watcher forwards file-arrival events under `messages/inbox`
+/// (creates and renames into the directory; atomic tmp+rename writers only
+/// produce the latter), including any rename shuffling caused by
+/// `MessageStore` archiving a batch a parked `receive --wait` already
+/// delivered mid-session. Those events sit
 /// queued on the channel while the session is active and would otherwise
 /// look like a fresh wake once the idle loop resumes, even though the inbox
 /// is empty. Ignore the wake iff all three hold:
@@ -196,7 +198,19 @@ impl InboxWatcher {
 
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
-                if event.kind.is_create() {
+                // Atomic writers (tmp-file + rename, e.g. feishu-collaborate's
+                // inbox writer) never produce a Create event: the file appears
+                // via a rename-into-dir instead. Treat those as new files too.
+                let is_new_file = event.kind.is_create()
+                    || matches!(
+                        event.kind,
+                        notify::EventKind::Modify(notify::event::ModifyKind::Name(
+                            notify::event::RenameMode::To
+                                | notify::event::RenameMode::Both
+                                | notify::event::RenameMode::Any,
+                        ))
+                    );
+                if is_new_file {
                     let _ = tx.send(DaemonEvent::InboxChanged { paths: event.paths });
                 }
             }

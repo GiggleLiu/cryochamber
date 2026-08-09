@@ -5297,3 +5297,40 @@ fn test_parked_client_death_pauses_session_deadline_instead_of_resetting_it() {
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert!(log.contains("wait: client disconnected"), "{log}");
 }
+
+#[test]
+fn inbox_watcher_fires_on_atomic_tmp_rename() {
+    // Atomic writers create `.{name}.tmp` and rename it into place; the
+    // rename produces no Create event, only Modify(Name(...)).
+    let dir = tempfile::tempdir().unwrap();
+    let inbox = dir.path().join("inbox");
+    fs::create_dir(&inbox).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _watcher = InboxWatcher::start(std::slice::from_ref(&inbox), tx).unwrap();
+
+    let final_path = inbox.join("2026-08-09T20-00-00_test_1.md");
+    let tmp_path = inbox.join(".2026-08-09T20-00-00_test_1.md.tmp");
+    fs::write(&tmp_path, "body").unwrap();
+    fs::rename(&tmp_path, &final_path).unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+            Ok(DaemonEvent::InboxChanged { paths }) => {
+                if paths.iter().any(|p| p == &final_path) {
+                    return; // rename into the dir woke the daemon
+                }
+            }
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no InboxChanged for the renamed-in file"
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("watcher channel disconnected")
+            }
+        }
+    }
+}
