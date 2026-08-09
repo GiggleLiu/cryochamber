@@ -5301,7 +5301,10 @@ fn test_parked_client_death_pauses_session_deadline_instead_of_resetting_it() {
 #[test]
 fn inbox_watcher_fires_on_atomic_tmp_rename() {
     // Atomic writers create `.{name}.tmp` and rename it into place; the
-    // rename produces no Create event, only Modify(Name(...)).
+    // rename produces no Create event, only Modify(Name(...)). The wake may
+    // legitimately carry the tmp path (macOS FSEvents) or the final path
+    // (Linux inotify pairs the rename) — the daemon re-lists the inbox
+    // either way, so the contract is "some inbox-contained path wakes".
     let dir = tempfile::tempdir().unwrap();
     let inbox = dir.path().join("inbox");
     fs::create_dir(&inbox).unwrap();
@@ -5317,8 +5320,16 @@ fn inbox_watcher_fires_on_atomic_tmp_rename() {
     loop {
         match rx.recv_timeout(std::time::Duration::from_millis(200)) {
             Ok(DaemonEvent::InboxChanged { paths }) => {
-                if paths.iter().any(|p| p == &final_path) {
-                    return; // rename into the dir woke the daemon
+                // Linux must pair the rename and report the final path
+                // (pre-fix only the tmp create fired, which is the bug);
+                // macOS FSEvents can't pair renames, so the tmp path is
+                // the only signal — fine, the daemon re-lists the inbox.
+                #[cfg(not(target_os = "macos"))]
+                let woke = paths.iter().any(|p| p == &final_path);
+                #[cfg(target_os = "macos")]
+                let woke = paths.iter().any(|p| p.starts_with(&inbox));
+                if woke {
+                    return; // the atomic write woke the daemon
                 }
             }
             Ok(_) => {}
