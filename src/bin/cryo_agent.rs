@@ -125,6 +125,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let dir = cryochamber::work_dir()?;
 
+    // Every command except the purely local `time` talks to this chamber's
+    // daemon; fail with the real reason before any IPC produces a misleading
+    // socket or instance-mismatch error.
+    if !matches!(cli.command, Commands::Time { .. }) {
+        cryochamber::ensure_chamber_dir(&dir)?;
+    }
+
     match cli.command {
         Commands::Hibernate {
             complete,

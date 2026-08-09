@@ -780,6 +780,7 @@ fn test_restart_respects_no_service_mode() {
 #[test]
 fn test_agent_hibernate_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo.toml"), "agent = \"opencode\"\n").unwrap();
     agent_cmd()
         .args(["hibernate", "--complete"])
         .current_dir(dir.path())

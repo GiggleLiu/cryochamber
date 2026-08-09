@@ -262,6 +262,9 @@ fn spawn_agent_with_dir(
 
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
+        // The agent's shell tool may run commands from any cwd; the env var
+        // keeps cryo-agent pointed at this chamber regardless.
+        cmd.env(crate::CHAMBER_DIR_ENV, dir);
     }
 
     if let Some(log) = agent_log {

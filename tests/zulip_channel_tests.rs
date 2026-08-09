@@ -379,3 +379,72 @@ fn test_parse_get_messages_filters_to_topic() {
     assert!(found_newest);
     assert_eq!(raw_max_id, Some(301));
 }
+
+#[test]
+fn test_get_retries_once_after_transport_failure() {
+    // A sync daemon polling every 30 s routinely finds its connection torn
+    // down by the server between cycles; the request then dies with an EOF
+    // before any HTTP response. One immediate retry of the idempotent GET
+    // turns that routine blip into silence instead of a logged transient
+    // error (and its recovery line) on every occurrence.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = r#"{"result":"success","msg":"","user_id":7,"email":"bot@example.com"}"#;
+    let server = std::thread::spawn(move || {
+        // First connection: closed without a response (transport failure).
+        let (first, _) = listener.accept().unwrap();
+        drop(first);
+        // Second connection (the retry): serve a valid response.
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = stream.read(&mut request);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+
+    let client = client_for_site(&format!("http://{addr}"));
+    let (user_id, email) = client.get_profile().unwrap();
+    server.join().unwrap();
+
+    assert_eq!(user_id, 7);
+    assert_eq!(email, "bot@example.com");
+}
+
+#[test]
+fn test_get_does_not_retry_http_status_errors() {
+    // Only transport-level failures are retried. An HTTP status error is a
+    // real server answer; replaying it buys nothing and would double load.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = stream.read(&mut request);
+        let response =
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        stream.write_all(response.as_bytes()).unwrap();
+        drop(stream);
+        // Watch briefly for a second connection: a retry would land in the
+        // listener backlog and be visible to this non-blocking accept.
+        listener.set_nonblocking(true).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        listener.accept().is_ok()
+    });
+
+    let client = client_for_site(&format!("http://{addr}"));
+    let err = client.get_profile().unwrap_err();
+    let saw_retry = server.join().unwrap();
+
+    assert!(!saw_retry, "HTTP status errors must not be retried");
+    assert!(err.to_string().contains("GET"), "{err}");
+}

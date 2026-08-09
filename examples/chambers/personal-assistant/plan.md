@@ -144,5 +144,10 @@ Each session you:
   is blocking her sprint, so earlier is better"). Keep suggestions specific and
   actionable; don't hedge.
 - Keep replies concise. The user wants a helpful assistant, not a verbose one.
+- After asking the user something (e.g. "did the image render?"), do **not**
+  schedule reply-check TODOs — their reply wakes you the moment it arrives.
+  Leave the daily summary / next reminder as the only pending wake, and don't
+  re-ask on a quiet wake; fold "still awaiting your reply on X" into the next
+  message you were going to send anyway.
 - Delayed-wake handling: the daemon injects a "DELAYED WAKE" notice when a
   scheduled wake was delayed 5+ minutes. Alert the user, then proceed.
