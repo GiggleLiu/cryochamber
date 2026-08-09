@@ -12,6 +12,21 @@ const WAKE_TIME_INPUT_FORMATS: &[&str] = &[WAKE_TIME_FMT, "%Y-%m-%dT%H:%M:%S"];
 /// clamped to one day so a persistently failing TODO still polls once a day.
 const RETRY_DELAY_CAP_MINUTES: i64 = 24 * 60;
 
+/// Number of most-recent completed TODOs kept visible in the wake prompt
+/// (`display_for_prompt`); older completed items are folded behind a count.
+const PROMPT_DONE_ITEMS_SHOWN: usize = 3;
+
+fn format_item(item: &TodoItem) -> String {
+    let check = if item.done {
+        "x"
+    } else if item.claimed {
+        "~"
+    } else {
+        " "
+    };
+    format!("{}. [{}] {} (at: {})", item.id, check, item.text, item.at)
+}
+
 /// A single todo item with an ID, text, scheduled time, and lifecycle state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
@@ -147,20 +162,38 @@ impl TodoFile {
         if items.is_empty() {
             return Ok("No todos.".to_string());
         }
-        Ok(items
-            .iter()
-            .map(|item| {
-                let check = if item.done {
-                    "x"
-                } else if item.claimed {
-                    "~"
-                } else {
-                    " "
-                };
-                format!("{}. [{}] {} (at: {})", item.id, check, item.text, item.at)
-            })
-            .collect::<Vec<_>>()
-            .join("\n"))
+        Ok(items.iter().map(format_item).collect::<Vec<_>>().join("\n"))
+    }
+
+    /// Like [`Self::display`], but bounded for the per-session wake prompt:
+    /// pending and claimed items are always shown, while only the most recent
+    /// [`PROMPT_DONE_ITEMS_SHOWN`] completed items stay visible. The daemon
+    /// injects this list into every session prompt, and done items are never
+    /// deleted, so the unbounded form would grow with chamber age forever.
+    pub fn display_for_prompt(&self) -> Result<String> {
+        let items = load_items(&self.path)?;
+        if items.is_empty() {
+            return Ok("No todos.".to_string());
+        }
+        let done_count = items.iter().filter(|i| i.done).count();
+        let hidden = done_count.saturating_sub(PROMPT_DONE_ITEMS_SHOWN);
+        if hidden == 0 {
+            return Ok(items.iter().map(format_item).collect::<Vec<_>>().join("\n"));
+        }
+        let mut lines = vec![format!(
+            "({hidden} completed TODOs hidden — `cryo-agent todo list` shows all)"
+        )];
+        let mut done_seen = 0;
+        for item in &items {
+            if item.done {
+                done_seen += 1;
+                if done_seen <= hidden {
+                    continue;
+                }
+            }
+            lines.push(format_item(item));
+        }
+        Ok(lines.join("\n"))
     }
 
     pub fn next_wake_time(&self) -> Result<Option<String>> {

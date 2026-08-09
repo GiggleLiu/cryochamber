@@ -396,3 +396,86 @@ fn normalize_rejects_natural_language() {
         .to_string();
     assert!(err.contains("Accepted forms"), "got: {err}");
 }
+#[test]
+fn test_display_for_prompt_hides_old_done_items_behind_a_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    let todos = TodoFile::new(&path);
+    for n in 1..=5 {
+        let id = todos
+            .add(format!("done task {n}"), "2026-01-01T00:00".into())
+            .unwrap();
+        todos.done(id).unwrap();
+    }
+    todos
+        .add("pending task".into(), "2026-12-01T09:00".into())
+        .unwrap();
+
+    let display = todos.display_for_prompt().unwrap();
+
+    // Pending items always shown.
+    assert!(display.contains("pending task"), "{display}");
+    // Only the most recent completed items are shown...
+    assert!(display.contains("done task 3"), "{display}");
+    assert!(display.contains("done task 4"), "{display}");
+    assert!(display.contains("done task 5"), "{display}");
+    // ...older ones are folded behind a note that names the full-list command.
+    assert!(!display.contains("done task 1"), "{display}");
+    assert!(!display.contains("done task 2"), "{display}");
+    assert!(
+        display.contains("2 completed") && display.contains("cryo-agent todo list"),
+        "{display}"
+    );
+}
+
+#[test]
+fn test_display_for_prompt_shows_everything_when_few_done_items() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    let todos = TodoFile::new(&path);
+    let id = todos
+        .add("done task".into(), "2026-01-01T00:00".into())
+        .unwrap();
+    todos.done(id).unwrap();
+    todos
+        .add("pending task".into(), "2026-12-01T09:00".into())
+        .unwrap();
+
+    let display = todos.display_for_prompt().unwrap();
+
+    assert_eq!(display, todos.display().unwrap());
+    assert!(!display.contains("completed TODO"), "{display}");
+}
+
+#[test]
+fn test_display_for_prompt_always_shows_claimed_and_pending_regardless_of_age() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("todo.json");
+    let todos = TodoFile::new(&path);
+    // Oldest item is pending, then many done items, then a claimed one.
+    todos
+        .add("ancient pending".into(), "2026-12-01T09:00".into())
+        .unwrap();
+    for n in 1..=6 {
+        let id = todos
+            .add(format!("done task {n}"), "2026-01-01T00:00".into())
+            .unwrap();
+        todos.done(id).unwrap();
+    }
+    todos
+        .add("claimed task".into(), "2026-01-02T00:00".into())
+        .unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 6, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    todos.claim_due(&now).unwrap();
+
+    let display = todos.display_for_prompt().unwrap();
+
+    assert!(display.contains("ancient pending"), "{display}");
+    assert!(display.contains("[~] claimed task"), "{display}");
+    assert!(display.contains("3 completed"), "{display}");
+    assert!(!display.contains("done task 1"), "{display}");
+    assert!(display.contains("done task 6"), "{display}");
+}
