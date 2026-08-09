@@ -328,6 +328,12 @@ struct ActiveRequestState<'a> {
 struct SessionWaitState {
     /// Monotonic deadline of the currently parked wait, if any.
     parked_deadline: Option<Instant>,
+    /// When the current wait parked. On a disconnect-reclaim the session
+    /// deadline is shifted by the parked duration — pause semantics — rather
+    /// than reset, so a repeatedly-killed wait client cannot mint fresh
+    /// session budgets forever. Delivery/timeout keep their documented
+    /// fresh-budget reset.
+    parked_since: Option<Instant>,
     /// Chamber default (secs) when a request omits --timeout.
     default_timeout_secs: u64,
     /// Set when a wait resolves; the loop consumes it to re-arm the session
@@ -1160,7 +1166,29 @@ impl Daemon {
                 // Claim the wake's due TODOs once for the whole retry
                 // campaign. TODOs that become due during retry backoff belong
                 // to the next wake, not this failed attempt sequence.
-                let claimed_due = self.claim_past_due_todos();
+                let claimed_due = match self.claim_past_due_todos() {
+                    Ok(count) => count,
+                    Err(e) if is_scheduled_wake => {
+                        // todo.json unreadable/unwritable at wake time. Keep
+                        // the stale `next_wake` armed so this wake refires,
+                        // paced, until the file heals — resyncing from the
+                        // same broken file would yield None and silently
+                        // park the chamber forever.
+                        eprintln!(
+                            "Daemon: failed to claim due TODOs ({e:#}); retrying in {}s",
+                            TODO_CLAIM_RETRY_DELAY.as_secs()
+                        );
+                        self.sleep_agent_retry_backoff(TODO_CLAIM_RETRY_DELAY);
+                        continue;
+                    }
+                    Err(e) => {
+                        // Inbox/forced/bootstrap wakes carry their own work;
+                        // run the session even though no TODO could be
+                        // claimed, so the message still gets answered.
+                        eprintln!("Daemon: failed to claim TODO list: {e:#}");
+                        0
+                    }
+                };
 
                 // Scheduled wakes are demand-driven: the cached `next_wake`
                 // only decides when to re-check `todo.json`; whether a
@@ -1170,9 +1198,11 @@ impl Daemon {
                 // file read, never an agent session. Bootstrap and
                 // inbox/forced wakes are explicit demand and run regardless.
                 if is_scheduled_wake && claimed_due == 0 {
+                    // Fail open on a listing error: skipping is only safe
+                    // when the inbox is *known* empty (invariant 2).
                     let inbox_has_files = crate::message::list_inbox(&self.dir)
                         .map(|files| !files.is_empty())
-                        .unwrap_or(false);
+                        .unwrap_or(true);
                     if !inbox_has_files {
                         next_wake = next_wake_from_todos(&self.dir);
                         eprintln!(
@@ -1182,12 +1212,6 @@ impl Daemon {
                                 .map(|t| t.to_string())
                                 .unwrap_or_else(|| "none".into()),
                         );
-                        if next_wake.is_some_and(|t| t <= self.clock.local_now()) {
-                            // Disk still shows past-due work this wake could
-                            // not claim: claim_due failed to persist (I/O
-                            // error). Pace the retries instead of spinning.
-                            self.sleep_agent_retry_backoff(TODO_CLAIM_RETRY_DELAY);
-                        }
                         continue;
                     }
                 }
@@ -1487,8 +1511,9 @@ impl Daemon {
                     let secs =
                         effective_wait_timeout(timeout_secs, state.wait.default_timeout_secs);
                     runtime.park()?;
-                    state.wait.parked_deadline =
-                        Some(self.clock.monotonic_now() + Duration::from_secs(secs));
+                    let now = self.clock.monotonic_now();
+                    state.wait.parked_deadline = Some(now + Duration::from_secs(secs));
+                    state.wait.parked_since = Some(now);
                     state.logger.log_event(&format!("wait: parked ({secs}s)"))?;
                 } else {
                     let response = runtime.respond(true, outcome.message);
@@ -1655,6 +1680,7 @@ impl Daemon {
         };
         let mut wait_state = SessionWaitState {
             parked_deadline: None,
+            parked_since: None,
             default_timeout_secs: context.wait_timeout_secs,
             reset_session_deadline: false,
             timed_out: false,
@@ -1823,7 +1849,14 @@ impl Daemon {
                 // died — park a fresh wait later in the same session.
                 if runtime.reclaim_parked_if_disconnected() {
                     wait_state.parked_deadline = None;
-                    wait_state.reset_session_deadline = true;
+                    // Pause, don't reset: the agent resumes with the work
+                    // budget it had when it parked. A fresh budget here would
+                    // let a repeatedly-killed wait client (too-short shell
+                    // timeout) extend one session forever.
+                    if let (Some(d), Some(since)) = (deadline, wait_state.parked_since.take()) {
+                        deadline =
+                            Some(d + self.clock.monotonic_now().saturating_duration_since(since));
+                    }
                     if let Err(e) = logger.log_event(
                         "wait: client disconnected — parked wait released, inbox left unclaimed",
                     ) {
@@ -1845,6 +1878,7 @@ impl Daemon {
                     if !outcome.claimed_filenames.is_empty() {
                         inbox_state.record_claimed_batch(&outcome.claimed_filenames);
                         wait_state.parked_deadline = None;
+                        wait_state.parked_since = None;
                         wait_state.reset_session_deadline = true;
                         if let Err(e) = logger.log_event(&format!(
                             "wait: delivered {} message(s) [{}]",
@@ -1880,6 +1914,7 @@ impl Daemon {
                         }
                     } else if self.clock.monotonic_now() >= wait_deadline {
                         wait_state.parked_deadline = None;
+                        wait_state.parked_since = None;
                         wait_state.reset_session_deadline = true;
                         wait_state.timed_out = true;
                         if let Err(e) = logger.log_event("wait: timed out") {
@@ -1939,21 +1974,16 @@ impl Daemon {
     /// while the scheduler ignores them. Load/save failures are swallowed and
     /// reported to stderr — TODO bookkeeping must never abort the session loop.
     /// Claim all past-due TODOs for the upcoming session and return how many
-    /// were claimed. Zero also covers the error path: a wake that cannot
-    /// claim anything carries no work either way.
-    fn claim_past_due_todos(&self) -> usize {
+    /// were claimed. Errors propagate: the caller must distinguish "nothing
+    /// due" (a valid skip for a scheduled wake) from "cannot read/write
+    /// todo.json" (must not silently drop the wake).
+    fn claim_past_due_todos(&self) -> Result<usize> {
         let now = self.clock.local_now();
-        match crate::todo::TodoFile::new(self.dir.join("todo.json")).claim_due(&now) {
-            Ok(items) if !items.is_empty() => {
-                eprintln!("Daemon: claimed {} due TODO(s)", items.len());
-                items.len()
-            }
-            Ok(_) => 0,
-            Err(e) => {
-                eprintln!("Daemon: failed to claim TODO list: {e}");
-                0
-            }
+        let items = crate::todo::TodoFile::new(self.dir.join("todo.json")).claim_due(&now)?;
+        if !items.is_empty() {
+            eprintln!("Daemon: claimed {} due TODO(s)", items.len());
         }
+        Ok(items.len())
     }
 
     /// Mark all claimed TODOs as done after a successful session. The claim is

@@ -394,8 +394,21 @@ fn test_get_retries_once_after_transport_failure() {
         // First connection: closed without a response (transport failure).
         let (first, _) = listener.accept().unwrap();
         drop(first);
-        // Second connection (the retry): serve a valid response.
-        let (mut stream, _) = listener.accept().unwrap();
+        // Second connection (the retry): serve a valid response. Bounded
+        // accept so a regression fails the test instead of wedging the
+        // server thread on a connection that never comes.
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => panic!("client never retried the GET: {e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(2)))
             .unwrap();

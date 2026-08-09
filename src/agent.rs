@@ -262,9 +262,6 @@ fn spawn_agent_with_dir(
 
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
-        // The agent's shell tool may run commands from any cwd; the env var
-        // keeps cryo-agent pointed at this chamber regardless.
-        cmd.env(crate::CHAMBER_DIR_ENV, dir);
     }
 
     if let Some(log) = agent_log {
@@ -283,6 +280,14 @@ fn spawn_agent_with_dir(
     // Inject provider-specific environment variables
     if !provider_env.is_empty() {
         cmd.envs(provider_env);
+    }
+
+    // The agent's shell tool may run commands from any cwd; this keeps
+    // cryo-agent pointed at this chamber regardless. Set AFTER provider env:
+    // the chamber identity comes from the daemon, and a user-editable
+    // [provider] env map must not be able to shadow it.
+    if let Some(dir) = working_dir {
+        cmd.env(crate::CHAMBER_DIR_ENV, dir);
     }
 
     // Put the agent in its own process group (pgid == child pid). Real agents

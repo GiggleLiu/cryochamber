@@ -166,10 +166,13 @@ impl TodoFile {
     }
 
     /// Like [`Self::display`], but bounded for the per-session wake prompt:
-    /// pending and claimed items are always shown, while only the most recent
-    /// [`PROMPT_DONE_ITEMS_SHOWN`] completed items stay visible. The daemon
-    /// injects this list into every session prompt, and done items are never
-    /// deleted, so the unbounded form would grow with chamber age forever.
+    /// pending and claimed items are always shown, while only the *last*
+    /// [`PROMPT_DONE_ITEMS_SHOWN`] completed items in list order stay
+    /// visible. List order approximates creation order (completion times are
+    /// not tracked), which is the recency that matters for prompt context.
+    /// The daemon injects this list into every session prompt, and done items
+    /// are never deleted, so the unbounded form would grow with chamber age
+    /// forever.
     pub fn display_for_prompt(&self) -> Result<String> {
         let items = load_items(&self.path)?;
         if items.is_empty() {
