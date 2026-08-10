@@ -54,11 +54,10 @@
 <tr><td><code>cryo-agent todo list</code></td><td>列出所有 TODO 项。</td></tr>
 <tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>将某个 TODO 项标记为完成。</td></tr>
 <tr><td><code>cryo-agent todo remove &lt;id&gt;</code></td><td>移除某个 TODO 项。</td></tr>
-<tr class="group"><td rowspan="6">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。</td></tr>
+<tr class="group"><td rowspan="5">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。</td></tr>
 <tr><td><code>cryo-agent send --stdin</code></td><td>从 stdin 原样读取发件箱消息正文，包括末尾换行；适用于多行或对 shell 敏感的文字。</td></tr>
 <tr><td><code>cryo-agent send --question "msg"</code></td><td>将该消息标记为等待人类回复的问题。</td></tr>
 <tr><td><code>cryo-agent receive</code></td><td>领取（claim）当前来自人类的收件箱批次。</td></tr>
-<tr><td><code>cryo-agent receive --wait [--timeout &lt;secs&gt;]</code></td><td>如果收件箱已有待处理批次，则像普通 <code>receive</code> 一样立即领取。否则阻塞：守护进程把请求停放在活动会话中，并把操作员的下一条消息送入该会话。超时时打印「No new messages」提示——把它当作应休眠的信号。<code>--timeout</code> 默认为 <code>cryo.toml</code> 中的 <code>wait_timeout</code>（否则为 14400 秒 / 4 小时），并被限制在 1–86400 秒（上限 24 小时；<code>0</code> 等待 1 秒，而不是 0）。再次调用 <code>receive --wait</code> 之前，必须先 <code>send</code> 一条回复。</td></tr>
 <tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>渲染对话记录（默认：最近 20 条消息）。<code>--last N</code> 显示最近 N 条，<code>--all</code> 显示所有已归档消息，<code>--since &lt;iso&gt;</code> 显示某个 ISO 8601 时刻之后的消息；三者互斥。副作用是会归档任何待处理的收件箱批次，与 <code>receive</code> 一样履行回复义务。</td></tr>
 <tr class="group"><td rowspan="3">时间</td><td><code>cryo-agent time</code></td><td>以 ISO 8601 格式打印当前本地时间。</td></tr>
 <tr><td><code>cryo-agent time "+30 minutes"</code></td><td>计算相对偏移。单位：<code>minutes</code>、<code>hours</code>、<code>days</code>、<code>weeks</code>。</td></tr>

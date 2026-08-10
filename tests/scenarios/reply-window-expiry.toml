@@ -1,0 +1,14 @@
+description = "A quiet chamber: the parked hibernate expires with the reply window and the session ends."
+
+[[actions]]
+kind = "send"
+message = "nothing more to report"
+
+[[actions]]
+kind = "todo_add"
+text = "follow up"
+at = "+1h"
+
+[[actions]]
+kind = "hibernate"
+summary = "quiet window"

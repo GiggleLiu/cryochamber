@@ -6,10 +6,6 @@ agent = "{{agent}}"
 # Session timeout in seconds (0 = no timeout)
 max_session_duration = 3600
 
-# Default timeout in seconds for `cryo-agent receive --wait` (interactive
-# mode). The daemon clamps any value to 1-86400 seconds (24 hours).
-# wait_timeout = 14400
-
 # Reply window in seconds. After the agent hibernates, the daemon keeps
 # the session parked this long; a message arriving inside the window is
 # handled by the same session. Unset = 300 (5 minutes); 0 disables the

@@ -54,11 +54,10 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 <tr><td><code>cryo-agent todo list</code></td><td>List all TODO items.</td></tr>
 <tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>Mark a TODO item as done.</td></tr>
 <tr><td><code>cryo-agent todo remove &lt;id&gt;</code></td><td>Remove a TODO item.</td></tr>
-<tr class="group"><td rowspan="6">Messaging</td><td><code>cryo-agent send "message"</code></td><td>Write a message to the outbox for the human.</td></tr>
+<tr class="group"><td rowspan="5">Messaging</td><td><code>cryo-agent send "message"</code></td><td>Write a message to the outbox for the human.</td></tr>
 <tr><td><code>cryo-agent send --stdin</code></td><td>Read the outbox message body from stdin exactly, including trailing newlines; use for multi-line or shell-sensitive text.</td></tr>
 <tr><td><code>cryo-agent send --question "msg"</code></td><td>Mark the message as a question awaiting a human reply.</td></tr>
 <tr><td><code>cryo-agent receive</code></td><td>Claim the current inbox batch from the human.</td></tr>
-<tr><td><code>cryo-agent receive --wait [--timeout &lt;secs&gt;]</code></td><td>If the inbox already has a pending batch, claim it immediately like plain <code>receive</code>. Otherwise block: the daemon parks the request in the live session and delivers the operator's next message into it. On timeout, prints a "No new messages" notice instead — treat that as a cue to hibernate. <code>--timeout</code> defaults to <code>wait_timeout</code> from <code>cryo.toml</code> (else 14400 s / 4 h) and is clamped to 1-86400 s (24 h cap; <code>0</code> waits 1 s, not 0). You must <code>send</code> a reply before calling <code>receive --wait</code> again.</td></tr>
 <tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>Render the conversation transcript (default: last 20 messages). <code>--last N</code> shows the last N, <code>--all</code> shows every archived message, <code>--since &lt;iso&gt;</code> shows messages at or after an ISO 8601 time; the three are mutually exclusive. Also archives any pending inbox batch as a side effect, satisfying the same reply obligation as <code>receive</code>.</td></tr>
 <tr class="group"><td rowspan="3">Time</td><td><code>cryo-agent time</code></td><td>Print the current local time in ISO 8601 format.</td></tr>
 <tr><td><code>cryo-agent time "+30 minutes"</code></td><td>Compute a relative offset. Units: <code>minutes</code>, <code>hours</code>, <code>days</code>, <code>weeks</code>.</td></tr>

@@ -85,15 +85,6 @@ enum Action {
     WriteFile { path: String, content: String },
     /// Spawn a detached orphan subprocess that outlives the mock agent.
     SpawnOrphan { command: String, args: Vec<String> },
-    /// Call `cryo-agent receive --wait [--timeout N]` and assert its stdout
-    /// contains the requested text. Blocks until the daemon delivers a batch
-    /// or the wait times out.
-    ReceiveWait {
-        #[serde(default)]
-        timeout: Option<u64>,
-        #[serde(default)]
-        contains: Vec<String>,
-    },
 }
 
 fn main() {
@@ -283,37 +274,6 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
                 .stderr(Stdio::null())
                 .spawn()
                 .with_context(|| format!("spawning orphan {command}"))?;
-            Ok(None)
-        }
-        Action::ReceiveWait { timeout, contains } => {
-            let mut args = vec!["receive".to_string(), "--wait".to_string()];
-            if let Some(secs) = timeout {
-                args.push("--timeout".into());
-                args.push(secs.to_string());
-            }
-
-            let output = call_cryo_agent_output(&args)?;
-            if !output.status.success() {
-                anyhow::bail!(
-                    "cryo-agent {:?} exited with {}: {}",
-                    args,
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr).trim(),
-                );
-            }
-
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for needle in contains {
-                let needle = expand(needle);
-                if !stdout.contains(&needle) {
-                    anyhow::bail!(
-                        "cryo-agent {:?} output missing {:?}: {}",
-                        args,
-                        needle,
-                        stdout.trim(),
-                    );
-                }
-            }
             Ok(None)
         }
     }

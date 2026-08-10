@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 8;
+pub const IPC_PROTOCOL_VERSION: u32 = 9;
 
 /// Read/write timeout applied to each accepted client connection. Bounds how
 /// long a single request poll may block on a slow or silent client so the
@@ -46,11 +46,6 @@ pub enum Request {
         question: bool,
     },
     Receive,
-    ReceiveWait {
-        /// `None` = agent passed no --timeout; daemon applies the cryo.toml
-        /// `wait_timeout` value or the built-in default.
-        timeout_secs: Option<u64>,
-    },
     Dialog {
         filter: DialogFilter,
     },
@@ -132,7 +127,7 @@ pub struct Responder {
 
 impl Responder {
     /// Best-effort liveness probe: true when the peer has closed its end of
-    /// the connection. A parked `cryo-agent receive --wait` client blocks on
+    /// the connection. A parked `cryo-agent hibernate` client blocks on
     /// its response and never writes again, so a readable stream that yields
     /// EOF (or a hard error) means the client process is gone. `WouldBlock`
     /// means the peer is alive with nothing to say. Errors arming the probe
