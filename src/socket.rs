@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 9;
+pub const IPC_PROTOCOL_VERSION: u32 = 10;
 
 /// Read/write timeout applied to each accepted client connection. Bounds how
 /// long a single request poll may block on a slow or silent client so the
@@ -39,6 +39,11 @@ pub enum Request {
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
+        /// Agent-requested reply window in seconds. `None` = daemon default;
+        /// `Some(0)` = sleep immediately. Only meaningful for a plain
+        /// hibernate (never with `complete` or a nonzero `exit_code`).
+        #[serde(default)]
+        linger: Option<u64>,
     },
     Send {
         text: String,

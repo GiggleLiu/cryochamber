@@ -27,6 +27,7 @@ pub(super) enum DaemonRequest {
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
+        linger: Option<u64>,
     },
     Receive,
     Todo(TodoRequest),
@@ -43,10 +44,12 @@ impl From<crate::socket::Request> for DaemonRequest {
                 complete,
                 exit_code,
                 summary,
+                linger,
             } => Self::Hibernate {
                 complete,
                 exit_code,
                 summary,
+                linger,
             },
             crate::socket::Request::Receive => Self::Receive,
             crate::socket::Request::TodoAdd { text, at } => {
@@ -635,9 +638,17 @@ fn parse_dialog_since(input: &str) -> Option<chrono::NaiveDateTime> {
         .and_then(|date| date.and_hms_opt(0, 0, 0))
 }
 
-/// Resolve the hibernate reply window: the chamber's `reply_window` value,
-/// capped at `MAX_REPLY_WINDOW_SECS`. Zero is a valid result: it means "no
-/// window" (the quietness gate still applies).
-pub(super) fn effective_linger_secs(default_secs: u64) -> u64 {
-    default_secs.min(crate::config::MAX_REPLY_WINDOW_SECS)
+/// Reply window applied when a hibernate carries no `--linger` value.
+pub(crate) const DEFAULT_LINGER_SECS: u64 = 300;
+/// Upper bound the daemon applies to any requested linger.
+pub(crate) const MAX_LINGER_SECS: u64 = 86400;
+
+/// Resolve the hibernate reply window: the agent's `--linger` request,
+/// defaulting to `DEFAULT_LINGER_SECS` when absent, capped at
+/// `MAX_LINGER_SECS`. Zero is a valid result: it means "no window" (the
+/// quietness gate still applies).
+pub(super) fn effective_linger_secs(requested: Option<u64>) -> u64 {
+    requested
+        .unwrap_or(DEFAULT_LINGER_SECS)
+        .min(MAX_LINGER_SECS)
 }

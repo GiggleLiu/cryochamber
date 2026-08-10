@@ -6,7 +6,7 @@ counter = ".mock-session-count"
 session = "1"
 actions = [
     { kind = "todo_add", text = "past wake", at = "-10m" },
-    { kind = "hibernate", summary = "Session 1 done, testing delayed wake" },
+    { kind = "hibernate", summary = "Session 1 done, testing delayed wake", linger = 0 },
 ]
 
 [[when]]

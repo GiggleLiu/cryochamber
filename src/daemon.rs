@@ -326,11 +326,6 @@ struct ActiveSessionContext<'a> {
     timeout_secs: u64,
     spawn_time: Instant,
     retry_remaining: bool,
-    /// Chamber default (secs) for the post-hibernate reply window,
-    /// resolved by the launcher as
-    /// `config.reply_window.unwrap_or(DEFAULT_REPLY_WINDOW_SECS)`.
-    /// 0 = no window.
-    reply_window_secs: u64,
 }
 
 struct ActiveRequestState<'a> {
@@ -352,8 +347,6 @@ struct SessionWaitState {
     /// than reset, so a repeatedly-killed client cannot mint fresh session
     /// budgets forever. A mail release keeps the fresh-budget reset.
     parked_since: Option<Instant>,
-    /// Chamber default (secs) for the hibernate reply window. 0 = no window.
-    reply_window_default_secs: u64,
     /// Set when mail rejects a parked hibernate back into the session; the
     /// loop consumes it to re-arm the session deadline so each conversation
     /// round gets a fresh work budget.
@@ -1437,6 +1430,7 @@ impl Daemon {
                 complete,
                 exit_code,
                 summary,
+                linger,
             } => {
                 if state.wait.parked_deadline.is_some() && exit_code == 0 {
                     // A hibernate is already parked for this session. Refuse
@@ -1476,7 +1470,7 @@ impl Daemon {
                 );
                 state.logger.log_event(&decision.log_event)?;
                 let linger_secs = if decision.outcome == Some(SessionLoopOutcome::Hibernate) {
-                    effective_linger_secs(state.wait.reply_window_default_secs)
+                    effective_linger_secs(linger)
                 } else {
                     0
                 };
@@ -1701,7 +1695,6 @@ impl Daemon {
         let mut wait_state = SessionWaitState {
             parked_deadline: None,
             parked_since: None,
-            reply_window_default_secs: context.reply_window_secs,
             reset_session_deadline: false,
             last_todo_check: None,
         };

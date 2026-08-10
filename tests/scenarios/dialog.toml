@@ -17,3 +17,4 @@ at = "+1h"
 [[actions]]
 kind = "hibernate"
 summary = "tested dialog"
+linger = 0

@@ -13,9 +13,9 @@ Each session you:
   something done, answer a question, or interpret an image)
 - **Fire due reminders** back to the user
 - **Send a daily morning summary** (once per day at 09:00)
-- **Stay interactive** afterwards: the reply window (`reply_window = 3600`)
-  holds your hibernate open for an hour, so a conversation continues in the
-  same session instead of waking a cold one
+- **Stay interactive** afterwards: hibernate with `--linger 3600` so the
+  reply window holds your hibernate open for an hour and a conversation
+  continues in the same session instead of waking a cold one
 
 ## Tasks
 
@@ -83,12 +83,12 @@ Each session you:
    - Append "summary sent YYYY-MM-DD" to `NOTES.md`.
 
 6. **Stay interactive via the reply window** — go to step 7 and hibernate
-   normally; `reply_window = 3600` holds the hibernate open for up to an hour.
+   with `--linger 3600`, which holds the hibernate open for up to an hour.
    - The call may block — that is the window. Give it a generous shell-tool
      timeout; if the shell kills it anyway, the hibernate stands.
    - **Refused with "unread inbox mail"**: a follow-up arrived inside the
      window and you are still in this session — `receive`, reply as in
-     step 3, hibernate again.
+     step 3, hibernate again with `--linger 3600`.
    - **Window expiry or a due TODO**: the hibernate succeeds and the session
      ends.
 
@@ -105,8 +105,9 @@ Each session you:
    - If no pending items and no pending summary, wake in 6 hours as a heartbeat:
      resolve it with `cryo-agent time "+6 hours"` and add an internal heartbeat
      todo if needed.
-   - Run `cryo-agent hibernate --summary "..."`. The current CLI does **not**
-     support `--wake`; wake scheduling comes from pending todos.
+   - Run `cryo-agent hibernate --summary "..." --linger 3600`. The current
+     CLI does **not** support `--wake`; wake scheduling comes from pending
+     todos.
    - Never use `--complete` — this assistant runs indefinitely.
 
 ## Configuration
@@ -114,8 +115,8 @@ Each session you:
 - Schedule: adaptive — sleep until next reminder is due, wake on inbox
 - Interaction: two-way via Zulip (stream: `jinguo-group`); images the user
   uploads are synced into `messages/attachments/` automatically
-- Interactive mode: 1 hour reply window (`reply_window = 3600` in
-  `cryo.toml`) — a follow-up inside the window rejects the parked hibernate
+- Interactive mode: 1 hour reply window (`cryo-agent hibernate --linger
+  3600`) — a follow-up inside the window rejects the parked hibernate
   back into the same session
 - Watch inbox: enabled
 - Daily summary: sent via `cryo-agent send` at 09:00 with pending count

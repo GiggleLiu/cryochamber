@@ -54,8 +54,9 @@ Security and reliability hardening.
   never refused.
 - **Reply window.** A successful `hibernate` now stays open for the reply
   window so a quick follow-up is answered by the same live session instead of
-  a cold new one. Configure with `reply_window` in `cryo.toml` (seconds;
-  unset = 300, `0` disables). Note `hibernate` may now block up to the window
+  a cold new one. The agent chooses the window per hibernate with
+  `cryo-agent hibernate --linger <seconds>` (omitted = 300, capped at 86400;
+  `0` sleeps immediately). Note `hibernate` may now block up to the window
   long.
 
 ### Removed
@@ -67,8 +68,9 @@ Security and reliability hardening.
 - **`cryo-agent receive --wait` / `--timeout` removed.** The reply window is
   the one waiting mechanism: just `hibernate` — a follow-up inside the window
   rejects the hibernate back into the same session.
-- **`wait_timeout` config key removed** (superseded by `reply_window`).
-  Leftover keys are silently ignored; update existing `cryo.toml` files.
+- **`wait_timeout` config key removed** (superseded by the agent-chosen
+  reply window, `hibernate --linger`). Leftover keys are silently ignored;
+  update existing `cryo.toml` files.
 - **GitHub Discussions message sync (`cryo-gh`) removed.** The `cryo-gh` binary
   and its Discussion-based sync channel are gone. Use Zulip (`cryo-zulip`) for
   remote sync, or the local file-based inbox/outbox.

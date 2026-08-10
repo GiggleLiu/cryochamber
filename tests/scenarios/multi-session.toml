@@ -6,7 +6,7 @@ counter = ".mock-session-count"
 session = "<3"
 actions = [
     { kind = "todo_add", text = "next session", at = "now" },
-    { kind = "hibernate", summary = "More to do" },
+    { kind = "hibernate", summary = "More to do", linger = 0 },
 ]
 
 [[when]]

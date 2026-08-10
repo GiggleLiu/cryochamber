@@ -8,6 +8,7 @@ at = "2099-12-31T23:59"
 [[actions]]
 kind = "hibernate"
 summary = "about to crash"
+linger = 0
 
 [[actions]]
 kind = "exit"

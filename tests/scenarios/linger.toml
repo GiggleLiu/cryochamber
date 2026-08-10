@@ -14,6 +14,7 @@ at = "+1h"
 [[actions]]
 kind = "hibernate"
 summary = "round 1 done"
+linger = 30
 
 [[actions]]
 kind = "receive"
@@ -22,6 +23,9 @@ kind = "receive"
 kind = "send"
 message = "ack: second round"
 
+# Round 2 requests no window at all: the duration is reselected per
+# hibernate, so this one is granted immediately instead of parking again.
 [[actions]]
 kind = "hibernate"
 summary = "reply-window round-trip done"
+linger = 0

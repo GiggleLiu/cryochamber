@@ -27,6 +27,12 @@ enum Commands {
         /// Human-readable session summary
         #[arg(long)]
         summary: Option<String>,
+        /// Seconds to hold the session open for an operator follow-up after
+        /// this hibernate is granted (unset = 300, capped at 86400; 0 = sleep
+        /// immediately). Linger long after asking a question; use 0 when no
+        /// reply is expected.
+        #[arg(long, conflicts_with_all = ["complete", "exit"])]
+        linger: Option<u64>,
     },
     /// Send message to human (writes to outbox)
     Send {
@@ -128,12 +134,14 @@ fn main() -> Result<()> {
             complete,
             exit,
             summary,
+            linger,
         } => send(
             &dir,
             &Request::Hibernate {
                 complete,
                 exit_code: exit,
                 summary,
+                linger,
             },
         ),
         Commands::Send {
