@@ -28,7 +28,6 @@ cryo cancel          # stop the daemon
 **Control the daemon:**
 
 ```bash
-cryo wake         # force the agent to wake up now (don't wait for schedule)
 cryo restart      # stop and restart the daemon
 cryo cancel       # stop the daemon and clean up state
 cryo ps           # list all running cryochamber daemons on this machine

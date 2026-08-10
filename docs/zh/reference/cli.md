@@ -13,16 +13,15 @@
 <tr><th>类别</th><th>命令</th><th>作用</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="7">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。</td></tr>
+<tr class="group"><td rowspan="6">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。</td></tr>
 <tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>启动守护进程。读取 <code>cryo.toml</code> 并把覆盖项写入 <code>timer.json</code>。</td></tr>
 <tr><td><code>cryo start --max-session-duration 3600</code></td><td>为本次运行覆盖会话超时时间。</td></tr>
 <tr><td><code>cryo status</code></td><td>显示守护进程是否在运行、当前会话编号以及下一次唤醒时间。</td></tr>
 <tr><td><code>cryo restart</code></td><td>重启正在运行的守护进程。若它已安装为操作系统服务，则重启现有服务而不重写或移除它。</td></tr>
 <tr><td><code>cryo cancel</code></td><td>停止守护进程并移除运行时状态。</td></tr>
-<tr><td><code>cryo wake ["message"]</code></td><td>立即唤醒守护进程，可附带一条消息。</td></tr>
 <tr class="group"><td rowspan="2">日志</td><td><code>cryo watch [--all] [--viewpoint cryo|agent]</code></td><td>实时跟踪日志。<code>--all</code> 从头显示日志。<code>--viewpoint cryo</code>（默认）跟踪结构化事件日志；<code>--viewpoint agent</code> 跟踪智能体原始输出（<code>cryo-agent.log</code>）。</td></tr>
 <tr><td><code>cryo log</code></td><td>打印完整会话日志。</td></tr>
-<tr class="group"><td rowspan="2">消息</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;] [--wake]</code></td><td>向智能体的收件箱发送消息。<code>--from</code> 设置发送者（默认 <code>human</code>），<code>--subject</code> 设置主题（默认根据正文生成），<code>--wake</code> 在发送后立即唤醒智能体。</td></tr>
+<tr class="group"><td rowspan="2">消息</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;]</code></td><td>向智能体的收件箱发送消息；守护进程的收件箱监视器会唤醒智能体。<code>--from</code> 设置发送者（默认 <code>human</code>），<code>--subject</code> 设置主题（默认根据正文生成）。</td></tr>
 <tr><td><code>cryo receive</code></td><td>读取智能体发送到发件箱（outbox）的消息。</td></tr>
 <tr class="group"><td rowspan="2">维护</td><td><code>cryo clean [--force]</code></td><td>移除日志、状态、消息等运行时文件。</td></tr>
 <tr><td><code>cryo ps [--kill-all]</code></td><td>列出（或终止）本机上所有正在运行的 cryo 守护进程。可从任意目录运行。</td></tr>

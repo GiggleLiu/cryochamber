@@ -593,11 +593,7 @@ impl StartupPlatform for FakeStartupPlatform {
     type Server = DummyServer;
     type Watcher = DummyWatcher;
 
-    fn register_signal_handlers(
-        &self,
-        _shutdown: &Arc<AtomicBool>,
-        _wake_requested: &Arc<AtomicBool>,
-    ) -> Result<()> {
+    fn register_signal_handlers(&self, _shutdown: &Arc<AtomicBool>) -> Result<()> {
         if let Some(message) = &self.signal_error {
             anyhow::bail!("{message}");
         }
@@ -4589,8 +4585,8 @@ fn test_parked_delivery_finalizes_session_even_when_respond_parked_fails() {
 
 #[test]
 fn test_should_ignore_inbox_wake_empty_paths_never_ignored() {
-    // SIGUSR1 / `cryo wake` forward empty paths and must always wake,
-    // regardless of inbox contents.
+    // An empty path list carries no evidence about which files arrived, so
+    // it must always wake regardless of inbox contents (fail open).
     let inbox_dir = Path::new("/chamber/messages/inbox");
     assert!(!should_ignore_inbox_wake(&[], inbox_dir, true));
     assert!(!should_ignore_inbox_wake(&[], inbox_dir, false));

@@ -13,16 +13,15 @@ Run these from inside a chamber directory unless noted otherwise.
 <tr><th>Category</th><th>Command</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="7">Lifecycle</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>Initialize the directory: write <code>cryo.toml</code>, <code>plan.md</code>, <code>NOTES.md</code>, and <code>README.md</code>. Existing files are kept.</td></tr>
+<tr class="group"><td rowspan="6">Lifecycle</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>Initialize the directory: write <code>cryo.toml</code>, <code>plan.md</code>, <code>NOTES.md</code>, and <code>README.md</code>. Existing files are kept.</td></tr>
 <tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>Start the daemon. Reads <code>cryo.toml</code> and writes overrides to <code>timer.json</code>.</td></tr>
 <tr><td><code>cryo start --max-session-duration 3600</code></td><td>Override the session timeout for this run.</td></tr>
 <tr><td><code>cryo status</code></td><td>Show whether the daemon is running, the current session number, and the next wake time.</td></tr>
 <tr><td><code>cryo restart</code></td><td>Restart the running daemon. When it is installed as an OS service, restart the existing service without rewriting or removing it.</td></tr>
 <tr><td><code>cryo cancel</code></td><td>Stop the daemon and remove the runtime state.</td></tr>
-<tr><td><code>cryo wake ["message"]</code></td><td>Wake the daemon immediately, optionally with a message.</td></tr>
 <tr class="group"><td rowspan="2">Logs</td><td><code>cryo watch [--all] [--viewpoint cryo|agent]</code></td><td>Follow a log in real time. <code>--all</code> shows the log from the beginning. <code>--viewpoint cryo</code> (default) follows the structured event log; <code>--viewpoint agent</code> follows raw agent output (<code>cryo-agent.log</code>).</td></tr>
 <tr><td><code>cryo log</code></td><td>Print the full session log.</td></tr>
-<tr class="group"><td rowspan="2">Messaging</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;] [--wake]</code></td><td>Send a message to the agent's inbox. <code>--from</code> sets the sender (default <code>human</code>), <code>--subject</code> sets the subject (default: derived from the body), <code>--wake</code> wakes the agent immediately after sending.</td></tr>
+<tr class="group"><td rowspan="2">Messaging</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;]</code></td><td>Send a message to the agent's inbox; the daemon's inbox watcher wakes the agent. <code>--from</code> sets the sender (default <code>human</code>), <code>--subject</code> sets the subject (default: derived from the body).</td></tr>
 <tr><td><code>cryo receive</code></td><td>Read messages the agent sent to the outbox.</td></tr>
 <tr class="group"><td rowspan="2">Housekeeping</td><td><code>cryo clean [--force]</code></td><td>Remove runtime files such as logs, state, and messages.</td></tr>
 <tr><td><code>cryo ps [--kill-all]</code></td><td>List, or kill, every running cryo daemon on this machine. Run from anywhere.</td></tr>

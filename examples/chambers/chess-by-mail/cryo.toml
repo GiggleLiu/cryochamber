@@ -8,4 +8,4 @@ agent = "opencode"
 max_session_duration = 3600
 
 # Directories to watch for reactive wake (empty = no reactive wake)
-watch_dirs = []
+watch_dirs = ["messages/inbox"]

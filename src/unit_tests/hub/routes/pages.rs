@@ -69,7 +69,7 @@ fn shell_does_not_render_restart_button() {
 fn shell_does_not_render_wake_button() {
     assert!(
         !SHELL_HTML.contains("btn('wake'"),
-        "wake remains a backend operation but should not be exposed as a hub button"
+        "there is no wake operation; the hub must not render a wake button"
     );
 }
 

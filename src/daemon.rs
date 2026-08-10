@@ -10,7 +10,7 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDateTime};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use signal_hook::consts::{SIGINT, SIGTERM, SIGUSR1};
+use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::flag;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,8 +144,9 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 /// queued on the channel while the session is active and would otherwise
 /// look like a fresh wake once the idle loop resumes, even though the inbox
 /// is empty. Ignore the wake iff all three hold:
-///   (a) `paths` is non-empty — SIGUSR1 / `cryo wake` send empty paths and
-///       must always wake regardless of inbox state.
+///   (a) `paths` is non-empty — an empty path list carries no evidence about
+///       which files arrived, so it must always wake regardless of inbox
+///       state (fail open).
 ///   (b) every path lies inside `inbox_dir` — a mixed batch (e.g. some other
 ///       watched dir) must still wake.
 ///   (c) the caller has already determined the inbox is empty. A listing
@@ -592,11 +593,7 @@ trait StartupPlatform {
     type Server;
     type Watcher;
 
-    fn register_signal_handlers(
-        &self,
-        shutdown: &Arc<AtomicBool>,
-        wake_requested: &Arc<AtomicBool>,
-    ) -> Result<()>;
+    fn register_signal_handlers(&self, shutdown: &Arc<AtomicBool>) -> Result<()>;
     fn bind_socket_server(&self, sock_path: &Path) -> Result<Self::Server>;
     fn register_registry(&self, dir: &Path, sock_path: &Path) -> Result<()>;
     fn start_inbox_watcher(
@@ -612,17 +609,11 @@ impl StartupPlatform for SystemStartupPlatform {
     type Server = crate::socket::SocketServer;
     type Watcher = InboxWatcher;
 
-    fn register_signal_handlers(
-        &self,
-        shutdown: &Arc<AtomicBool>,
-        wake_requested: &Arc<AtomicBool>,
-    ) -> Result<()> {
+    fn register_signal_handlers(&self, shutdown: &Arc<AtomicBool>) -> Result<()> {
         flag::register(SIGTERM, Arc::clone(shutdown))
             .context("Failed to register SIGTERM handler")?;
         flag::register(SIGINT, Arc::clone(shutdown))
             .context("Failed to register SIGINT handler")?;
-        flag::register(SIGUSR1, Arc::clone(wake_requested))
-            .context("Failed to register SIGUSR1 handler")?;
         Ok(())
     }
 
@@ -749,7 +740,6 @@ pub struct Daemon {
     state_path: PathBuf,
     log_path: PathBuf,
     shutdown: Arc<AtomicBool>,
-    wake_requested: Arc<AtomicBool>,
     clock: Arc<dyn Clock>,
     launcher: Arc<dyn SessionLauncher>,
     state_store: Arc<dyn StateStore>,
@@ -778,7 +768,6 @@ impl Daemon {
             state_path,
             log_path,
             shutdown: Arc::new(AtomicBool::new(false)),
-            wake_requested: Arc::new(AtomicBool::new(false)),
             clock,
             launcher,
             state_store,
@@ -859,7 +848,7 @@ impl Daemon {
         watch_dirs: &[PathBuf],
         tx: mpsc::Sender<DaemonEvent>,
     ) -> Result<StartupResources<P::Server, P::Watcher>> {
-        platform.register_signal_handlers(&self.shutdown, &self.wake_requested)?;
+        platform.register_signal_handlers(&self.shutdown)?;
 
         let sock_path = crate::socket::socket_path(&self.dir);
         if let Some(parent) = sock_path.parent() {
@@ -1086,9 +1075,8 @@ impl Daemon {
         let _watcher = startup.watcher;
 
         // Spawn a thread that forwards signals to the event channel,
-        // so recv_timeout() unblocks immediately on SIGTERM/SIGINT/SIGUSR1.
+        // so recv_timeout() unblocks immediately on SIGTERM/SIGINT.
         let shutdown_flag = Arc::clone(&self.shutdown);
-        let wake_flag = Arc::clone(&self.wake_requested);
         let signal_tx = tx;
         let signal_clock = Arc::clone(&self.clock);
         std::thread::spawn(move || loop {
@@ -1096,9 +1084,6 @@ impl Daemon {
             if shutdown_flag.load(Ordering::Relaxed) {
                 let _ = signal_tx.send(DaemonEvent::Shutdown);
                 break;
-            }
-            if wake_flag.swap(false, Ordering::Relaxed) {
-                let _ = signal_tx.send(DaemonEvent::InboxChanged { paths: Vec::new() });
             }
         });
 
@@ -1196,7 +1181,7 @@ impl Daemon {
                         continue;
                     }
                     Err(e) => {
-                        // Inbox/forced/bootstrap wakes carry their own work;
+                        // Inbox/bootstrap wakes carry their own work;
                         // run the session even though no TODO could be
                         // claimed, so the message still gets answered.
                         eprintln!("Daemon: failed to claim TODO list: {e:#}");
@@ -1210,7 +1195,7 @@ impl Daemon {
                 // (or by inbox files awaiting a receive). A stale cache —
                 // however it came to disagree with disk — therefore costs a
                 // file read, never an agent session. Bootstrap and
-                // inbox/forced wakes are explicit demand and run regardless.
+                // inbox wakes are explicit demand and run regardless.
                 if is_scheduled_wake && claimed_due == 0 {
                     // Fail open on a listing error: skipping is only safe
                     // when the inbox is *known* empty (invariant 2).

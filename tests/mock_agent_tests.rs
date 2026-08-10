@@ -686,22 +686,13 @@ fn test_inbox_wake_no_delayed_wake_notice() {
     // notice into the agent prompt.
     //
     // Scenario: session 1 hibernates with a past wake time, then sleeps 2s.
-    // During that sleep, the test runs `cryo wake`. With watch_dirs disabled,
-    // `cryo wake` writes an inbox file and sends SIGUSR1. The signal-forwarding
-    // thread queues an InboxChanged event before the daemon's event loop resumes.
-    // When the daemon checks recv_timeout(0), it finds InboxChanged first, so
-    // session 2 runs as an inbox wake (not a timeout wake) and skips delayed
-    // wake detection.
+    // During that sleep, the test runs `cryo send`; the inbox watcher queues
+    // an InboxChanged event before the daemon's event loop resumes. When the
+    // daemon checks recv_timeout(0), it finds InboxChanged first, so session 2
+    // runs as an inbox wake (not a timeout wake) and skips delayed wake
+    // detection.
     let dir = tempfile::tempdir().unwrap();
     setup_scenario(dir.path(), "inbox-delayed-wake.sh");
-
-    let config_path = dir.path().join("cryo.toml");
-    let config = fs::read_to_string(&config_path).unwrap();
-    fs::write(
-        &config_path,
-        config.replace(r#"watch_dirs = ["messages/inbox"]"#, "watch_dirs = []"),
-    )
-    .unwrap();
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "30"])
@@ -719,7 +710,7 @@ fn test_inbox_wake_no_delayed_wake_notice() {
     // Write inbox file while session 1's script is still sleeping (2s after hibernate).
     // This queues an InboxChanged event before the daemon's event loop resumes.
     cryo_bin()
-        .args(["wake", "wake up via inbox"])
+        .args(["send", "wake up via inbox"])
         .current_dir(dir.path())
         .assert()
         .success();
