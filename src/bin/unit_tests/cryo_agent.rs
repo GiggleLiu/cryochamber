@@ -41,6 +41,36 @@ fn send_stdin_conflicts_with_text_argument() {
 }
 
 #[test]
+fn hibernate_linger_parses_on_plain_hibernate() {
+    use clap::Parser;
+
+    let cli = super::Cli::parse_from(["cryo-agent", "hibernate", "--linger", "600"]);
+    match cli.command {
+        super::Commands::Hibernate { linger, .. } => assert_eq!(linger, Some(600)),
+        _ => unreachable!(),
+    }
+}
+
+/// `--linger` shapes the reply window after a granted plain hibernate;
+/// `--complete` and `--exit` never park, so combining them is agent error
+/// and must fail loudly instead of being silently ignored.
+#[test]
+fn hibernate_linger_conflicts_with_complete_and_exit() {
+    use clap::Parser;
+
+    for args in [
+        ["cryo-agent", "hibernate", "--linger", "600", "--complete"].as_slice(),
+        ["cryo-agent", "hibernate", "--linger", "600", "--exit", "1"].as_slice(),
+    ] {
+        let err = match super::Cli::try_parse_from(args) {
+            Ok(_) => panic!("expected --linger to conflict in {args:?}"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+}
+
+#[test]
 fn resolve_at_arg_normalizes_seconds_to_minute() {
     assert_eq!(
         resolve_at_arg("2026-08-01T09:15:59").unwrap(),

@@ -6,10 +6,20 @@ fn test_serialize_hibernate_request() {
         complete: false,
         exit_code: 0,
         summary: Some("Done".to_string()),
+        linger: Some(600),
     };
     let json = serde_json::to_string(&req).unwrap();
     let parsed: Request = serde_json::from_str(&json).unwrap();
     assert!(matches!(parsed, Request::Hibernate { .. }));
+}
+
+/// A pre-`--linger` cryo-agent binary omits the field entirely; the wire
+/// protocol must accept that and fall back to `None` (daemon default).
+#[test]
+fn test_hibernate_request_without_linger_deserializes() {
+    let json = r#"{"cmd":"hibernate","complete":false,"exit_code":0,"summary":null}"#;
+    let parsed: Request = serde_json::from_str(json).unwrap();
+    assert!(matches!(parsed, Request::Hibernate { linger: None, .. }));
 }
 
 #[test]

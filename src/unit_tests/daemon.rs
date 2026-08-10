@@ -658,23 +658,6 @@ fn test_session_context_with_inbox<'a>(
         timeout_secs,
         spawn_time,
         retry_remaining: false,
-        reply_window_secs: 0,
-    }
-}
-
-/// Like `test_session_context`, but with a nonzero reply window.
-fn test_session_context_with_reply_window(
-    cryo_state: &CryoState,
-    timeout_secs: u64,
-    spawn_time: Instant,
-    reply_window_secs: u64,
-) -> ActiveSessionContext<'_> {
-    ActiveSessionContext {
-        cryo_state,
-        timeout_secs,
-        spawn_time,
-        retry_remaining: false,
-        reply_window_secs,
     }
 }
 
@@ -1569,6 +1552,7 @@ fn test_drive_active_session_timeout_after_hibernate_uses_hibernate_outcome() {
             complete: false,
             exit_code: 0,
             summary: Some("waiting".into()),
+            linger: Some(0),
         }))],
         vec![],
     );
@@ -1607,6 +1591,7 @@ fn test_hibernate_with_window_parks_instead_of_responding() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(1),
         }))];
     requests.extend((0..14).map(|_| Ok(None)));
     let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
@@ -1620,7 +1605,7 @@ fn test_hibernate_with_window_parks_instead_of_responding() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 1),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1660,11 +1645,13 @@ fn test_second_hibernate_while_parked_is_refused_before_logging() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(1),
         })),
         Ok(Some(crate::socket::Request::Hibernate {
             complete: true,
             exit_code: 0,
             summary: None,
+            linger: Some(1),
         })),
     ];
     requests.extend((0..14).map(|_| Ok(None)));
@@ -1679,7 +1666,7 @@ fn test_second_hibernate_while_parked_is_refused_before_logging() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 1),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1727,11 +1714,13 @@ fn test_failure_report_releases_parked_hibernate_and_stands() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         })),
         Ok(Some(crate::socket::Request::Hibernate {
             complete: false,
             exit_code: 1,
             summary: Some("boom".into()),
+            linger: Some(60),
         })),
     ];
     let waits: Vec<std::io::Result<Option<ChildExitStatus>>> = vec![
@@ -1747,7 +1736,7 @@ fn test_failure_report_releases_parked_hibernate_and_stands() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1793,6 +1782,7 @@ fn test_linger_release_with_dead_client_keeps_hibernate_standing() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         }))];
     let waits: Vec<std::io::Result<Option<ChildExitStatus>>> = vec![
         Ok(None),
@@ -1814,7 +1804,7 @@ fn test_linger_release_with_dead_client_keeps_hibernate_standing() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1853,11 +1843,13 @@ fn test_second_hibernate_refusal_propagates_respond_failure() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         })),
         Ok(Some(crate::socket::Request::Hibernate {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         })),
     ];
     let waits: Vec<std::io::Result<Option<ChildExitStatus>>> = vec![Ok(None), Ok(None)];
@@ -1873,7 +1865,7 @@ fn test_second_hibernate_refusal_propagates_respond_failure() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .expect_err("a failed refusal response must propagate");
@@ -1905,6 +1897,7 @@ fn test_linger_todo_due_release_respond_failure_is_logged() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         }))];
     let waits: Vec<std::io::Result<Option<ChildExitStatus>>> = vec![
         Ok(None),
@@ -1932,7 +1925,7 @@ fn test_linger_todo_due_release_respond_failure_is_logged() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -1967,6 +1960,7 @@ fn test_linger_expiry_respond_failure_is_logged() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(1),
         }))];
     requests.extend((0..14).map(|_| Ok(None)));
     let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
@@ -1984,7 +1978,7 @@ fn test_linger_expiry_respond_failure_is_logged() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 1),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -2049,6 +2043,7 @@ fn test_hibernate_complete_never_parks() {
             complete: true,
             exit_code: 0,
             summary: None,
+            linger: Some(600),
         }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
@@ -2058,7 +2053,7 @@ fn test_hibernate_complete_never_parks() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 600),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -2097,6 +2092,7 @@ fn test_hibernate_linger_delivers_followup_into_same_session() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(1),
         })),
         Ok(None), // linger tick: quiet
         Ok(None), // linger tick: unread=true -> parked rejection fires
@@ -2109,6 +2105,7 @@ fn test_hibernate_linger_delivers_followup_into_same_session() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(1),
         })),
     ];
     let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
@@ -2130,7 +2127,7 @@ fn test_hibernate_linger_delivers_followup_into_same_session() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 1),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -2199,6 +2196,7 @@ fn test_hibernate_linger_releases_on_due_todo() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
@@ -2217,7 +2215,7 @@ fn test_hibernate_linger_releases_on_due_todo() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -2263,6 +2261,7 @@ fn test_hibernate_linger_disconnect_keeps_hibernate_standing() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
@@ -2280,7 +2279,7 @@ fn test_hibernate_linger_disconnect_keeps_hibernate_standing() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -2355,6 +2354,7 @@ fn test_hibernate_linger_release_clears_recorded_hibernate_outcome() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         })),
         Ok(None), // linger tick: quiet
         Ok(Some(crate::socket::Request::Receive)),
@@ -2374,7 +2374,7 @@ fn test_hibernate_linger_release_clears_recorded_hibernate_outcome() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 600, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -2436,6 +2436,7 @@ fn test_hibernate_linger_released_on_session_error_path() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         }))],
         vec![Ok(None), Err(std::io::Error::other("boom"))],
     );
@@ -2444,7 +2445,7 @@ fn test_hibernate_linger_released_on_session_error_path() {
     let result = daemon.drive_active_session(
         &mut runtime,
         &mut effects,
-        test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+        test_session_context(&cryo_state, 600, clock.monotonic_now()),
         begin_test_logger(dir.path()),
     );
 
@@ -2522,6 +2523,7 @@ fn test_drive_active_session_writes_daemon_status_without_outbound_message() {
             complete: false,
             exit_code: 0,
             summary: Some("checked schedule".into()),
+            linger: Some(0),
         }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
@@ -2574,6 +2576,7 @@ fn test_drive_active_session_reply_failure_still_finishes_session_log() {
                 complete: false,
                 exit_code: 0,
                 summary: Some("waiting".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -2636,6 +2639,7 @@ fn test_drive_active_session_unreceived_inbox_only_gets_daemon_status() {
             complete: true,
             exit_code: 0,
             summary: Some("done".into()),
+            linger: Some(0),
         }))],
         vec![
             Ok(None),
@@ -2710,6 +2714,7 @@ fn test_drive_active_session_complete_refused_while_todo_is_due() {
                 complete: true,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
             // Refused above — the agent clears the overdue item, which is the
             // documented way out, and only then may it call the plan finished.
@@ -2718,6 +2723,7 @@ fn test_drive_active_session_complete_refused_while_todo_is_due() {
                 complete: true,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -2796,6 +2802,7 @@ fn test_drive_active_session_send_after_receive_satisfies_queued_inbox_message()
                 complete: true,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -2848,6 +2855,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
                 complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
             // Gate refused the hibernate above — agent now drains the inbox.
             Ok(Some(crate::socket::Request::Receive)),
@@ -2859,6 +2867,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
                 complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -2984,6 +2993,7 @@ fn test_drive_active_session_todo_requests_use_effects() {
                 complete: false,
                 exit_code: 0,
                 summary: None,
+                linger: Some(0),
             })),
         ],
         vec![
@@ -3151,6 +3161,7 @@ fn test_drive_active_session_receive_request_invokes_effect_and_returns_body() {
                 complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -3305,6 +3316,7 @@ fn test_drive_active_session_dialog_request_returns_transcript_and_preserves_fal
                 complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -3381,6 +3393,7 @@ fn test_drive_active_session_dialog_failure_after_claim_still_triggers_fallback(
                 complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -3957,9 +3970,6 @@ impl SessionLauncher for ShutdownAfterRetryableCrashLauncher {
                 timeout_secs: config.max_session_duration,
                 spawn_time: daemon.clock.monotonic_now(),
                 retry_remaining,
-                reply_window_secs: config
-                    .reply_window
-                    .unwrap_or(crate::config::DEFAULT_REPLY_WINDOW_SECS),
             },
             logger,
         );
@@ -5144,6 +5154,7 @@ fn test_session_deadline_suspended_while_parked_and_reset_on_delivery() {
         complete: false,
         exit_code: 0,
         summary: None,
+        linger: Some(3600),
     }))];
     requests.extend((0..21).map(|_| Ok(None)));
     requests.push(Ok(Some(crate::socket::Request::Receive)));
@@ -5155,6 +5166,7 @@ fn test_session_deadline_suspended_while_parked_and_reset_on_delivery() {
         complete: true,
         exit_code: 0,
         summary: None,
+        linger: Some(3600),
     })));
     let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
         (0..25).map(|_| Ok(None)).collect();
@@ -5172,7 +5184,7 @@ fn test_session_deadline_suspended_while_parked_and_reset_on_delivery() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 1, clock.monotonic_now(), 3600),
+            test_session_context(&cryo_state, 1, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -5211,6 +5223,7 @@ fn test_agent_exit_while_parked_releases_hibernate() {
             complete: false,
             exit_code: 0,
             summary: None,
+            linger: Some(60),
         }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(1) }))],
     );
@@ -5220,7 +5233,7 @@ fn test_agent_exit_while_parked_releases_hibernate() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 60, clock.monotonic_now(), 60),
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();
@@ -5332,6 +5345,7 @@ fn test_send_log_line_trims_trailing_newline_from_stdin_body() {
                 complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
+                linger: Some(0),
             })),
         ],
         vec![
@@ -5496,6 +5510,7 @@ fn test_clean_hibernate_fallback_has_no_log_dump() {
             complete: false,
             exit_code: 0,
             summary: Some("quiet".into()),
+            linger: Some(0),
         }))],
         vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
     );
@@ -5732,6 +5747,7 @@ fn test_parked_client_death_pauses_session_deadline_instead_of_resetting_it() {
         complete: false,
         exit_code: 0,
         summary: None,
+        linger: Some(3600),
     })));
     requests.extend((0..22).map(|_| Ok(None)));
     requests.push(Ok(Some(crate::socket::Request::Send {
@@ -5749,7 +5765,7 @@ fn test_parked_client_death_pauses_session_deadline_instead_of_resetting_it() {
         .drive_active_session(
             &mut runtime,
             &mut effects,
-            test_session_context_with_reply_window(&cryo_state, 1, clock.monotonic_now(), 3600),
+            test_session_context(&cryo_state, 1, clock.monotonic_now()),
             begin_test_logger(dir.path()),
         )
         .unwrap();

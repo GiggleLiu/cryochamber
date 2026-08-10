@@ -39,6 +39,11 @@ pub enum Request {
         complete: bool,
         exit_code: u8,
         summary: Option<String>,
+        /// Agent-requested reply window in seconds. `None` = daemon default;
+        /// `Some(0)` = sleep immediately. Only meaningful for a plain
+        /// hibernate (never with `complete` or a nonzero `exit_code`).
+        #[serde(default)]
+        linger: Option<u64>,
     },
     Send {
         text: String,

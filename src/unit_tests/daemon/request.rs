@@ -320,11 +320,16 @@ fn dialog_since_iso_filters() {
 
 #[test]
 fn test_effective_linger_secs() {
-    // Cap applies; zero is allowed (no window).
-    assert_eq!(effective_linger_secs(600), 600);
-    assert_eq!(effective_linger_secs(0), 0);
+    // Agent value wins; absent flag falls back to the default; the cap
+    // applies to any request; zero is allowed (no window).
+    assert_eq!(effective_linger_secs(Some(600)), 600);
     assert_eq!(
-        effective_linger_secs(1_000_000),
-        crate::config::MAX_REPLY_WINDOW_SECS
+        effective_linger_secs(None),
+        super::request::DEFAULT_LINGER_SECS
+    );
+    assert_eq!(effective_linger_secs(Some(0)), 0);
+    assert_eq!(
+        effective_linger_secs(Some(1_000_000)),
+        super::request::MAX_LINGER_SECS
     );
 }

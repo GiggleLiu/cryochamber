@@ -48,7 +48,8 @@ enum Action {
     Sleep { seconds: u64 },
     /// Exit the process with `code`.
     Exit { code: i32 },
-    /// Call `cryo-agent hibernate [--complete] [--summary ...] [--exit N]`.
+    /// Call `cryo-agent hibernate [--complete] [--summary ...] [--exit N]
+    /// [--linger SECS]`.
     Hibernate {
         #[serde(default)]
         complete: bool,
@@ -56,6 +57,11 @@ enum Action {
         summary: Option<String>,
         #[serde(default)]
         exit: Option<i32>,
+        /// Reply window request in seconds. Omitted = the daemon's 300 s
+        /// default, which parks a granted plain hibernate; scenarios that
+        /// assert on what happens after the session ends want `linger = 0`.
+        #[serde(default)]
+        linger: Option<u64>,
     },
     /// Call `cryo-agent todo add <text> --at <time>`.
     TodoAdd {
@@ -184,6 +190,7 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
             complete,
             summary,
             exit,
+            linger,
         } => {
             let mut args: Vec<String> = vec!["hibernate".into()];
             if *complete {
@@ -196,6 +203,10 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
             if let Some(code) = exit {
                 args.push("--exit".into());
                 args.push(code.to_string());
+            }
+            if let Some(secs) = linger {
+                args.push("--linger".into());
+                args.push(secs.to_string());
             }
             call_cryo_agent(&args)?;
             Ok(None)

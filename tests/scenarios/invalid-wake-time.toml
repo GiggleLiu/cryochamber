@@ -8,3 +8,4 @@ at = "banana"
 [[actions]]
 kind = "hibernate"
 summary = "bad wake time"
+linger = 0

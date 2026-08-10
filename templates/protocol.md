@@ -98,7 +98,7 @@ cryo-agent hibernate --exit 1 --summary "Failure: what broke"       # report fai
 
 A failure report (`--exit N`, N≠0) is never refused.
 
-A successful `hibernate` may block up to the reply window (`reply_window` in cryo.toml; unset = 300 s, `0` disables) while the daemon holds your session open for a quick follow-up. Treat a slow `hibernate` as normal and give it a generous shell-tool timeout; if the shell kills it anyway, nothing is lost — the hibernate stands.
+A successful `hibernate` may block up to the reply window while the daemon holds your session open for a quick follow-up. **You choose the window** with `--linger <seconds>` (omitted = 300, capped at 86400): linger long after asking a question or mid-conversation, use `--linger 0` to sleep immediately when no reply is expected (a routine status update, the operator is away). Treat a slow `hibernate` as normal and give it a generous shell-tool timeout; if the shell kills it anyway, nothing is lost — the hibernate stands.
 
 If you exit without calling `cryo-agent hibernate`, the daemon may retry transient runner failures before making the failure visible. Once retries are exhausted, or once you have already sent or received messages in the session, the daemon marks each claimed TODO done and creates a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). The daemon also writes a stand-in `from: cryochamber` outbox message if you never sent a human-visible message this session — don't make the human read a crash notice instead of your words.
 
@@ -126,5 +126,5 @@ cryo-agent todo done <id>                                        # Mark item as 
 cryo-agent todo remove <id>                                      # Remove an item
 cryo-agent time                                                  # Current time in ISO8601
 cryo-agent time "+1 day"                                         # Relative time computation (other forms: ISO8601, date-only; anything else is rejected)
-cryo-agent hibernate [--complete|--exit N] [--summary "..."]  # End the session (may be refused or held open — see above)
+cryo-agent hibernate [--complete|--exit N] [--summary "..."] [--linger SECS]  # End the session (may be refused or held open — see above); --linger sets the reply window (plain hibernate only)
 ```

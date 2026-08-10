@@ -3,6 +3,7 @@ description = "Two hibernate calls in a row; the last (--complete) wins."
 [[actions]]
 kind = "hibernate"
 summary = "first hibernate"
+linger = 0
 
 [[actions]]
 kind = "hibernate"

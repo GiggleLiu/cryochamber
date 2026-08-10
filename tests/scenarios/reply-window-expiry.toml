@@ -12,3 +12,4 @@ at = "+1h"
 [[actions]]
 kind = "hibernate"
 summary = "quiet window"
+linger = 2

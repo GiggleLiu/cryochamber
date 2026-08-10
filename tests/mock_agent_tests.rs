@@ -15,20 +15,12 @@ fn cryo_bin() -> assert_cmd::Command {
 /// `scenario_name` is the basename without extension (e.g. `"crash"` or
 /// `"multi-session"`); the file at `tests/scenarios/<name>.toml` is copied into
 /// the project as `scenario.toml`, where `cryo-mock` picks it up.
+/// The reply window is agent-requested (`hibernate --linger`), so each
+/// scenario's hibernate actions carry their own `linger` value: 0 for
+/// scenarios that assert on what happens *after* a session ends (an omitted
+/// value would park each plain hibernate for the 300 s default), nonzero for
+/// the reply-window scenarios.
 fn setup_scenario(dir: &std::path::Path, scenario_name: &str) {
-    // Opt out of the reply window: most scenarios assert on what happens
-    // *after* a session ends, and an unset `reply_window` would park each
-    // plain hibernate for the 300 s default before the daemon moves on.
-    setup_scenario_with_reply_window(dir, scenario_name, Some(0));
-}
-
-/// Like `setup_scenario`, but writes an explicit `reply_window` (or leaves the
-/// key absent, i.e. the 300 s default, when `reply_window_secs` is `None`).
-fn setup_scenario_with_reply_window(
-    dir: &std::path::Path,
-    scenario_name: &str,
-    reply_window_secs: Option<u64>,
-) {
     let name = scenario_name
         .trim_end_matches(".sh")
         .trim_end_matches(".toml");
@@ -43,16 +35,6 @@ fn setup_scenario_with_reply_window(
         .current_dir(dir)
         .assert()
         .success();
-
-    if let Some(secs) = reply_window_secs {
-        let path = dir.join("cryo.toml");
-        let mut config = fs::read_to_string(&path).unwrap();
-        if !config.ends_with('\n') {
-            config.push('\n');
-        }
-        config.push_str(&format!("reply_window = {secs}\n"));
-        fs::write(&path, config).unwrap();
-    }
 }
 
 /// Wait for the daemon to exit by polling timer.json for pid=null.
@@ -511,7 +493,6 @@ fn test_provider_env_injected() {
 max_retries = 1
 max_session_duration = 30
 watch_dirs = []
-reply_window = 0
 
 [provider]
 name = "test-provider"
@@ -775,11 +756,12 @@ fn test_inbox_wake_no_delayed_wake_notice() {
 #[test]
 fn test_mock_reply_window_second_round_in_one_session() {
     let dir = tempfile::tempdir().unwrap();
-    // Explicit window: long enough that a descheduled test thread cannot miss
-    // round 2 (the waits above allow 15 s), short enough that the round-2
-    // park expires while the test watches, so the session actually ends
-    // before the stale-watcher regression check.
-    setup_scenario_with_reply_window(dir.path(), "reply-window.toml", Some(30));
+    // The scenario's hibernates request a 30 s linger: long enough that a
+    // descheduled test thread cannot miss round 2 (the waits above allow
+    // 15 s), short enough that the round-2 park expires while the test
+    // watches, so the session actually ends before the stale-watcher
+    // regression check.
+    setup_scenario(dir.path(), "reply-window.toml");
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "60"])
@@ -852,7 +834,7 @@ fn test_mock_reply_window_second_round_in_one_session() {
 #[test]
 fn test_mock_reply_window_expires_and_hibernate_stands() {
     let dir = tempfile::tempdir().unwrap();
-    setup_scenario_with_reply_window(dir.path(), "reply-window-expiry.toml", Some(2));
+    setup_scenario(dir.path(), "reply-window-expiry.toml");
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "60"])
