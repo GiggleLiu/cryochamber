@@ -1,6 +1,6 @@
 use crate::daemon::request::{
-    effective_wait_timeout, handle_dialog_request, handle_todo_request, FileMessageEffects,
-    MessageEffects, TodoEffects, TodoOperationError, TodoRequest,
+    effective_linger_secs, effective_wait_timeout, handle_dialog_request, handle_todo_request,
+    FileMessageEffects, MessageEffects, TodoEffects, TodoOperationError, TodoRequest,
 };
 use crate::message::Message;
 use crate::socket::DialogFilter;
@@ -343,6 +343,17 @@ fn effective_wait_timeout_clamps_to_cap() {
 #[test]
 fn effective_wait_timeout_zero_becomes_one_second() {
     assert_eq!(effective_wait_timeout(Some(0), 14400), 1);
+}
+
+#[test]
+fn test_effective_linger_secs() {
+    // Cap applies; zero is allowed (no window).
+    assert_eq!(effective_linger_secs(600), 600);
+    assert_eq!(effective_linger_secs(0), 0);
+    assert_eq!(
+        effective_linger_secs(1_000_000),
+        crate::config::MAX_WAIT_TIMEOUT_SECS
+    );
 }
 
 #[test]

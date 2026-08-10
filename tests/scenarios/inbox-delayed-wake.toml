@@ -10,6 +10,12 @@ actions = [
     { kind = "sleep", seconds = 2 },
 ]
 
+# Session 2 is the inbox-triggered wake: it drains and answers the mail before
+# hibernating, because the quietness gate refuses a hibernate with unread mail.
 [[when]]
 session = "*"
-actions = [{ kind = "hibernate", complete = true, summary = "Plan completed after inbox wake" }]
+actions = [
+    { kind = "receive" },
+    { kind = "send", message = "Handled the inbox wake" },
+    { kind = "hibernate", complete = true, summary = "Plan completed after inbox wake" },
+]

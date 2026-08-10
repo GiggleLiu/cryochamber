@@ -47,9 +47,9 @@
 <tr><th>类别</th><th>命令</th><th>作用</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="3">休眠</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>结束会话；还有更多工作要做。</td></tr>
-<tr><td><code>cryo-agent hibernate --complete</code></td><td>结束会话；计划已完成。</td></tr>
-<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>报告失败的会话。守护进程会把已消费的 TODO 标记为完成，并新增一个带编号的重试 TODO。</td></tr>
+<tr class="group"><td rowspan="4">休眠</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>结束会话；还有更多工作要做。只要收件箱存在未读邮件，就会被拒绝（非零退出）——智能体必须先 <code>receive</code>、回复，再重试，因此会话绝不会在还有邮件等着它时结束。若没有任何待办 TODO 声明下次唤醒，同样会被拒绝。</td></tr>
+<tr><td><code>cryo-agent hibernate --complete</code></td><td>结束会话；计划已完成。此外，只要有 TODO 到期就会被拒绝。它永远不会被回复窗口驻留。</td></tr>
+<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>报告失败的会话。守护进程会把已消费的 TODO 标记为完成，并新增一个带编号的重试 TODO。失败报告永远不会被拒绝，也不会被驻留。</td></tr>
 <tr class="group"><td rowspan="4">TODO</td><td><code>cryo-agent todo add "text" --at &lt;TIME&gt;</code></td><td>通过 TODO 安排下一次唤醒。<code>--at</code> 接受相对偏移（<code>+30 minutes</code>）、ISO 8601 时间戳（<code>2026-04-25T10:00</code>；容忍秒和空格分隔符），或仅日期（<code>2026-04-25</code>，表示午夜）。</td></tr>
 <tr><td><code>cryo-agent todo list</code></td><td>列出所有 TODO 项。</td></tr>
 <tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>将某个 TODO 项标记为完成。</td></tr>

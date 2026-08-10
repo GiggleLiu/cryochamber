@@ -11,6 +11,12 @@ if [ -n "$MOCK_AGENT_NOTE" ]; then
     "$CRYO_AGENT_BIN" note "$MOCK_AGENT_NOTE" 2>/dev/null || true
 fi
 
+# Drain the inbox when asked. Tests that seed inbox mail need this: the
+# hibernate quietness gate refuses to end a session with unread messages.
+if [ "$MOCK_AGENT_RECEIVE" = "true" ]; then
+    "$CRYO_AGENT_BIN" receive 2>/dev/null || true
+fi
+
 # Default: send a human-visible message, then hibernate --complete.
 "$CRYO_AGENT_BIN" send "${MOCK_AGENT_REPLY:-Mock agent completed this session.}" 2>/dev/null || true
 

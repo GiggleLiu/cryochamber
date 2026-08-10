@@ -30,6 +30,23 @@ fn setup_scenario(dir: &std::path::Path, scenario_name: &str) {
         .current_dir(dir)
         .assert()
         .success();
+
+    // Opt out of the reply window: these scenarios assert on what happens
+    // *after* a session ends, and an unset `reply_window` would park each
+    // plain hibernate for the 300 s default before the daemon moves on.
+    disable_reply_window(dir);
+}
+
+/// Append `reply_window = 0` to a chamber's `cryo.toml` so a granted
+/// hibernate ends the session immediately instead of lingering.
+fn disable_reply_window(dir: &std::path::Path) {
+    let path = dir.join("cryo.toml");
+    let mut config = fs::read_to_string(&path).unwrap();
+    if !config.ends_with('\n') {
+        config.push('\n');
+    }
+    config.push_str("reply_window = 0\n");
+    fs::write(&path, config).unwrap();
 }
 
 /// Wait for the daemon to exit by polling timer.json for pid=null.
@@ -488,6 +505,7 @@ fn test_provider_env_injected() {
 max_retries = 1
 max_session_duration = 30
 watch_dirs = []
+reply_window = 0
 
 [provider]
 name = "test-provider"
@@ -606,7 +624,7 @@ fn test_inbox_wake_coalesces_multiple_events() {
 #[test]
 fn test_unreceived_queued_inbox_gets_daemon_status_only() {
     let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "inbox-wake.sh");
+    setup_scenario(dir.path(), "unreceived-inbox.toml");
     write_inbox_message(dir.path(), "queued.md", "please acknowledge this");
 
     cryo_bin()
@@ -616,9 +634,12 @@ fn test_unreceived_queued_inbox_gets_daemon_status_only() {
         .assert()
         .success();
 
+    // The gate refuses a clean hibernate while the queued message is unread,
+    // so this agent ends the session with a failure report (never gated).
     assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
-        "Daemon should exit after plan completion"
+        wait_for_log_content(dir.path(), "--- CRYO END ---", Duration::from_secs(15)),
+        "session should finish: {}",
+        fs::read_to_string(dir.path().join("cryo.log")).unwrap_or_default()
     );
 
     let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
@@ -638,6 +659,8 @@ fn test_unreceived_queued_inbox_gets_daemon_status_only() {
             .is_empty(),
         "queued inbox message should remain until the agent explicitly receives it"
     );
+
+    cancel_and_wait(dir.path());
 }
 
 #[test]
@@ -653,16 +676,21 @@ fn test_status_send_without_receive_does_not_trigger_fallback() {
         .assert()
         .success();
 
+    // The gate refuses a clean hibernate while the queued message is unread,
+    // so this agent ends the session with a failure report (never gated).
+    // Wait for the session to be fully finalized before reading the outbox —
+    // that is when a fallback reply, if any, would have been written.
     assert!(
-        wait_for_daemon_exit(dir.path(), Duration::from_secs(15)),
-        "Daemon should exit after plan completion"
+        wait_for_log_content(dir.path(), "--- CRYO END ---", Duration::from_secs(15)),
+        "session should finish: {}",
+        fs::read_to_string(dir.path().join("cryo.log")).unwrap_or_default()
     );
 
     let outbox = cryochamber::message::read_outbox(dir.path()).unwrap();
     assert_eq!(
         outbox.len(),
         1,
-        "without receive, a status send should remain just a status send"
+        "without receive, a status send should remain just a status send: {outbox:?}"
     );
     assert!(
         outbox
@@ -677,6 +705,8 @@ fn test_status_send_without_receive_does_not_trigger_fallback() {
             .is_empty(),
         "queued inbox message should remain until the agent explicitly receives it"
     );
+
+    cancel_and_wait(dir.path());
 }
 
 #[test]

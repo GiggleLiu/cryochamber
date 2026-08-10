@@ -47,9 +47,9 @@ These commands are used by the spawned AI agent to communicate with the daemon o
 <tr><th>Category</th><th>Command</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="3">Hibernating</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>End the session; more work remains.</td></tr>
-<tr><td><code>cryo-agent hibernate --complete</code></td><td>End the session; the plan is done.</td></tr>
-<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>Report a failed session. The daemon marks consumed TODOs done and adds a fresh numbered retry TODO.</td></tr>
+<tr class="group"><td rowspan="4">Hibernating</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>End the session; more work remains. Refused (non-zero exit) while unread inbox mail exists — the agent must <code>receive</code>, reply, and retry, so a session never ends with mail waiting for it. Also refused while no pending TODO declares the next wake.</td></tr>
+<tr><td><code>cryo-agent hibernate --complete</code></td><td>End the session; the plan is done. Additionally refused while a TODO is due. Never held open by the reply window.</td></tr>
+<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>Report a failed session. The daemon marks consumed TODOs done and adds a fresh numbered retry TODO. Failure reports are never refused and never held open.</td></tr>
 <tr class="group"><td rowspan="4">TODOs</td><td><code>cryo-agent todo add "text" --at &lt;TIME&gt;</code></td><td>Schedule the next wake via a TODO. <code>--at</code> accepts a relative offset (<code>+30 minutes</code>), an ISO 8601 timestamp (<code>2026-04-25T10:00</code>; seconds and a space separator are tolerated), or a date only (<code>2026-04-25</code>, meaning midnight).</td></tr>
 <tr><td><code>cryo-agent todo list</code></td><td>List all TODO items.</td></tr>
 <tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>Mark a TODO item as done.</td></tr>

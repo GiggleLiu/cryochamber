@@ -321,6 +321,7 @@ struct FakeSessionEffects {
     todos: Vec<crate::todo::TodoItem>,
     next_todo_id: u32,
     scripted_claims: VecDeque<Vec<(String, crate::message::Message)>>,
+    unread_script: std::cell::RefCell<VecDeque<bool>>,
 }
 
 impl FakeSessionEffects {
@@ -335,6 +336,7 @@ impl FakeSessionEffects {
             todos: Vec::new(),
             next_todo_id: 1,
             scripted_claims: VecDeque::new(),
+            unread_script: std::cell::RefCell::new(VecDeque::new()),
         }
     }
 
@@ -351,6 +353,12 @@ impl FakeSessionEffects {
     /// `inbox_messages` when the script is exhausted.
     fn push_scripted_claim(&mut self, batch: Vec<(String, crate::message::Message)>) {
         self.scripted_claims.push_back(batch);
+    }
+
+    /// Script future `has_unread_inbox` results, one per call; when the
+    /// script is exhausted the fallback is `!inbox_messages.is_empty()`.
+    fn push_unread_result(&mut self, unread: bool) {
+        self.unread_script.borrow_mut().push_back(unread);
     }
 
     fn make_inbox_message(filename: &str, body: &str) -> (String, crate::message::Message) {
@@ -525,6 +533,21 @@ impl SessionEffects for FakeSessionEffects {
                 && NaiveDateTime::parse_from_str(&item.at, WAKE_TIME_FMT).is_ok()
         })
     }
+
+    fn has_unread_inbox(&self) -> bool {
+        if let Some(scripted) = self.unread_script.borrow_mut().pop_front() {
+            return scripted;
+        }
+        !self.inbox_messages.is_empty()
+    }
+
+    fn next_valid_todo_wake(&self) -> Option<NaiveDateTime> {
+        self.todos
+            .iter()
+            .filter(|item| !item.done && !item.claimed)
+            .filter_map(|item| NaiveDateTime::parse_from_str(&item.at, WAKE_TIME_FMT).ok())
+            .min()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -665,6 +688,7 @@ fn test_session_context_with_inbox<'a>(
         wait_timeout_secs: crate::config::DEFAULT_WAIT_TIMEOUT_SECS,
         spawn_time,
         retry_remaining: false,
+        reply_window_secs: 0,
     }
 }
 
@@ -683,6 +707,24 @@ fn test_session_context_with_wait(
         wait_timeout_secs,
         spawn_time,
         retry_remaining: false,
+        reply_window_secs: 0,
+    }
+}
+
+/// Like `test_session_context`, but with a nonzero reply window.
+fn test_session_context_with_reply_window(
+    cryo_state: &CryoState,
+    timeout_secs: u64,
+    spawn_time: Instant,
+    reply_window_secs: u64,
+) -> ActiveSessionContext<'_> {
+    ActiveSessionContext {
+        cryo_state,
+        timeout_secs,
+        wait_timeout_secs: crate::config::DEFAULT_WAIT_TIMEOUT_SECS,
+        spawn_time,
+        retry_remaining: false,
+        reply_window_secs,
     }
 }
 
@@ -1064,7 +1106,8 @@ fn test_next_wake_from_todos_all_invalid_returns_none() {
 fn test_resolve_hibernate_request_failure_retries() {
     // Failure path does not require a pending TODO. Claimed TODO retry is
     // handled by the outer session-finalization path, not by this response.
-    let decision = resolve_hibernate_request(false, 7, Some("provider failed"), false);
+    let decision =
+        resolve_hibernate_request(false, 7, Some("provider failed"), false, false, false);
 
     assert_eq!(
         decision.outcome,
@@ -1084,7 +1127,7 @@ fn test_resolve_hibernate_request_failure_retries() {
 #[test]
 fn test_resolve_hibernate_request_complete() {
     // `--complete` means the plan is truly finished; no TODO needed.
-    let decision = resolve_hibernate_request(true, 0, None, false);
+    let decision = resolve_hibernate_request(true, 0, None, false, false, false);
 
     assert_eq!(decision.outcome, Some(SessionLoopOutcome::PlanComplete));
     assert!(decision.response_ok);
@@ -1097,7 +1140,8 @@ fn test_resolve_hibernate_request_complete() {
 
 #[test]
 fn test_resolve_hibernate_request_hibernates_with_pending_todo() {
-    let decision = resolve_hibernate_request(false, 0, Some("waiting on reply"), true);
+    let decision =
+        resolve_hibernate_request(false, 0, Some("waiting on reply"), true, false, false);
 
     assert_eq!(decision.outcome, Some(SessionLoopOutcome::Hibernate));
     assert!(decision.response_ok);
@@ -1112,7 +1156,7 @@ fn test_resolve_hibernate_request_hibernates_with_pending_todo() {
 fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
     // Non-complete hibernate with no pending TODO: session must stay alive
     // so the agent can observe the error and correct.
-    let decision = resolve_hibernate_request(false, 0, Some("forgot todo"), false);
+    let decision = resolve_hibernate_request(false, 0, Some("forgot todo"), false, false, false);
 
     assert_eq!(
         decision.outcome, None,
@@ -1131,6 +1175,92 @@ fn test_resolve_hibernate_request_rejects_when_no_pending_todo() {
     assert_eq!(
         decision.log_event,
         "hibernate refused: no pending TODO, summary=\"forgot todo\""
+    );
+}
+
+#[test]
+fn test_resolve_hibernate_request_gate_refuses_unread_inbox() {
+    let decision = resolve_hibernate_request(false, 0, Some("done"), true, true, false);
+    assert_eq!(decision.outcome, None);
+    assert!(!decision.response_ok);
+    assert!(decision
+        .response_message
+        .contains("unread message(s) in inbox"));
+
+    // The gate covers --complete too.
+    let complete = resolve_hibernate_request(true, 0, None, false, true, false);
+    assert_eq!(complete.outcome, None);
+    assert!(!complete.response_ok);
+}
+
+#[test]
+fn test_resolve_hibernate_request_gate_skips_failure_reports() {
+    // --exit 1 with unread mail still records the failure (terminal).
+    let decision = resolve_hibernate_request(false, 1, Some("broke"), true, true, true);
+    assert_eq!(
+        decision.outcome,
+        Some(SessionLoopOutcome::ValidationFailed {
+            quick_exit: false,
+            retryable: false
+        })
+    );
+    assert!(decision.response_ok);
+}
+
+#[test]
+fn test_resolve_hibernate_request_complete_refused_while_todo_due() {
+    let decision = resolve_hibernate_request(true, 0, None, true, false, true);
+    assert_eq!(decision.outcome, None);
+    assert!(!decision.response_ok);
+    assert!(decision.response_message.contains("--complete refused"));
+
+    // A normal (non-complete) hibernate is NOT gated on a due TODO — the
+    // window/outer loop handles it (spec: "a due TODO ends the window early").
+    let normal = resolve_hibernate_request(false, 0, None, true, false, true);
+    assert_eq!(normal.outcome, Some(SessionLoopOutcome::Hibernate));
+}
+
+#[test]
+fn test_fs_effects_has_unread_inbox() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let effects = crate::daemon::effects::FsSessionEffects::new(dir.path());
+    assert!(
+        !effects.has_unread_inbox(),
+        "empty inbox must read as quiet"
+    );
+
+    std::fs::write(
+        dir.path().join("messages").join("inbox").join("m1.md"),
+        "---\nfrom: human\n---\nhello",
+    )
+    .unwrap();
+    assert!(
+        effects.has_unread_inbox(),
+        "a file in the inbox must read as unread"
+    );
+}
+
+#[test]
+fn test_fs_effects_next_valid_todo_wake() {
+    let dir = tempfile::tempdir().unwrap();
+    let effects = crate::daemon::effects::FsSessionEffects::new(dir.path());
+    assert_eq!(
+        effects.next_valid_todo_wake(),
+        None,
+        "missing todo.json must read as no wake"
+    );
+
+    let todo = crate::todo::TodoFile::new(dir.path().join("todo.json"));
+    todo.add("check".into(), "2026-03-01T13:00".into()).unwrap();
+    assert_eq!(
+        effects.next_valid_todo_wake(),
+        Some(
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+                .unwrap()
+                .and_hms_opt(13, 0, 0)
+                .unwrap()
+        )
     );
 }
 
@@ -1495,6 +1625,482 @@ fn test_drive_active_session_timeout_after_hibernate_uses_hibernate_outcome() {
 }
 
 #[test]
+fn test_hibernate_with_window_parks_instead_of_responding() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    // Agent hibernates; the chamber's window is 1s. Quiet chamber: the parked
+    // call resolves ok=true only when the window expires (~10 ticks at 100ms),
+    // then the agent exits.
+    let mut requests: Vec<anyhow::Result<Option<crate::socket::Request>>> =
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        }))];
+    requests.extend((0..14).map(|_| Ok(None)));
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..13).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 1),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    assert_eq!(
+        runtime.responses(),
+        vec![(true, "Hibernating.".to_string())]
+    );
+    assert!(!runtime.parked(), "parked slot must be released by expiry");
+}
+
+#[test]
+fn test_hibernate_complete_never_parks() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: true,
+            exit_code: 0,
+            summary: None,
+        }))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::new();
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 600),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    assert_eq!(
+        runtime.responses(),
+        vec![(true, "Plan complete. Shutting down.".to_string())]
+    );
+    assert!(
+        !runtime.parked(),
+        "--complete must respond immediately, never linger"
+    );
+}
+
+#[test]
+fn test_hibernate_linger_delivers_followup_into_same_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    // Script: agent hibernates; the chamber's window is 1s. The chamber is
+    // quiet at the gate and for one tick; then a follow-up lands (scripted
+    // unread=true). The parked hibernate is rejected; the agent receives,
+    // replies, and hibernates again — the reply re-arms the window, so the
+    // second hibernate parks too and is granted when its window expires
+    // (~10 ticks at 100ms). Exhausted request/wait scripts return Ok(None),
+    // supplying the quiet ticks; the scripted exit lands after the expiry.
+    let requests: Vec<anyhow::Result<Option<crate::socket::Request>>> = vec![
+        Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        })),
+        Ok(None), // linger tick: quiet
+        Ok(None), // linger tick: unread=true -> parked rejection fires
+        Ok(Some(crate::socket::Request::Receive)),
+        Ok(Some(crate::socket::Request::Send {
+            text: "Answer to the follow-up".into(),
+            question: false,
+        })),
+        Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        })),
+    ];
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..24).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.push_inbox_message("followup-1.md", "不对，是 #43");
+    // Scripted quietness: gate call sees quiet, first linger tick sees quiet,
+    // second linger tick sees the arrival. After the script drains, the
+    // fallback (!inbox_messages.is_empty()) takes over: true until Receive
+    // claims the message, false afterwards.
+    effects.push_unread_result(false); // gate at first Hibernate
+    effects.push_unread_result(false); // linger tick 1
+    effects.push_unread_result(true); // linger tick 2 -> release
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 1),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    let responses = runtime.responses();
+    assert_eq!(
+        responses.first(),
+        Some(&(false, HIBERNATE_LINGER_INBOX_RESPONSE.to_string())),
+        "parked hibernate must be rejected with the mail notice"
+    );
+    assert_eq!(
+        responses.last(),
+        Some(&(true, "Hibernating.".to_string())),
+        "second hibernate must be granted when its re-armed window expires"
+    );
+    // The follow-up was answered by the agent in this same session: exactly
+    // one agent reply, zero daemon fallback replies.
+    assert_eq!(
+        effects
+            .replies
+            .iter()
+            .filter(|(author, _, _, _)| *author == ReplyAuthor::Agent)
+            .count(),
+        1
+    );
+    assert_eq!(
+        effects
+            .replies
+            .iter()
+            .filter(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
+            .count(),
+        0
+    );
+    assert!(
+        effects.inbox_messages.is_empty(),
+        "follow-up batch was claimed"
+    );
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("linger: released — inbox message(s) waiting"),
+        "{log}"
+    );
+}
+
+#[test]
+fn test_hibernate_linger_releases_on_due_todo() {
+    // The chamber is quiet but a TODO is already due at the TestClock's now.
+    // The hibernate is accepted at the gate (a pending TODO with a valid wake
+    // exists, and `--complete` is not set), parks for its 60s window, and the
+    // very first linger tick sees the due TODO and grants the sleep: the outer
+    // loop is what claims and runs it, in a fresh session with a wake prompt.
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    // Tick 1: Hibernate parks, and the same tick's linger check releases it on
+    // the due TODO. Tick 2: the agent exits.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        }))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.todos.push(crate::todo::TodoItem {
+        id: 1,
+        text: "due right now".to_string(),
+        done: false,
+        claimed: false,
+        at: "2026-03-01T12:00".to_string(),
+        created: "unknown".to_string(),
+    });
+    effects.next_todo_id = 2;
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    assert_eq!(
+        runtime.responses(),
+        vec![(true, HIBERNATE_LINGER_TODO_DUE_RESPONSE.to_string())],
+        "a due TODO must end the window by granting the sleep, once"
+    );
+    assert!(!runtime.parked(), "the window must be closed");
+    // Claiming is the outer loop's job: the linger must leave the item exactly
+    // as it found it, or the fresh session would wake with nothing to do.
+    assert_eq!(effects.todos.len(), 1);
+    assert!(!effects.todos[0].done, "linger must not complete the TODO");
+    assert!(!effects.todos[0].claimed, "linger must not claim the TODO");
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("linger: released — TODO due, hibernate accepted"),
+        "{log}"
+    );
+}
+
+#[test]
+fn test_hibernate_linger_disconnect_keeps_hibernate_standing() {
+    // The blocked `cryo-agent hibernate` client dies inside the window (e.g.
+    // the agent runner's shell timeout kills it). The linger is notice-only —
+    // it never claimed anything — so the daemon just frees the slot and keeps
+    // the recorded hibernate: the session still ends as a clean hibernate.
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    // Tick 1: Hibernate parks, and the same tick's liveness probe finds the
+    // client gone. Tick 2: the agent process itself exits.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        }))],
+        vec![Ok(None), Ok(Some(ChildExitStatus { code: Some(0) }))],
+    );
+    runtime.script_parked_disconnects(vec![true]);
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    // A real message sits in the inbox so "never claimed" is a claim about
+    // behavior, not about an empty mailbox: the gate sees a quiet chamber
+    // (scripted), the message lands during the window, and the disconnect
+    // must leave it in the inbox for the next session rather than claiming
+    // it for a client that can no longer read it.
+    effects.push_inbox_message("arrived-during-window.md", "still here?");
+    effects.push_unread_result(false); // gate at Hibernate
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        SessionLoopOutcome::Hibernate,
+        "the recorded hibernate must stand after a disconnect"
+    );
+    assert!(
+        runtime.responses().is_empty(),
+        "nothing can be responded to a dead parked client: {:?}",
+        runtime.responses()
+    );
+    assert!(!runtime.parked(), "the parked slot must be freed");
+    // Notice-only: no batch was claimed, so there is no unanswered-batch
+    // fallback to write. The only daemon reply is the generic "hibernated
+    // without sending anything" status (chamber invariant 1).
+    assert!(
+        effects.archived_inbox.is_empty(),
+        "the linger must never claim an inbox batch"
+    );
+    assert_eq!(
+        effects.inbox_messages.len(),
+        1,
+        "the message must stay in the inbox for the next session"
+    );
+    assert!(
+        !effects
+            .replies
+            .iter()
+            .any(|(_, text, _, _)| text.contains("without replying")),
+        "no unanswered-batch fallback is owed: {:?}",
+        effects.replies
+    );
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("linger: client disconnected — hibernate stands"),
+        "{log}"
+    );
+}
+
+#[test]
+fn test_hibernate_linger_release_clears_recorded_hibernate_outcome() {
+    // The load-bearing bookkeeping of a rejected linger: releasing on new mail
+    // must also clear the already-recorded hibernate outcome. The agent is
+    // handed fresh work, so an exit from here is a *crash*, not the clean sleep
+    // it asked for two ticks ago. Scripted accordingly: the agent receives the
+    // follow-up and then dies without replying and without re-hibernating.
+    //
+    // If the clear were dropped, `resolve_child_exit(Some(Hibernate), ..)` would
+    // report a clean hibernate — no crash outcome (so no TODO retry re-injection,
+    // chamber invariant 3), and the operator's fallback would read "hibernated
+    // without replying" with no agent-log tail instead of naming the crash.
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    // Tick 1: Hibernate parks (quiet gate, quiet first linger tick).
+    // Tick 2: the follow-up lands, the parked hibernate is rejected.
+    // Tick 3: the agent claims the batch. Tick 4: it exits — no second
+    // hibernate, no reply.
+    let requests: Vec<anyhow::Result<Option<crate::socket::Request>>> = vec![
+        Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        })),
+        Ok(None), // linger tick: quiet
+        Ok(Some(crate::socket::Request::Receive)),
+    ];
+    let mut waits: Vec<std::io::Result<Option<ChildExitStatus>>> =
+        (0..3).map(|_| Ok(None)).collect();
+    waits.push(Ok(Some(ChildExitStatus { code: Some(0) })));
+
+    let mut runtime = FakeSessionRuntime::new(requests, waits);
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+    effects.push_inbox_message("followup-1.md", "one more thing");
+    effects.push_unread_result(false); // gate at Hibernate
+    effects.push_unread_result(false); // linger tick 1
+    effects.push_unread_result(true); // linger tick 2 -> release
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    assert_ne!(
+        outcome,
+        SessionLoopOutcome::Hibernate,
+        "an exit after the linger was rejected is a crash, not the hibernate \
+         the agent asked for before it was handed new work"
+    );
+    assert!(
+        matches!(outcome, SessionLoopOutcome::ValidationFailed { .. }),
+        "the session must be reported as a crash: {outcome:?}"
+    );
+    assert!(outcome.is_crash());
+    // The claimed batch gets the crash-flavored fallback, which is what carries
+    // the agent-log tail the operator needs to diagnose this failure.
+    let daemon_replies: Vec<&String> = effects
+        .replies
+        .iter()
+        .filter(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
+        .map(|(_, text, _, _)| text)
+        .collect();
+    assert_eq!(daemon_replies.len(), 1, "{daemon_replies:?}");
+    assert!(
+        daemon_replies[0].contains("crashed before replying"),
+        "the fallback must name the crash: {daemon_replies:?}"
+    );
+    assert!(
+        !daemon_replies[0].contains("hibernated without replying"),
+        "a stale hibernate outcome must not launder the crash: {daemon_replies:?}"
+    );
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("linger: released — inbox message(s) waiting"),
+        "{log}"
+    );
+    assert!(log.contains("agent exited without hibernate"), "{log}");
+}
+
+#[test]
+fn test_hibernate_linger_released_on_session_error_path() {
+    // The hibernate counterpart of `test_try_wait_error_while_parked_releases_wait`:
+    // `try_wait` errors while the hibernate is parked. The kind-aware release
+    // must answer the blocked client with the hibernate it already earned —
+    // not with the `receive --wait` interruption notice — before the error
+    // propagates.
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+
+    // Tick 1: Hibernate parks (quiet chamber, window open). Tick 2: try_wait
+    // errors while parked.
+    let mut runtime = FakeSessionRuntime::new(
+        vec![Ok(Some(crate::socket::Request::Hibernate {
+            complete: false,
+            exit_code: 0,
+            summary: None,
+        }))],
+        vec![Ok(None), Err(std::io::Error::other("boom"))],
+    );
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
+
+    let result = daemon.drive_active_session(
+        &mut runtime,
+        &mut effects,
+        test_session_context_with_reply_window(&cryo_state, 600, clock.monotonic_now(), 60),
+        begin_test_logger(dir.path()),
+    );
+
+    let err = result.expect_err("a try_wait error must propagate");
+    assert!(err.to_string().contains("boom"), "{err:#}");
+    assert_eq!(
+        runtime.responses(),
+        vec![(true, "Hibernating.".to_string())],
+        "the parked hibernate must be granted, not answered as a wait"
+    );
+    assert!(!runtime.parked(), "the parked slot must be freed");
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("linger: interrupted — hibernate accepted"),
+        "{log}"
+    );
+    assert!(!log.contains("wait: interrupted"), "{log}");
+}
+
+#[test]
 fn test_drive_active_session_quick_exit_without_hibernate() {
     let dir = tempfile::tempdir().unwrap();
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
@@ -1685,15 +2291,123 @@ fn test_drive_active_session_unreceived_inbox_only_gets_daemon_status() {
         )
         .unwrap();
 
-    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+    // The quietness gate refuses the hibernate while the message is still
+    // unread; this agent ignores the refusal and exits without ever reading
+    // it, so the session ends on the crash path instead of a clean hibernate.
+    assert_eq!(
+        outcome,
+        SessionLoopOutcome::ValidationFailed {
+            quick_exit: true,
+            retryable: true,
+        }
+    );
+    let responses = runtime.responses();
+    assert_eq!(responses.len(), 1);
+    assert!(!responses[0].0);
+    assert!(
+        responses[0].1.contains("unread message(s) in inbox"),
+        "hibernate with unread mail must be refused: {responses:?}"
+    );
+    // There is no TODO at all here, so the refusal can only be the inbox one:
+    // this pins the argument order at the call site (both flags are `bool`, so
+    // swapping them would compile and would name the wrong reason).
+    assert!(
+        !responses[0].1.contains("--complete refused"),
+        "unread mail must be named as the reason, not a due TODO: {responses:?}"
+    );
     assert_eq!(effects.replies.len(), 1);
     assert_eq!(effects.replies[0].0, ReplyAuthor::Daemon);
     assert!(
         effects.replies[0]
             .1
-            .contains("daemon: agent hibernated without sending anything"),
+            .contains("daemon: agent crashed before sending"),
         "without a claimed inbox batch, the daemon should only send its generic status: {:?}",
         effects.replies
+    );
+}
+
+#[test]
+fn test_drive_active_session_complete_refused_while_todo_is_due() {
+    // Pins the call-site wiring of the `--complete` gate (src/daemon.rs): the
+    // daemon must compare the earliest unclaimed TODO wake against its *own*
+    // clock and pass the answer in the `has_due_todo` position. A quiet inbox
+    // plus a past-due TODO is the only combination that isolates it.
+    let dir = tempfile::tempdir().unwrap();
+    let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap();
+    let clock = Arc::new(TestClock::new(now));
+    let daemon = Daemon::new_with_clock(dir.path().to_path_buf(), clock.clone());
+    let cryo_state = test_cryo_state();
+    let mut runtime = FakeSessionRuntime::new(
+        vec![
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+            // Refused above — the agent clears the overdue item, which is the
+            // documented way out, and only then may it call the plan finished.
+            Ok(Some(crate::socket::Request::TodoDone { id: 1 })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: true,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+        ],
+        vec![
+            Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(Some(ChildExitStatus { code: Some(0) })),
+        ],
+    );
+    let mut effects = FakeSessionEffects::new();
+    effects.todos.push(crate::todo::TodoItem {
+        id: 1,
+        text: "overdue work".to_string(),
+        done: false,
+        claimed: false,
+        at: "2020-01-01T00:00".to_string(),
+        created: "unknown".to_string(),
+    });
+    effects.next_todo_id = 2;
+
+    let outcome = daemon
+        .drive_active_session(
+            &mut runtime,
+            &mut effects,
+            test_session_context(&cryo_state, 60, clock.monotonic_now()),
+            begin_test_logger(dir.path()),
+        )
+        .unwrap();
+
+    let responses = runtime.responses();
+    assert_eq!(responses.len(), 3);
+    assert!(
+        !responses[0].0,
+        "--complete with a past-due TODO must be refused: {responses:?}"
+    );
+    assert!(
+        responses[0].1.contains("--complete refused"),
+        "the refusal must name the due TODO: {responses:?}"
+    );
+    // The inbox is empty, so a swapped argument order at the call site would
+    // name unread mail instead.
+    assert!(
+        !responses[0].1.contains("unread message(s) in inbox"),
+        "a due TODO must be named as the reason, not unread mail: {responses:?}"
+    );
+    // Once the item is done nothing is due, and the same request succeeds —
+    // proving the refusal came from the due TODO and not a blanket rule.
+    assert_eq!(responses[2], (true, "Plan complete. Shutting down.".into()));
+    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
+
+    let log = std::fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert!(
+        log.contains("hibernate --complete refused: TODO due"),
+        "the refusal should be visible in the session log: {log}"
     );
 }
 
@@ -1767,7 +2481,18 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
                 text: "Still investigating".into(),
             })),
             Ok(Some(crate::socket::Request::Hibernate {
-                complete: true,
+                complete: false,
+                exit_code: 0,
+                summary: Some("done".into()),
+            })),
+            // Gate refused the hibernate above — agent now drains the inbox.
+            Ok(Some(crate::socket::Request::Receive)),
+            Ok(Some(crate::socket::Request::Send {
+                question: false,
+                text: "Reply to human".into(),
+            })),
+            Ok(Some(crate::socket::Request::Hibernate {
+                complete: false,
                 exit_code: 0,
                 summary: Some("done".into()),
             })),
@@ -1775,10 +2500,13 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
         vec![
             Ok(None),
             Ok(None),
+            Ok(None),
+            Ok(None),
+            Ok(None),
             Ok(Some(ChildExitStatus { code: Some(0) })),
         ],
     );
-    let mut effects = FakeSessionEffects::new();
+    let mut effects = FakeSessionEffects::new_with_pending_todo();
     effects.push_inbox_message("human-1.md", "Need a reply");
 
     let outcome = daemon
@@ -1795,14 +2523,16 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
         )
         .unwrap();
 
-    assert_eq!(outcome, SessionLoopOutcome::PlanComplete);
-    assert_eq!(
-        runtime.responses(),
-        vec![
-            (true, "Message sent".into()),
-            (true, "Plan complete. Shutting down.".into())
-        ]
+    assert_eq!(outcome, SessionLoopOutcome::Hibernate);
+    let responses = runtime.responses();
+    assert_eq!(responses.len(), 5);
+    assert_eq!(responses[0], (true, "Message sent".into()));
+    assert!(!responses[1].0);
+    assert!(
+        responses[1].1.contains("unread message(s) in inbox"),
+        "the status send does not license hibernating past unread mail: {responses:?}"
     );
+    assert_eq!(responses[4], (true, "Hibernating.".into()));
     assert!(
         effects
             .replies
@@ -1819,7 +2549,7 @@ fn test_drive_active_session_send_without_receive_can_still_post_status() {
             .filter(|(author, _, _, _)| *author == ReplyAuthor::Daemon)
             .count(),
         0,
-        "unreceived inbox should remain silent until the agent explicitly reads it"
+        "the agent answered the batch itself, so the daemon adds no fallback reply"
     );
 }
 
@@ -2866,6 +3596,9 @@ impl SessionLauncher for ShutdownAfterRetryableCrashLauncher {
                     .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
                 spawn_time: daemon.clock.monotonic_now(),
                 retry_remaining,
+                reply_window_secs: config
+                    .reply_window
+                    .unwrap_or(crate::config::DEFAULT_REPLY_WINDOW_SECS),
             },
             logger,
         );

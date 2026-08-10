@@ -276,6 +276,9 @@ impl SessionLauncher for ProcessSessionLauncher {
                 .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
             spawn_time,
             retry_remaining,
+            reply_window_secs: config
+                .reply_window
+                .unwrap_or(crate::config::DEFAULT_REPLY_WINDOW_SECS),
         };
         let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);
 

@@ -287,9 +287,9 @@ use schedule::{detect_delayed_wake, WAKE_TIME_FMT};
 #[cfg(test)]
 use request::TodoRequest;
 use request::{
-    effective_wait_timeout, handle_dialog_request, handle_receive_request, handle_todo_request,
-    resolve_hibernate_request, DaemonRequest, FileTodoEffects, ReceiveRequestOutcome,
-    TodoRequestOutcome,
+    effective_linger_secs, effective_wait_timeout, handle_dialog_request, handle_receive_request,
+    handle_todo_request, resolve_hibernate_request, DaemonRequest, FileTodoEffects,
+    ReceiveRequestOutcome, TodoRequestOutcome,
 };
 #[cfg(test)]
 use session::ChildExitStatus;
@@ -329,6 +329,11 @@ struct ActiveSessionContext<'a> {
     wait_timeout_secs: u64,
     spawn_time: Instant,
     retry_remaining: bool,
+    /// Chamber default (secs) for the post-hibernate reply window,
+    /// resolved by the launcher as
+    /// `config.reply_window.unwrap_or(DEFAULT_REPLY_WINDOW_SECS)`.
+    /// 0 = no window.
+    reply_window_secs: u64,
 }
 
 struct ActiveRequestState<'a> {
@@ -336,6 +341,16 @@ struct ActiveRequestState<'a> {
     hibernate_outcome: &'a mut Option<SessionLoopOutcome>,
     inbox_state: &'a mut SessionInboxState,
     wait: &'a mut SessionWaitState,
+}
+
+/// Which IPC call currently occupies the single parked-responder slot.
+/// `Wait` = `receive --wait` (claim-and-deliver semantics), `Hibernate` =
+/// reply-window linger (notice-only semantics). Both block the same
+/// agent process, so at most one exists at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParkedKind {
+    Wait,
+    Hibernate,
 }
 
 /// Parked-wait bookkeeping for `cryo-agent receive --wait`. In-memory only,
@@ -349,8 +364,14 @@ struct SessionWaitState {
     /// session budgets forever. Delivery/timeout keep their documented
     /// fresh-budget reset.
     parked_since: Option<Instant>,
+    /// Which call owns the parked slot. Kept in lockstep with
+    /// `parked_deadline`: `parked_kind.is_some()` iff `parked_deadline.is_some()`.
+    parked_kind: Option<ParkedKind>,
     /// Chamber default (secs) when a request omits --timeout.
     default_timeout_secs: u64,
+    /// Chamber default (secs) for the hibernate reply window when a
+    /// hibernate request omits `--wait`. 0 = no window.
+    reply_window_default_secs: u64,
     /// Set when a wait resolves; the loop consumes it to re-arm the session
     /// deadline so each conversation round gets a fresh work budget.
     reset_session_deadline: bool,
@@ -510,6 +531,18 @@ pub(super) const WAIT_TIMEOUT_RESPONSE: &str =
 /// for another reason (shutdown, agent exit, internal error).
 pub(super) const WAIT_INTERRUPTED_RESPONSE: &str =
     "Session is ending; the wait was interrupted. Do not start new work.";
+
+/// Response released to a parked hibernate when new inbox mail arrives inside
+/// the reply window: the sleep is rejected, the agent handles the work.
+pub(super) const HIBERNATE_LINGER_INBOX_RESPONSE: &str =
+    "hibernate rejected: new message(s) arrived in the inbox. Run `cryo-agent receive` to \
+     read them, reply with `cryo-agent send`, then run `cryo-agent hibernate` again.";
+
+/// Response released to a parked hibernate when a TODO comes due inside the
+/// window: the sleep is granted so the outer loop runs the TODO in a fresh
+/// session with a proper wake prompt.
+pub(super) const HIBERNATE_LINGER_TODO_DUE_RESPONSE: &str =
+    "Hibernating. (A TODO is due; the daemon will run it in a fresh session.)";
 
 /// Retry transient agent-runner failures before surfacing a final daemon
 /// fallback. The count is retries after the initial attempt.
@@ -1433,17 +1466,43 @@ impl Daemon {
                 exit_code,
                 summary,
             } => {
+                let has_due_todo = effects
+                    .next_valid_todo_wake()
+                    .is_some_and(|wake| wake <= self.clock.local_now());
                 let decision = resolve_hibernate_request(
                     complete,
                     exit_code,
                     summary.as_deref(),
                     effects.has_pending_todo_with_valid_wake(),
+                    effects.has_unread_inbox(),
+                    has_due_todo,
                 );
                 state.logger.log_event(&decision.log_event)?;
-                if let Some(outcome) = decision.outcome {
-                    *state.hibernate_outcome = Some(outcome);
+                let linger_secs = if decision.outcome == Some(SessionLoopOutcome::Hibernate) {
+                    effective_linger_secs(state.wait.reply_window_default_secs)
+                } else {
+                    0
+                };
+                if linger_secs > 0 && state.wait.parked_deadline.is_none() {
+                    // Quiet chamber + open window: hold the hibernate instead
+                    // of granting it. The parked responder is answered by the
+                    // linger tick — with new work (ok=false) or with sleep
+                    // (ok=true on TODO-due / expiry).
+                    *state.hibernate_outcome = decision.outcome;
+                    runtime.park()?;
+                    let now_mono = self.clock.monotonic_now();
+                    state.wait.parked_deadline = Some(now_mono + Duration::from_secs(linger_secs));
+                    state.wait.parked_since = Some(now_mono);
+                    state.wait.parked_kind = Some(ParkedKind::Hibernate);
+                    state
+                        .logger
+                        .log_event(&format!("hibernate: parked ({linger_secs}s reply window)"))?;
+                } else {
+                    if let Some(outcome) = decision.outcome {
+                        *state.hibernate_outcome = Some(outcome);
+                    }
+                    runtime.respond(decision.response_ok, decision.response_message.into())?;
                 }
-                runtime.respond(decision.response_ok, decision.response_message.into())?;
             }
             DaemonRequest::Receive => {
                 if state.inbox_state.has_claimed_batch() {
@@ -1513,6 +1572,7 @@ impl Daemon {
                     let now = self.clock.monotonic_now();
                     state.wait.parked_deadline = Some(now + Duration::from_secs(secs));
                     state.wait.parked_since = Some(now);
+                    state.wait.parked_kind = Some(ParkedKind::Wait);
                     state.logger.log_event(&format!("wait: parked ({secs}s)"))?;
                 } else {
                     let response = runtime.respond(true, outcome.message);
@@ -1651,17 +1711,26 @@ impl Daemon {
         }
     }
 
-    /// Best-effort release of a parked `receive --wait` when the session ends
-    /// for reasons other than delivery/timeout. Never fails the caller: the
-    /// blocked cryo-agent may already be dead.
-    fn release_parked_wait(
+    /// Best-effort release of any parked call (`receive --wait` or a hibernate
+    /// linger) when the session ends for reasons other than
+    /// delivery/timeout/expiry. Never fails the caller: the blocked cryo-agent
+    /// may already be dead.
+    fn release_parked_call(
         runtime: &mut impl SessionRuntime,
         wait_state: &mut SessionWaitState,
         logger: &mut crate::log::EventLogger,
     ) {
         if wait_state.parked_deadline.take().is_some() {
-            let _ = runtime.respond_parked(true, WAIT_INTERRUPTED_RESPONSE.into());
-            let _ = logger.log_event("wait: interrupted");
+            match wait_state.parked_kind.take() {
+                Some(ParkedKind::Hibernate) => {
+                    let _ = runtime.respond_parked(true, "Hibernating.".into());
+                    let _ = logger.log_event("linger: interrupted — hibernate accepted");
+                }
+                _ => {
+                    let _ = runtime.respond_parked(true, WAIT_INTERRUPTED_RESPONSE.into());
+                    let _ = logger.log_event("wait: interrupted");
+                }
+            }
         }
     }
 
@@ -1680,7 +1749,9 @@ impl Daemon {
         let mut wait_state = SessionWaitState {
             parked_deadline: None,
             parked_since: None,
+            parked_kind: None,
             default_timeout_secs: context.wait_timeout_secs,
+            reply_window_default_secs: context.reply_window_secs,
             reset_session_deadline: false,
             timed_out: false,
         };
@@ -1691,7 +1762,7 @@ impl Daemon {
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
-                Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
+                Self::release_parked_call(runtime, &mut wait_state, &mut logger);
                 runtime.terminate();
                 let clean_hibernate = hibernate_outcome.is_some();
                 let decision = resolve_interrupted_session(
@@ -1748,7 +1819,7 @@ impl Daemon {
                             wait: &mut wait_state,
                         },
                     ) {
-                        Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
+                        Self::release_parked_call(runtime, &mut wait_state, &mut logger);
                         let clean_hibernate = hibernate_outcome.is_some();
                         self.finalize_human_replies(
                             effects,
@@ -1795,7 +1866,7 @@ impl Daemon {
                             "quick exit detected ({elapsed_s} without hibernate)"
                         ))?;
                     }
-                    Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
+                    Self::release_parked_call(runtime, &mut wait_state, &mut logger);
                     let mut outcome = decision.outcome;
                     if decision.retryable && session_has_retry_blocking_side_effects(&inbox_state) {
                         logger.log_event(
@@ -1824,7 +1895,7 @@ impl Daemon {
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    Self::release_parked_wait(runtime, &mut wait_state, &mut logger);
+                    Self::release_parked_call(runtime, &mut wait_state, &mut logger);
                     let clean_hibernate = hibernate_outcome.is_some();
                     self.finalize_human_replies(
                         effects,
@@ -1839,24 +1910,160 @@ impl Daemon {
             }
 
             if let Some(wait_deadline) = wait_state.parked_deadline {
-                // Check liveness BEFORE claiming: a batch claimed for a dead
-                // client would be swallowed (archived, never seen by the
-                // agent) and answered by the daemon fallback instead of the
-                // agent's own words. Releasing the slot leaves the inbox
-                // untouched for normal delivery and lets the agent — whose
-                // process is still alive; only its `receive --wait` CLI call
-                // died — park a fresh wait later in the same session.
-                if runtime.reclaim_parked_if_disconnected() {
-                    wait_state.parked_deadline = None;
-                    // Pause, don't reset: the agent resumes with the work
-                    // budget it had when it parked. A fresh budget here would
-                    // let a repeatedly-killed wait client (too-short shell
-                    // timeout) extend one session forever.
-                    if let (Some(d), Some(since)) = (deadline, wait_state.parked_since.take()) {
-                        deadline =
-                            Some(d + self.clock.monotonic_now().saturating_duration_since(since));
+                match wait_state.parked_kind {
+                    Some(ParkedKind::Hibernate) => {
+                        // Continuity-window linger. Notice-only: never claims a batch,
+                        // so a dead client here loses nothing.
+                        if runtime.reclaim_parked_if_disconnected() {
+                            wait_state.parked_deadline = None;
+                            wait_state.parked_kind = None;
+                            // Pause, don't reset (same anti-extension rule as the
+                            // wait): the recorded hibernate stands, so if the agent
+                            // exits now the session ends cleanly.
+                            if let (Some(d), Some(since)) =
+                                (deadline, wait_state.parked_since.take())
+                            {
+                                deadline = Some(
+                                    d + self.clock.monotonic_now().saturating_duration_since(since),
+                                );
+                            }
+                            if let Err(e) =
+                                logger.log_event("linger: client disconnected — hibernate stands")
+                            {
+                                // Mirror the wait arm: a log failure must not skip
+                                // finalization of already-claimed batches.
+                                let clean_hibernate = hibernate_outcome.is_some();
+                                self.finalize_human_replies(
+                                    effects,
+                                    &mut logger,
+                                    &mut inbox_state,
+                                    clean_hibernate,
+                                    false,
+                                );
+                                let _ =
+                                    logger.finish(&format!("error logging linger release: {e}"));
+                                return Err(e);
+                            }
+                        } else if effects.has_unread_inbox() {
+                            // New mail inside the window: reject the parked hibernate
+                            // so the same LLM context handles it. The earlier
+                            // hibernate no longer covers this work — clear it so a
+                            // crash from here is real.
+                            wait_state.parked_deadline = None;
+                            wait_state.parked_kind = None;
+                            wait_state.parked_since = None;
+                            wait_state.reset_session_deadline = true;
+                            hibernate_outcome = None;
+                            if let Err(e) =
+                                logger.log_event("linger: released — inbox message(s) waiting")
+                            {
+                                let _ = runtime
+                                    .respond_parked(false, HIBERNATE_LINGER_INBOX_RESPONSE.into());
+                                self.finalize_human_replies(
+                                    effects,
+                                    &mut logger,
+                                    &mut inbox_state,
+                                    hibernate_outcome.is_some(),
+                                    false,
+                                );
+                                let _ =
+                                    logger.finish(&format!("error logging linger release: {e}"));
+                                return Err(e);
+                            }
+                            // Best-effort for the same reason as the wait arm: a dead
+                            // client must not skip finalization. The child-exit path
+                            // handles the rest.
+                            if runtime
+                                .respond_parked(false, HIBERNATE_LINGER_INBOX_RESPONSE.into())
+                                .is_err()
+                            {
+                                let _ =
+                                    logger.log_event("linger: parked respond failed after release");
+                            }
+                        } else if effects
+                            .next_valid_todo_wake()
+                            .is_some_and(|wake| wake <= self.clock.local_now())
+                        {
+                            // A TODO came due: end the window, grant the sleep. The
+                            // outer loop claims the TODO and runs it in a fresh
+                            // session with a proper wake prompt.
+                            wait_state.parked_deadline = None;
+                            wait_state.parked_kind = None;
+                            wait_state.parked_since = None;
+                            if let Err(e) =
+                                logger.log_event("linger: released — TODO due, hibernate accepted")
+                            {
+                                let _ = runtime.respond_parked(
+                                    true,
+                                    HIBERNATE_LINGER_TODO_DUE_RESPONSE.into(),
+                                );
+                                let clean_hibernate = hibernate_outcome.is_some();
+                                self.finalize_human_replies(
+                                    effects,
+                                    &mut logger,
+                                    &mut inbox_state,
+                                    clean_hibernate,
+                                    false,
+                                );
+                                let _ =
+                                    logger.finish(&format!("error logging linger release: {e}"));
+                                return Err(e);
+                            }
+                            if runtime
+                                .respond_parked(true, HIBERNATE_LINGER_TODO_DUE_RESPONSE.into())
+                                .is_err()
+                            {
+                                let _ =
+                                    logger.log_event("linger: parked respond failed after release");
+                            }
+                        } else if self.clock.monotonic_now() >= wait_deadline {
+                            wait_state.parked_deadline = None;
+                            wait_state.parked_kind = None;
+                            wait_state.parked_since = None;
+                            if let Err(e) = logger.log_event("linger: expired — hibernate accepted")
+                            {
+                                let _ = runtime.respond_parked(true, "Hibernating.".into());
+                                let clean_hibernate = hibernate_outcome.is_some();
+                                self.finalize_human_replies(
+                                    effects,
+                                    &mut logger,
+                                    &mut inbox_state,
+                                    clean_hibernate,
+                                    false,
+                                );
+                                let _ = logger.finish(&format!("error logging linger expiry: {e}"));
+                                return Err(e);
+                            }
+                            if runtime.respond_parked(true, "Hibernating.".into()).is_err() {
+                                let _ =
+                                    logger.log_event("linger: parked respond failed after expiry");
+                            }
+                        }
+                        // Quiet and inside the window: keep lingering.
                     }
-                    if let Err(e) = logger.log_event(
+                    _ => {
+                        // Check liveness BEFORE claiming: a batch claimed for a dead
+                        // client would be swallowed (archived, never seen by the
+                        // agent) and answered by the daemon fallback instead of the
+                        // agent's own words. Releasing the slot leaves the inbox
+                        // untouched for normal delivery and lets the agent — whose
+                        // process is still alive; only its `receive --wait` CLI call
+                        // died — park a fresh wait later in the same session.
+                        if runtime.reclaim_parked_if_disconnected() {
+                            wait_state.parked_deadline = None;
+                            wait_state.parked_kind = None;
+                            // Pause, don't reset: the agent resumes with the work
+                            // budget it had when it parked. A fresh budget here would
+                            // let a repeatedly-killed wait client (too-short shell
+                            // timeout) extend one session forever.
+                            if let (Some(d), Some(since)) =
+                                (deadline, wait_state.parked_since.take())
+                            {
+                                deadline = Some(
+                                    d + self.clock.monotonic_now().saturating_duration_since(since),
+                                );
+                            }
+                            if let Err(e) = logger.log_event(
                         "wait: client disconnected — parked wait released, inbox left unclaimed",
                     ) {
                         // Mirror the delivery/timeout arms: a log failure must
@@ -1872,77 +2079,86 @@ impl Daemon {
                         let _ = logger.finish(&format!("error logging wait release: {e}"));
                         return Err(e);
                     }
-                } else {
-                    let outcome = handle_receive_request(effects);
-                    if !outcome.claimed_filenames.is_empty() {
-                        inbox_state.record_claimed_batch(&outcome.claimed_filenames);
-                        wait_state.parked_deadline = None;
-                        wait_state.parked_since = None;
-                        wait_state.reset_session_deadline = true;
-                        if let Err(e) = logger.log_event(&format!(
-                            "wait: delivered {} message(s) [{}]",
-                            outcome.claimed_filenames.len(),
-                            outcome.claimed_filenames.join(", ")
-                        )) {
-                            // The batch is already recorded in inbox_state above,
-                            // so a log failure here must not skip finalization —
-                            // mirror the handle_active_request error arm: best-
-                            // effort respond so the blocked client isn't left
-                            // hanging, then finalize (writes the fallback reply
-                            // per chamber invariant 2), then best-effort finish.
-                            let _ = runtime.respond_parked(true, outcome.message);
-                            let clean_hibernate = hibernate_outcome.is_some();
-                            self.finalize_human_replies(
-                                effects,
-                                &mut logger,
-                                &mut inbox_state,
-                                clean_hibernate,
-                                false,
-                            );
-                            let _ = logger.finish(&format!("error logging wait delivery: {e}"));
-                            return Err(e);
-                        }
-                        // Best-effort: the batch is already recorded in
-                        // inbox_state, so if the blocked client is gone
-                        // (EPIPE/EOF) the next tick's child-exit detection still
-                        // runs finalize_human_replies, which writes the fallback
-                        // reply. Propagating this error would skip finalization
-                        // for an already-delivered batch (chamber invariant 2).
-                        if runtime.respond_parked(true, outcome.message).is_err() {
-                            let _ = logger.log_event("wait: parked respond failed after delivery");
-                        }
-                    } else if self.clock.monotonic_now() >= wait_deadline {
-                        wait_state.parked_deadline = None;
-                        wait_state.parked_since = None;
-                        wait_state.reset_session_deadline = true;
-                        wait_state.timed_out = true;
-                        if let Err(e) = logger.log_event("wait: timed out") {
-                            // Same reasoning as the delivery branch above: a log
-                            // failure must not skip finalization.
-                            let _ = runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into());
-                            let clean_hibernate = hibernate_outcome.is_some();
-                            self.finalize_human_replies(
-                                effects,
-                                &mut logger,
-                                &mut inbox_state,
-                                clean_hibernate,
-                                false,
-                            );
-                            let _ = logger.finish(&format!("error logging wait timeout: {e}"));
-                            return Err(e);
-                        }
-                        // Best-effort for the same reason as the delivery branch
-                        // above: a dead client must not skip finalization.
-                        if runtime
-                            .respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())
-                            .is_err()
-                        {
-                            let _ = logger.log_event("wait: parked respond failed after timeout");
+                        } else {
+                            let outcome = handle_receive_request(effects);
+                            if !outcome.claimed_filenames.is_empty() {
+                                inbox_state.record_claimed_batch(&outcome.claimed_filenames);
+                                wait_state.parked_deadline = None;
+                                wait_state.parked_since = None;
+                                wait_state.parked_kind = None;
+                                wait_state.reset_session_deadline = true;
+                                if let Err(e) = logger.log_event(&format!(
+                                    "wait: delivered {} message(s) [{}]",
+                                    outcome.claimed_filenames.len(),
+                                    outcome.claimed_filenames.join(", ")
+                                )) {
+                                    // The batch is already recorded in inbox_state above,
+                                    // so a log failure here must not skip finalization —
+                                    // mirror the handle_active_request error arm: best-
+                                    // effort respond so the blocked client isn't left
+                                    // hanging, then finalize (writes the fallback reply
+                                    // per chamber invariant 2), then best-effort finish.
+                                    let _ = runtime.respond_parked(true, outcome.message);
+                                    let clean_hibernate = hibernate_outcome.is_some();
+                                    self.finalize_human_replies(
+                                        effects,
+                                        &mut logger,
+                                        &mut inbox_state,
+                                        clean_hibernate,
+                                        false,
+                                    );
+                                    let _ =
+                                        logger.finish(&format!("error logging wait delivery: {e}"));
+                                    return Err(e);
+                                }
+                                // Best-effort: the batch is already recorded in
+                                // inbox_state, so if the blocked client is gone
+                                // (EPIPE/EOF) the next tick's child-exit detection still
+                                // runs finalize_human_replies, which writes the fallback
+                                // reply. Propagating this error would skip finalization
+                                // for an already-delivered batch (chamber invariant 2).
+                                if runtime.respond_parked(true, outcome.message).is_err() {
+                                    let _ = logger
+                                        .log_event("wait: parked respond failed after delivery");
+                                }
+                            } else if self.clock.monotonic_now() >= wait_deadline {
+                                wait_state.parked_deadline = None;
+                                wait_state.parked_since = None;
+                                wait_state.parked_kind = None;
+                                wait_state.reset_session_deadline = true;
+                                wait_state.timed_out = true;
+                                if let Err(e) = logger.log_event("wait: timed out") {
+                                    // Same reasoning as the delivery branch above: a log
+                                    // failure must not skip finalization.
+                                    let _ =
+                                        runtime.respond_parked(true, WAIT_TIMEOUT_RESPONSE.into());
+                                    let clean_hibernate = hibernate_outcome.is_some();
+                                    self.finalize_human_replies(
+                                        effects,
+                                        &mut logger,
+                                        &mut inbox_state,
+                                        clean_hibernate,
+                                        false,
+                                    );
+                                    let _ =
+                                        logger.finish(&format!("error logging wait timeout: {e}"));
+                                    return Err(e);
+                                }
+                                // Best-effort for the same reason as the delivery branch
+                                // above: a dead client must not skip finalization.
+                                if runtime
+                                    .respond_parked(true, WAIT_TIMEOUT_RESPONSE.into())
+                                    .is_err()
+                                {
+                                    let _ = logger
+                                        .log_event("wait: parked respond failed after timeout");
+                                }
+                            }
+                            // Empty claim + deadline not reached: keep waiting. A claim
+                            // error surfaces as ok=false with no filenames — also keep
+                            // waiting; the next tick retries.
                         }
                     }
-                    // Empty claim + deadline not reached: keep waiting. A claim
-                    // error surfaces as ok=false with no filenames — also keep
-                    // waiting; the next tick retries.
                 }
             }
             if wait_state.reset_session_deadline {

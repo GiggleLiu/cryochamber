@@ -11,6 +11,7 @@ max_session_duration = 3600      # 会话超时秒数 (0 = 不超时)
 watch_dirs = ["messages/inbox"]  # 监听以实现响应式唤醒的目录 ([] 表示禁用)
 zulip_poll_interval = 5          # Zulip 同步轮询间隔（秒）
 wait_timeout = 14400             # `cryo-agent receive --wait` 的默认超时秒数（限制为 1-86400）
+# reply_window = 600             # 保持会话 10 分钟，用于承接后续消息（不设置 = 300；0 表示禁用）
 
 # 注入到每个智能体会话的 Provider 环境变量（可选）。
 [provider]
@@ -25,6 +26,9 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # 派生智能体时设置的环境�
 | `watch_dirs` | `["messages/inbox"]` | 守护进程监听新文件的目录列表，用于响应式唤醒智能体。路径相对于 chamber 目录解释，除非是绝对路径。设为 `[]` 可完全禁用响应式唤醒。 |
 | `zulip_poll_interval` | `5` | `cryo-zulip sync` 轮询 Zulip 的间隔（秒）。`cryo-zulip sync --interval N` 可单次覆盖它。 |
 | `wait_timeout` | `14400` | 可选。当智能体未传 `--timeout` 时，`cryo-agent receive --wait` 的默认超时秒数。守护进程会把任何值限制到 `1`–`86400`（因此 `0` 等待 1 秒而非 0；上限为 24 小时）。 |
+| `reply_window` | `300` | 可选。回复窗口秒数。智能体休眠后，守护进程会把会话驻留这么久；在窗口内到达的消息会被退回同一个会话（同一 LLM 上下文）处理，而不是派生一个全新会话。TODO 到期或窗口结束则放行休眠。不设置该字段时为 300（5 分钟）；显式设为 `0` 则禁用窗口，休眠一经放行会话立即结束。上限为 `86400`。与该窗口无关，只要收件箱有未读邮件，休眠一律被拒绝。 |
+
+> **`reply_window` 与 `max_session_duration`**：休眠被驻留期间，会话时长计时是暂停的；每一条把休眠退回会话的消息还会重新发放一轮工作时间预算。因此一个较长的窗口可能让同一个会话远远超过 `max_session_duration` 才结束——真正结束它的是窗口到期或 TODO 到期。除非你确实想要长时间的对话式会话，否则请把窗口设得短一些（分钟级，而非小时级）。
 
 ## `[provider]`
 

@@ -1,4 +1,4 @@
-description = "Agent sends a status update but does not receive/reply to the queued inbox message."
+description = "Agent sends a status update but does not receive/reply to the queued inbox message; it can only end the session by reporting a failure, because the quietness gate refuses a clean hibernate while mail is unread."
 
 [[actions]]
 kind = "send"
@@ -6,5 +6,5 @@ message = "Status update for operator"
 
 [[actions]]
 kind = "hibernate"
-complete = true
+exit = 1
 summary = "Sent a status update only"

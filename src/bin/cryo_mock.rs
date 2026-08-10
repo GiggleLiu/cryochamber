@@ -66,6 +66,10 @@ enum Action {
     },
     /// Call `cryo-agent send <message>`.
     Send { message: String },
+    /// Call `cryo-agent receive` to claim the pending inbox batch. Needed by
+    /// any scenario that hibernates after mail arrived: the hibernate
+    /// quietness gate refuses to end a session with unread inbox messages.
+    Receive,
     /// Call `cryo-agent dialog` and assert its stdout contains the requested text.
     DialogAssert {
         #[serde(default)]
@@ -218,6 +222,10 @@ fn run_action(action: &Action) -> Result<Option<i32>> {
         }
         Action::Send { message } => {
             call_cryo_agent(&["send".into(), expand(message)])?;
+            Ok(None)
+        }
+        Action::Receive => {
+            call_cryo_agent(&["receive".into()])?;
             Ok(None)
         }
         Action::DialogAssert {

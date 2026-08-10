@@ -22,6 +22,13 @@ pub(super) trait SessionEffects {
     /// by the daemon wake-time format. Used to reject hibernate attempts that
     /// would leave the chamber without a scheduled next wake.
     fn has_pending_todo_with_valid_wake(&self) -> bool;
+    /// True when unread files exist in `messages/inbox/`. Fails open to
+    /// `false` (quiet) so an I/O error degrades to today's behavior
+    /// (hibernate accepted) instead of wedging the agent in refusal.
+    fn has_unread_inbox(&self) -> bool;
+    /// Earliest pending (not done, not claimed) TODO wake time, if any.
+    /// Fails open to `None` for the same reason as `has_unread_inbox`.
+    fn next_valid_todo_wake(&self) -> Option<chrono::NaiveDateTime>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,5 +125,16 @@ impl SessionEffects for FsSessionEffects<'_> {
 
     fn has_pending_todo_with_valid_wake(&self) -> bool {
         self.todo_file().next_valid_wake().ok().flatten().is_some()
+    }
+
+    fn has_unread_inbox(&self) -> bool {
+        self.message_store()
+            .list_inbox_filenames()
+            .map(|files| !files.is_empty())
+            .unwrap_or(false)
+    }
+
+    fn next_valid_todo_wake(&self) -> Option<chrono::NaiveDateTime> {
+        self.todo_file().next_valid_wake().ok().flatten()
     }
 }

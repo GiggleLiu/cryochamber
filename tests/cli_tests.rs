@@ -650,10 +650,13 @@ fn test_session_logs_inbox_filenames() {
         .success();
 
     // Run a session with mock agent via daemon
-    // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket
+    // CRYO_AGENT_BIN tells the mock agent to call `cryo-agent hibernate --complete` via socket.
+    // MOCK_AGENT_RECEIVE makes it drain the seeded inbox first — the hibernate
+    // quietness gate refuses to end a session with unread messages.
     cmd()
         .args(["start", "--agent", &mock_agent_cmd()])
         .env("CRYO_AGENT_BIN", cryo_agent_bin_path())
+        .env("MOCK_AGENT_RECEIVE", "true")
         .env("CRYO_NO_SERVICE", "1")
         .current_dir(dir.path())
         .assert()
