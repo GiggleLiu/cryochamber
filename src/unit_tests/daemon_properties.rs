@@ -69,7 +69,9 @@ proptest! {
 
 proptest! {
     /// Exit table:
-    ///   exit_code != 0               → ValidationFailed
+    ///   exit_code != 0               → ValidationFailed (terminal; gate skipped)
+    ///   has_unread_inbox             → outcome=None (quietness gate)
+    ///   complete && has_due_todo     → outcome=None (rejected)
     ///   complete && exit_code == 0   → PlanComplete
     ///   !has_pending_todos           → outcome=None (rejected)
     ///   otherwise                    → Hibernate
@@ -79,12 +81,16 @@ proptest! {
         exit_code in 0u8..=10,
         summary in prop::option::of("[A-Za-z0-9 ]{0,32}"),
         has_pending_todos in any::<bool>(),
+        has_unread_inbox in any::<bool>(),
+        has_due_todo in any::<bool>(),
     ) {
         let decision = resolve_hibernate_request(
             complete,
             exit_code,
             summary.as_deref(),
             has_pending_todos,
+            has_unread_inbox,
+            has_due_todo,
         );
 
         if exit_code != 0 {
@@ -96,6 +102,12 @@ proptest! {
                 })
             );
             prop_assert!(decision.response_ok, "failure path still ACKs the agent");
+        } else if has_unread_inbox {
+            prop_assert_eq!(decision.outcome, None);
+            prop_assert!(!decision.response_ok);
+        } else if complete && has_due_todo {
+            prop_assert_eq!(decision.outcome, None);
+            prop_assert!(!decision.response_ok);
         } else if complete {
             prop_assert_eq!(decision.outcome, Some(SessionLoopOutcome::PlanComplete));
         } else if !has_pending_todos {

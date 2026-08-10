@@ -55,20 +55,6 @@ fn test_cancel_no_daemon() {
 }
 
 #[test]
-fn test_wake_no_daemon() {
-    let dir = tempfile::tempdir().unwrap();
-    init_project(dir.path());
-
-    // wake writes an inbox message and warns that no daemon is running,
-    // but still exits successfully (the message is queued)
-    cryo_bin()
-        .args(["wake"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-}
-
-#[test]
 fn test_send_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
     init_project(dir.path());

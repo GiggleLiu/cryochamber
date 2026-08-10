@@ -13,9 +13,9 @@ Each session you:
   something done, answer a question, or interpret an image)
 - **Fire due reminders** back to the user
 - **Send a daily morning summary** (once per day at 09:00)
-- **Stay interactive** afterwards: park with `cryo-agent receive --wait` so a
-  conversation continues in the same session, and hibernate only after an hour
-  of silence
+- **Stay interactive** afterwards: the reply window (`reply_window = 3600`)
+  holds your hibernate open for an hour, so a conversation continues in the
+  same session instead of waking a cold one
 
 ## Tasks
 
@@ -82,24 +82,15 @@ Each session you:
      send a summary of pending reminders via `cryo-agent send`.
    - Append "summary sent YYYY-MM-DD" to `NOTES.md`.
 
-6. **Interactive loop** — after the steps above, stay available instead of
-   hibernating immediately. You may only wait after a `send`; if you have not
-   sent anything yet this session (e.g. a scheduled wake with an empty inbox
-   and nothing due), skip this loop and go to step 7.
-   - Check `cryo-agent todo list` for the next pending `--at` deadline.
-     - If the next deadline is **within the next hour**, wait only until it:
-       `cryo-agent receive --wait --timeout <seconds until deadline>`.
-     - Otherwise wait with the default (1 hour): `cryo-agent receive --wait`.
-   - **A message arrives**: it is delivered into this session, already claimed.
-     Handle it exactly as in step 3 (images included), reply with
-     `cryo-agent send`, then repeat this loop.
-   - **"No new messages" timeout notice**: the wait budget for this session is
-     spent — the daemon refuses any further `receive --wait` after a timeout.
-     Run `cryo-agent todo list`; if a reminder is now due, fire it as in step 4
-     (send + mark done). Then go to step 7 and hibernate. The next message
-     from the user simply wakes a fresh session.
-   - The session clock pauses while you wait, so waiting never burns your work
-     budget. Strict alternation applies: one `send` before each new wait.
+6. **Stay interactive via the reply window** — go to step 7 and hibernate
+   normally; `reply_window = 3600` holds the hibernate open for up to an hour.
+   - The call may block — that is the window. Give it a generous shell-tool
+     timeout; if the shell kills it anyway, the hibernate stands.
+   - **Refused with "unread inbox mail"**: a follow-up arrived inside the
+     window and you are still in this session — `receive`, reply as in
+     step 3, hibernate again.
+   - **Window expiry or a due TODO**: the hibernate succeeds and the session
+     ends.
 
 7. Compute the next wake time:
    - If you have not sent any user-visible message this session (e.g. a
@@ -123,8 +114,9 @@ Each session you:
 - Schedule: adaptive — sleep until next reminder is due, wake on inbox
 - Interaction: two-way via Zulip (stream: `jinguo-group`); images the user
   uploads are synced into `messages/attachments/` automatically
-- Interactive mode: 1 hour default wait (`wait_timeout = 3600` in `cryo.toml`),
-  shortened when a reminder is due sooner
+- Interactive mode: 1 hour reply window (`reply_window = 3600` in
+  `cryo.toml`) — a follow-up inside the window rejects the parked hibernate
+  back into the same session
 - Watch inbox: enabled
 - Daily summary: sent via `cryo-agent send` at 09:00 with pending count
 
@@ -137,8 +129,8 @@ Each session you:
 - Use `cryo-agent time` for all time calculations — never hardcode timestamps.
 - Every session must end with `cryo-agent hibernate`. Failure to hibernate is
   treated as a crash. Ending an interactive conversation is natural language:
-  say goodbye in your last `send`, then hibernate after the wait times out (or
-  immediately if the user says they are done).
+  say goodbye in your last `send`, then hibernate — the reply window still
+  lets a quick follow-up reach this session before the sleep stands.
 - When firing a reminder or reporting a pending item, include 1–2 suggested next
   steps with a one-line reason each (e.g., "Call Alice — she mentioned the draft
   is blocking her sprint, so earlier is better"). Keep suggestions specific and

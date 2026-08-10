@@ -2,10 +2,13 @@ description = "First invocation crashes; retry completes the plan."
 
 counter = ".mock-crash-count"
 
+# The wake is in the future: the in-daemon retry runs immediately (it does not
+# wait for the TODO), and a TODO that is not yet due leaves the retry session
+# free to declare the plan complete — `--complete` is refused while one is due.
 [[when]]
 session = "1"
 actions = [
-  { kind = "todo_add", text = "Retry crashed session", at = "now" },
+  { kind = "todo_add", text = "Retry crashed session", at = "+10m" },
   { kind = "exit", code = 1 },
 ]
 

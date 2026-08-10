@@ -111,18 +111,64 @@ fn test_apply_overrides_none_fields() {
 }
 
 #[test]
-fn wait_timeout_defaults_to_none_and_is_not_serialized() {
+fn reply_window_defaults_to_none_and_is_not_serialized() {
     let config = CryoConfig::default();
-    assert_eq!(config.wait_timeout, None);
+    assert_eq!(config.reply_window, None);
     let toml = toml::to_string(&config).unwrap();
-    assert!(!toml.contains("wait_timeout"));
+    assert!(!toml.contains("reply_window"));
 }
 
 #[test]
-fn wait_timeout_round_trips_when_set() {
-    let toml_src = "agent = \"mock\"\nwait_timeout = 7200\n";
+fn reply_window_absent_key_parses_as_none() {
+    let config: CryoConfig = toml::from_str("agent = \"mock\"\n").unwrap();
+    assert_eq!(config.reply_window, None);
+}
+
+/// The struct keeps `None` for an absent key; the 300 s window is applied at
+/// the use site (`config.reply_window.unwrap_or(DEFAULT_..)`), and an
+/// explicit `0` disables the window rather than falling back to the default.
+#[test]
+fn reply_window_unset_resolves_to_the_default_window_and_zero_disables() {
+    assert_eq!(crate::config::DEFAULT_REPLY_WINDOW_SECS, 300);
+
+    let unset: CryoConfig = toml::from_str("agent = \"mock\"\n").unwrap();
+    assert_eq!(
+        unset
+            .reply_window
+            .unwrap_or(crate::config::DEFAULT_REPLY_WINDOW_SECS),
+        300
+    );
+
+    let disabled: CryoConfig = toml::from_str("agent = \"mock\"\nreply_window = 0\n").unwrap();
+    assert_eq!(disabled.reply_window, Some(0));
+    assert_eq!(
+        disabled
+            .reply_window
+            .unwrap_or(crate::config::DEFAULT_REPLY_WINDOW_SECS),
+        0
+    );
+}
+
+#[test]
+fn reply_window_round_trips_when_set() {
+    let toml_src = "agent = \"mock\"\nreply_window = 600\n";
     let config: CryoConfig = toml::from_str(toml_src).unwrap();
-    assert_eq!(config.wait_timeout, Some(7200));
+    assert_eq!(config.reply_window, Some(600));
     let out = toml::to_string(&config).unwrap();
-    assert!(out.contains("wait_timeout = 7200"));
+    assert!(out.contains("reply_window = 600"));
+}
+
+#[test]
+fn reply_window_survives_save_and_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cryo.toml");
+    let config = CryoConfig {
+        reply_window: Some(900),
+        ..CryoConfig::default()
+    };
+
+    save_config(&path, &config).unwrap();
+    let loaded = load_config(&path).unwrap().unwrap();
+
+    assert_eq!(loaded.reply_window, Some(900));
 }

@@ -8,7 +8,7 @@ The AI adapts to your pace — respond fast and it checks back quickly, take you
 
 A cron job can't do this because:
 - The AI decides when to stop checking (adaptive patience, not fixed schedule)
-- It schedules its own next check adaptively (fast when you're active, backing off when idle); this chamber sets `watch_dirs = []` (no reactive inbox wake), so it looks on its own schedule — send `cryo send "<move>" --wake` to make it check immediately instead of waiting for the next scheduled check
+- A move sent with `cryo send "<move>"` wakes the AI immediately (the daemon watches the inbox); between moves it schedules its own heartbeat checks adaptively (fast when you're active, backing off when idle)
 - Board state and strategy notes persist across arbitrarily long gaps
 - Multiple moves can accumulate; the AI processes them all on wake
 
@@ -29,7 +29,7 @@ cd .. && cryohub start --foreground   # open the browser chat UI for all chamber
 ```bash
 # Send a move (algebraic or coordinate notation)
 cryo send "e2e4"
-cryo send "Nf3" --wake  # wake the AI immediately
+cryo send "Nf3"   # the AI wakes immediately on new mail
 
 # Or use the hub UI; cd to a parent of your chamber subdirs first
 cd <chambers-parent-dir> && cryohub start

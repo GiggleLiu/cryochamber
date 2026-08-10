@@ -1,0 +1,27 @@
+description = "Two conversation rounds inside one live session via the reply window: the parked hibernate is rejected by mail arriving inside the window."
+
+[[actions]]
+kind = "send"
+message = "what is my mission?"
+
+[[actions]]
+kind = "todo_add"
+text = "next"
+at = "+1h"
+
+# Blocks: the daemon parks this hibernate for the reply window and rejects it
+# when the operator's next message lands.
+[[actions]]
+kind = "hibernate"
+summary = "round 1 done"
+
+[[actions]]
+kind = "receive"
+
+[[actions]]
+kind = "send"
+message = "ack: second round"
+
+[[actions]]
+kind = "hibernate"
+summary = "reply-window round-trip done"

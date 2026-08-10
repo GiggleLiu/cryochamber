@@ -121,41 +121,6 @@ pub async fn post_send(
     }
 }
 
-#[derive(Deserialize, Default)]
-pub struct WakeRequest {
-    message: Option<String>,
-}
-
-pub async fn post_wake(
-    State(app): State<Arc<AppState>>,
-    AxumPath(id): AxumPath<String>,
-    Json(req): Json<WakeRequest>,
-) -> Result<Json<Value>, StatusCode> {
-    let (path, _entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let store = MessageStore::new(path.clone());
-    let body = req
-        .message
-        .unwrap_or_else(|| "Wake requested from web UI.".into());
-    let msg = crate::message::Message {
-        from: "operator".into(),
-        subject: "Wake".into(),
-        body,
-        timestamp: chrono::Local::now().naive_local(),
-        metadata: Default::default(),
-        is_question: false,
-    };
-    if let Err(e) = store.send_in(&msg) {
-        return Ok(Json(
-            json!({"ok": false, "message": format!("Failed: {e}")}),
-        ));
-    }
-    let signaled = crate::daemon_client::signal_daemon_wake(&path);
-    Ok(Json(json!({
-        "ok": true,
-        "message": wake_response_message(signaled)
-    })))
-}
-
 pub async fn post_start(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
@@ -231,13 +196,6 @@ fn lifecycle_status_json(result: anyhow::Result<()>, success_message: &str) -> V
     match result {
         Ok(()) => json!({"ok": true, "message": success_message}),
         Err(e) => json!({"ok": false, "message": e.to_string()}),
-    }
-}
-
-fn wake_response_message(signaled: bool) -> &'static str {
-    match signaled {
-        true => "Wake signal sent",
-        false => "Message queued (no daemon running)",
     }
 }
 

@@ -166,35 +166,12 @@ fn dialog_all_and_since_rejected() {
     assert!(result.is_err());
 }
 
+/// `receive` is a plain non-blocking claim: the reply window is the chamber's
+/// only waiting mechanism, so the old interactive-mode flags must not parse.
 #[test]
-fn receive_without_wait_maps_to_plain_receive() {
-    assert!(matches!(
-        super::receive_request(false, None),
-        cryochamber::socket::Request::Receive
-    ));
-}
-
-#[test]
-fn receive_with_wait_maps_to_receive_wait() {
-    match super::receive_request(true, Some(300)) {
-        cryochamber::socket::Request::ReceiveWait { timeout_secs } => {
-            assert_eq!(timeout_secs, Some(300))
-        }
-        other => panic!("expected ReceiveWait, got {other:?}"),
-    }
-    assert!(matches!(
-        super::receive_request(true, None),
-        cryochamber::socket::Request::ReceiveWait { timeout_secs: None }
-    ));
-}
-
-#[test]
-fn receive_timeout_flag_requires_wait_flag() {
+fn receive_takes_no_wait_flags() {
     use clap::Parser;
-    assert!(super::Cli::try_parse_from(["cryo-agent", "receive", "--timeout", "5"]).is_err());
-    assert!(
-        super::Cli::try_parse_from(["cryo-agent", "receive", "--wait", "--timeout", "5"]).is_ok()
-    );
-    assert!(super::Cli::try_parse_from(["cryo-agent", "receive", "--wait"]).is_ok());
     assert!(super::Cli::try_parse_from(["cryo-agent", "receive"]).is_ok());
+    assert!(super::Cli::try_parse_from(["cryo-agent", "receive", "--wait"]).is_err());
+    assert!(super::Cli::try_parse_from(["cryo-agent", "receive", "--timeout", "5"]).is_err());
 }

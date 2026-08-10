@@ -410,18 +410,12 @@ fn test_accept_one_large_request_round_trips() {
     handle.join().unwrap();
 }
 
+/// The reply window is the only waiting mechanism, so the wire protocol must
+/// no longer carry an agent-chosen wait.
 #[test]
-fn receive_wait_request_round_trips_through_serde() {
-    for timeout_secs in [None, Some(300u64)] {
-        let request = Request::ReceiveWait { timeout_secs };
-        let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("\"cmd\":\"receive_wait\""));
-        let back: Request = serde_json::from_str(&json).unwrap();
-        match back {
-            Request::ReceiveWait { timeout_secs: t } => assert_eq!(t, timeout_secs),
-            other => panic!("expected ReceiveWait, got {other:?}"),
-        }
-    }
+fn receive_wait_request_is_not_part_of_the_protocol() {
+    let err = serde_json::from_str::<Request>(r#"{"cmd":"receive_wait","timeout_secs":300}"#);
+    assert!(err.is_err(), "receive_wait must not deserialize: {err:?}");
 }
 
 #[test]
@@ -434,7 +428,7 @@ fn test_responder_peer_disconnected_detects_dead_client() {
     let mut client = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
     use std::io::Write;
     client
-        .write_all(b"{\"cmd\":\"receive_wait\",\"timeout_secs\":null}\n")
+        .write_all(b"{\"cmd\":\"hibernate\",\"complete\":false,\"exit_code\":0,\"summary\":null}\n")
         .unwrap();
     let (_req, responder) = server.accept_one(None).unwrap().unwrap();
 

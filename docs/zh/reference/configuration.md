@@ -10,7 +10,7 @@ agent = "opencode"               # 智能体命令 (opencode, claude, codex, pi,
 max_session_duration = 3600      # 会话超时秒数 (0 = 不超时)
 watch_dirs = ["messages/inbox"]  # 监听以实现响应式唤醒的目录 ([] 表示禁用)
 zulip_poll_interval = 5          # Zulip 同步轮询间隔（秒）
-wait_timeout = 14400             # `cryo-agent receive --wait` 的默认超时秒数（限制为 1-86400）
+# reply_window = 600             # 保持会话 10 分钟，用于承接后续消息（不设置 = 300；0 表示禁用）
 
 # 注入到每个智能体会话的 Provider 环境变量（可选）。
 [provider]
@@ -24,7 +24,9 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # 派生智能体时设置的环境�
 | `max_session_duration` | `3600` | 会话超时秒数。`0` 表示禁用超时。 |
 | `watch_dirs` | `["messages/inbox"]` | 守护进程监听新文件的目录列表，用于响应式唤醒智能体。路径相对于 chamber 目录解释，除非是绝对路径。设为 `[]` 可完全禁用响应式唤醒。 |
 | `zulip_poll_interval` | `5` | `cryo-zulip sync` 轮询 Zulip 的间隔（秒）。`cryo-zulip sync --interval N` 可单次覆盖它。 |
-| `wait_timeout` | `14400` | 可选。当智能体未传 `--timeout` 时，`cryo-agent receive --wait` 的默认超时秒数。守护进程会把任何值限制到 `1`–`86400`（因此 `0` 等待 1 秒而非 0；上限为 24 小时）。 |
+| `reply_window` | `300` | 可选。休眠成功后保持会话打开的秒数：窗口内的后续消息由同一会话处理，而不是派生新会话。TODO 到期会提前结束窗口。`0` 表示禁用；上限为 `86400`。 |
+
+> **`reply_window` 与 `max_session_duration`**：休眠驻留期间会话计时暂停，且每一轮后续消息都会重新发放工作预算，因此较长的窗口可能让同一会话远远超过 `max_session_duration`。
 
 ## `[provider]`
 

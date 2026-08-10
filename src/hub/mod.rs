@@ -72,10 +72,6 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             post(crate::hub::routes::chamber::post_send),
         )
         .route(
-            "/api/chambers/{id}/wake",
-            post(crate::hub::routes::chamber::post_wake),
-        )
-        .route(
             "/api/chambers/{id}/start",
             post(crate::hub::routes::chamber::post_start),
         )

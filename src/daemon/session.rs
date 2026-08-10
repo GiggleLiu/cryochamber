@@ -27,7 +27,7 @@ pub(super) trait SessionRuntime {
     /// Respond from the parked slot and clear it.
     fn respond_parked(&mut self, ok: bool, message: String) -> Result<()>;
     /// If the parked client has closed its connection (e.g. the agent
-    /// runner's shell timeout killed `cryo-agent receive --wait`), drop the
+    /// runner's shell timeout killed the blocked `cryo-agent hibernate`), drop the
     /// dead responder and return true. Returns false when nothing is parked
     /// or the client is still alive.
     fn reclaim_parked_if_disconnected(&mut self) -> bool;
@@ -271,11 +271,11 @@ impl SessionLauncher for ProcessSessionLauncher {
         let context = ActiveSessionContext {
             cryo_state,
             timeout_secs,
-            wait_timeout_secs: config
-                .wait_timeout
-                .unwrap_or(crate::config::DEFAULT_WAIT_TIMEOUT_SECS),
             spawn_time,
             retry_remaining,
+            reply_window_secs: config
+                .reply_window
+                .unwrap_or(crate::config::DEFAULT_REPLY_WINDOW_SECS),
         };
         let outcome = daemon.drive_active_session(&mut runtime, &mut effects, context, logger);
 

@@ -1,5 +1,14 @@
 description = "Completes on first session; used by inbox-triggered wake tests."
 
+# Stay alive long enough for the test's inbox files to land, then drain them:
+# the quietness gate refuses to hibernate while inbox files are unread.
+[[actions]]
+kind = "sleep"
+seconds = 2
+
+[[actions]]
+kind = "receive"
+
 [[actions]]
 kind = "hibernate"
 complete = true

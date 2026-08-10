@@ -29,9 +29,6 @@ pub(super) enum DaemonRequest {
         summary: Option<String>,
     },
     Receive,
-    ReceiveWait {
-        timeout_secs: Option<u64>,
-    },
     Todo(TodoRequest),
 }
 
@@ -52,9 +49,6 @@ impl From<crate::socket::Request> for DaemonRequest {
                 summary,
             },
             crate::socket::Request::Receive => Self::Receive,
-            crate::socket::Request::ReceiveWait { timeout_secs } => {
-                Self::ReceiveWait { timeout_secs }
-            }
             crate::socket::Request::TodoAdd { text, at } => {
                 Self::Todo(TodoRequest::Add { text, at })
             }
@@ -81,6 +75,8 @@ pub(super) fn resolve_hibernate_request(
     exit_code: u8,
     summary: Option<&str>,
     has_pending_todos: bool,
+    has_unread_inbox: bool,
+    has_due_todo: bool,
 ) -> HibernateDecision {
     let summary = summary.unwrap_or("(no summary)");
     if exit_code != 0 {
@@ -92,6 +88,31 @@ pub(super) fn resolve_hibernate_request(
             response_ok: true,
             response_message: "Failure recorded.",
             log_event: format!("hibernate failed: exit={exit_code}, summary=\"{summary}\""),
+        };
+    }
+
+    // Quietness gate: a session may not end while there is mail for it.
+    // Unconditional — no config. Failure hibernates above stay terminal.
+    if has_unread_inbox {
+        return HibernateDecision {
+            outcome: None,
+            response_ok: false,
+            response_message:
+                "hibernate refused: unread message(s) in inbox. Run `cryo-agent receive` to \
+                 read them, reply with `cryo-agent send`, then retry `cryo-agent hibernate`.",
+            log_event: format!("hibernate refused: unread inbox, summary=\"{summary}\""),
+        };
+    }
+
+    if complete && has_due_todo {
+        return HibernateDecision {
+            outcome: None,
+            response_ok: false,
+            response_message:
+                "hibernate --complete refused: a TODO is due. Finish that work now, or clear \
+                 it with `cryo-agent todo done <id>` / `cryo-agent todo remove <id>`, then \
+                 retry `cryo-agent hibernate --complete`.",
+            log_event: format!("hibernate --complete refused: TODO due, summary=\"{summary}\""),
         };
     }
 
@@ -614,10 +635,9 @@ fn parse_dialog_since(input: &str) -> Option<chrono::NaiveDateTime> {
         .and_then(|date| date.and_hms_opt(0, 0, 0))
 }
 
-/// Resolve the wait timeout for a `ReceiveWait` request: the request's value
-/// if given, else the chamber default, clamped into [1, MAX_WAIT_TIMEOUT_SECS].
-pub(super) fn effective_wait_timeout(requested: Option<u64>, default_secs: u64) -> u64 {
-    requested
-        .unwrap_or(default_secs)
-        .clamp(1, crate::config::MAX_WAIT_TIMEOUT_SECS)
+/// Resolve the hibernate reply window: the chamber's `reply_window` value,
+/// capped at `MAX_REPLY_WINDOW_SECS`. Zero is a valid result: it means "no
+/// window" (the quietness gate still applies).
+pub(super) fn effective_linger_secs(default_secs: u64) -> u64 {
+    default_secs.min(crate::config::MAX_REPLY_WINDOW_SECS)
 }

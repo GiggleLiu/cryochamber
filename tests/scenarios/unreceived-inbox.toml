@@ -1,0 +1,6 @@
+description = "Agent never receives the queued inbox message; the quietness gate refuses a clean hibernate, so it reports a failure instead (failure reports are never gated)."
+
+[[actions]]
+kind = "hibernate"
+exit = 1
+summary = "Never read the inbox"

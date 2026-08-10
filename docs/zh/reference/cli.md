@@ -13,16 +13,15 @@
 <tr><th>类别</th><th>命令</th><th>作用</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="7">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。</td></tr>
+<tr class="group"><td rowspan="6">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。</td></tr>
 <tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>启动守护进程。读取 <code>cryo.toml</code> 并把覆盖项写入 <code>timer.json</code>。</td></tr>
 <tr><td><code>cryo start --max-session-duration 3600</code></td><td>为本次运行覆盖会话超时时间。</td></tr>
 <tr><td><code>cryo status</code></td><td>显示守护进程是否在运行、当前会话编号以及下一次唤醒时间。</td></tr>
 <tr><td><code>cryo restart</code></td><td>重启正在运行的守护进程。若它已安装为操作系统服务，则重启现有服务而不重写或移除它。</td></tr>
 <tr><td><code>cryo cancel</code></td><td>停止守护进程并移除运行时状态。</td></tr>
-<tr><td><code>cryo wake ["message"]</code></td><td>立即唤醒守护进程，可附带一条消息。</td></tr>
 <tr class="group"><td rowspan="2">日志</td><td><code>cryo watch [--all] [--viewpoint cryo|agent]</code></td><td>实时跟踪日志。<code>--all</code> 从头显示日志。<code>--viewpoint cryo</code>（默认）跟踪结构化事件日志；<code>--viewpoint agent</code> 跟踪智能体原始输出（<code>cryo-agent.log</code>）。</td></tr>
 <tr><td><code>cryo log</code></td><td>打印完整会话日志。</td></tr>
-<tr class="group"><td rowspan="2">消息</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;] [--wake]</code></td><td>向智能体的收件箱发送消息。<code>--from</code> 设置发送者（默认 <code>human</code>），<code>--subject</code> 设置主题（默认根据正文生成），<code>--wake</code> 在发送后立即唤醒智能体。</td></tr>
+<tr class="group"><td rowspan="2">消息</td><td><code>cryo send "&lt;message&gt;" [--from &lt;name&gt;] [--subject &lt;text&gt;]</code></td><td>向智能体的收件箱发送消息；守护进程的收件箱监视器会唤醒智能体。<code>--from</code> 设置发送者（默认 <code>human</code>），<code>--subject</code> 设置主题（默认根据正文生成）。</td></tr>
 <tr><td><code>cryo receive</code></td><td>读取智能体发送到发件箱（outbox）的消息。</td></tr>
 <tr class="group"><td rowspan="2">维护</td><td><code>cryo clean [--force]</code></td><td>移除日志、状态、消息等运行时文件。</td></tr>
 <tr><td><code>cryo ps [--kill-all]</code></td><td>列出（或终止）本机上所有正在运行的 cryo 守护进程。可从任意目录运行。</td></tr>
@@ -48,18 +47,17 @@
 <tr><th>类别</th><th>命令</th><th>作用</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="3">休眠</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>结束会话；还有更多工作要做。</td></tr>
-<tr><td><code>cryo-agent hibernate --complete</code></td><td>结束会话；计划已完成。</td></tr>
-<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>报告失败的会话。守护进程会把已消费的 TODO 标记为完成，并新增一个带编号的重试 TODO。</td></tr>
+<tr class="group"><td rowspan="4">休眠</td><td><code>cryo-agent hibernate --summary "..."</code></td><td>结束会话；还有更多工作要做。只要收件箱存在未读邮件，就会被拒绝（非零退出）——智能体必须先 <code>receive</code>、回复，再重试，因此会话绝不会在还有邮件等着它时结束。若没有任何待办 TODO 声明下次唤醒，同样会被拒绝。除非禁用了回复窗口，否则调用成功后最多可能阻塞 <code>reply_window</code> 秒（见配置一节）。</td></tr>
+<tr><td><code>cryo-agent hibernate --complete</code></td><td>结束会话；计划已完成。此外，只要有 TODO 到期就会被拒绝。它永远不会被回复窗口驻留。</td></tr>
+<tr><td><code>cryo-agent hibernate --exit 1</code></td><td>报告失败的会话。守护进程会把已消费的 TODO 标记为完成，并新增一个带编号的重试 TODO。失败报告永远不会被拒绝，也不会被驻留。</td></tr>
 <tr class="group"><td rowspan="4">TODO</td><td><code>cryo-agent todo add "text" --at &lt;TIME&gt;</code></td><td>通过 TODO 安排下一次唤醒。<code>--at</code> 接受相对偏移（<code>+30 minutes</code>）、ISO 8601 时间戳（<code>2026-04-25T10:00</code>；容忍秒和空格分隔符），或仅日期（<code>2026-04-25</code>，表示午夜）。</td></tr>
 <tr><td><code>cryo-agent todo list</code></td><td>列出所有 TODO 项。</td></tr>
 <tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>将某个 TODO 项标记为完成。</td></tr>
 <tr><td><code>cryo-agent todo remove &lt;id&gt;</code></td><td>移除某个 TODO 项。</td></tr>
-<tr class="group"><td rowspan="6">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。</td></tr>
+<tr class="group"><td rowspan="5">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。</td></tr>
 <tr><td><code>cryo-agent send --stdin</code></td><td>从 stdin 原样读取发件箱消息正文，包括末尾换行；适用于多行或对 shell 敏感的文字。</td></tr>
 <tr><td><code>cryo-agent send --question "msg"</code></td><td>将该消息标记为等待人类回复的问题。</td></tr>
 <tr><td><code>cryo-agent receive</code></td><td>领取（claim）当前来自人类的收件箱批次。</td></tr>
-<tr><td><code>cryo-agent receive --wait [--timeout &lt;secs&gt;]</code></td><td>如果收件箱已有待处理批次，则像普通 <code>receive</code> 一样立即领取。否则阻塞：守护进程把请求停放在活动会话中，并把操作员的下一条消息送入该会话。超时时打印「No new messages」提示——把它当作应休眠的信号。<code>--timeout</code> 默认为 <code>cryo.toml</code> 中的 <code>wait_timeout</code>（否则为 14400 秒 / 4 小时），并被限制在 1–86400 秒（上限 24 小时；<code>0</code> 等待 1 秒，而不是 0）。再次调用 <code>receive --wait</code> 之前，必须先 <code>send</code> 一条回复。</td></tr>
 <tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>渲染对话记录（默认：最近 20 条消息）。<code>--last N</code> 显示最近 N 条，<code>--all</code> 显示所有已归档消息，<code>--since &lt;iso&gt;</code> 显示某个 ISO 8601 时刻之后的消息；三者互斥。副作用是会归档任何待处理的收件箱批次，与 <code>receive</code> 一样履行回复义务。</td></tr>
 <tr class="group"><td rowspan="3">时间</td><td><code>cryo-agent time</code></td><td>以 ISO 8601 格式打印当前本地时间。</td></tr>
 <tr><td><code>cryo-agent time "+30 minutes"</code></td><td>计算相对偏移。单位：<code>minutes</code>、<code>hours</code>、<code>days</code>、<code>weeks</code>。</td></tr>

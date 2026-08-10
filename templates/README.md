@@ -21,8 +21,7 @@ Go to the project folder and type:
 ```bash
 cryo status          # check if the daemon is running
 cryo watch           # follow the live log
-cryo send "message"  # send a message to the agent
-cryo wake            # force the agent to wake up now (don't wait for schedule)
+cryo send "message"  # send a message to the agent (wakes it immediately)
 cryo restart         # stop and restart the daemon
 cryo cancel          # stop the daemon and clean up state
 cryo ps              # list all running cryochamber daemons on this machine

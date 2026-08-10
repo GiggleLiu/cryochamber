@@ -10,7 +10,7 @@ agent = "opencode"               # Agent command (opencode, claude, codex, pi, k
 max_session_duration = 3600      # Session timeout in seconds (0 = no timeout)
 watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
 zulip_poll_interval = 5          # Zulip sync poll interval in seconds
-wait_timeout = 14400             # Default `cryo-agent receive --wait` timeout in seconds (clamped to 1-86400)
+# reply_window = 600             # hold the session 10 min for follow-up messages (unset = 300; 0 disables)
 
 # Provider environment injected into every agent session (optional).
 [provider]
@@ -24,7 +24,12 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # Env vars set when spawning the age
 | `max_session_duration` | `3600` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
 | `zulip_poll_interval` | `5` | How often `cryo-zulip sync` polls Zulip, in seconds. `cryo-zulip sync --interval N` overrides it for one run. |
-| `wait_timeout` | `14400` | Optional. Default timeout in seconds for `cryo-agent receive --wait` when the agent doesn't pass `--timeout`. The daemon clamps any value to `1`-`86400` (so `0` waits 1 s, not 0; the upper bound is 24 h). |
+| `reply_window` | `300` | Optional. Seconds a successful `hibernate` stays open so a follow-up message is answered by the same session instead of a fresh one. A due TODO ends the window early. `0` disables; capped at `86400`. |
+
+> **`reply_window` and `max_session_duration`**: the session clock is
+> suspended while a hibernate is parked and each follow-up round gets a fresh
+> budget, so a generous window can hold one session open well past
+> `max_session_duration`.
 
 ## `[provider]`
 

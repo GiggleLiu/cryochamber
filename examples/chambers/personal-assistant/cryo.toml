@@ -10,9 +10,10 @@ max_session_duration = 3600
 # Directories to watch for reactive wake (two-way interaction via Zulip)
 watch_dirs = ["messages/inbox"]
 
-# Default `cryo-agent receive --wait` timeout: stay interactive for up to
-# 1 hour of user silence before hibernating
-wait_timeout = 3600
+# Reply window: a successful `hibernate` stays open this long (seconds), so a
+# follow-up message inside the window is answered by the same live session.
+# 0 disables the window; unset means 300.
+reply_window = 3600
 
 # Zulip sync polling interval (seconds)
 zulip_poll_interval = 30

@@ -72,17 +72,9 @@ enum Commands {
         /// Message subject (default: derived from body)
         #[arg(long)]
         subject: Option<String>,
-        /// Wake the agent immediately after sending
-        #[arg(long)]
-        wake: bool,
     },
     /// Read messages from the agent's outbox
     Receive,
-    /// Send a wake message to the daemon's inbox
-    Wake {
-        /// Message to include in the agent's prompt
-        message: Option<String>,
-    },
     /// Run the persistent daemon (internal — use `cryo start` instead)
     #[command(hide = true)]
     Daemon,
@@ -108,9 +100,7 @@ fn main() -> Result<()> {
             body,
             from,
             subject,
-            wake,
-        } => cmd_send(&body, &from, subject.as_deref(), wake),
-        Commands::Wake { message } => cmd_wake(message.as_deref()),
+        } => cmd_send(&body, &from, subject.as_deref()),
         Commands::Daemon => cmd_daemon(),
         Commands::Receive => cmd_receive(),
     }
@@ -471,83 +461,7 @@ fn is_daemon_running(dir: &std::path::Path) -> bool {
     false
 }
 
-/// Send SIGUSR1 to the daemon to force an immediate wake.
-/// Returns true if the signal was delivered successfully.
-fn signal_daemon_wake(dir: &std::path::Path) -> bool {
-    cryochamber::daemon_client::signal_daemon_wake(dir)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WakeNotificationAction {
-    QueueUntilStart,
-    InboxWatcher,
-    SendSignal,
-}
-
-fn wake_notification_action(daemon_running: bool, inbox_watched: bool) -> WakeNotificationAction {
-    match (daemon_running, inbox_watched) {
-        (false, _) => WakeNotificationAction::QueueUntilStart,
-        (true, true) => WakeNotificationAction::InboxWatcher,
-        (true, false) => WakeNotificationAction::SendSignal,
-    }
-}
-
-/// True when the configured `watch_dirs` list includes `messages/inbox`.
-/// Matches both the relative `messages/inbox` form and equivalent absolute
-/// paths against the chamber directory.
-fn inbox_is_watched(dir: &std::path::Path, watch_dirs: &[std::path::PathBuf]) -> bool {
-    let inbox_abs = dir.join("messages").join("inbox");
-    watch_dirs.iter().any(|p| {
-        let resolved = if p.is_absolute() {
-            p.clone()
-        } else {
-            dir.join(p)
-        };
-        resolved == inbox_abs
-    })
-}
-
-/// After writing an inbox message, notify the daemon and print status.
-/// When `messages/inbox` is in `watch_dirs`, the inotify watcher handles
-/// wake — no signal needed. Otherwise, send SIGUSR1.
-fn notify_daemon_wake(dir: &std::path::Path) -> Result<()> {
-    let watch_dirs = config::load_config(&config::config_path(dir))?
-        .map(|c| c.watch_dirs)
-        .unwrap_or_else(config::default_watch_dirs);
-
-    let inbox_watched = inbox_is_watched(dir, &watch_dirs);
-
-    match wake_notification_action(is_daemon_running(dir), inbox_watched) {
-        WakeNotificationAction::QueueUntilStart => {
-            eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
-        }
-        WakeNotificationAction::InboxWatcher => {
-            println!("Daemon will pick it up shortly.");
-        }
-        WakeNotificationAction::SendSignal => {
-            if signal_daemon_wake(dir) {
-                println!("Wake signal sent. Daemon waking now.");
-            } else {
-                eprintln!("Warning: failed to signal daemon. Message queued for the next session.");
-            }
-        }
-    }
-    Ok(())
-}
-
-fn cmd_wake(wake_message: Option<&str>) -> Result<()> {
-    let dir = cryochamber::work_dir()?;
-    lifecycle::require_valid_project(&dir)?;
-    let store = MessageStore::new(dir.clone());
-
-    let body = wake_message.unwrap_or("Manual wake requested by operator.");
-    let msg = build_inbox_message("operator", "Wake", body);
-    store.send_in(&msg)?;
-
-    notify_daemon_wake(&dir)
-}
-
-fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result<()> {
+fn cmd_send(body: &str, from: &str, subject: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
     lifecycle::require_valid_project(&dir)?;
     let store = MessageStore::new(dir.clone());
@@ -570,8 +484,8 @@ fn cmd_send(body: &str, from: &str, subject: Option<&str>, wake: bool) -> Result
         path.strip_prefix(&dir).unwrap_or(&path).display()
     );
 
-    if wake {
-        notify_daemon_wake(&dir)?;
+    if !is_daemon_running(&dir) {
+        eprintln!("Warning: no daemon is running. Message queued for the next `cryo start`.");
     }
 
     Ok(())
