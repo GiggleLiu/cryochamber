@@ -135,6 +135,15 @@ impl SessionEffects for FsSessionEffects<'_> {
     }
 
     fn next_valid_todo_wake(&self) -> Option<chrono::NaiveDateTime> {
-        self.todo_file().next_valid_wake().ok().flatten()
+        match self.todo_file().next_valid_wake() {
+            Ok(wake) => wake,
+            Err(e) => {
+                // Fail open toward "quiet" so an I/O hiccup can't wedge
+                // hibernation — but loudly: `hibernate --complete` is
+                // terminal, and a due TODO hidden by this error never runs.
+                eprintln!("Daemon: cannot read todo.json, treating the chamber as quiet: {e:#}");
+                None
+            }
+        }
     }
 }

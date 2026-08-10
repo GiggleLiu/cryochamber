@@ -41,7 +41,8 @@ pub struct CryoConfig {
 
     /// Reply window in seconds kept open after the agent hibernates: a
     /// message arriving inside the window is handled by the same session.
-    /// `None` (or 0) = no window; the daemon caps any value at 86400.
+    /// `None` = `DEFAULT_REPLY_WINDOW_SECS` (300); an explicit 0 disables
+    /// the window; the daemon caps any value at 86400.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_window: Option<u64>,
 

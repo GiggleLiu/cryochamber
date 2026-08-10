@@ -775,8 +775,11 @@ fn test_inbox_wake_no_delayed_wake_notice() {
 #[test]
 fn test_mock_reply_window_second_round_in_one_session() {
     let dir = tempfile::tempdir().unwrap();
-    // Leave `reply_window` unset so the chamber uses the 300 s default.
-    setup_scenario_with_reply_window(dir.path(), "reply-window.toml", None);
+    // Explicit window: long enough that a descheduled test thread cannot miss
+    // round 2 (the waits above allow 15 s), short enough that the round-2
+    // park expires while the test watches, so the session actually ends
+    // before the stale-watcher regression check.
+    setup_scenario_with_reply_window(dir.path(), "reply-window.toml", Some(30));
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "60"])
@@ -818,8 +821,23 @@ fn test_mock_reply_window_second_round_in_one_session() {
     // Regression for Finding 2: the round-2 message's create event (queued on
     // the watcher channel before the agent claimed and archived it) must not
     // be replayed as a fresh wake once the session ends and the idle loop
-    // resumes.
-    std::thread::sleep(Duration::from_secs(2));
+    // resumes. The round-2 hibernate is parked; nobody writes more mail, so
+    // the window expires and the session really ends.
+    assert!(
+        wait_for_log_content(dir.path(), "--- CRYO END ---", Duration::from_secs(45)),
+        "the round-2 park should expire and end the session"
+    );
+    // Give the idle loop a chance to drain the stale watcher event: it either
+    // logs the ignore line or never delivers the event at all. Only after
+    // that is the session count meaningful.
+    let saw_stale_ignore = wait_for_log_content(
+        dir.path(),
+        "ignoring stale inbox events",
+        Duration::from_secs(5),
+    );
+    if !saw_stale_ignore {
+        std::thread::sleep(Duration::from_secs(2));
+    }
     let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
     assert_eq!(
         log.matches("--- CRYO SESSION").count(),
