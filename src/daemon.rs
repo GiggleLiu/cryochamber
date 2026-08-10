@@ -1708,6 +1708,21 @@ impl Daemon {
 
         let mut hibernate_outcome: Option<SessionLoopOutcome> = None;
         let mut inbox_state = SessionInboxState::new();
+
+        // Linger-release log failure: finalize claimed batches and propagate.
+        // A macro because each arm moves `logger` while `effects` and
+        // `inbox_state` stay borrowed — a closure cannot do both.
+        macro_rules! linger_log_failed {
+            ($e:expr, $clean:expr) => {
+                return Err(self.linger_release_log_failed(
+                    effects,
+                    logger,
+                    &mut inbox_state,
+                    $clean,
+                    $e,
+                ))
+            };
+        }
         let expected_instance_id = context.cryo_state.instance_id.as_deref();
 
         loop {
@@ -1881,13 +1896,7 @@ impl Daemon {
                     if let Err(e) =
                         logger.log_event("linger: client disconnected — hibernate stands")
                     {
-                        return Err(self.linger_release_log_failed(
-                            effects,
-                            logger,
-                            &mut inbox_state,
-                            hibernate_outcome.is_some(),
-                            e,
-                        ));
+                        linger_log_failed!(e, hibernate_outcome.is_some());
                     }
                 } else if effects.has_unread_inbox() {
                     // New mail inside the window: reject the parked hibernate
@@ -1909,13 +1918,7 @@ impl Daemon {
                         if let Err(e) =
                             logger.log_event("linger: released — inbox message(s) waiting")
                         {
-                            return Err(self.linger_release_log_failed(
-                                effects,
-                                logger,
-                                &mut inbox_state,
-                                false,
-                                e,
-                            ));
+                            linger_log_failed!(e, false);
                         }
                     } else {
                         // Same bookkeeping as the disconnect-reclaim arm.
@@ -1928,13 +1931,7 @@ impl Daemon {
                         if let Err(e) = logger.log_event(
                             "linger: client disconnected before release — hibernate stands",
                         ) {
-                            return Err(self.linger_release_log_failed(
-                                effects,
-                                logger,
-                                &mut inbox_state,
-                                hibernate_outcome.is_some(),
-                                e,
-                            ));
+                            linger_log_failed!(e, hibernate_outcome.is_some());
                         }
                     }
                 } else if todo_check_due
@@ -1952,13 +1949,7 @@ impl Daemon {
                     {
                         let _ =
                             runtime.respond_parked(true, HIBERNATE_LINGER_TODO_DUE_RESPONSE.into());
-                        return Err(self.linger_release_log_failed(
-                            effects,
-                            logger,
-                            &mut inbox_state,
-                            hibernate_outcome.is_some(),
-                            e,
-                        ));
+                        linger_log_failed!(e, hibernate_outcome.is_some());
                     }
                     if runtime
                         .respond_parked(true, HIBERNATE_LINGER_TODO_DUE_RESPONSE.into())
@@ -1971,13 +1962,7 @@ impl Daemon {
                     wait_state.parked_since = None;
                     if let Err(e) = logger.log_event("linger: expired — hibernate accepted") {
                         let _ = runtime.respond_parked(true, "Hibernating.".into());
-                        return Err(self.linger_release_log_failed(
-                            effects,
-                            logger,
-                            &mut inbox_state,
-                            hibernate_outcome.is_some(),
-                            e,
-                        ));
+                        linger_log_failed!(e, hibernate_outcome.is_some());
                     }
                     if runtime.respond_parked(true, "Hibernating.".into()).is_err() {
                         let _ = logger.log_event("linger: parked respond failed after expiry");
