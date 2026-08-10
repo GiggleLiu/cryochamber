@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub const IPC_PROTOCOL_VERSION: u32 = 9;
+pub const IPC_PROTOCOL_VERSION: u32 = 10;
 
 /// Read/write timeout applied to each accepted client connection. Bounds how
 /// long a single request poll may block on a slow or silent client so the

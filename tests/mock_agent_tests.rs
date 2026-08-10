@@ -754,14 +754,14 @@ fn test_inbox_wake_no_delayed_wake_notice() {
 // --- Reply window tests ---
 
 #[test]
-fn test_mock_reply_window_second_round_in_one_session() {
+fn test_mock_linger_second_round_in_one_session() {
     let dir = tempfile::tempdir().unwrap();
-    // The scenario's hibernates request a 30 s linger: long enough that a
+    // The round-1 hibernate requests a 30 s linger: long enough that a
     // descheduled test thread cannot miss round 2 (the waits above allow
-    // 15 s), short enough that the round-2 park expires while the test
-    // watches, so the session actually ends before the stale-watcher
-    // regression check.
-    setup_scenario(dir.path(), "reply-window.toml");
+    // 15 s). The round-2 hibernate requests `linger = 0`, pinning that the
+    // window is reselected per request — it is granted immediately, so the
+    // session ends before the stale-watcher regression check.
+    setup_scenario(dir.path(), "linger.toml");
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "60"])
@@ -803,11 +803,18 @@ fn test_mock_reply_window_second_round_in_one_session() {
     // Regression for Finding 2: the round-2 message's create event (queued on
     // the watcher channel before the agent claimed and archived it) must not
     // be replayed as a fresh wake once the session ends and the idle loop
-    // resumes. The round-2 hibernate is parked; nobody writes more mail, so
-    // the window expires and the session really ends.
+    // resumes. The round-2 hibernate requests `linger = 0`, so it is granted
+    // without parking and the session really ends.
     assert!(
         wait_for_log_content(dir.path(), "--- CRYO END ---", Duration::from_secs(45)),
-        "the round-2 park should expire and end the session"
+        "the round-2 `--linger 0` hibernate should end the session"
+    );
+    let log = fs::read_to_string(dir.path().join("cryo.log")).unwrap();
+    assert_eq!(
+        log.matches("hibernate: parked").count(),
+        1,
+        "only round 1 asked for a window; round 2's `--linger 0` must be \
+         granted without parking; log:\n{log}"
     );
     // Give the idle loop a chance to drain the stale watcher event: it either
     // logs the ignore line or never delivers the event at all. Only after
@@ -832,9 +839,9 @@ fn test_mock_reply_window_second_round_in_one_session() {
 }
 
 #[test]
-fn test_mock_reply_window_expires_and_hibernate_stands() {
+fn test_mock_linger_expires_and_hibernate_stands() {
     let dir = tempfile::tempdir().unwrap();
-    setup_scenario(dir.path(), "reply-window-expiry.toml");
+    setup_scenario(dir.path(), "linger-expiry.toml");
 
     cryo_bin()
         .args(["start", "--agent", "mock", "--max-session-duration", "60"])
@@ -849,7 +856,7 @@ fn test_mock_reply_window_expires_and_hibernate_stands() {
             "hibernate: parked (2s reply window)",
             Duration::from_secs(20)
         ),
-        "daemon should park the hibernate for the configured 2 s window"
+        "daemon should park the hibernate for the requested 2 s window"
     );
     assert!(
         wait_for_log_content(

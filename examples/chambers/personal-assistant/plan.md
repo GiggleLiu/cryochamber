@@ -88,7 +88,7 @@ Each session you:
      timeout; if the shell kills it anyway, the hibernate stands.
    - **Refused with "unread inbox mail"**: a follow-up arrived inside the
      window and you are still in this session — `receive`, reply as in
-     step 3, hibernate again.
+     step 3, hibernate again with `--linger 3600`.
    - **Window expiry or a due TODO**: the hibernate succeeds and the session
      ends.
 
@@ -105,8 +105,9 @@ Each session you:
    - If no pending items and no pending summary, wake in 6 hours as a heartbeat:
      resolve it with `cryo-agent time "+6 hours"` and add an internal heartbeat
      todo if needed.
-   - Run `cryo-agent hibernate --summary "..."`. The current CLI does **not**
-     support `--wake`; wake scheduling comes from pending todos.
+   - Run `cryo-agent hibernate --summary "..." --linger 3600`. The current
+     CLI does **not** support `--wake`; wake scheduling comes from pending
+     todos.
    - Never use `--complete` — this assistant runs indefinitely.
 
 ## Configuration
