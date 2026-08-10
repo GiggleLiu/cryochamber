@@ -92,14 +92,13 @@ cryo-agent hibernate --exit 1 --summary "Failure: what broke"       # report fai
 
 `hibernate` may be *refused* (non-zero exit) — read the message and do what it says, then hibernate again:
 
-- **Unread inbox mail** — a message arrived before or during your hibernate call. `cryo-agent receive`, reply with `cryo-agent send`, then retry. A session is never allowed to end while mail for it is waiting.
-- **Operator forced a wake** — only while a reply window holds your hibernate open. Check `cryo-agent receive` and `cryo-agent todo list`, act on what you find, then retry.
+- **Unread inbox mail** — a message arrived before or during your hibernate call (including inside the reply window). `cryo-agent receive`, reply with `cryo-agent send`, then retry. A session is never allowed to end while mail for it is waiting.
 - **No pending TODO** — Step 4 was skipped: add the next wake with `cryo-agent todo add ... --at <TIME>`, then retry.
 - **`--complete` while a TODO is due** — finish that work or clear the item (`todo done` / `todo remove`), then retry.
 
 A failure report (`--exit N`, N≠0) is never refused.
 
-Unless the chamber disables its reply window (`reply_window = 0` in cryo.toml; unset means 300 s), a successful `hibernate` may take up to the window long to return: the daemon holds your session open so a quick follow-up message is answered by you, in context, instead of by a cold new session. Treat a slow `hibernate` as normal — run it with a generous shell-tool timeout. If your shell kills the blocked `hibernate` anyway, nothing is lost: the daemon notices the disconnect and the hibernate stands.
+A successful `hibernate` may block up to the reply window (`reply_window` in cryo.toml; unset = 300 s, `0` disables) while the daemon holds your session open for a quick follow-up. Treat a slow `hibernate` as normal and give it a generous shell-tool timeout; if the shell kills it anyway, nothing is lost — the hibernate stands.
 
 If you exit without calling `cryo-agent hibernate`, the daemon may retry transient runner failures before making the failure visible. Once retries are exhausted, or once you have already sent or received messages in the session, the daemon marks each claimed TODO done and creates a fresh retry TODO with an `(attempt k)` suffix and a `2^k`-minute delay (capped at 1 day). The daemon also writes a stand-in `from: cryochamber` outbox message if you never sent a human-visible message this session — don't make the human read a crash notice instead of your words.
 

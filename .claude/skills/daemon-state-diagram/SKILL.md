@@ -174,7 +174,8 @@ nodes and edges — do **not** rebuild the style block from scratch.
 1. **Analyse the daemon sources.** Read these files (in order) and
    summarise the state transitions around wake events, inbox handling,
    session run, and crash retry:
-   - `src/daemon.rs` — top-level event loop, SIGUSR1 handling, inbox watcher
+   - `src/daemon.rs` — top-level event loop, inbox watcher, hibernate
+     reply window (parked hibernate released by mail / due TODO / expiry)
    - `src/daemon/schedule.rs` — how the next wake time is computed
    - `src/daemon/session.rs` — session launch and finalisation
    - `src/daemon/request.rs` — IPC request dispatch (`Receive`, `Send`,
@@ -195,7 +196,7 @@ nodes and edges — do **not** rebuild the style block from scratch.
    more only if the summary surfaces them):
    - `Idle` — daemon sleeping on 250 ms ticks; serves `Ping`, `Hello`,
      `Receive`, `Todo*`; refuses `Send` / `Hibernate`.
-   - `Triggered` — `WakeFromSchedule` / `InboxChanged` / SIGUSR1
+   - `Triggered` — `WakeFromSchedule` / `InboxChanged`
      sets `run_now`.
    - `Collect Reminders` — `TodoFile::consume_past_due` marks due
      items `done` and returns `Vec<(text, at)>`.

@@ -45,8 +45,30 @@ Security and reliability hardening.
   comments, so inbound messages are unreliable — prefer Zulip sync
   (`cryo-zulip`).
 
+### Changed
+
+- **Hibernate quietness gate.** `cryo-agent hibernate` is refused (non-zero
+  exit) while unread inbox mail exists — the agent must `receive`, reply, and
+  retry, so a session never ends with mail waiting for it. `--complete` is
+  additionally refused while a TODO is due. Failure reports (`--exit N`) are
+  never refused.
+- **Reply window.** A successful `hibernate` now stays open for the reply
+  window so a quick follow-up is answered by the same live session instead of
+  a cold new one. Configure with `reply_window` in `cryo.toml` (seconds;
+  unset = 300, `0` disables). Note `hibernate` may now block up to the window
+  long.
+
 ### Removed
 
+- **`cryo wake` and `cryo send --wake` removed**, along with the SIGUSR1 wake
+  path. A chamber wakes for its schedule, for mail via the `watch_dirs`
+  inbox watcher, or at daemon start; `cryo send` is how an operator reaches
+  the agent.
+- **`cryo-agent receive --wait` / `--timeout` removed.** The reply window is
+  the one waiting mechanism: just `hibernate` — a follow-up inside the window
+  rejects the hibernate back into the same session.
+- **`wait_timeout` config key removed** (superseded by `reply_window`).
+  Leftover keys are silently ignored; update existing `cryo.toml` files.
 - **GitHub Discussions message sync (`cryo-gh`) removed.** The `cryo-gh` binary
   and its Discussion-based sync channel are gone. Use Zulip (`cryo-zulip`) for
   remote sync, or the local file-based inbox/outbox.
