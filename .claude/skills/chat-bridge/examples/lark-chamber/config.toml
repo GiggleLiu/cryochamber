@@ -1,0 +1,21 @@
+# config.toml — 本 chamber agent 的工程配置
+#
+# 被唤醒的 agent 必须先读本文件，了解自己照看哪些仓库。
+# 用户（通过飞书指令或直接编辑）会陆续把仓库交给本 agent 管理，
+# 每次新增就在下面追加一个 [[repos]] 条目。
+
+# agent 收到未指明目录的指令时使用的默认工作目录（通常就是某个仓库）。
+default_repo = "my-project"
+
+# 交给本 agent 照看的仓库列表。
+# path:  仓库的绝对路径
+# note:  一句话说明这个仓库是什么、照看的重点（可选）
+[[repos]]
+name = "my-project"
+path = "/absolute/path/to/my-project"
+note = "替换为这个仓库的用途和照看重点"
+
+# [[repos]]
+# name = "some-project"
+# path = "/Users/liujinguo/agentic/some-project"
+# note = "照看重点写在这里"

@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""chat-bridge — unified cryochamber ↔ chat bridge (Zulip / Feishu-Lark).
+
+Run from a chamber directory:
+    chat-bridge init   --platform zulip --stream "..." [--topic T]
+    chat-bridge init   --platform lark [--chat-id oc_xxx]
+    chat-bridge run            # install the sync service (or --no-service)
+    chat-bridge pull / status / unsync
+"""
+
+import os
+import shutil
+import sys
+
+
+def _best_python() -> str:
+    """Modern interpreters first; the code targets Python >= 3.10 semantics
+    (e.g. TimeoutError == socket.timeout), so upgrade from 3.9 hosts."""
+    for name in ("python3.13", "python3.12", "python3.11", "python3.10"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return sys.executable
+
+
+if __name__ == "__main__":
+    if sys.version_info < (3, 10):
+        target = _best_python()
+        if target and os.path.realpath(target) != os.path.realpath(sys.executable):
+            os.execv(target, [target, os.path.abspath(__file__), *sys.argv[1:]])
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from chat_bridge.cli import main  # noqa: E402
+
+    sys.exit(main())
