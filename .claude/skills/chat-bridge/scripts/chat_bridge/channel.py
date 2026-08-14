@@ -106,7 +106,8 @@ class Channel(abc.ABC):
         if history import, else from newest)."""
 
     @abc.abstractmethod
-    def send(self, target: ReplyTarget, content: str) -> str:
+    def send(self, target: ReplyTarget, content: str,
+             idempotency_key: str | None = None) -> str:
         """Post `content` to the target thread. Returns the platform message id."""
 
     def upload(self, path: Path) -> str:

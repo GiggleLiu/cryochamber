@@ -17,6 +17,8 @@ import hashlib
 import json
 import os
 import shlex
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -147,6 +149,24 @@ class BridgeConfig:
         }
         atomic_write(chamber / CONFIG_FILE, toml_from_json(json.dumps(body)))
 
+    def validate(self) -> None:
+        if self.poll_interval <= 0:
+            raise ChannelError("bridge.poll_interval must be greater than zero")
+        if not self.channels:
+            raise ChannelError("no bridge channels configured; run 'chat-bridge init' first")
+        keys = [channel.key for channel in self.channels]
+        if len(keys) != len(set(keys)):
+            raise ChannelError("bridge channel names must be unique per platform")
+        for channel in self.channels:
+            if channel.platform == "zulip" and not channel.topic:
+                raise ChannelError(
+                    f"Zulip channel {channel.name!r} requires a topic for reply-safe routing"
+                )
+            if channel.platform == "lark" and not channel.chat_id:
+                raise ChannelError(
+                    f"Lark channel {channel.name!r} requires --chat-id for reply-safe routing"
+                )
+
 
 def toml_to_json(text: str) -> str:
     """Minimal TOML -> JSON for the flat config shape we generate."""
@@ -244,8 +264,8 @@ def load_state(chamber: Path) -> dict:
     if path.exists():
         try:
             return json.loads(path.read_text())
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as exc:
+            raise ChannelError(f"invalid {STATE_FILE}: {exc}") from exc
     return {"channels": {}, "stats": {"pulled": 0, "delivered": 0,
                                       "pushed": 0, "ignored": 0}}
 
@@ -332,9 +352,49 @@ def _format_with_context(msg: Message, kind: str, pending: list[dict]) -> str:
 
 
 def atomic_write(path: Path, data: str) -> None:
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(data)
-    os.replace(tmp, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+@contextmanager
+def bridge_lock(chamber: Path):
+    """Serialize state mutations across the service and one-shot commands."""
+    import fcntl
+
+    lock_dir = chamber / ".cryo"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / "chat-bridge.lock").open("a+") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ChannelError(
+                "another chat-bridge process is already running for this chamber"
+            ) from exc
+        yield
+
+
+def ensure_runtime_ignored(chamber: Path) -> None:
+    """Keep credentials, chat content, and generated state out of Git."""
+    path = chamber / ".gitignore"
+    existing = path.read_text() if path.exists() else ""
+    lines = set(existing.splitlines())
+    required = [".cryo/", "chat-bridge.json", "chat-bridge.log", "messages/"]
+    missing = [entry for entry in required if entry not in lines]
+    if not missing:
+        return
+    prefix = existing
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    atomic_write(path, prefix + "\n# chat-bridge runtime\n" + "\n".join(missing) + "\n")
 
 
 # ------------------------------------------------------------------ trigger gate
@@ -353,19 +413,24 @@ def is_directed(msg: Message, bot: BotIdentity, cfg: BridgeConfig) -> str | None
     lower = content.lower()
 
     # (a) explicit mention
-    if bot.id and bot.id in msg.mentioned_ids:
+    if msg.mentioned or (bot.id and bot.id in msg.mentioned_ids):
         return "mention"
     for label in bot.labels:
         if not label:
             continue
-        if f"@{label}" in lower or f"@**{label}**" in lower:
+        label = label.lower()
+        if f"@**{label}**" in lower or _contains_plain_mention(lower, label):
             return "mention"
 
     # (b) trigger word at the start, followed by punctuation or @-sign
     start = lower.lstrip()
     for w in cfg.trigger_words:
         wl = w.lower()
-        if start.startswith(f"@{wl}"):
+        mention = f"@{wl}"
+        if start.startswith(mention) and (
+            len(start) == len(mention)
+            or not (start[len(mention)].isalnum() or start[len(mention)] in "_-")
+        ):
             return "trigger"
         if start.startswith(wl) and start[len(wl):len(wl) + 1] in ",:，：!。":
             return "trigger"
@@ -376,6 +441,17 @@ def is_directed(msg: Message, bot: BotIdentity, cfg: BridgeConfig) -> str | None
         return None
 
     return None
+
+
+def _contains_plain_mention(content: str, label: str) -> bool:
+    token = f"@{label}"
+    start = 0
+    while (index := content.find(token, start)) >= 0:
+        end = index + len(token)
+        if end == len(content) or not (content[end].isalnum() or content[end] in "_-"):
+            return True
+        start = end
+    return False
 
 
 def sender_allowed(msg: Message, cfg: BridgeConfig) -> bool:
@@ -413,7 +489,7 @@ def deliver_to_inbox(chamber: Path, platform: str, msg: Message,
 
 
 def push_outbox(chamber: Path, channels: dict[str, Channel], state: dict,
-                cfg: BridgeConfig) -> int:
+                cfg: BridgeConfig, errors: list[str] | None = None) -> int:
     outbox = chamber / "messages" / "outbox"
     archive = outbox / "archive"
     archive.mkdir(parents=True, exist_ok=True)
@@ -426,26 +502,45 @@ def push_outbox(chamber: Path, channels: dict[str, Channel], state: dict,
         # none), so route via state: the channel that last delivered a
         # message is where the reply belongs (in its last thread).
         platform = meta.get("platform") or ""
-        ckey = meta.get("channel_key") or _guess_channel_key(platform, channels) \
-            or state.get("last_active")
+        active_route = state.get("active_route") or {}
+        ckey = meta.get("channel_key") or active_route.get("channel_key") \
+            or _guess_channel_key(platform, channels) or state.get("last_active")
         chan = channels.get(ckey)
         if chan is None:
-            log(f"push skipped {f.name}: no channel {ckey}")
+            error = f"push skipped {f.name}: no channel {ckey}"
+            log(error)
+            if errors is not None:
+                errors.append(error)
             continue
         cs = channel_state(state, ckey)
-        thread = meta.get("thread") or cs.get("last_thread")
+        thread = meta.get("thread") or (
+            active_route.get("thread") if active_route.get("channel_key") == ckey else None
+        ) or cs.get("last_thread")
         if not thread:
-            log(f"push skipped {f.name}: no reply thread known")
+            error = f"push skipped {f.name}: no reply thread known"
+            log(error)
+            if errors is not None:
+                errors.append(error)
             continue
-        target = ReplyTarget(thread=thread,
-                             parent_id=cs.get("last_parent") if cfg.reply_in_thread else None)
+        parent_id = active_route.get("parent_id") \
+            if active_route.get("channel_key") == ckey else cs.get("last_parent")
+        target = ReplyTarget(
+            thread=thread,
+            parent_id=parent_id if cfg.reply_in_thread else None,
+        )
         content = body
         if meta.get("subject"):
             content = f"{meta['subject']}\n\n{content}"
         try:
-            mid = chan.send(target, content.strip())
+            idempotency_key = hashlib.sha256(
+                f"{ckey}:{f.name}:{thread}".encode()
+            ).hexdigest()[:32]
+            mid = chan.send(target, content.strip(), idempotency_key=idempotency_key)
         except ChannelError as e:
-            log(f"push failed {f.name}: {e}")
+            error = f"push failed {f.name}: {e}"
+            log(error)
+            if errors is not None:
+                errors.append(error)
             continue
         cs["sent_ids"] = (cs["sent_ids"] + [mid])[-SEEN_IDS_LIMIT:]
         os.replace(f, archive / f.name)
@@ -464,7 +559,7 @@ def _guess_channel_key(platform: str, channels: dict[str, Channel]) -> str | Non
 # ------------------------------------------------------------------ sync loop
 
 def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig,
-              state: dict, bot: BotIdentity, attachments_dir: Path) -> None:
+              state: dict, bot: BotIdentity, attachments_dir: Path) -> int:
     key = spec.key
     cs = channel_state(state, key)
     if cs["cursor"] is None:
@@ -474,7 +569,7 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
             cs["cursor"] = res.cursor
             save_state(chamber, state)
             log(f"[{key}] initialized at cursor {cs['cursor']}")
-            return
+            return 0
         anchor: str | None = "0"  # history import: from the beginning
     else:
         anchor = cs["cursor"]
@@ -483,6 +578,7 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
     all_new = res.messages
     if res.cursor:
         cs["cursor"] = res.cursor
+    delivered = 0
 
     for msg in all_new:
         if msg.id in cs["seen_ids"]:
@@ -531,10 +627,17 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
         if msg.parent_id:
             cs["last_parent"] = msg.parent_id
         state["last_active"] = key
+        state.setdefault("active_route", {
+            "channel_key": key,
+            "thread": msg.thread,
+            "parent_id": msg.parent_id,
+        })
         state["stats"]["delivered"] += 1
+        delivered += 1
         log(f"[{key}] delivered to inbox: {msg.id} from {msg.sender_id} thread={msg.thread_name}")
 
     save_state(chamber, state)
+    return delivered
 
 
 def _is_reply_to_bot(msg: Message, cs: dict) -> bool:
@@ -546,18 +649,40 @@ def _is_reply_to_bot(msg: Message, cs: dict) -> bool:
 
 def sync_once(chamber: Path, channels: dict[str, Channel], specs: list[ChannelSpec],
               cfg: BridgeConfig, state: dict, bots: dict[str, BotIdentity]) -> None:
-    attachments_dir = chamber / "messages" / "attachments"
-    attachments_dir.mkdir(parents=True, exist_ok=True)
-    for spec in specs:
-        chan = channels[spec.key]
-        try:
-            pull_once(chamber, chan, spec, cfg, state, bots[spec.key], attachments_dir)
-        except ChannelError as e:
-            log(f"[{spec.key}] pull error: {e}")
-    pushed = push_outbox(chamber, channels, state, cfg)
+    errors: list[str] = []
+    pushed = push_outbox(chamber, channels, state, cfg, errors)
     if pushed:
         state["stats"]["pushed"] += pushed
+        if not errors:
+            state.pop("active_route", None)
         log(f"pushed {pushed} outbox message(s)")
+    if errors or state.get("active_route"):
+        save_state(chamber, state)
+        return
+
+    attachments_dir = chamber / "messages" / "attachments"
+    attachments_dir.mkdir(parents=True, exist_ok=True)
+    if not specs:
+        save_state(chamber, state)
+        return
+    start = int(state.get("next_channel_index", 0)) % len(specs)
+    ordered = [(start + offset) % len(specs) for offset in range(len(specs))]
+    delivered_any = False
+    for index in ordered:
+        spec = specs[index]
+        chan = channels[spec.key]
+        try:
+            delivered = pull_once(
+                chamber, chan, spec, cfg, state, bots[spec.key], attachments_dir
+            )
+            if delivered:
+                state["next_channel_index"] = (index + 1) % len(specs)
+                delivered_any = True
+                break
+        except ChannelError as e:
+            log(f"[{spec.key}] pull error: {e}")
+    if not delivered_any:
+        state["next_channel_index"] = (start + 1) % len(specs)
     save_state(chamber, state)
 
 
@@ -569,10 +694,19 @@ def service_name(chamber: Path, kind: str = "chat-bridge") -> str:
 
 
 def install_service(chamber: Path, command: list[str]) -> str:
+    import shutil
+
+    if shutil.which("systemctl") is None:
+        raise ChannelError(
+            "systemd is not available; use 'chat-bridge run --no-service' under your OS supervisor"
+        )
+    if any("\n" in part or "\r" in part for part in [str(chamber), *command]):
+        raise ChannelError("service paths and arguments must not contain newlines")
     name = service_name(chamber)
     unit_dir = Path.home() / ".config" / "systemd" / "user"
     unit_dir.mkdir(parents=True, exist_ok=True)
-    cmd = shlex.join(command)
+    cmd = shlex.join(command).replace("%", "%%")
+    working_directory = str(chamber).replace("%", "%%")
     unit = unit_dir / f"{name}.service"
     unit.write_text(f"""[Unit]
 Description=Cryochamber chat bridge ({chamber.name})
@@ -580,7 +714,7 @@ After=default.target
 
 [Service]
 Type=simple
-WorkingDirectory={chamber}
+WorkingDirectory={working_directory}
 ExecStart={cmd}
 Restart=on-failure
 RestartSec=5
@@ -605,5 +739,15 @@ def uninstall_service(chamber: Path) -> bool:
 
 def _systemctl(*args, check: bool = True) -> None:
     import subprocess
-    subprocess.run(["systemctl", "--user", *args],
-                   check=check, capture_output=True)
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", *args], check=False,
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError as exc:
+        if check:
+            raise ChannelError("systemctl not found; systemd user services are unavailable") from exc
+        return
+    if check and proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or "unknown error"
+        raise ChannelError(f"systemctl --user {' '.join(args)} failed: {detail}")

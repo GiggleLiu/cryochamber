@@ -22,8 +22,10 @@ from .backbone import (
     CONFIG_FILE,
     BridgeConfig,
     ChannelSpec,
+    bridge_lock,
     channel_state,
     configure_logging,
+    ensure_runtime_ignored,
     install_service,
     load_state,
     log,
@@ -41,6 +43,7 @@ def _make_channels(cfg: BridgeConfig, chamber: Path,
     from .lark import LarkChannel
     from .zulip import ZulipChannel
 
+    cfg.validate()
     channels: dict[str, object] = {}
     specs: list[ChannelSpec] = []
     bots: dict[str, object] = {}
@@ -69,6 +72,7 @@ def cmd_init(args) -> int:
     chamber = Path(args.chamber).resolve()
     chamber.mkdir(parents=True, exist_ok=True)
     configure_logging(chamber)
+    ensure_runtime_ignored(chamber)
     if args.platform == "zulip" and not args.stream:
         log("error: --stream is required for zulip")
         return 1
@@ -87,9 +91,20 @@ def cmd_init(args) -> int:
             rc_dir.mkdir(parents=True, exist_ok=True)
             dest = rc_dir / "zuliprc"
             pending_zuliprc = rc_dir / ".zuliprc.pending"
-            import shutil
-            shutil.copyfile(Path(args.config).resolve(), pending_zuliprc)
-            pending_zuliprc.chmod(0o600)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                fd = os.open(pending_zuliprc, flags, 0o600)
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "wb") as target, \
+                        Path(args.config).resolve().open("rb") as source:
+                    target.write(source.read())
+                    target.flush()
+                    os.fsync(target.fileno())
+            except OSError:
+                pending_zuliprc.unlink(missing_ok=True)
+                raise
         elif not (chamber / ".cryo" / "zuliprc").exists():
             log("error: no .cryo/zuliprc; pass --config <zuliprc path>")
             return 1
@@ -142,6 +157,8 @@ def cmd_init(args) -> int:
     finally:
         for chan in channels.values():
             chan.close()
+        if pending_zuliprc is not None:
+            pending_zuliprc.unlink(missing_ok=True)
     log(f"config written to {chamber / CONFIG_FILE}")
     log("next: chat-bridge run  (or pull/push for one-off cycles)")
     return 0
@@ -154,11 +171,22 @@ def cmd_pull(args) -> int:
     channels, specs, bots = _make_channels(cfg, chamber)
     try:
         state = load_state(chamber)
+        if state.get("active_route"):
+            raise ChannelError(
+                "a chamber reply is still pending; push it before pulling another route"
+            )
         attachments_dir = chamber / "messages" / "attachments"
         attachments_dir.mkdir(parents=True, exist_ok=True)
-        for spec in specs:
-            pull_once(chamber, channels[spec.key], spec, cfg, state,
-                      bots[spec.key], attachments_dir)
+        start = int(state.get("next_channel_index", 0)) % len(specs)
+        for offset in range(len(specs)):
+            index = (start + offset) % len(specs)
+            spec = specs[index]
+            delivered = pull_once(chamber, channels[spec.key], spec, cfg, state,
+                                  bots[spec.key], attachments_dir)
+            if delivered:
+                state["next_channel_index"] = (index + 1) % len(specs)
+                save_state(chamber, state)
+                break
     finally:
         for chan in channels.values():
             chan.close()
@@ -172,19 +200,23 @@ def cmd_push(args) -> int:
     channels, _specs, _bots = _make_channels(cfg, chamber)
     try:
         state = load_state(chamber)
-        pushed = push_outbox(chamber, channels, state, cfg)
+        errors: list[str] = []
+        pushed = push_outbox(chamber, channels, state, cfg, errors)
         state["stats"]["pushed"] += pushed
+        if pushed and not errors:
+            state.pop("active_route", None)
         save_state(chamber, state)
     finally:
         for chan in channels.values():
             chan.close()
-    return 0
+    return 1 if errors else 0
 
 
 def cmd_run(args) -> int:
     chamber = Path(args.chamber).resolve()
     configure_logging(chamber)
     cfg = BridgeConfig.load(chamber)
+    cfg.validate()
     if args.interval is not None:
         if args.interval <= 0:
             raise ChannelError("--interval must be greater than zero")
@@ -298,6 +330,13 @@ def main(argv=None) -> int:
         "unsync": cmd_unsync,
     }
     try:
+        needs_lock = args.command in {"init", "pull", "push"} or (
+            args.command == "run" and args.no_service
+        )
+        if needs_lock:
+            chamber = Path(args.chamber).resolve()
+            with bridge_lock(chamber):
+                return handlers[args.command](args)
         return handlers[args.command](args)
     except (ChannelError, OSError, ValueError) as exc:
         print(f"chat-bridge: error: {exc}", file=sys.stderr)

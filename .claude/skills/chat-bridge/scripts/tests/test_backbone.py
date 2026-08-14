@@ -9,26 +9,32 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from chat_bridge.backbone import (
     BridgeConfig,
     ChannelSpec,
     channel_state,
     deliver_to_inbox,
+    ensure_runtime_ignored,
     is_directed,
     load_state,
     parse_frontmatter,
     pull_once,
     push_outbox,
+    save_state,
     sender_allowed,
     sync_once,
 )
 from chat_bridge.channel import (
     BotIdentity,
     Channel,
+    ChannelError,
     FetchResult,
     Message,
 )
+from chat_bridge.cli import cmd_pull
 
 
 class MockChannel(Channel):
@@ -56,8 +62,8 @@ class MockChannel(Channel):
         self._messages = {k: m for k, m in self._messages.items() if int(k) > newest}
         return FetchResult(messages=out, cursor=str(max(int(k) for k in self._messages)) if self._messages else str(newest), done=True)
 
-    def send(self, target, content):
-        self._sent.append((target, content))
+    def send(self, target, content, idempotency_key=None):
+        self._sent.append((target, content, idempotency_key))
         return f"sent-{len(self._sent)}"
 
 
@@ -95,6 +101,10 @@ class TriggerGateTests(unittest.TestCase):
     def test_no_false_positive_on_plain_prose(self):
         self.assertFalse(is_directed(msg("1", "flash memory is fast"), BOT, self.cfg))
         self.assertFalse(is_directed(msg("1", "just checking the weather"), BOT, self.cfg))
+        self.assertFalse(is_directed(msg("1", "@flashlight status"), BOT, self.cfg))
+
+    def test_platform_mention_flag_is_directed(self):
+        self.assertTrue(is_directed(msg("1", "hello", mentioned=True), BOT, self.cfg))
 
     def test_require_mention_false(self):
         # require_mention=False is enforced at the pull gate, not inside
@@ -225,6 +235,23 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.channels[0].stream, 'Research "Lab"')
             self.assertEqual(loaded.channels[0].topic, "a,b")
 
+    def test_invalid_state_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            (chamber / "chat-bridge.json").write_text("{")
+            with self.assertRaisesRegex(Exception, "invalid chat-bridge.json"):
+                load_state(chamber)
+
+    def test_runtime_and_credentials_are_gitignored(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            (chamber / ".gitignore").write_text("existing\n")
+            ensure_runtime_ignored(chamber)
+            ensure_runtime_ignored(chamber)
+            lines = (chamber / ".gitignore").read_text().splitlines()
+            for entry in (".cryo/", "chat-bridge.json", "chat-bridge.log", "messages/"):
+                self.assertEqual(lines.count(entry), 1)
+
 
 class ContextBatchingTests(unittest.TestCase):
     def test_non_directed_buffered_and_attached(self):
@@ -290,7 +317,44 @@ class PushTests(unittest.TestCase):
             self.assertEqual(pushed, 1)
             self.assertEqual(chan._sent[0][0].thread, "general")
             self.assertIn("Hello agent reply", chan._sent[0][1])
+            self.assertEqual(len(chan._sent[0][2]), 32)
             self.assertTrue((outbox / "archive" / "2026-08-14T10-00-00_reply.md").exists())
+
+    def test_active_route_wins_over_newer_last_active_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            first = MockChannel(BOT)
+            second = MockChannel(BOT)
+            outbox = chamber / "messages" / "outbox"
+            outbox.mkdir(parents=True)
+            (outbox / "reply.md").write_text("---\n---\n\nanswer")
+            state = load_state(chamber)
+            state["active_route"] = {
+                "channel_key": "mock:first", "thread": "original", "parent_id": None,
+            }
+            state["last_active"] = "mock:second"
+            channel_state(state, "mock:first")["last_thread"] = "old"
+            channel_state(state, "mock:second")["last_thread"] = "newer"
+            pushed = push_outbox(
+                chamber, {"mock:first": first, "mock:second": second},
+                state, BridgeConfig(),
+            )
+            self.assertEqual(pushed, 1)
+            self.assertEqual(first._sent[0][0].thread, "original")
+            self.assertEqual(second._sent, [])
+
+    def test_failed_push_reports_error_without_archiving(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            outbox = chamber / "messages" / "outbox"
+            outbox.mkdir(parents=True)
+            message = outbox / "reply.md"
+            message.write_text("---\n---\n\nanswer")
+            errors = []
+            pushed = push_outbox(chamber, {}, load_state(chamber), BridgeConfig(), errors)
+            self.assertEqual(pushed, 0)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(message.exists())
 
     def test_inbox_frontmatter_roundtrip(self):
         with tempfile.TemporaryDirectory() as td:
@@ -325,6 +389,43 @@ class SyncOnceTests(unittest.TestCase):
             sync_once(chamber, {"mock:main": chan}, [spec], BridgeConfig(), state,
                       {"mock:main": BOT})
             self.assertEqual(len(list((chamber / "messages" / "inbox").glob("*.md"))), 1)
+
+    @patch("chat_bridge.cli._make_channels")
+    def test_one_shot_pull_refuses_while_a_reply_route_is_active(self, make_channels):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            state = load_state(chamber)
+            state["active_route"] = {
+                "channel_key": "mock:main", "thread": "topic", "parent_id": None,
+            }
+            save_state(chamber, state)
+            chan = MockChannel(BOT)
+            spec = ChannelSpec(name="main", platform="mock")
+            make_channels.return_value = ({spec.key: chan}, [spec], {spec.key: BOT})
+            with self.assertRaisesRegex(ChannelError, "reply is still pending"):
+                cmd_pull(SimpleNamespace(chamber=str(chamber)))
+
+    def test_round_robin_polls_next_channel_after_reply(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            first_spec = ChannelSpec(name="first", platform="mock")
+            second_spec = ChannelSpec(name="second", platform="mock")
+            first = MockChannel(BOT, {"1": msg("1", "@flash hi")})
+            second = MockChannel(BOT, {"1": msg("1", "@flash hi")})
+            channels = {first_spec.key: first, second_spec.key: second}
+            bots = {first_spec.key: BOT, second_spec.key: BOT}
+            state = load_state(chamber)
+            channel_state(state, first_spec.key)["cursor"] = "0"
+            channel_state(state, second_spec.key)["cursor"] = "0"
+            cfg = BridgeConfig()
+
+            sync_once(chamber, channels, [first_spec, second_spec], cfg, state, bots)
+            self.assertEqual(state["active_route"]["channel_key"], first_spec.key)
+            outbox = chamber / "messages" / "outbox"
+            outbox.mkdir(parents=True, exist_ok=True)
+            (outbox / "reply.md").write_text("---\n---\n\nreply")
+            sync_once(chamber, channels, [first_spec, second_spec], cfg, state, bots)
+            self.assertEqual(state["active_route"]["channel_key"], second_spec.key)
 
 
 if __name__ == "__main__":

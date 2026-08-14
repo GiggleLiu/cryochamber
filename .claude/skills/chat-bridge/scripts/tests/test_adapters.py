@@ -10,6 +10,7 @@ from unittest.mock import patch
 from chat_bridge.backbone import ChannelSpec
 from chat_bridge.channel import Attachment, ReplyTarget, resolve_local_link
 from chat_bridge.lark import LarkChannel
+from chat_bridge.zulip import ZulipChannel
 
 
 class LocalLinkTests(unittest.TestCase):
@@ -96,13 +97,35 @@ class LarkChannelTests(unittest.TestCase):
             ]
             chan = LarkChannel(ChannelSpec(name="main", platform="lark"), chamber)
             sent = chan.send(ReplyTarget("oc_chat"),
-                             "Done\n\n[result](result.txt)")
+                             "Done\n\n[result](result.txt)",
+                             idempotency_key="batch-key")
             self.assertEqual(sent, "om_file")
             text_args = run_cli.call_args_list[0].args[0]
             file_args = run_cli.call_args_list[1].args[0]
             self.assertIn("--markdown", text_args)
             self.assertNotIn("result.txt", text_args[text_args.index("--markdown") + 1])
             self.assertEqual(file_args[file_args.index("--file") + 1], "result.txt")
+            self.assertEqual(
+                text_args[text_args.index("--idempotency-key") + 1], "batch-key-0"
+            )
+            self.assertEqual(
+                file_args[file_args.index("--idempotency-key") + 1], "batch-key-1"
+            )
+
+
+class ZulipChannelTests(unittest.TestCase):
+    def test_event_queue_narrow_includes_configured_topic(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            zuliprc = chamber / "zuliprc"
+            zuliprc.write_text("[api]\nsite=https://zulip.example\nemail=bot@example.com\nkey=x\n")
+            spec = ChannelSpec(name="main", platform="zulip", stream="research",
+                               stream_id=7, topic="decoder")
+            chan = ZulipChannel(spec, chamber, zuliprc, "events")
+            self.assertEqual(
+                chan._register_narrow(),
+                '[["stream", "research"], ["topic", "decoder"]]',
+            )
 
 
 if __name__ == "__main__":

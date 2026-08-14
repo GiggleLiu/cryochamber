@@ -17,5 +17,5 @@ note = "替换为这个仓库的用途和照看重点"
 
 # [[repos]]
 # name = "some-project"
-# path = "/Users/liujinguo/agentic/some-project"
+# path = "/absolute/path/to/some-project"
 # note = "照看重点写在这里"

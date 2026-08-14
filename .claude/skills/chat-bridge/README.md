@@ -26,15 +26,17 @@ The `Channel` protocol is the same abstraction for both platforms:
 All policy (mention-gate, quiet mode, reply routing, dedupe, services) lives
 in `backbone.py` and is platform-identical.
 
-## Features (A + full B set)
+## Features
 
-- A — mention/trigger-word/thread-follow-up gate, quiet by default,
-  in-thread replies, anti-echo, atomic state + dedupe + stats,
+- A — mention/trigger-word gate, quiet by default, same-topic/chat replies,
+  anti-echo, locked atomic state + dedupe + stats,
   outbox push, systemd service + linger.
 - B1 — sender whitelist (`allowed_senders`).
-- B2 — attachments: Zulip `/user_uploads` both ways; Lark
-  `+messages-resources-download` (in) and `--image/--file` send (out).
-- B3 — multiple channels per chamber (`[[bridge.channels]]`).
+- B2 — attachments: Zulip `/user_uploads` both ways (25 MB cap); Lark
+  `--image/--file` send (out). Lark inbound resource extraction is not claimed
+  because the event CLI exposes normalized text without resource keys.
+- B3 — multiple concrete routes per chamber (`[[bridge.channels]]`), serialized
+  so an outstanding reply cannot be redirected by a newer message.
 - B4 — Feishu group `@bot` mode (content-based mention gate, same as Zulip).
 - B5 — Zulip history import (`--history`).
 - B6 — unified mailbox frontmatter / formatting across platforms.
@@ -49,9 +51,9 @@ ln -sf "$PWD/scripts/chat-bridge" ~/.local/bin/chat-bridge
 
 # Zulip
 chat-bridge init --chamber <chamber> --platform zulip \
-    --stream "QEC-automated search" --config path/to/zuliprc [--topic T]
-# Lark (install with: npx @larksuite/cli@latest install)
-chat-bridge init --chamber <chamber> --platform lark [--chat-id oc_xxx]
+    --stream "QEC-automated search" --topic "agent" --config path/to/zuliprc
+# Lark (tested with: npx @larksuite/cli@1.0.53 install)
+chat-bridge init --chamber <chamber> --platform lark --chat-id oc_xxx
 
 chat-bridge run --chamber <chamber>   # installs the systemd user service
 chat-bridge pull / status / unsync --chamber <chamber>
@@ -60,6 +62,8 @@ chat-bridge pull / status / unsync --chamber <chamber>
 Per-chamber config: `bridge.toml` (`trigger_words`, `allowed_senders`,
 `require_mention`, `reply_in_thread`, `transport`, `[[bridge.channels]]`).
 State: `chat-bridge.json`.
+
+Requirements: Python 3.10+; Lark support is tested against `lark-cli` 1.0.53.
 
 ## Tests
 

@@ -38,7 +38,7 @@ from .channel import (
 LARK_CLI = "lark-cli"
 EVENT_KEY = "im.message.receive_v1"
 READY_TIMEOUT = 90
-DEFAULT_POLL_INTERVAL = 2.0
+ONE_SHOT_WAIT_SECONDS = 5.0
 
 
 def _run_cli(args: list[str], timeout: int = 60, cwd: Path | None = None) -> dict:
@@ -129,12 +129,19 @@ class LarkChannel(Channel):
                 self._queue.put(ev)
 
     def fetch_new(self, cursor: str | None, limit: int = 1000) -> FetchResult:
+        started = False
         if self._proc is None or self._proc.poll() is not None:
             self._spawn_stream()
+            started = True
             # give the stream a moment to start delivering
             if cursor is None:
                 return FetchResult(messages=[], cursor="0", done=True)
         events: list[dict] = []
+        if started:
+            try:
+                events.append(self._queue.get(timeout=ONE_SHOT_WAIT_SECONDS))
+            except queue.Empty:
+                pass
         try:
             while len(events) < limit:
                 events.append(self._queue.get_nowait())
@@ -199,7 +206,8 @@ class LarkChannel(Channel):
 
     # ------------------------------------------------------------ outbound
 
-    def send(self, target: ReplyTarget, content: str) -> str:
+    def send(self, target: ReplyTarget, content: str,
+             idempotency_key: str | None = None) -> str:
         chat_id = target.thread
         if not chat_id:
             raise ChannelError("lark: no chat_id for reply target")
@@ -215,22 +223,29 @@ class LarkChannel(Channel):
         body = LOCAL_LINK_RE.sub(collect, content).strip()
         ids: list[str] = []
         if body:
-            ids.append(self._send_payload(target, "--markdown", body))
+            ids.append(self._send_payload(
+                target, "--markdown", body, idempotency_key, len(ids)
+            ))
         for path in attachments:
             flag = "--image" if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp") else "--file"
             rel = path.relative_to(self.chamber)
-            ids.append(self._send_payload(target, flag, str(rel)))
+            ids.append(self._send_payload(
+                target, flag, str(rel), idempotency_key, len(ids)
+            ))
         if not ids:
             raise ChannelError("lark: reply content is empty")
         return ids[-1]
 
-    def _send_payload(self, target: ReplyTarget, flag: str, value: str) -> str:
+    def _send_payload(self, target: ReplyTarget, flag: str, value: str,
+                      idempotency_key: str | None, segment: int) -> str:
         if target.parent_id:
             args = ["im", "+messages-reply", "--message-id", target.parent_id,
                     flag, value, "--as", "bot"]
         else:
             args = ["im", "+messages-send", "--chat-id", target.thread,
                     flag, value, "--as", "bot"]
+        if idempotency_key:
+            args.extend(["--idempotency-key", f"{idempotency_key}-{segment}"])
         r = _run_cli(args, cwd=self.chamber)
         data = r.get("data") or r
         return str(data.get("message_id") or data.get("id") or "")

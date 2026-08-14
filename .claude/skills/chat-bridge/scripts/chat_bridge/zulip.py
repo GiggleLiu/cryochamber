@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import base64
 import configparser
+import hashlib
 import json
 import os
 import socket
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -33,6 +35,8 @@ from .channel import (
     ReplyTarget,
     resolve_local_link,
 )
+
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
 class ZulipChannel(Channel):
@@ -77,7 +81,7 @@ class ZulipChannel(Channel):
         except urllib.error.HTTPError as e:
             detail = e.read().decode()[:300]
             raise ChannelError(f"zulip HTTP {e.code}: {detail}") from e
-        except (TimeoutError, socket.timeout) as e:
+        except TimeoutError as e:
             raise ChannelTimeout(f"zulip timeout: {e}") from e
         except urllib.error.URLError as e:
             if isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)):
@@ -111,7 +115,10 @@ class ZulipChannel(Channel):
 
     def _register_narrow(self) -> str:
         operand = self.spec.stream or str(self.stream_id)
-        return json.dumps([["stream", operand]])
+        narrow = [["stream", operand]]
+        if self.spec.topic:
+            narrow.append(["topic", self.spec.topic])
+        return json.dumps(narrow)
 
     def _queue_supported(self) -> bool:
         try:
@@ -146,6 +153,8 @@ class ZulipChannel(Channel):
             # realtime long-poll (instant pickup) + poll catch-up (messages
             # posted while the bridge was down never enter the queue).
             ev = self._fetch_events(cursor, limit)
+            if ev is None:
+                return self._fetch_poll(cursor, limit)
             poll = self._fetch_poll(cursor, limit)
             by_id = {m.id: m for m in poll.messages}
             for m in ev.messages:
@@ -244,6 +253,8 @@ class ZulipChannel(Channel):
         ts = datetime.fromtimestamp(m.get("timestamp", 0), tz=timezone.utc)
         mentioned_ids = [str(u.get("id")) for u in (m.get("mentioned_users") or [])]
         attachments = _extract_upload_links(m.get("content") or "")
+        for attachment in attachments:
+            attachment.meta["message_id"] = str(m.get("id", 0))
         return Message(
             id=str(m.get("id", 0)),
             sender_id=m.get("sender_email") or m.get("sender_id", ""),
@@ -261,7 +272,8 @@ class ZulipChannel(Channel):
 
     # ------------------------------------------------------------ outbound
 
-    def send(self, target: ReplyTarget, content: str) -> str:
+    def send(self, target: ReplyTarget, content: str,
+             idempotency_key: str | None = None) -> str:
         def externalize(match) -> str:
             path = resolve_local_link(self.chamber, match.group(3))
             return self.upload(path) if path is not None else match.group(0)
@@ -279,6 +291,10 @@ class ZulipChannel(Channel):
     def upload(self, path: Path) -> str:
         """Upload a local file; return a markdown link (image if it looks like one)."""
         import mimetypes
+        if path.stat().st_size > MAX_ATTACHMENT_BYTES:
+            raise ChannelError(
+                f"zulip upload exceeds {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB: {path.name}"
+            )
         boundary = "----chatbridge" + str(time.time()).replace(".", "")
         with open(path, "rb") as f:
             raw = f.read()
@@ -307,7 +323,9 @@ class ZulipChannel(Channel):
     def download(self, attachment: Attachment, dest: Path) -> Path:
         dest.mkdir(parents=True, exist_ok=True)
         safe = _safe_name(attachment.name)
-        out = dest / safe
+        identity = f"{attachment.meta.get('message_id', '')}:{attachment.key}"
+        prefix = hashlib.sha256(identity.encode()).hexdigest()[:12]
+        out = dest / f"{prefix}_{safe}"
         url = attachment.key
         if url.startswith(self.site):
             path = url[len(self.site):]
@@ -319,7 +337,26 @@ class ZulipChannel(Channel):
         req.add_header("Authorization", self._basic())
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
-                out.write_bytes(resp.read())
+                length = resp.headers.get("Content-Length")
+                if length and int(length) > MAX_ATTACHMENT_BYTES:
+                    raise ChannelError(
+                        f"zulip download exceeds {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB: {attachment.name}"
+                    )
+                payload = resp.read(MAX_ATTACHMENT_BYTES + 1)
+                if len(payload) > MAX_ATTACHMENT_BYTES:
+                    raise ChannelError(
+                        f"zulip download exceeds {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB: {attachment.name}"
+                    )
+                fd, tmp_name = tempfile.mkstemp(prefix=f".{out.name}.", dir=dest)
+                tmp = Path(tmp_name)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(payload)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(tmp, out)
+                finally:
+                    tmp.unlink(missing_ok=True)
         except urllib.error.HTTPError as e:
             raise ChannelError(f"zulip download failed: {e.read().decode()[:200]}") from e
         return out

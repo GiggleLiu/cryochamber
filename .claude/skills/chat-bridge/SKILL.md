@@ -58,7 +58,7 @@ directed).
 1. `cryo` installed and a chamber exists (`cryo init` or the `make-plan` skill).
 2. Credentials:
    - Zulip: a `zuliprc` file; the bot must be **subscribed** to the stream.
-   - Lark: install with `npx @larksuite/cli@latest install`, then complete
+  - Lark: install the tested CLI with `npx @larksuite/cli@1.0.53 install`, then complete
      `lark-cli config init` and `lark-cli auth login --recommend`; app scopes
      `im:message.p2p_msg:readonly` (+ send) and `im.message.receive_v1`
      event subscription enabled.
@@ -69,20 +69,25 @@ directed).
 ```bash
 cd <chamber>
 # Zulip
-chat-bridge init --platform zulip --stream "STREAM" [--topic T] \
+chat-bridge init --platform zulip --stream "STREAM" --topic T \
     --config path/to/zuliprc [--history] [--trigger flash] [--allow-sender id...]
 # Lark
-chat-bridge init --platform lark [--chat-id oc_xxx] [--chat-type p2p|group]
+chat-bridge init --platform lark --chat-id oc_xxx [--chat-type p2p|group]
 # multi-channel: repeat init with --name <other>
 chat-bridge run            # installs the systemd user service (or --no-service)
 ```
 
-`init` validates the credentials before replacing `.cryo/zuliprc` (0600),
-resolves the channel, and anchors the cursor at the newest message. Zulip's
+`init` requires one concrete reply route per channel: a Zulip topic or a Lark
+chat id. For Zulip, use `--topic T` (whole-stream routing is rejected). It
+validates credentials before replacing `.cryo/zuliprc` (0600), adds runtime
+credentials/state to the chamber's `.gitignore`, resolves the channel, and
+anchors the cursor at the newest message. Zulip's
 `--history` option imports the past instead; Lark's event stream does not offer
 history import. With no Lark `--chat-type`, the bridge defaults to `p2p`.
 Per-chamber config: `bridge.toml`. State: `chat-bridge.json`; logs:
-`chat-bridge.log` in the chamber.
+`chat-bridge.log` in the chamber. Multiple configured channels are serialized:
+the bridge does not pull another route until the chamber's reply to the active
+route has been posted.
 
 Common flags in `bridge.toml`:
 
