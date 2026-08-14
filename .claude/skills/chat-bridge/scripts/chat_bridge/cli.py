@@ -197,11 +197,11 @@ def cmd_push(args) -> int:
     chamber = Path(args.chamber).resolve()
     configure_logging(chamber)
     cfg = BridgeConfig.load(chamber)
-    channels, _specs, _bots = _make_channels(cfg, chamber)
+    channels, specs, _bots = _make_channels(cfg, chamber)
     try:
         state = load_state(chamber)
         errors: list[str] = []
-        pushed = push_outbox(chamber, channels, state, cfg, errors)
+        pushed = push_outbox(chamber, channels, state, cfg, errors, specs)
         state["stats"]["pushed"] += pushed
         if pushed and not errors:
             state.pop("active_route", None)
@@ -298,15 +298,16 @@ def build_parser() -> argparse.ArgumentParser:
         ("--config", {"default": None, "help": "zuliprc path to copy into .cryo/ (zulip)"}),
         ("--name", {"default": "main", "help": "channel name (multi-channel key)"}),
         ("--stream", {"default": "", "help": "zulip stream name"}),
-        ("--topic", {"default": None, "help": "zulip topic (None = whole stream)"}),
-        ("--chat-id", {"default": None, "help": "lark chat_id (None = any whitelisted p2p)"}),
+        ("--topic", {"default": None, "help": "zulip topic (required for zulip: the reply route)"}),
+        ("--chat-id", {"default": None, "help": "lark chat_id (required for lark: the reply route)"}),
         ("--chat-type", {"choices": ["p2p", "group"], "default": None,
                          "help": "lark chat type (default: p2p)"}),
         ("--history", {"action": "store_true", "help": "import existing history on first pull"}),
         ("--trigger", {"action": "append", "help": "trigger words (repeatable)"}),
         ("--allow-sender", {"action": "append", "help": "sender whitelist ids (repeatable; empty = anyone)"}),
         ("--interval", {"type": int, "default": None}),
-        ("--transport", {"choices": ["auto", "poll", "events", "event-stream"], "default": None}),
+        ("--transport", {"choices": ["auto", "poll", "events", "event-stream"], "default": None,
+                         "help": "shared by all channels; zulip: auto|poll|events, lark always uses its event stream"}),
     ])
 
     for name, help_ in (("pull", "one inbound fetch"), ("push", "one outbound push"),

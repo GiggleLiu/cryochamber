@@ -38,8 +38,9 @@ Ask the user **one question at a time**. Start with the platform:
 - **Zulip** — REST API (`transport = events` realtime queue, or `poll`).
   Trigger models:
   - **Mention-gated** (default, recommended for shared/busy streams):
-    only messages directed at the bot reach the agent — `@**bot**` mentions,
-    trigger words (`flash, ...`), or follow-ups in a thread the bot answered.
+    only messages directed at the bot reach the agent — `@**bot**` mentions
+    or trigger words (`flash, ...`). (Zulip has no message-level reply ids;
+    reply-to-bot follow-ups are a Lark-only trigger, see below.)
     Everything else stays out of the chamber inbox. Recent same-thread chatter
     is buffered as reference context and included only when a directed message
     arrives, so unrelated topics/chats never leak into the prompt.
@@ -48,6 +49,8 @@ Ask the user **one question at a time**. Start with the platform:
 - **Feishu / Lark** — `lark-cli` event stream (WebSocket long connection, no
   ports opened). `require_mention` gates both p2p and group `@bot` messages;
   mention detection is content-based (lark events carry no mentions array).
+  Lark messages carry reply ids, so with `reply_in_thread` a reply to one of
+  the bot's own messages also counts as directed and is answered in-thread.
 
 If unsure, recommend **Zulip + mention-gated** — quietest, matches
 group-chat etiquette (one consolidated reply per batch, never reply unless
@@ -97,8 +100,8 @@ Common flags in `bridge.toml`:
 | `require_mention` | true | only directed messages wake the agent |
 | `trigger_words` | `["flash", "flash-bot"]` | trigger words (start + punctuation) |
 | `allowed_senders` | `[]` | whitelist of platform ids; empty = anyone |
-| `reply_in_thread` | true | reply in the topic/thread of the trigger |
-| `transport` | auto | zulip: `events`/`poll`; lark: `event-stream` |
+| `reply_in_thread` | true | treat replies to the bot's messages as directed and answer in-thread (message-level replies are Lark-only; Zulip routes by topic) |
+| `transport` | auto | shared by all channels; zulip: `auto`/`poll`/`events` (other values behave as `poll`); lark always uses its event stream |
 
 ## Step 3 — Survive reboots and logout
 

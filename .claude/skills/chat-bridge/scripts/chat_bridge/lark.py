@@ -106,7 +106,7 @@ class LarkChannel(Channel):
         try:
             self._proc = subprocess.Popen(
                 [LARK_CLI, "event", "consume", EVENT_KEY, "--as", "bot", "--quiet"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
             )
         except FileNotFoundError as e:
             raise ChannelError(f"lark-cli not found on PATH ({LARK_CLI})") from e
@@ -189,6 +189,9 @@ class LarkChannel(Channel):
         create_ms = int(ev.get("create_time") or 0)
         ts = datetime.fromtimestamp(create_ms / 1000, tz=timezone.utc) if create_ms else \
             datetime.now(timezone.utc)
+        nested = ev.get("message") if isinstance(ev.get("message"), dict) else {}
+        parent_id = (ev.get("parent_id") or ev.get("root_id")
+                     or nested.get("parent_id") or nested.get("root_id") or None)
         return Message(
             id=msg_id or ev.get("event_id") or "",
             sender_id=sender,
@@ -199,7 +202,7 @@ class LarkChannel(Channel):
             timestamp=ts,
             mentioned=False,  # lark events expose no mentions array; gate is content-based
             mentioned_ids=[],
-            parent_id=None,
+            parent_id=str(parent_id) if parent_id else None,
             attachments=attachments,
             raw=ev,
         )

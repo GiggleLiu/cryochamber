@@ -5,6 +5,7 @@ Run: python3 -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -13,8 +14,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from chat_bridge.backbone import (
+    CONFIG_FILE,
     BridgeConfig,
     ChannelSpec,
+    _toml_to_json_simple,
     channel_state,
     deliver_to_inbox,
     ensure_runtime_ignored,
@@ -235,6 +238,23 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.channels[0].stream, 'Research "Lab"')
             self.assertEqual(loaded.channels[0].topic, "a,b")
 
+    def test_fallback_toml_parser_preserves_quoted_commas_and_quotes(self):
+        # The pre-3.11 fallback (no tomllib) must round-trip the same config.
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            cfg = BridgeConfig(
+                trigger_words=['flash,bot', 'quote"bot'],
+                channels=[ChannelSpec(name="main", platform="zulip",
+                                      stream='Research "Lab"', topic="a,b")],
+            )
+            cfg.save(chamber)
+            data = json.loads(
+                _toml_to_json_simple((chamber / CONFIG_FILE).read_text())
+            )["bridge"]
+            self.assertEqual(data["trigger_words"], ['flash,bot', 'quote"bot'])
+            self.assertEqual(data["channels"][0]["stream"], 'Research "Lab"')
+            self.assertEqual(data["channels"][0]["topic"], "a,b")
+
     def test_invalid_state_fails_loudly(self):
         with tempfile.TemporaryDirectory() as td:
             chamber = Path(td)
@@ -370,6 +390,41 @@ class PushTests(unittest.TestCase):
             self.assertEqual(body, "@**flash** hi")
 
 
+class ReplyToBotTests(unittest.TestCase):
+    def test_reply_to_bot_message_is_directed(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            chan = MockChannel(BOT, {"31": msg("31", "thanks, one more thing",
+                                               parent="sent-9")})
+            spec = ChannelSpec(name="main", platform="mock")
+            state = load_state(chamber)
+            cs = channel_state(state, spec.key)
+            cs["cursor"] = "30"
+            cs["sent_ids"] = ["sent-9"]
+            pull_once(chamber, chan, spec, BridgeConfig(), state, BOT, chamber / "att")
+            inbox = list((chamber / "messages" / "inbox").glob("*.md"))
+            self.assertEqual(len(inbox), 1)
+            self.assertIn("thanks, one more thing", inbox[0].read_text())
+            self.assertEqual(state["stats"]["delivered"], 1)
+
+    def test_reply_to_bot_respects_reply_in_thread_off(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            chan = MockChannel(BOT, {"31": msg("31", "thanks, one more thing",
+                                               parent="sent-9")})
+            spec = ChannelSpec(name="main", platform="mock")
+            state = load_state(chamber)
+            cs = channel_state(state, spec.key)
+            cs["cursor"] = "30"
+            cs["sent_ids"] = ["sent-9"]
+            pull_once(chamber, chan, spec, BridgeConfig(reply_in_thread=False),
+                      state, BOT, chamber / "att")
+            self.assertFalse((chamber / "messages" / "inbox").exists())
+            self.assertEqual(
+                len(channel_state(state, spec.key)["pending_context"]), 1
+            )
+
+
 class SyncOnceTests(unittest.TestCase):
     def test_full_cycle(self):
         with tempfile.TemporaryDirectory() as td:
@@ -404,6 +459,44 @@ class SyncOnceTests(unittest.TestCase):
             make_channels.return_value = ({spec.key: chan}, [spec], {spec.key: BOT})
             with self.assertRaisesRegex(ChannelError, "reply is still pending"):
                 cmd_pull(SimpleNamespace(chamber=str(chamber)))
+
+    def test_routeless_proactive_outbox_falls_back_and_never_wedges_pull(self):
+        # Bootstrap wake: the chamber writes an outbox message before any chat
+        # message ever arrived. It must go out on the channel's configured
+        # route, and the pull phase must still run in the same cycle.
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            outbox = chamber / "messages" / "outbox"
+            outbox.mkdir(parents=True)
+            (outbox / "hello.md").write_text("---\n---\n\nproactive status")
+            spec = ChannelSpec(name="main", platform="mock", topic="lobby")
+            chan = MockChannel(BOT, {"1": msg("1", "@flash hi")})
+            state = load_state(chamber)
+            channel_state(state, spec.key)["cursor"] = "0"
+            sync_once(chamber, {spec.key: chan}, [spec], BridgeConfig(), state,
+                      {spec.key: BOT})
+            self.assertEqual(chan._sent[0][0].thread, "lobby")
+            self.assertTrue((outbox / "archive" / "hello.md").exists())
+            self.assertEqual(
+                len(list((chamber / "messages" / "inbox").glob("*.md"))), 1
+            )
+
+    def test_unroutable_outbox_is_quarantined_and_pull_still_runs(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            outbox = chamber / "messages" / "outbox"
+            outbox.mkdir(parents=True)
+            (outbox / "hello.md").write_text("---\n---\n\nproactive status")
+            spec = ChannelSpec(name="main", platform="mock")  # no default route
+            chan = MockChannel(BOT, {"1": msg("1", "@flash hi")})
+            state = load_state(chamber)
+            channel_state(state, spec.key)["cursor"] = "0"
+            sync_once(chamber, {spec.key: chan}, [spec], BridgeConfig(), state,
+                      {spec.key: BOT})
+            self.assertTrue((outbox / "failed" / "hello.md").exists())
+            self.assertEqual(
+                len(list((chamber / "messages" / "inbox").glob("*.md"))), 1
+            )
 
     def test_round_robin_polls_next_channel_after_reply(self):
         with tempfile.TemporaryDirectory() as td:

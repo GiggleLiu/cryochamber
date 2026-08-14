@@ -71,7 +71,7 @@ class ChannelSpec:
     # zulip
     stream: str = ""
     stream_id: int = 0
-    topic: str | None = None  # None = whole stream
+    topic: str | None = None  # required by validate(): the reply route
     # lark
     chat_id: str | None = None
     chat_type: str | None = None  # p2p | group | None=any
@@ -216,9 +216,13 @@ def _toml_to_json_simple(text: str) -> str:
 
 def _toml_scalar(v: str):
     if v.startswith("[") and v.endswith("]"):
-        inner = v[1:-1].strip()
-        return [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
-    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+        return [_toml_scalar(item) for item in _split_toml_list(v[1:-1])]
+    if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+        try:
+            return json.loads(v)
+        except json.JSONDecodeError:
+            return v[1:-1]
+    if len(v) >= 2 and v.startswith("'") and v.endswith("'"):
         return v[1:-1]
     if v.lower() in ("true", "false"):
         return v.lower() == "true"
@@ -226,6 +230,35 @@ def _toml_scalar(v: str):
         return int(v)
     except ValueError:
         return v
+
+
+def _split_toml_list(inner: str) -> list[str]:
+    """Split a TOML inline-list body on commas outside quoted strings."""
+    items: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in inner:
+        if quote:
+            buf.append(ch)
+            if escaped:
+                escaped = False
+            elif quote == '"' and ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            items.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        items.append(tail)
+    return [item for item in items if item]
 
 
 def toml_from_json(text: str) -> str:
@@ -489,10 +522,13 @@ def deliver_to_inbox(chamber: Path, platform: str, msg: Message,
 
 
 def push_outbox(chamber: Path, channels: dict[str, Channel], state: dict,
-                cfg: BridgeConfig, errors: list[str] | None = None) -> int:
+                cfg: BridgeConfig, errors: list[str] | None = None,
+                specs: list[ChannelSpec] | None = None) -> int:
     outbox = chamber / "messages" / "outbox"
     archive = outbox / "archive"
     archive.mkdir(parents=True, exist_ok=True)
+    default_threads = {s.key: (s.topic or s.chat_id) for s in (specs or [])
+                       if (s.topic or s.chat_id)}
     pushed = 0
     for f in sorted(outbox.iterdir()):
         if not f.is_file() or not f.name.endswith(".md"):
@@ -500,25 +536,36 @@ def push_outbox(chamber: Path, channels: dict[str, Channel], state: dict,
         meta, body = parse_frontmatter(f.read_text())
         # Outbox files carry no platform metadata (cryo-agent send writes
         # none), so route via state: the channel that last delivered a
-        # message is where the reply belongs (in its last thread).
+        # message is where the reply belongs (in its last thread). Proactive
+        # chamber messages with no conversation state yet (e.g. the bootstrap
+        # wake) fall back to the channel's configured route; a file with no
+        # resolvable route is quarantined so it can never wedge the loop.
         platform = meta.get("platform") or ""
         active_route = state.get("active_route") or {}
         ckey = meta.get("channel_key") or active_route.get("channel_key") \
             or _guess_channel_key(platform, channels) or state.get("last_active")
+        if ckey is None and len(channels) == 1:
+            ckey = next(iter(channels))
         chan = channels.get(ckey)
         if chan is None:
-            error = f"push skipped {f.name}: no channel {ckey}"
-            log(error)
+            if not channels:
+                error = f"push skipped {f.name}: no channel {ckey}"
+                log(error)
+                if errors is not None:
+                    errors.append(error)
+                continue
+            if active_route.get("channel_key") == ckey:
+                state.pop("active_route", None)
+            error = _quarantine_outbox(f, outbox, f"no channel {ckey}")
             if errors is not None:
                 errors.append(error)
             continue
         cs = channel_state(state, ckey)
         thread = meta.get("thread") or (
             active_route.get("thread") if active_route.get("channel_key") == ckey else None
-        ) or cs.get("last_thread")
+        ) or cs.get("last_thread") or default_threads.get(ckey)
         if not thread:
-            error = f"push skipped {f.name}: no reply thread known"
-            log(error)
+            error = _quarantine_outbox(f, outbox, "no reply thread known")
             if errors is not None:
                 errors.append(error)
             continue
@@ -554,6 +601,15 @@ def _guess_channel_key(platform: str, channels: dict[str, Channel]) -> str | Non
             if chan.name == platform:
                 return key
     return None
+
+
+def _quarantine_outbox(f: Path, outbox: Path, reason: str) -> str:
+    failed = outbox / "failed"
+    failed.mkdir(parents=True, exist_ok=True)
+    os.replace(f, failed / f.name)
+    error = f"push quarantined {f.name} -> failed/: {reason}"
+    log(error)
+    return error
 
 
 # ------------------------------------------------------------------ sync loop
@@ -593,7 +649,7 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
             continue
         if cfg.require_mention:
             directed = is_directed(msg, bot, cfg)
-            if not directed and _is_reply_to_bot(msg, cs):
+            if not directed and cfg.reply_in_thread and _is_reply_to_bot(msg, cs):
                 directed = "reply"
             if not directed:
                 # not directed: keep it as reference context (feishu-collaborate
@@ -619,8 +675,8 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
                     log(f"[{key}] attachment download failed {att.name}: {e}")
         deliver_to_inbox(chamber, spec.platform, msg, attachments)
         cs["delivered"] = (cs["delivered"] + [msg.id])[-SEEN_IDS_LIMIT:]
-        # Consume context only for the delivered thread. Whole-stream Zulip
-        # bridges must not leak one topic's context into another.
+        # Consume context only for the delivered thread; another thread's
+        # chatter must never leak into a later prompt.
         cs["pending_context"] = [entry for entry in cs["pending_context"]
                                  if entry.get("thread") != msg.thread]
         cs["last_thread"] = msg.thread
@@ -650,13 +706,16 @@ def _is_reply_to_bot(msg: Message, cs: dict) -> bool:
 def sync_once(chamber: Path, channels: dict[str, Channel], specs: list[ChannelSpec],
               cfg: BridgeConfig, state: dict, bots: dict[str, BotIdentity]) -> None:
     errors: list[str] = []
-    pushed = push_outbox(chamber, channels, state, cfg, errors)
+    pushed = push_outbox(chamber, channels, state, cfg, errors, specs)
     if pushed:
         state["stats"]["pushed"] += pushed
         if not errors:
             state.pop("active_route", None)
         log(f"pushed {pushed} outbox message(s)")
-    if errors or state.get("active_route"):
+    # Only an unanswered active route defers pulling (serialized replies).
+    # Push errors alone must not: a stuck proactive outbox file would
+    # otherwise wedge the pull phase forever.
+    if state.get("active_route"):
         save_state(chamber, state)
         return
 

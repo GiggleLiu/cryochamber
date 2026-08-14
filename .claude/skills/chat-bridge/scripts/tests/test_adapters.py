@@ -43,6 +43,27 @@ class LarkChannelTests(unittest.TestCase):
                                                        "chat_type": "p2p"}))
             self.assertIsNotNone(chan._event_to_message({**base, "chat_id": "oc_keep"}))
 
+    def test_reply_events_carry_parent_id(self):
+        with tempfile.TemporaryDirectory() as td:
+            spec = ChannelSpec(name="main", platform="lark", chat_id="oc_keep",
+                               chat_type="p2p")
+            chan = LarkChannel(spec, Path(td))
+            base = {
+                "sender_id": "ou_user", "message_id": "om_2", "content": "follow-up",
+                "create_time": "1000", "chat_type": "p2p", "chat_id": "oc_keep",
+            }
+            self.assertEqual(
+                chan._event_to_message({**base, "parent_id": "om_bot"}).parent_id,
+                "om_bot",
+            )
+            self.assertEqual(
+                chan._event_to_message(
+                    {**base, "message": {"root_id": "om_root"}}
+                ).parent_id,
+                "om_root",
+            )
+            self.assertIsNone(chan._event_to_message(base).parent_id)
+
     def test_keeps_distinct_events_with_same_millisecond_timestamp(self):
         class RunningProcess:
             @staticmethod
