@@ -158,14 +158,15 @@ class BridgeConfig:
         if len(keys) != len(set(keys)):
             raise ChannelError("bridge channel names must be unique per platform")
         for channel in self.channels:
+            # Whole-stream / any-p2p modes are first-class: the reply thread is
+            # resolved from the triggering message (zulip topic / lark chat_id),
+            # tracked as last_thread. A missing topic/chat-id is only a warning.
             if channel.platform == "zulip" and not channel.topic:
-                raise ChannelError(
-                    f"Zulip channel {channel.name!r} requires a topic for reply-safe routing"
-                )
+                log(f"note: zulip channel {channel.name!r} has no topic — "
+                    "whole-stream mode; replies route to the triggering message's topic")
             if channel.platform == "lark" and not channel.chat_id:
-                raise ChannelError(
-                    f"Lark channel {channel.name!r} requires --chat-id for reply-safe routing"
-                )
+                log(f"note: lark channel {channel.name!r} has no chat-id — "
+                    "reactive p2p/group mode; replies route to the triggering chat")
 
 
 def toml_to_json(text: str) -> str:
