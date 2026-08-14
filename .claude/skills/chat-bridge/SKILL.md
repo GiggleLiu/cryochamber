@@ -54,7 +54,8 @@ Ask the user **one question at a time**. Start with the platform:
 
 If unsure, recommend **Zulip + mention-gated** — quietest, matches
 group-chat etiquette (one consolidated reply per batch, never reply unless
-directed).
+directed, and never echo the `@mention` in replies — the chamber's
+plan.md/AGENTS.md should state this rule).
 
 ## Prerequisites
 

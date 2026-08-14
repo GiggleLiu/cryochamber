@@ -577,7 +577,9 @@ def push_outbox(chamber: Path, channels: dict[str, Channel], state: dict,
             parent_id=parent_id if cfg.reply_in_thread else None,
         )
         content = body
-        if meta.get("subject"):
+        if meta.get("subject") and meta.get("from", "").lower() not in ("agent", "pi"):
+            # daemon/cryochamber system notices keep their subject header;
+            # agent replies are posted verbatim (no daemon 'Reply' prefix).
             content = f"{meta['subject']}\n\n{content}"
         try:
             idempotency_key = hashlib.sha256(
