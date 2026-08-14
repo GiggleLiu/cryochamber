@@ -1,21 +1,22 @@
-# config.toml — 本 chamber agent 的工程配置
+# config.toml — Project configuration for this chamber agent
 #
-# 被唤醒的 agent 必须先读本文件，了解自己照看哪些仓库。
-# 用户（通过飞书指令或直接编辑）会陆续把仓库交给本 agent 管理，
-# 每次新增就在下面追加一个 [[repos]] 条目。
+# When awakened, the agent must read this file first to learn which repositories
+# it manages. The user may add repositories through Lark instructions or direct
+# edits. Append one [[repos]] entry below for each repository.
 
-# agent 收到未指明目录的指令时使用的默认工作目录（通常就是某个仓库）。
+# Default working directory for instructions that do not specify one.
+# This is usually the name of a registered repository.
 default_repo = "my-project"
 
-# 交给本 agent 照看的仓库列表。
-# path:  仓库的绝对路径
-# note:  一句话说明这个仓库是什么、照看的重点（可选）
+# Repositories managed by this agent.
+# path: absolute repository path
+# note: optional one-line description of the repository and areas to monitor
 [[repos]]
 name = "my-project"
 path = "/absolute/path/to/my-project"
-note = "替换为这个仓库的用途和照看重点"
+note = "Replace this with the repository's purpose and areas to monitor"
 
 # [[repos]]
 # name = "some-project"
 # path = "/absolute/path/to/some-project"
-# note = "照看重点写在这里"
+# note = "Describe the areas to monitor here"
