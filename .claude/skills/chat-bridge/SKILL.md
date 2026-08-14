@@ -61,7 +61,7 @@ directed).
 1. `cryo` installed and a chamber exists (`cryo init` or the `make-plan` skill).
 2. Credentials:
    - Zulip: a `zuliprc` file; the bot must be **subscribed** to the stream.
-  - Lark: install the tested CLI with `npx @larksuite/cli@1.0.53 install`, then complete
+   - Lark: install the tested CLI with `npx @larksuite/cli@1.0.53 install`, then complete
      `lark-cli config init` and `lark-cli auth login --recommend`; app scopes
      `im:message.p2p_msg:readonly` (+ send) and `im.message.receive_v1`
      event subscription enabled.
