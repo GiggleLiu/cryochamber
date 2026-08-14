@@ -1,6 +1,9 @@
 /target
 *.log
 *.pid
+*.py[cod]
+__pycache__/
+.ruff_cache/
 NOTES.md
 
 # Generated docs
