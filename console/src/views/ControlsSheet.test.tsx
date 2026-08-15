@@ -333,6 +333,35 @@ describe('tabs', () => {
     expect(tab).toHaveAttribute('aria-controls', panel.id)
     expect(panel).toHaveAttribute('aria-labelledby', tab.id)
     expect(panel).toHaveTextContent('the plan')
+    // Unselected tabs must not point at panels that are not in the DOM.
+    for (const other of screen.getAllByRole('tab')) {
+      if (other !== tab) expect(other).not.toHaveAttribute('aria-controls')
+    }
+    // The panel is focusable so a keyboard user can reach scrollable content.
+    expect(panel).toHaveAttribute('tabindex', '0')
+  })
+
+  test('the Sync, Settings and Log tabs are wired to this chamber', async () => {
+    const hub = makeHub(
+      status({
+        log_tail: 'boot line one',
+        has_config: true,
+        settings_rows: [{ key: 'agent', value: 'claude', kind: 'scalar' }],
+      }),
+    )
+    vi.spyOn(hub, 'chamberSync').mockResolvedValue([
+      { backend: 'zulip', configured: true, installed: true, running: false, target: 'stream', last_pushed_session: null, log_tail_path: '' },
+    ])
+    useAppStore.setState({ client: hub })
+    renderSheet()
+    await screen.findByText('Stopped')
+    await userEvent.click(screen.getByRole('tab', { name: 'Log' }))
+    expect(await screen.findByText(/boot line one/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
+    expect(await screen.findByText('claude')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: 'Sync' }))
+    expect(await screen.findByRole('button', { name: 'Start zulip sync' })).toBeInTheDocument()
+    expect(hub.chamberSync).toHaveBeenCalledWith('cham-a')
   })
 
   test('an empty plan says which file is missing', async () => {

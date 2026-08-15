@@ -261,7 +261,9 @@ export function ControlsSheet({
                 key={name}
                 role="tab"
                 id={tabId(name)}
-                aria-controls={panelId(name)}
+                // Only the selected panel is in the DOM, so only its tab may
+                // claim to control one — a dangling id is invalid ARIA.
+                aria-controls={tab === name ? panelId(name) : undefined}
                 aria-selected={tab === name}
                 className={`tab${tab === name ? ' is-on' : ''}`}
                 onClick={() => setTab(name)}
@@ -273,7 +275,7 @@ export function ControlsSheet({
 
           {/* Only the selected tab is mounted, so each one's fetch happens when
               it is first opened rather than on every sheet open. */}
-          <div role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)}>
+          <div role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)} tabIndex={0}>
             {tab === 'Todos' && <TodosTab chamberId={chamberId} />}
             {tab === 'Plan' && (
               <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />

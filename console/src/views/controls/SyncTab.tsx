@@ -98,7 +98,7 @@ export function SyncTab({ chamberId }: { chamberId: string }) {
             <button
               className="row-action"
               aria-label={`${item.running ? 'Stop' : 'Start'} ${item.backend} sync`}
-              disabled={pending === item.backend}
+              disabled={pending !== null}
               onClick={() => toggle(item)}
             >
               {item.running ? 'Stop' : 'Start'}
