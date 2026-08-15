@@ -1,12 +1,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, useIsOwner, AUTH_LOGOUT_REASON } from '../store/appStore'
 import { ApiError, isAuthError } from '../api/errors'
 import { CLIENT_UNRESOLVED } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
-import { AlertCircle, ArrowDown, ChevronLeft, Message } from '../components/Icon'
+import { AlertCircle, ArrowDown, ChevronLeft, Message, UserPlus } from '../components/Icon'
 import { initial, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
+import { InviteSheet } from './InviteSheet'
 
 /** Messages this far apart start a new time-stamped block. */
 const GAP_SECONDS = 300
@@ -58,6 +59,9 @@ export function ConversationView({ streamId }: { streamId: number }) {
   const setOwnUserId = useAppStore((s) => s.setOwnUserId)
   const navigate = useAppStore((s) => s.navigate)
   const logout = useAppStore((s) => s.logout)
+  const isOwner = useIsOwner()
+  const [sheet, setSheet] = useState<'invite' | null>(null)
+  const chamberId = client?.chamberIdFor(streamId)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
   const [showJump, setShowJump] = useState(false)
@@ -214,6 +218,17 @@ export function ConversationView({ streamId }: { streamId: number }) {
           <ChevronLeft />
         </button>
         <h1>{stream.name}</h1>
+        {/* Owner-only, and absent (not disabled) for everyone else: a guest is
+            never shown a control they cannot use. `chamberId` is unknown before
+            the first register(), and an invite for an unknown chamber is not a
+            thing we can mint. */}
+        {isOwner && chamberId && (
+          <div className="topbar-actions">
+            <button className="icon-btn" aria-label="Invite" onClick={() => setSheet('invite')}>
+              <UserPlus />
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="thread">
@@ -343,6 +358,14 @@ export function ConversationView({ streamId }: { streamId: number }) {
       ) : null}
 
       <Composer streamName={name} streamId={streamId} />
+
+      {sheet === 'invite' && chamberId && (
+        <InviteSheet
+          chamberId={chamberId}
+          chamberName={stream.name}
+          onClose={() => setSheet(null)}
+        />
+      )}
     </div>
   )
 }

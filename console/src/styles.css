@@ -1088,8 +1088,31 @@ input, select, textarea { font: inherit; color: inherit; }
   background: var(--danger-tint);
   border-radius: var(--r-full);
 }
+
+.invite-copy { margin-bottom: var(--sp-4); }
+.invite-scope {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.confirm-row {
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  background: var(--danger-tint);
+}
+.confirm-question {
+  flex: 1 1 100%;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
 .sheet-action { padding: var(--sp-4); }
 .sheet-action .btn-primary { width: 100%; }
+
+/* A bar carrying an action cluster gives up its fixed side tracks: two 44px
+   buttons do not fit a 44px column, and the fixed track let them paint over
+   the centred title. Both outer tracks become 1fr — equal, so the title stays
+   centred — and neither can be squeezed below the buttons it holds, because
+   the title's `min-width: 0` lets it ellipsize instead. */
+.topbar:has(.topbar-actions) { grid-template-columns: 1fr auto 1fr; }
 
 /* Two or three header buttons where the grid expects one. */
 .topbar-actions {

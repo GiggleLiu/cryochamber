@@ -16,7 +16,6 @@ export function SettingsSheet() {
   const hubRole = useAppStore((s) => s.hubRole)
   const toggleHidden = useAppStore((s) => s.toggleHidden)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
-  const setShareOpen = useAppStore((s) => s.setShareOpen)
   const logout = useAppStore((s) => s.logout)
   const [theme, setTheme] = useState<Theme>(readTheme)
 
@@ -72,24 +71,6 @@ export function SettingsSheet() {
             </div>
           </div>
         </div>
-
-        {hubRole === 'owner' && (
-          <>
-            <p className="group-label">People</p>
-            <div className="group">
-              <button
-                className="row"
-                onClick={() => {
-                  setSettingsOpen(false)
-                  setShareOpen(true)
-                }}
-              >
-                Share access
-                <span className="row-value">Invite links</span>
-              </button>
-            </div>
-          </>
-        )}
 
         <p className="group-label">Projects</p>
         {streams.length === 0 ? (

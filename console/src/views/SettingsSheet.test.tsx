@@ -41,27 +41,6 @@ test('log out clears credentials', async () => {
   expect(useAppStore.getState().creds).toBeNull()
 })
 
-describe('owner-only rows', () => {
-  test('the Share access row opens the share sheet and closes settings', async () => {
-    useAppStore.setState({ hubRole: 'owner' })
-    render(<SettingsSheet />)
-    await userEvent.click(screen.getByRole('button', { name: /share access/i }))
-    expect(useAppStore.getState().shareOpen).toBe(true)
-    expect(useAppStore.getState().settingsOpen).toBe(false)
-  })
-
-  test('invite-token holders never see the Share access row', () => {
-    useAppStore.setState({ hubRole: 'invite' })
-    render(<SettingsSheet />)
-    expect(screen.queryByRole('button', { name: /share access/i })).toBeNull()
-  })
-
-  test('a session whose role is not known yet sees no Share access row', () => {
-    render(<SettingsSheet />)
-    expect(screen.queryByRole('button', { name: /share access/i })).toBeNull()
-  })
-})
-
 describe('appearance', () => {
   afterEach(() => {
     localStorage.removeItem('agent-console.theme')

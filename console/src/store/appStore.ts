@@ -93,7 +93,6 @@ export interface AppState {
   client: HubClient | null
   view: View
   settingsOpen: boolean
-  shareOpen: boolean
   streams: StreamSub[]
   unreadByStream: Record<number, number[]>
   messagesByStream: Record<number, Message[]>
@@ -109,7 +108,7 @@ export interface AppState {
   /** Shown on the login screen after an auth-forced logout; cleared on next setCreds. */
   loginReason: string | null
   /** Hub role behind the current token; null until whoami answers. Owner-only
-   *  UI — the Share screen — keys off this. */
+   *  UI — the per-chamber Invite sheet — keys off this. */
   hubRole: HubRole | null
   /** Unconfirmed sends per stream. Session-local: never cached, cleared on logout. */
   outboxByStream: Record<number, OutboxItem[]>
@@ -117,7 +116,6 @@ export interface AppState {
   logout(reason?: string): void
   navigate(v: View): void
   setSettingsOpen(open: boolean): void
-  setShareOpen(open: boolean): void
   applyInitialState(s: InitialState): void
   /** Merge fresh liveness into the projects already on screen. */
   updateStreamStatus(
@@ -182,7 +180,6 @@ const initialData = {
   client: null as HubClient | null,
   view: { name: 'projects' } as View,
   settingsOpen: false,
-  shareOpen: false,
   streams: [] as StreamSub[],
   unreadByStream: {} as Record<number, number[]>,
   messagesByStream: {} as Record<number, Message[]>,
@@ -239,7 +236,6 @@ export const useAppStore = create<AppState>()((set, get) => {
 
   navigate: (v) => set({ view: v }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
-  setShareOpen: (open) => set({ shareOpen: open }),
 
   applyInitialState: (s) => {
     const unreadByStream: Record<number, number[]> = {}

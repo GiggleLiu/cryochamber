@@ -92,3 +92,23 @@ export function initial(name: string, fallback = ''): string {
   const source = name || fallback
   return source ? source[0].toUpperCase() : '?'
 }
+
+/**
+ * "added 3d ago" for an ISO timestamp the hub stamped (invite creation).
+ *
+ * Relative up to a month, because that is the window in which "how long ago"
+ * is what the reader is actually asking; past that a date is more useful than
+ * "47d ago". An unparseable string is shown verbatim rather than as `NaN`.
+ */
+export function relativeTimeLabel(iso: string, now: Date = new Date()): string {
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return iso
+  const minutes = Math.floor((now.getTime() - ms) / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return listTimeLabel(Math.floor(ms / 1000), now)
+}

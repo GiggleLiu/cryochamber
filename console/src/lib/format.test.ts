@@ -1,4 +1,11 @@
-import { initial, listTimeLabel, previewText, separatorLabel, tileColor } from './format'
+import {
+  initial,
+  listTimeLabel,
+  previewText,
+  relativeTimeLabel,
+  separatorLabel,
+  tileColor,
+} from './format'
 
 // 2026-08-15 14:32 local time.
 const NOW = new Date(2026, 7, 15, 14, 32)
@@ -92,5 +99,24 @@ describe('initial', () => {
 
   test('with nothing to work from it still renders a character', () => {
     expect(initial('')).toBe('?')
+  })
+})
+
+describe('relativeTimeLabel', () => {
+  const now = new Date('2026-08-15T12:00:00Z')
+
+  test('counts minutes, hours and days back from now', () => {
+    expect(relativeTimeLabel('2026-08-15T11:59:30Z', now)).toBe('just now')
+    expect(relativeTimeLabel('2026-08-15T11:20:00Z', now)).toBe('40m ago')
+    expect(relativeTimeLabel('2026-08-15T05:00:00Z', now)).toBe('7h ago')
+    expect(relativeTimeLabel('2026-08-12T12:00:00Z', now)).toBe('3d ago')
+  })
+
+  test('falls back to a date once it is more than a month old', () => {
+    expect(relativeTimeLabel('2026-06-01T12:00:00Z', now)).toBe('1 Jun')
+  })
+
+  test('an unparseable timestamp is shown as-is rather than as NaN', () => {
+    expect(relativeTimeLabel('not a date', now)).toBe('not a date')
   })
 })

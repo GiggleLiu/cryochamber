@@ -10,7 +10,6 @@ import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
-import { ShareSheet } from './views/ShareSheet'
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
  * usable token — the caller says so on the login screen rather than dropping
@@ -36,7 +35,6 @@ export default function App() {
   const view = useAppStore((s) => s.view)
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
-  const shareOpen = useAppStore((s) => s.shareOpen)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
   const [downloadNote, setDownloadNote] = useState<string | null>(null)
 
@@ -129,7 +127,6 @@ export default function App() {
         <ProjectsView />
       )}
       {settingsOpen && <SettingsSheet />}
-      {shareOpen && <ShareSheet />}
     </div>
   )
 }

@@ -24,6 +24,7 @@ function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
     markStreamRead: vi.fn(async () => {}),
     authHeaderValue: vi.fn(() => 'Bearer k'),
     getOwnUser: vi.fn(async () => ({ user_id: 7 })),
+    chamberIdFor: vi.fn(() => 'cham-a'),
     ...overrides,
   } as unknown as HubClient
 }
@@ -622,5 +623,33 @@ describe('outbox bubbles', () => {
       useAppStore.getState().enqueueOutbox(2, 'elsewhere')
     })
     expect(screen.queryByText('elsewhere')).toBeNull()
+  })
+})
+
+describe('owner header actions', () => {
+  test('an owner gets an Invite button that opens the sheet for this chamber', async () => {
+    useAppStore.setState({
+      client: fakeClient({ chamberIdFor: vi.fn(() => 'cham-a'), listInvites: vi.fn(async () => []) }),
+      hubRole: 'owner',
+    })
+    render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    await userEvent.click(screen.getByRole('button', { name: 'Invite' }))
+    expect(await screen.findByRole('dialog', { name: 'Invite' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Invite to alpha' })).toBeInTheDocument()
+  })
+
+  test('a guest is never shown the Invite button at all', async () => {
+    useAppStore.setState({ client: fakeClient(), hubRole: 'invite' })
+    render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull()
+  })
+
+  test('a session whose role is unknown shows no owner actions', async () => {
+    useAppStore.setState({ client: fakeClient() })
+    render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull()
   })
 })
