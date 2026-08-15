@@ -7,7 +7,8 @@
 //! `Role` is inserted into request extensions for handlers to consume.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::SystemTime;
 
 use axum::{
     extract::Request,
@@ -20,22 +21,125 @@ use axum::{
 use crate::hub::state::AppState;
 use crate::hub::tokens::{load_tokens, save_tokens, Role, TokenFile};
 
+/// Cheap fingerprint of the tokens file, used to notice writes made by another
+/// process. `None` means the file does not exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    mtime: Option<SystemTime>,
+    len: u64,
+}
+
+fn stamp_of(path: &Path) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(FileStamp {
+        mtime: meta.modified().ok(),
+        len: meta.len(),
+    })
+}
+
+/// The exact bearer token a request presented, inserted into request extensions
+/// next to the resolved [`Role`].
+///
+/// Long-lived surfaces (the SSE stream) must re-authorize against *this*
+/// credential rather than against the invite name it resolved to at connect
+/// time: names are reusable after revocation, secrets are not.
+#[derive(Debug, Clone)]
+pub struct BearerToken(pub String);
+
+/// Why a token mutation did not happen.
+#[derive(Debug)]
+pub enum MutateError {
+    /// The store rejected it (duplicate name, no such active invite). Nothing
+    /// was written and nothing changed.
+    Rejected(anyhow::Error),
+    /// It was accepted but could not be persisted. Memory is unchanged, so a
+    /// retry sees exactly the state the caller started from.
+    Persist(anyhow::Error),
+}
+
+/// The live token store plus the file it is mirrored from.
+///
+/// Two invariants make this the single source of truth for authorization:
+///
+/// 1. **It follows the file.** `cryohub token create/revoke` runs in a separate
+///    process and only rewrites the file, so every resolve re-stats it and
+///    reloads when it changed. Without that, CLI revocation would not take
+///    effect until the next server restart.
+/// 2. **Mutations are transactional.** A change is applied to a copy, persisted,
+///    and only then published in memory — under one write lock, so concurrent
+///    mutations can neither interleave their saves nor lose each other.
 pub struct AuthCtx {
     pub store: RwLock<TokenFile>,
     pub path: PathBuf,
+    /// Stamp of `path` as of the last load or save.
+    stamp: Mutex<Option<FileStamp>>,
 }
 
 impl AuthCtx {
     pub fn load(path: &Path) -> anyhow::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             store: RwLock::new(load_tokens(path)?),
+            stamp: Mutex::new(stamp_of(path)),
             path: path.to_path_buf(),
         }))
     }
 
-    pub fn persist(&self) -> anyhow::Result<()> {
-        let tokens = self.store.read().expect("token store poisoned").clone();
-        save_tokens(&self.path, &tokens)
+    /// Pull in any out-of-band edit to the tokens file. Cheap in the common
+    /// case: one `stat`, and the write lock is taken only when it changed.
+    pub fn sync(&self) {
+        if *self.stamp.lock().expect("token stamp poisoned") == stamp_of(&self.path) {
+            return;
+        }
+        let mut store = self.store.write().expect("token store poisoned");
+        self.sync_locked(&mut store);
+    }
+
+    /// `sync` for a caller that already holds the write lock.
+    fn sync_locked(&self, store: &mut TokenFile) {
+        let current = stamp_of(&self.path);
+        let mut stamp = self.stamp.lock().expect("token stamp poisoned");
+        if *stamp == current {
+            return;
+        }
+        // A half-written or unreadable file is no reason to drop the
+        // credentials already in hand: keep the last good store and retry on
+        // the next request.
+        if let Ok(fresh) = load_tokens(&self.path) {
+            *store = fresh;
+            *stamp = current;
+        }
+    }
+
+    /// Resolve a bearer token against the *live* store.
+    pub fn resolve(&self, bearer: &str) -> Option<Role> {
+        self.sync();
+        self.store
+            .read()
+            .expect("token store poisoned")
+            .resolve(bearer)
+    }
+
+    /// Read the live store.
+    pub fn with_store<R>(&self, f: impl FnOnce(&TokenFile) -> R) -> R {
+        self.sync();
+        f(&self.store.read().expect("token store poisoned"))
+    }
+
+    /// Apply `f` as one transaction: mutate a copy of the live store, persist
+    /// it, then publish it in memory. The write lock is held throughout, so a
+    /// concurrent mutation cannot persist an older snapshot on top of this one.
+    pub fn mutate<T>(
+        &self,
+        f: impl FnOnce(&mut TokenFile) -> anyhow::Result<T>,
+    ) -> Result<T, MutateError> {
+        let mut store = self.store.write().expect("token store poisoned");
+        self.sync_locked(&mut store);
+        let mut draft = store.clone();
+        let out = f(&mut draft).map_err(MutateError::Rejected)?;
+        save_tokens(&self.path, &draft).map_err(MutateError::Persist)?;
+        *store = draft;
+        *self.stamp.lock().expect("token stamp poisoned") = stamp_of(&self.path);
+        Ok(out)
     }
 }
 
@@ -118,8 +222,7 @@ async fn guard(ctx: &AuthCtx, mut req: Request, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_string);
-    let role = bearer.and_then(|t| ctx.store.read().expect("token store poisoned").resolve(&t));
-    let Some(role) = role else {
+    let Some((bearer, role)) = bearer.and_then(|t| ctx.resolve(&t).map(|r| (t, r))) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let allowed = match (&access, &role) {
@@ -140,6 +243,9 @@ async fn guard(ctx: &AuthCtx, mut req: Request, next: Next) -> Response {
     };
     debug_assert!(allowed);
     req.extensions_mut().insert(role);
+    // The credential itself, so a handler holding a connection open can
+    // re-check *it* rather than the name it resolved to (see `get_events`).
+    req.extensions_mut().insert(BearerToken(bearer));
     next.run(req).await
 }
 

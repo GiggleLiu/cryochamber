@@ -12,24 +12,28 @@ use serde_json::json;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::hub::auth::AuthCtx;
+use crate::hub::auth::{AuthCtx, BearerToken};
 use crate::hub::state::{AppState, SseEvent};
 use crate::hub::tokens::Role;
 
 /// How the per-event filter decides what this stream may carry.
 ///
 /// The auth guard runs once, when the stream is opened; an SSE connection then
-/// stays alive indefinitely. So the invite case re-reads the *live* token store
-/// on every event: revoking an invite has to silence its already-open stream,
-/// not just its next request. Without a store handle (unit tests, and any
-/// caller that layers `Role` without `AuthCtx`) it falls back to the scope
-/// frozen at connect time.
+/// stays alive indefinitely. So the invite case re-authorizes against the
+/// *live* token store on every event: revoking an invite has to silence its
+/// already-open stream, not just its next request. Without a store handle (unit
+/// tests, and any caller that layers `Role` without `AuthCtx`) it falls back to
+/// the scope frozen at connect time.
 enum StreamScope {
     /// Owner, or open (loopback) mode.
     Unfiltered,
     Frozen(Vec<String>),
     Live {
-        name: String,
+        /// The exact credential this stream was opened with — never the invite
+        /// name. Names are reusable after revocation: binding to one let a
+        /// revoked stream resume under a replacement invite that happened to
+        /// reuse the name, without ever presenting its secret.
+        token: String,
         ctx: Arc<AuthCtx>,
     },
 }
@@ -43,18 +47,15 @@ impl StreamScope {
             Self::Frozen(chambers) => {
                 chamber_id.is_none_or(|id| crate::hub::auth::scope_covers(chambers, id))
             }
-            Self::Live { name, ctx } => {
-                let store = ctx.store.read().expect("token store poisoned");
-                // A revoked invite gets nothing at all — not even index events.
-                let Some(invite) = store
-                    .invites
-                    .iter()
-                    .find(|i| i.name == *name && i.revoked_at.is_none())
-                else {
-                    return false;
-                };
-                chamber_id.is_none_or(|id| crate::hub::auth::scope_covers(&invite.chambers, id))
-            }
+            Self::Live { token, ctx } => match ctx.resolve(token) {
+                // Revoked, or replaced by a different token: nothing at all
+                // reaches this stream, not even index events.
+                None => false,
+                Some(Role::Owner) => true,
+                Some(Role::Invite { chambers, .. }) => {
+                    chamber_id.is_none_or(|id| crate::hub::auth::scope_covers(&chambers, id))
+                }
+            },
         }
     }
 }
@@ -67,12 +68,15 @@ pub async fn get_events(
     State(app): State<Arc<AppState>>,
     role: Option<axum::Extension<Role>>,
     ctx: Option<axum::Extension<Arc<AuthCtx>>>,
+    token: Option<axum::Extension<BearerToken>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    let scope = match (role, ctx) {
-        (Some(axum::Extension(Role::Invite { name, .. })), Some(axum::Extension(ctx))) => {
-            StreamScope::Live { name, ctx }
-        }
-        (Some(axum::Extension(Role::Invite { chambers, .. })), None) => {
+    let scope = match (role, ctx, token) {
+        (
+            Some(axum::Extension(Role::Invite { .. })),
+            Some(axum::Extension(ctx)),
+            Some(axum::Extension(BearerToken(token))),
+        ) => StreamScope::Live { token, ctx },
+        (Some(axum::Extension(Role::Invite { chambers, .. })), _, _) => {
             StreamScope::Frozen(chambers)
         }
         // Owner, or open (local) mode: unfiltered.

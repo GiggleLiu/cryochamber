@@ -545,7 +545,71 @@ async fn matrix_public_surface() {
 }
 
 // ---------------------------------------------------------------------------
-// Row group 5: scope forms
+// Row group 5: revocation binds to the credential, not the name
+// ---------------------------------------------------------------------------
+
+/// An SSE stream is authorized once, at connect, and then lives indefinitely.
+/// It must therefore be bound to the exact bearer token that opened it. Binding
+/// it to the invite *name* let this sequence resurrect a revoked stream:
+/// revoke `Alice`, mint a replacement invite also called `Alice`, and the old
+/// connection — which never presented the new secret — resumed under the new
+/// invite's scope.
+#[tokio::test]
+async fn a_revoked_stream_is_not_resurrected_by_a_same_named_replacement_invite() {
+    let m = setup();
+
+    let mut stream = m.events(As::Invite).await;
+    m.app
+        .tx
+        .send(new_message(&m.alpha, "BEFORE-REVOKE"))
+        .unwrap();
+    let text = drain(&mut stream, 1, 2000).await;
+    assert!(
+        text.contains("BEFORE-REVOKE"),
+        "the stream must be delivering before revocation, or the negative below is vacuous: {text}"
+    );
+
+    let (status, body) = m
+        .call(As::Owner, "POST", "/api/tokens/Alice/revoke", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "revoke Alice: {body}");
+
+    // The replacement: same name, same scope, brand-new secret.
+    let (status, body) = m
+        .call(
+            As::Owner,
+            "POST",
+            "/api/tokens",
+            Some(&format!(r#"{{"name":"Alice","chambers":["{}"]}}"#, m.alpha)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "recreate Alice: {body}");
+
+    m.app
+        .tx
+        .send(new_message(&m.alpha, "AFTER-REVOKE"))
+        .unwrap();
+    let tail = drain(&mut stream, 1, 500).await;
+    assert!(
+        !tail.contains("AFTER-REVOKE"),
+        "a revoked stream was resurrected by a same-named replacement invite: {tail}"
+    );
+
+    // ...and the revoked token is dead on ordinary routes too.
+    assert_eq!(
+        m.status(
+            As::Invite,
+            "GET",
+            &format!("/api/chambers/{}/messages", m.alpha)
+        )
+        .await,
+        StatusCode::UNAUTHORIZED,
+        "the revoked token must not authenticate any request"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Row group 6: scope forms
 // ---------------------------------------------------------------------------
 
 /// A scope may be handed to `token create` as the decoded chamber path

@@ -120,6 +120,76 @@ async fn token_routes_report_unavailable_in_open_mode() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
+async fn a_create_that_cannot_be_persisted_is_500_and_mints_nothing() {
+    // The API must not hand out a token it could not write down: after the
+    // restart that a 500 invites, such a token would silently stop working.
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (router, owner, _alice, path) = public_router(&tmp);
+    let dir = path.parent().unwrap().to_path_buf();
+
+    // Read-only store directory: the atomic save cannot create its temp file.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::write(dir.join(".write-probe"), b"x").is_ok() {
+        // Running as root, where the mode bits prove nothing.
+        let _ = std::fs::remove_file(dir.join(".write-probe"));
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/tokens",
+        Some(&owner),
+        Some(r#"{"name":"Mallory","chambers":["c1"]}"#),
+    )
+    .await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "an unpersistable create must be 500, not a success: {body}"
+    );
+    assert!(
+        !body.contains("token"),
+        "a failed create must not return a token: {body}"
+    );
+
+    // Neither memory nor disk learned about Mallory, so a retry is clean.
+    let (status, body) = send(&router, "GET", "/api/tokens", Some(&owner), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !body.contains("Mallory"),
+        "a failed create must not be visible in memory: {body}"
+    );
+    assert!(
+        !load_tokens(&path)
+            .unwrap()
+            .invites
+            .iter()
+            .any(|i| i.name == "Mallory"),
+        "a failed create must not be on disk"
+    );
+
+    // Control: with the directory writable again the same request succeeds.
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/tokens",
+        Some(&owner),
+        Some(r#"{"name":"Mallory","chambers":["c1"]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "retry after the failure: {body}");
+    let mallory = json_of(&body)["token"].as_str().unwrap().to_string();
+    let (status, _) = send(&router, "GET", "/api/chambers", Some(&mallory), None).await;
+    assert_eq!(status, StatusCode::OK, "the retried token must work");
+}
+
+#[tokio::test]
 async fn token_lifecycle_via_api() {
     let tmp = tempfile::tempdir().unwrap();
     let (router, owner, alice, path) = public_router(&tmp);

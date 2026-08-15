@@ -46,7 +46,7 @@ async fn invite_stream_only_carries_scoped_chambers() {
         chambers: vec!["mine".into()],
     };
 
-    let sse = get_events(State(app.clone()), Some(axum::Extension(role)), None).await;
+    let sse = get_events(State(app.clone()), Some(axum::Extension(role)), None, None).await;
     let response = sse.into_response();
 
     app.tx.send(new_message("mine", "visible")).unwrap();
@@ -73,7 +73,7 @@ async fn owner_and_open_mode_streams_are_unfiltered() {
     let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
 
     for role in [Some(axum::Extension(crate::hub::tokens::Role::Owner)), None] {
-        let response = get_events(State(app.clone()), role, None)
+        let response = get_events(State(app.clone()), role, None, None)
             .await
             .into_response();
         app.tx.send(new_message("mine", "visible")).unwrap();
@@ -92,7 +92,7 @@ async fn message_frames_carry_the_mailbox_message_id() {
     let dir = tempfile::tempdir().unwrap();
     let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
 
-    let response = get_events(State(app.clone()), None, None)
+    let response = get_events(State(app.clone()), None, None, None)
         .await
         .into_response();
     app.tx.send(new_message("mine", "visible")).unwrap();
@@ -113,7 +113,7 @@ async fn invite_stream_filters_status_and_log_events_too() {
         chambers: vec!["mine".into()],
     };
 
-    let response = get_events(State(app.clone()), Some(axum::Extension(role)), None)
+    let response = get_events(State(app.clone()), Some(axum::Extension(role)), None, None)
         .await
         .into_response();
 
@@ -150,7 +150,10 @@ async fn revoking_an_invite_silences_its_live_stream() {
 
     let mut tf = crate::hub::tokens::TokenFile::default();
     tf.ensure_owner().unwrap();
-    tf.create_invite("Alice", vec!["mine".into()]).unwrap();
+    let alice = tf
+        .create_invite("Alice", vec!["mine".into()])
+        .unwrap()
+        .token;
     let path = dir.path().join("tokens.json");
     crate::hub::tokens::save_tokens(&path, &tf).unwrap();
     let ctx = crate::hub::auth::AuthCtx::load(&path).unwrap();
@@ -163,6 +166,7 @@ async fn revoking_an_invite_silences_its_live_stream() {
         State(app.clone()),
         Some(axum::Extension(role)),
         Some(axum::Extension(ctx.clone())),
+        Some(axum::Extension(crate::hub::auth::BearerToken(alice))),
     )
     .await
     .into_response();
@@ -179,7 +183,11 @@ async fn revoking_an_invite_silences_its_live_stream() {
     assert!(first.contains("before-revoke"), "got {first}");
 
     // Revoke through the shared store the guard reads from.
-    assert!(ctx.store.write().unwrap().revoke("Alice"));
+    ctx.mutate(|store| {
+        anyhow::ensure!(store.revoke("Alice"), "Alice should have been active");
+        Ok(())
+    })
+    .expect("revoke should persist");
 
     app.tx.send(new_message("mine", "AFTER-REVOKE")).unwrap();
     let mut tail = String::new();

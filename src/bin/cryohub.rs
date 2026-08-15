@@ -217,55 +217,72 @@ fn cmd_daemon(host: Option<String>, port: Option<u16>, public: bool) -> Result<(
     rt.block_on(cryochamber::hub::serve(&config.host, config.port, public))
 }
 
-fn cmd_token(action: TokenAction) -> Result<()> {
-    use cryochamber::hub::tokens;
+/// Unwrap a token transaction. Both failure modes abort the command; only the
+/// wording differs, and a persistence failure additionally guarantees that
+/// nothing was written, so the operator can safely retry.
+fn unwrap_mutation<T>(result: Result<T, cryochamber::hub::auth::MutateError>) -> Result<T> {
+    use cryochamber::hub::auth::MutateError;
+    match result {
+        Ok(value) => Ok(value),
+        Err(MutateError::Rejected(e)) => Err(e),
+        Err(MutateError::Persist(e)) => {
+            Err(e.context("token store could not be written; no change was made"))
+        }
+    }
+}
 
+fn cmd_token(action: TokenAction) -> Result<()> {
+    use cryochamber::hub::{auth::AuthCtx, tokens};
+
+    // Go through `AuthCtx` rather than load/mutate/save by hand, so the CLI
+    // gets the same transaction as the API: the change is persisted before it
+    // is considered to have happened.
     let path = tokens::default_tokens_path();
-    let mut tf = tokens::load_tokens(&path)?;
+    let ctx = AuthCtx::load(&path)?;
     match action {
         TokenAction::Owner => {
-            let token = tf.ensure_owner()?;
-            tokens::save_tokens(&path, &tf)?;
+            let token = unwrap_mutation(ctx.mutate(|store| store.ensure_owner()))?;
             // Bare on stdout so `cryohub token owner` composes in a pipeline;
             // everything explanatory goes to stderr.
             println!("{token}");
             eprintln!("Owner token stored in {}", path.display());
         }
         TokenAction::Create { name, chambers } => {
-            let invite = tf.create_invite(&name, chambers)?;
-            tokens::save_tokens(&path, &tf)?;
+            let invite = unwrap_mutation(ctx.mutate(|store| store.create_invite(&name, chambers)))?;
             // The only moment this secret is ever printed — it is not
             // recoverable from `token list` or the API afterwards.
             println!("token: {}", invite.token);
             println!("link fragment: #invite={}", invite.token);
         }
         TokenAction::List => {
-            if tf.invites.is_empty() {
-                println!("(no invites)");
-                return Ok(());
-            }
-            println!("NAME\tSTATUS\tCHAMBERS\tCREATED\tREVOKED");
-            for i in &tf.invites {
-                let status = if i.revoked_at.is_some() {
-                    "revoked"
-                } else {
-                    "active"
-                };
-                println!(
-                    "{}\t{}\t{}\t{}\t{}",
-                    i.name,
-                    status,
-                    i.chambers.join(","),
-                    i.created_at,
-                    i.revoked_at.as_deref().unwrap_or("-")
-                );
-            }
+            ctx.with_store(|store| {
+                if store.invites.is_empty() {
+                    println!("(no invites)");
+                    return;
+                }
+                println!("NAME\tSTATUS\tCHAMBERS\tCREATED\tREVOKED");
+                for i in &store.invites {
+                    let status = if i.revoked_at.is_some() {
+                        "revoked"
+                    } else {
+                        "active"
+                    };
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}",
+                        i.name,
+                        status,
+                        i.chambers.join(","),
+                        i.created_at,
+                        i.revoked_at.as_deref().unwrap_or("-")
+                    );
+                }
+            });
         }
         TokenAction::Revoke { name } => {
-            if !tf.revoke(&name) {
-                anyhow::bail!("no active invite named '{name}'");
-            }
-            tokens::save_tokens(&path, &tf)?;
+            unwrap_mutation(ctx.mutate(|store| {
+                anyhow::ensure!(store.revoke(&name), "no active invite named '{name}'");
+                Ok(())
+            }))?;
             println!("revoked {name}");
         }
     }
