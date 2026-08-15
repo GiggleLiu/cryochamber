@@ -82,7 +82,7 @@ pub fn scope_covers(chambers: &[String], id: &str) -> bool {
         return true;
     }
     let re_encoded = crate::hub::discovery::encode_id(std::path::Path::new(id));
-    chambers.iter().any(|c| *c == re_encoded)
+    chambers.contains(&re_encoded)
 }
 
 /// Percent-decode a chamber id captured from the raw request URI, exactly

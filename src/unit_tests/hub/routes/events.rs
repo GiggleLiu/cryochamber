@@ -41,7 +41,7 @@ async fn invite_stream_only_carries_scoped_chambers() {
         chambers: vec!["mine".into()],
     };
 
-    let sse = get_events(State(app.clone()), Some(axum::Extension(role))).await;
+    let sse = get_events(State(app.clone()), Some(axum::Extension(role)), None).await;
     let response = sse.into_response();
 
     app.tx.send(new_message("mine", "visible")).unwrap();
@@ -68,7 +68,9 @@ async fn owner_and_open_mode_streams_are_unfiltered() {
     let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
 
     for role in [Some(axum::Extension(crate::hub::tokens::Role::Owner)), None] {
-        let response = get_events(State(app.clone()), role).await.into_response();
+        let response = get_events(State(app.clone()), role, None)
+            .await
+            .into_response();
         app.tx.send(new_message("mine", "visible")).unwrap();
         app.tx.send(new_message("other", "also-visible")).unwrap();
 
@@ -87,7 +89,7 @@ async fn invite_stream_filters_status_and_log_events_too() {
         chambers: vec!["mine".into()],
     };
 
-    let response = get_events(State(app.clone()), Some(axum::Extension(role)))
+    let response = get_events(State(app.clone()), Some(axum::Extension(role)), None)
         .await
         .into_response();
 
@@ -112,6 +114,59 @@ async fn invite_stream_filters_status_and_log_events_too() {
     assert!(!text.contains("SECRET-LOG"), "log line leaked: {text}");
     assert!(!text.contains("\"chamber_id\":\"other\""), "got {text}");
     assert!(text.contains("\"chamber_id\":\"mine\""), "got {text}");
+}
+
+#[tokio::test]
+async fn revoking_an_invite_silences_its_live_stream() {
+    // An SSE stream is long-lived: the guard only runs once, at connect time.
+    // Revocation must therefore be enforced per event against the live store,
+    // otherwise a revoked guest keeps receiving chamber traffic indefinitely.
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+
+    let mut tf = crate::hub::tokens::TokenFile::default();
+    tf.ensure_owner().unwrap();
+    tf.create_invite("Alice", vec!["mine".into()]).unwrap();
+    let path = dir.path().join("tokens.json");
+    crate::hub::tokens::save_tokens(&path, &tf).unwrap();
+    let ctx = crate::hub::auth::AuthCtx::load(&path).unwrap();
+
+    let role = crate::hub::tokens::Role::Invite {
+        name: "Alice".into(),
+        chambers: vec!["mine".into()],
+    };
+    let response = get_events(
+        State(app.clone()),
+        Some(axum::Extension(role)),
+        Some(axum::Extension(ctx.clone())),
+    )
+    .await
+    .into_response();
+    let mut stream = response.into_body().into_data_stream();
+
+    // Positive path first: the stream really is delivering before revocation.
+    app.tx.send(new_message("mine", "before-revoke")).unwrap();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+        .await
+        .expect("first event should arrive")
+        .expect("stream open")
+        .unwrap();
+    let first = String::from_utf8_lossy(&first).into_owned();
+    assert!(first.contains("before-revoke"), "got {first}");
+
+    // Revoke through the shared store the guard reads from.
+    assert!(ctx.store.write().unwrap().revoke("Alice"));
+
+    app.tx.send(new_message("mine", "AFTER-REVOKE")).unwrap();
+    let mut tail = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+    while let Ok(Some(Ok(bytes))) = tokio::time::timeout_at(deadline, stream.next()).await {
+        tail.push_str(&String::from_utf8_lossy(&bytes));
+    }
+    assert!(
+        !tail.contains("AFTER-REVOKE"),
+        "revoked invite kept receiving events: {tail}"
+    );
 }
 
 #[tokio::test]

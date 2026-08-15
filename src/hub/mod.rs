@@ -114,6 +114,19 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             get(crate::hub::routes::files::get_file),
         )
         .route("/api/events", get(crate::hub::routes::events::get_events))
+        .route(
+            "/api/whoami",
+            get(crate::hub::routes::tokens_api::get_whoami),
+        )
+        .route(
+            "/api/tokens",
+            get(crate::hub::routes::tokens_api::get_tokens)
+                .post(crate::hub::routes::tokens_api::post_token),
+        )
+        .route(
+            "/api/tokens/{name}/revoke",
+            post(crate::hub::routes::tokens_api::post_revoke),
+        )
         .with_state(app)
         // Bound the buffered body so the 25 MB attachment cap binds before an
         // unbounded upload is read into memory. The slack covers multipart
@@ -125,8 +138,13 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
 }
 
 /// Public-mode router: same routes, wrapped in the bearer-token guard.
+///
+/// The `Extension(ctx)` layer sits *inside* the guard, so by the time a handler
+/// runs the request carries both the resolved `Role` (inserted by the guard)
+/// and the live token store. Open (loopback) mode builds the router without it,
+/// which is how the token-management handlers know to answer 503.
 pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::AuthCtx>) -> Router {
-    let router = build_router_with_state(app.clone());
+    let router = build_router_with_state(app.clone()).layer(axum::Extension(ctx.clone()));
     crate::hub::auth::apply_auth(router, app, ctx)
 }
 
