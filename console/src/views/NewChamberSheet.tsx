@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { HubClient, type NewChamberPayload } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
 import { logoutIfAuthError } from '../lib/authGuard'
@@ -50,6 +50,13 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const hub = client instanceof HubClient ? client : null
+  // Dismissing mid-request would drop the outcome on the floor: a failure's
+  // message would land on an unmounted sheet, and a success would still
+  // navigate into a chamber the user just walked away from. The sheet stays
+  // until the request answers.
+  const guardedClose = useCallback(() => {
+    if (!busy) onClose()
+  }, [busy, onClose])
 
   async function create() {
     if (!hub || busy) return
@@ -79,7 +86,7 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet title="New chamber" label="New chamber" onClose={onClose}>
+    <Sheet title="New chamber" label="New chamber" onClose={guardedClose}>
       {error && (
         <p className="alert" role="alert">
           <AlertCircle size={18} />
@@ -139,6 +146,7 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
             type="password"
             value={apiKey}
             placeholder="sk-..."
+            autoComplete="off"
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}

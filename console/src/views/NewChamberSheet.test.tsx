@@ -103,3 +103,19 @@ test('a 401 signs out', async () => {
   await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
   expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
 })
+
+test('closing while a create is in flight waits for the outcome', async () => {
+  const hub = useAppStore.getState().client as HubClient
+  let reject!: (e: unknown) => void
+  vi.mocked(hub.createChamber).mockReturnValue(new Promise((_, r) => { reject = r }))
+  const onClose = vi.fn()
+  render(<NewChamberSheet onClose={onClose} />)
+  await userEvent.type(screen.getByLabelText('Name'), 'gamma')
+  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+  expect(onClose).not.toHaveBeenCalled()
+  reject(new ApiError('chamber already exists', 400))
+  expect(await screen.findByRole('alert')).toHaveTextContent('chamber already exists')
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
