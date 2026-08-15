@@ -19,20 +19,33 @@ export function Sheet({
   onClose: () => void
   children: ReactNode
 }) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   // aria-modal promises modal behaviour: focus lands inside on open, and
   // Escape dismisses. Without both, the attribute only hides the page from
   // assistive tech while keyboard users are still stranded behind it.
   useEffect(() => {
+    const restoreTo = document.activeElement
     closeRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      // Sheets stack: a detail sheet opens over the one that listed it, and
+      // both are listening on the document. Only the topmost may take the key,
+      // or one Escape would close the whole stack.
+      const open = document.querySelectorAll('.sheet[role="dialog"]')
+      if (open[open.length - 1] !== rootRef.current) return
+      onClose()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      // Where the focus came from is where it belongs when this closes —
+      // otherwise a keyboard user lands back at the top of the document.
+      if (restoreTo instanceof HTMLElement && document.contains(restoreTo)) restoreTo.focus()
+    }
   }, [onClose])
   return (
-    <div className="sheet" role="dialog" aria-label={label} aria-modal="true">
+    <div className="sheet" ref={rootRef} role="dialog" aria-label={label} aria-modal="true">
       <header className="topbar">
         <h2>{title}</h2>
         <button

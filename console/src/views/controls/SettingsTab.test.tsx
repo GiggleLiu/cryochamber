@@ -26,7 +26,10 @@ test('scalar rows show key and value, with a monospace value', () => {
   expect(screen.getByText('agent')).toBeInTheDocument()
   expect(screen.getByText('"opencode"')).toHaveClass('is-mono')
   expect(screen.getByText('anthropic · env: ANTHROPIC_API_KEY')).not.toHaveClass('is-mono')
-  expect(container.querySelectorAll('.settings-row')).toHaveLength(2)
+  // Grouped rows, the same vocabulary as every other list in the app.
+  expect(container.querySelectorAll('.group .row')).toHaveLength(2)
+  // The value is the thing being read here, so it wraps rather than clipping.
+  expect(screen.getByText('"opencode"')).toHaveClass('is-wrap')
 })
 
 test('no cryo.toml at all says so', () => {

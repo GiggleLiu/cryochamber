@@ -1464,11 +1464,23 @@ input, select, textarea { font: inherit; color: inherit; }
 .state-stopped { color: var(--ink-3); }
 .state-archived { color: var(--ink-3); }
 
-/* A disclosure's contents sit inside the group's ground, indented to the row
-   text so the section reads as belonging to the row that opened it. */
-.section-body { padding: 0 var(--sp-4) var(--sp-3); }
-.group > summary.row + .section-body { border-top: 1px solid var(--line); padding-top: var(--sp-3); }
 .group .row:disabled { opacity: 0.5; cursor: default; }
+
+/* A row that opens a sheet of its own. The chevron is the promise that there
+   is somewhere to go; it is decorative, and the row's own text is its name. */
+.row-nav { justify-content: space-between; }
+.row-chevron { flex: none; color: var(--ink-3); font-size: var(--fs-lg); line-height: 1; }
+
+/* A row whose value is the thing being read, not a summary of it: it wraps
+   instead of clipping, and keeps the key from being squeezed out. */
+.row-key { flex: none; color: var(--ink-3); }
+.row-value.is-wrap {
+  margin-left: auto;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+.row-value.is-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
 
 .todo-list { padding: 0 var(--sp-4); }
 .todo-row {
@@ -1538,19 +1550,6 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
   overflow-wrap: anywhere;
 }
-
-.settings-list { padding: 0 var(--sp-4); }
-.settings-row {
-  display: flex;
-  gap: var(--sp-3);
-  align-items: baseline;
-  padding: var(--sp-2) 0;
-  font-size: var(--fs-sm);
-  border-bottom: 1px solid var(--line);
-}
-.settings-key { flex: none; color: var(--ink-3); }
-.settings-value { flex: 1 1 auto; min-width: 0; text-align: right; overflow-wrap: anywhere; }
-.settings-value.is-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
 
 .log-pre {
   max-height: 55vh;

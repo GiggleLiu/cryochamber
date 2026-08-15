@@ -298,9 +298,10 @@ test('a failed status load stays inline in the sheet', async () => {
 })
 
 describe('detail sections', () => {
-  /** The sections are disclosure rows now, so opening one is a click on its
-   * summary — the same gesture as the Completed fold in the projects list. */
-  const open = (name: string) => userEvent.click(screen.getByText(name))
+  /** Each detail opens a sheet of its own, listed by a row in the controls
+   * sheet underneath. */
+  const open = (name: string) => userEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }))
+  const closeTop = () => userEvent.click(screen.getAllByRole('button', { name: /close/i }).at(-1)!)
 
   test('every section starts closed, and opening one fetches once', async () => {
     // Closed by default: the state and the actions are what the sheet is
@@ -329,17 +330,38 @@ describe('detail sections', () => {
     expect(await screen.findByText('No NOTES.md in this chamber.')).toBeInTheDocument()
   })
 
-  test('opening one closes the last, so only its content is mounted', async () => {
+  test('a detail opens over the controls and closing returns to them', async () => {
     useAppStore.setState({
       client: makeHub(status({ plan_html: '<p>the plan</p>', notes_html: '<p>the notes</p>' })),
     })
     renderSheet()
     await screen.findByText('Stopped')
     await open('Plan')
+    // Its own dialog, named for what it is reading, over the one that listed it.
     expect(await screen.findByText('the plan')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /alpha Plan/ })).toBeInTheDocument()
+    await closeTop()
+    expect(screen.queryByText('the plan')).toBeNull()
+    // Back on the controls, with the actions reachable again.
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeInTheDocument()
     await open('Notes')
     expect(await screen.findByText('the notes')).toBeInTheDocument()
+  })
+
+  test('escape closes the detail, not the whole stack', async () => {
+    // Both sheets listen on the document; one keypress must not take both.
+    const onClose = vi.fn()
+    useAppStore.setState({ client: makeHub(status({ plan_html: '<p>the plan</p>' })) })
+    render(
+      <ControlsSheet chamberId="cham-a" chamberName="alpha" archived={false} onClose={onClose} />,
+    )
+    await screen.findByText('Stopped')
+    await open('Plan')
+    await screen.findByText('the plan')
+    await userEvent.keyboard('{Escape}')
     expect(screen.queryByText('the plan')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeInTheDocument()
   })
 
   test('the Sync, Settings and Log sections are wired to this chamber', async () => {

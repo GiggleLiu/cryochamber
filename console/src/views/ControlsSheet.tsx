@@ -77,10 +77,10 @@ export function ControlsSheet({
   const [actionError, setActionError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
-  // One section open at a time, like the tabs this replaced: each one fetches
-  // when it is first opened rather than on every sheet open. `null` is all
-  // closed, which is where the sheet starts — the state and the actions above
-  // are what it is opened for.
+  // The detail sheet on top of this one, if any. Its content mounts only while
+  // it is open, so each section still fetches when first opened rather than on
+  // every sheet open. `null` — where this starts — is the controls list
+  // itself, which is what the sheet is opened for.
   const [section, setSection] = useState<ControlsSection | null>(null)
   const hub = client instanceof HubClient ? client : null
 
@@ -262,38 +262,37 @@ export function ControlsSheet({
           )}
 
           <p className="group-label">Detail</p>
-          {SECTIONS.map((name) => (
-            <details
-              key={name}
-              className="group"
-              open={section === name}
-              // Only the section this event is about may change the state: when
-              // one opens, React closes the last, and that close fires a
-              // `toggle` of its own — a plain `open ? name : null` would take
-              // the second event and leave everything shut.
-              onToggle={(e) => {
-                const isOpen = e.currentTarget.open
-                setSection((prev) => (isOpen ? name : prev === name ? null : prev))
-              }}
-            >
-              <summary className="row">{name}</summary>
-              {section === name && (
-                <div className="section-body">
-                  {name === 'Todos' && <TodosTab chamberId={chamberId} />}
-                  {name === 'Plan' && (
-                    <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
-                  )}
-                  {name === 'Notes' && (
-                    <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
-                  )}
-                  {name === 'Sync' && <SyncTab chamberId={chamberId} />}
-                  {name === 'Settings' && <SettingsTab status={status} />}
-                  {name === 'Log' && <LogTab chamberId={chamberId} logTail={status.log_tail} />}
-                </div>
-              )}
-            </details>
-          ))}
+          <div className="group">
+            {SECTIONS.map((name) => (
+              <button key={name} className="row row-nav" onClick={() => setSection(name)}>
+                {name}
+                <span className="row-chevron" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            ))}
+          </div>
         </>
+      )}
+
+      {/* Read in a surface of its own. A plan, a log or a parsed cryo.toml is a
+          document, and inlining six of them turned this sheet into a page you
+          had to scroll past to reach anything. A sheet — not a floating panel —
+          because on a phone a popover over a sheet is a third layer that
+          cannot scroll properly, and this one gets its own title and scroll. */}
+      {section !== null && status !== null && (
+        <Sheet title={section} label={`${chamberName} ${section}`} onClose={() => setSection(null)}>
+          {section === 'Todos' && <TodosTab chamberId={chamberId} />}
+          {section === 'Plan' && (
+            <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
+          )}
+          {section === 'Notes' && (
+            <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
+          )}
+          {section === 'Sync' && <SyncTab chamberId={chamberId} />}
+          {section === 'Settings' && <SettingsTab status={status} />}
+          {section === 'Log' && <LogTab chamberId={chamberId} logTail={status.log_tail} />}
+        </Sheet>
       )}
     </Sheet>
   )

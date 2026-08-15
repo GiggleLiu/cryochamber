@@ -1,5 +1,8 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { mockHub, signIn } from './fixtures'
+
+/** Mirrors `--col-max` in styles.css: the widest a reading column ever gets. */
+const COL_MAX = 800
 
 test('token login → projects → conversation → send', async ({ page }) => {
   const sent: unknown[] = []
@@ -61,5 +64,61 @@ test.describe('phone layout contract', () => {
       clientWidth: document.documentElement.clientWidth,
     }))
     expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
+  })
+})
+
+test.describe('desktop layout contract', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  /** The column's width and its gutters, measured against the box that holds
+   * it. Measuring against the container's `clientWidth` (not the viewport)
+   * keeps a classic scrollbar from reading as a centering bug. */
+  async function column(page: Page, selector: string, container: string) {
+    return page.evaluate(([sel, cont]) => {
+      const el = document.querySelector(sel!)!.getBoundingClientRect()
+      const box = document.querySelector(cont!)!
+      const outer = box.getBoundingClientRect()
+      return {
+        width: el.width,
+        left: el.left - outer.left,
+        right: outer.left + box.clientWidth - el.right,
+      }
+    }, [selector, container])
+  }
+
+  /** Clamped to the reading column and optically centred inside it. */
+  function expectCentred({ width, left, right }: { width: number; left: number; right: number }) {
+    expect(width).toBeLessThanOrEqual(COL_MAX + 1)
+    expect(left).toBeGreaterThan(100)
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(2)
+  }
+
+  test('the conversation is a centred reading column, not a full-width smear', async ({ page }) => {
+    await mockHub(page)
+    await signIn(page)
+    await page.getByRole('button', { name: /qec-decoders/ }).click()
+    await expect(page.getByRole('textbox')).toBeVisible()
+
+    const overflow = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }))
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
+
+    // Messages, and the composer that answers them, share one column.
+    expectCentred(await column(page, '.msg-row', '.message-scroll'))
+    expectCentred(await column(page, '.composer', '.composer-dock'))
+
+    // The dock itself still spans the window: the chrome is full-bleed, only
+    // the content inside it is clamped.
+    const dock = await page.locator('.composer-dock').boundingBox()
+    expect(dock!.width).toBe(1440)
+  })
+
+  test('the projects list is a centred rail', async ({ page }) => {
+    await mockHub(page)
+    await signIn(page)
+    await expect(page.getByRole('button', { name: /qec-decoders/ })).toBeVisible()
+    expectCentred(await column(page, '.stream-list', '.projects-scroll'))
   })
 })
