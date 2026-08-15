@@ -542,6 +542,50 @@ describe('the asleep banner', () => {
   })
 })
 
+describe('liveness in the header', () => {
+  function setStream(extra: Record<string, unknown>) {
+    useAppStore.setState({
+      client: fakeClient(),
+      streams: [{ stream_id: 1, name: 'alpha', description: 'A', ...extra }],
+    })
+  }
+
+  test.each([
+    ['a working agent', { running: true, agentRunning: true }, 'agent working', 'is-awake'],
+    [
+      'a chamber between wakes',
+      { running: true, agentRunning: false },
+      'chamber running, agent asleep',
+      'is-running',
+    ],
+  ])('%s is dotted beside the title', async (_n, extra, label, cls) => {
+    setStream(extra)
+    render(<ConversationView streamId={1} />)
+    const dot = await screen.findByLabelText(label)
+    expect(dot).toHaveClass(cls)
+    // Beside the name, in the same heading — the glance that replaces opening
+    // the controls sheet to read a status.
+    const heading = screen.getByRole('heading', { name: /alpha/ })
+    expect(heading).toContainElement(dot)
+    expect(heading.firstElementChild).toBe(dot)
+  })
+
+  test('a stopped chamber is dotted too, in its own state', async () => {
+    setStream({ running: false, agentRunning: false })
+    render(<ConversationView streamId={1} />)
+    const dot = await screen.findByLabelText('chamber stopped')
+    expect(dot).not.toHaveClass('is-awake')
+    expect(dot).not.toHaveClass('is-running')
+  })
+
+  test('a hub that never reported liveness gets no dot', async () => {
+    setStream({})
+    const { container } = render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    expect(container.querySelector('.topbar .status-dot')).toBeNull()
+  })
+})
+
 describe('outbox bubbles', () => {
   test('a sending item renders a pending self bubble', async () => {
     useAppStore.setState({ client: fakeClient() })

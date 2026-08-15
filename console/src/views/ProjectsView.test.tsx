@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProjectsView } from './ProjectsView'
+import { ProjectsView, foldedLabel } from './ProjectsView'
 import { useAppStore, resetAppStore } from '../store/appStore'
 
 beforeEach(() => {
@@ -74,6 +74,18 @@ describe('agent status dots', () => {
   test('a project whose liveness is unknown carries no dot at all', () => {
     const { container } = render(<ProjectsView />)
     expect(container.querySelector('.status-dot')).toBeNull()
+  })
+
+  test('the dot reads before the name, not on the tile', () => {
+    // Liveness answered at a glance is the whole point: it must sit on the
+    // name line the eye already reads, ahead of the name itself.
+    useAppStore.setState({
+      streams: [{ stream_id: 1, name: 'alpha', description: 'A', running: true }],
+    })
+    const { container } = render(<ProjectsView />)
+    const head = container.querySelector('.stream-head')
+    expect(head?.firstElementChild).toHaveClass('status-dot')
+    expect(head?.children[1]).toHaveTextContent('alpha')
   })
 })
 
@@ -178,6 +190,55 @@ describe('groups, badge and meta line', () => {
     render(<ProjectsView />)
     expect(screen.getByText('next wake in 2 h')).toBeInTheDocument()
     expect(screen.getAllByText(/next wake/)).toHaveLength(1)
+  })
+})
+
+describe('the folded chambers are always accounted for', () => {
+  const MIXED_ACTIVE = [
+    { stream_id: 1, name: 'alpha', description: 'A' },
+    { stream_id: 2, name: 'beta', description: 'B', completed: true },
+    { stream_id: 3, name: 'gamma', description: 'C', archived: true },
+  ]
+
+  test('a reveal row counts what the toggle is hiding', () => {
+    // The old empty-state hint only fired when nothing active was left, so a
+    // single active chamber was enough to make a completed one look lost.
+    useAppStore.setState({
+      streams: MIXED_ACTIVE,
+      hubRole: 'owner',
+      showCompletedArchived: false,
+    })
+    render(<ProjectsView />)
+    expect(screen.getByRole('button', { name: /1 completed · 1 archived/ })).toBeInTheDocument()
+  })
+
+  test('tapping it unfolds them in place', async () => {
+    useAppStore.setState({
+      streams: MIXED_ACTIVE,
+      hubRole: 'owner',
+      showCompletedArchived: false,
+    })
+    render(<ProjectsView />)
+    await userEvent.click(screen.getByRole('button', { name: /1 completed/ }))
+    expect(useAppStore.getState().showCompletedArchived).toBe(true)
+    expect(screen.getByText('Completed (1)')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /1 completed ·/ })).toBeNull()
+  })
+
+  test('a guest is never shown a fold they do not have', () => {
+    useAppStore.setState({
+      streams: MIXED_ACTIVE,
+      hubRole: 'invite',
+      showCompletedArchived: false,
+    })
+    render(<ProjectsView />)
+    expect(screen.queryByRole('button', { name: /completed/ })).toBeNull()
+  })
+
+  test('the row names only the kinds that exist', () => {
+    expect(foldedLabel(2, 0)).toBe('2 completed')
+    expect(foldedLabel(0, 3)).toBe('3 archived')
+    expect(foldedLabel(2, 3)).toBe('2 completed · 3 archived')
   })
 })
 

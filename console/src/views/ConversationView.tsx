@@ -5,6 +5,7 @@ import { CLIENT_UNRESOLVED } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
+import { StatusDot } from '../components/StatusDot'
 import { initial, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
 import { InviteSheet } from './InviteSheet'
@@ -218,7 +219,12 @@ export function ConversationView({ streamId }: { streamId: number }) {
         >
           <ChevronLeft />
         </button>
-        <h1>{stream.name}</h1>
+        <h1>
+          {/* Liveness before the name: the state the composer note explains in
+              words, readable at a glance without opening the controls sheet. */}
+          <StatusDot running={stream.running} agentRunning={stream.agentRunning} />
+          <span className="topbar-title-text">{stream.name}</span>
+        </h1>
         {/* Owner-only, and absent (not disabled) for everyone else: a guest is
             never shown a control they cannot use. `chamberId` is unknown before
             the first register(), and an invite for an unknown chamber is not a

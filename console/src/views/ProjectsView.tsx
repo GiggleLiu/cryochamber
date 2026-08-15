@@ -4,6 +4,16 @@ import { useAppStore, useIsOwner } from '../store/appStore'
 import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, previewText, tileColor } from '../lib/format'
 import { NewChamberSheet } from './NewChamberSheet'
+import { StatusDot } from '../components/StatusDot'
+
+/** How the folded chambers are counted on the reveal row. Naming both kinds
+ * only when both exist keeps the row from claiming an archive that is empty. */
+export function foldedLabel(completed: number, archived: number): string {
+  const parts: string[] = []
+  if (completed > 0) parts.push(`${completed} completed`)
+  if (archived > 0) parts.push(`${archived} archived`)
+  return parts.join(' · ')
+}
 
 function SkeletonList() {
   return (
@@ -32,6 +42,7 @@ export function ProjectsView() {
   const isOwner = useIsOwner()
   const [newChamberOpen, setNewChamberOpen] = useState(false)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
+  const setShowCompletedArchived = useAppStore((s) => s.setShowCompletedArchived)
   const visible = streams.filter((s) => !hidden.includes(s.stream_id))
   // The folds are an owner's filing system, never a filter on anyone else's
   // list: a guest scoped to a finished chamber still sees it as a plain row,
@@ -65,22 +76,11 @@ export function ProjectsView() {
           <span className="stream-tile" style={{ background: tileColor(s.name) }}>
             {initial(s.name)}
           </span>
-          {s.running !== undefined && (
-            <span
-              className={`status-dot${
-                s.agentRunning ? ' is-awake' : s.running ? ' is-running' : ''
-              }`}
-              role="img"
-              aria-label={
-                s.agentRunning
-                  ? 'agent working'
-                  : s.running
-                    ? 'chamber running, agent asleep'
-                    : 'chamber stopped'
-              }
-            />
-          )}
           <span className="stream-head">
+            {/* Liveness reads before the name, the same way it does in the
+                conversation header — the glance that used to need the controls
+                sheet. */}
+            <StatusDot running={s.running} agentRunning={s.agentRunning} />
             <span className="stream-name">{s.name}</span>
             {s.hasOpenQuestion && (
               <span className="question-badge" title="Open question — agent is waiting on you">
@@ -151,6 +151,17 @@ export function ProjectsView() {
           )}
 
         {active.length > 0 && <ul className="stream-list">{active.map(card)}</ul>}
+
+        {/* With the toggle off, completed and archived chambers vanish from the
+            list. Saying how many are folded away — and offering the one tap
+            that unfolds them — is the difference between a filter and a
+            chamber that looks lost. The empty state covers the case where
+            there is no active list to sit under. */}
+        {!showGroups && active.length > 0 && completedList.length + archivedList.length > 0 && (
+          <button className="stream-reveal" onClick={() => setShowCompletedArchived(true)}>
+            Show {foldedLabel(completedList.length, archivedList.length)}
+          </button>
+        )}
 
         {showGroups && completedList.length > 0 && (
           <details className="stream-group">
