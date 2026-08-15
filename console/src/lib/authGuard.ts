@@ -3,7 +3,7 @@ import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
 
 /**
  * The single funnel every 401 goes through, wherever it surfaced: the event
- * loop, an attachment fetch, the Share screen, a boot-time whoami.
+ * loop, an attachment fetch, the Invite and Controls sheets, a boot-time whoami.
  *
  * A revoked token that only produced an inline "could not load" message left
  * the app looking signed in — with cached messages on screen and an SSE stream

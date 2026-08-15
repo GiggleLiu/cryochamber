@@ -26,7 +26,18 @@ export function defaultInviteLabel(invites: Invite[]): string {
  * taken — while a silent 403 (owner rights lost mid-session) is a refusal that
  * renaming would not cure, so it must not be dressed up as one.
  */
+/** The hub answers 503 on every token route while it runs in open (loopback)
+ * mode: there is no access control to share, so invites cannot exist. That is
+ * a configuration fact, not a connectivity problem, and is worded as one. */
+export const OPEN_MODE_MESSAGE =
+  'Sharing needs public mode. Restart the hub with `cryohub start --public` (after `cryohub token owner`).'
+
+function isOpenMode(e: unknown): boolean {
+  return e instanceof ApiError && e.httpStatus === 503
+}
+
 function mintErrorMessage(e: unknown): string {
+  if (isOpenMode(e)) return OPEN_MODE_MESSAGE
   if (e instanceof ApiError && e.httpStatus >= 400 && e.httpStatus < 500) {
     const said = e.message.trim()
     if (said && said !== `HTTP ${e.httpStatus}`) return said
@@ -81,7 +92,11 @@ export function InviteSheet({
       })
       .catch((e) => {
         if (logoutIfAuthError(e)) return
-        setListError('Could not load who has access. Check your connection and try again.')
+        setListError(
+          isOpenMode(e)
+            ? OPEN_MODE_MESSAGE
+            : 'Could not load who has access. Check your connection and try again.',
+        )
       })
   }, [hub])
 

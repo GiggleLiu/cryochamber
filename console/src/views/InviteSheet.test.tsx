@@ -281,3 +281,13 @@ describe('errors', () => {
     expect(screen.getByRole('dialog', { name: 'Invite' })).toBeInTheDocument()
   })
 })
+
+test('a hub in open mode says sharing needs public mode, not "check your connection"', async () => {
+  const fetchFn = vi.fn(async () => new Response('', { status: 503 }))
+  const client = new HubClient(creds, fetchFn as unknown as typeof fetch)
+  useAppStore.setState({ client })
+  render(<InviteSheet chamberId="cham-a" chamberName="alpha" onClose={() => {}} />)
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent(/public mode/)
+  expect(alert).not.toHaveTextContent(/connection/)
+})

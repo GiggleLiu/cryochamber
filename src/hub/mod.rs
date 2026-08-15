@@ -54,9 +54,11 @@ pub fn build_router_with_config(
     let mut configured_hosts = vec![config.host.clone()];
     configured_hosts.extend(config.public_hosts.iter().cloned());
     let router = Router::new();
-    // A configured console owns the whole non-`/api` surface: its build emits
-    // its own `/assets`, and leaving the bundled shell's pages registered would
-    // shadow them with a second, unrelated dashboard.
+    // A configured console takes over the page surface: its build emits its
+    // own `/assets`, and leaving the bundled shell's pages registered would
+    // shadow them with a second, unrelated dashboard. (The `/assets/vendor/*`
+    // routes below stay registered in both modes; a Vite build never emits
+    // those names, so nothing is shadowed.)
     let router = match &config.console_dir {
         Some(_) => router,
         None => router

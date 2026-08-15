@@ -74,8 +74,9 @@ async fn root_serves_the_console_index() {
 
 #[tokio::test]
 async fn extensionless_paths_fall_back_to_the_spa_entry() {
-    // The console routes `/c/...` and `/user_uploads/...` client-side, so a
-    // deep link (or a reload on one) must land on `index.html`, not a 404.
+    // The console has no client-side router, but any extensionless path a
+    // user lands on (a pasted link, a reload) must serve the SPA entry — the
+    // app then boots to its home — rather than a 404.
     for uri in ["/c/alpha", "/user_uploads/42/report", "/settings"] {
         let (_ws, _dist, router) = console_router();
         let (status, _, body) = get(router, uri).await;
