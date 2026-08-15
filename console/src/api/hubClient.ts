@@ -107,6 +107,9 @@ interface ChamberMessage {
 interface Chamber {
   id: string
   name: string
+  /** The chamber daemon holds its lock (the chamber is started). */
+  running?: boolean
+  /** A session is executing right now; implies `running`. */
   agent_running?: boolean
   next_wake_display?: string | null
 }
@@ -176,8 +179,13 @@ export class HubClient {
         stream_id: sid,
         name: c.name,
         description: '',
-        agentRunning: c.agent_running,
-        nextWake: c.next_wake_display ?? null,
+        // Absent flags stay undefined (a hub that says nothing about
+        // liveness must not paint every chamber as stopped).
+        running: typeof c.running === 'boolean' ? c.running : undefined,
+        agentRunning: typeof c.agent_running === 'boolean' ? c.agent_running : undefined,
+        // Only a started chamber has a real schedule; a stopped one reports
+        // whatever was pending when it died, which reads as nonsense.
+        nextWake: c.running === true ? (c.next_wake_display ?? null) : null,
       }
     })
     // No server-side unread state on the hub: it is tracked client-side.
@@ -192,13 +200,14 @@ export class HubClient {
    * wakes or falls asleep: the same index, re-read, without disturbing the
    * projects the store already has. */
   async chamberStatuses(): Promise<
-    Array<{ stream_id: number; agentRunning: boolean; nextWake: string | null }>
+    Array<{ stream_id: number; running: boolean; agentRunning: boolean; nextWake: string | null }>
   > {
     const chambers = await this.chambers()
     return chambers.map((c) => ({
       stream_id: numericStreamId(c.id, this.account),
+      running: c.running === true,
       agentRunning: c.agent_running === true,
-      nextWake: c.next_wake_display ?? null,
+      nextWake: c.running === true ? (c.next_wake_display ?? null) : null,
     }))
   }
 

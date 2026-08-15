@@ -293,6 +293,8 @@ input, select, textarea { font: inherit; color: inherit; }
   border-radius: var(--r-full);
 }
 .status-dot.is-awake { background: var(--brand); }
+/* Started chamber whose agent is between wakes; gray stays "not running". */
+.status-dot.is-running { background: var(--warn); }
 
 .stream-name {
   grid-column: 2;

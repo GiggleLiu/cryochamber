@@ -38,9 +38,12 @@ export interface StreamSub {
   stream_id: number
   name: string
   description: string
-  /** Whether the chamber's agent is awake. Absent until the hub says. */
+  /** Whether the chamber daemon is started at all. Absent until the hub says. */
+  running?: boolean
+  /** Whether a session is executing right now; implies `running`. */
   agentRunning?: boolean
-  /** Display form of the next scheduled wake, when one is scheduled. */
+  /** Display form of the next scheduled wake. Only a started chamber has
+   *  one — a stopped chamber's schedule is a stale leftover and never shown. */
   nextWake?: string | null
 }
 

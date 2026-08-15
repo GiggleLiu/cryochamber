@@ -228,11 +228,11 @@ describe('updateStreamStatus', () => {
     useAppStore.getState().setCreds(creds)
     useAppStore.getState().applyInitialState(initial)
     useAppStore.getState().updateStreamStatus([
-      { stream_id: 1, agentRunning: false, nextWake: 'in 2 h' },
+      { stream_id: 1, running: true, agentRunning: false, nextWake: 'in 2 h' },
     ])
     const [alpha, beta] = useAppStore.getState().streams
     expect(alpha).toEqual({
-      stream_id: 1, name: 'alpha', description: 'A', agentRunning: false, nextWake: 'in 2 h',
+      stream_id: 1, name: 'alpha', description: 'A', running: true, agentRunning: false, nextWake: 'in 2 h',
     })
     // Not in the update: left exactly as it was, not reset to "unknown".
     expect(beta).toEqual({ stream_id: 2, name: 'beta', description: 'B' })
@@ -241,7 +241,7 @@ describe('updateStreamStatus', () => {
   test('a status for a project we do not have is ignored', () => {
     useAppStore.getState().applyInitialState(initial)
     useAppStore.getState().updateStreamStatus([
-      { stream_id: 99, agentRunning: true, nextWake: null },
+      { stream_id: 99, running: true, agentRunning: true, nextWake: null },
     ])
     expect(useAppStore.getState().streams.map((s) => s.stream_id)).toEqual([1, 2])
   })

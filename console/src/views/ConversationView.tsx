@@ -330,13 +330,17 @@ export function ConversationView({ streamId }: { streamId: number }) {
       {/* Persistent, and the composer stays enabled: queuing for a sleeping
           agent is the intended way to use it, so this states where the message
           goes rather than standing in its way. */}
-      {stream.agentRunning === false && (
+      {stream.running === false ? (
+        <p className="asleep-note is-stopped" role="status">
+          Chamber is not running — messages will wait in its inbox until it is started
+        </p>
+      ) : stream.agentRunning === false ? (
         <p className="asleep-note" role="status">
-          {`Agent is asleep — messages will wait in its inbox${
-            stream.nextWake ? ` · next wake ${stream.nextWake}` : ''
+          {`Agent is asleep — messages will be read at the next wake${
+            stream.nextWake ? ` · ${stream.nextWake}` : ''
           }`}
         </p>
-      )}
+      ) : null}
 
       <Composer streamName={name} streamId={streamId} />
     </div>

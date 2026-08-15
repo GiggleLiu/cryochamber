@@ -46,39 +46,41 @@ test('getMessages maps a chamber message to a store message with markdown conten
 
 describe('chamber liveness', () => {
   const chambers = [
-    { id: 'cham-a', name: 'alpha', agent_running: true, next_wake_display: null },
-    { id: 'cham-b', name: 'beta', agent_running: false, next_wake_display: 'in 2 h' },
+    { id: 'cham-a', name: 'alpha', running: true, agent_running: true, next_wake_display: null },
+    { id: 'cham-b', name: 'beta', running: true, agent_running: false, next_wake_display: 'in 2 h' },
   ]
 
   test('register carries the hub liveness onto each subscription', async () => {
     const c = new HubClient(creds, mockFetch(() => chambers))
     const subs = (await c.register()).subscriptions
     expect(subs.find((s) => s.name === 'alpha')).toMatchObject({
-      agentRunning: true, nextWake: null,
+      running: true, agentRunning: true, nextWake: null,
     })
     expect(subs.find((s) => s.name === 'beta')).toMatchObject({
-      agentRunning: false, nextWake: 'in 2 h',
+      running: true, agentRunning: false, nextWake: 'in 2 h',
     })
   })
 
   test('a hub that reports no liveness leaves it undefined rather than asleep', async () => {
     const c = new HubClient(creds, mockFetch(() => [{ id: 'cham-a', name: 'alpha' }]))
-    expect((await c.register()).subscriptions[0].agentRunning).toBeUndefined()
+    const sub = (await c.register()).subscriptions[0]
+    expect(sub.running).toBeUndefined()
+    expect(sub.agentRunning).toBeUndefined()
   })
 
   test('chamberStatuses re-reads the index and keys it by stream id', async () => {
     const c = new HubClient(creds, mockFetch(() => chambers))
     const subs = (await c.register()).subscriptions
     expect(await c.chamberStatuses()).toEqual([
-      { stream_id: subs.find((s) => s.name === 'alpha')!.stream_id, agentRunning: true, nextWake: null },
-      { stream_id: subs.find((s) => s.name === 'beta')!.stream_id, agentRunning: false, nextWake: 'in 2 h' },
+      { stream_id: subs.find((s) => s.name === 'alpha')!.stream_id, running: true, agentRunning: true, nextWake: null },
+      { stream_id: subs.find((s) => s.name === 'beta')!.stream_id, running: true, agentRunning: false, nextWake: 'in 2 h' },
     ])
   })
 
   test('chamberStatuses reports a missing flag as not running', async () => {
     const c = new HubClient(creds, mockFetch(() => [{ id: 'cham-a', name: 'alpha' }]))
     expect(await c.chamberStatuses()).toEqual([
-      { stream_id: numericStreamId('cham-a', ACCOUNT), agentRunning: false, nextWake: null },
+      { stream_id: numericStreamId('cham-a', ACCOUNT), running: false, agentRunning: false, nextWake: null },
     ])
   })
 })

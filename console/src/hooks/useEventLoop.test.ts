@@ -62,7 +62,7 @@ test('a status event refreshes chamber liveness into the store', async () => {
     // Awake at register; asleep by the time the status event lands.
     return new Response(
       JSON.stringify([
-        { id: 'cham-a', name: 'alpha', agent_running: indexReads === 1, next_wake_display: 'in 2 h' },
+        { id: 'cham-a', name: 'alpha', running: true, agent_running: indexReads === 1, next_wake_display: 'in 2 h' },
       ]),
       { status: 200 },
     )
@@ -86,7 +86,7 @@ test('a failed status refresh is swallowed and leaves the loop running', async (
     // Register succeeds once; the status refresh behind it fails.
     return fetchMock.mock.calls.filter(([u]) => !String(u).includes('/api/events')).length > 1
       ? new Response('', { status: 500 })
-      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha', agent_running: true }]), { status: 200 })
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha', running: true, agent_running: true }]), { status: 200 })
   })
   vi.stubGlobal('fetch', fetchMock)
   useAppStore.setState({ client: new HubClient(creds) })

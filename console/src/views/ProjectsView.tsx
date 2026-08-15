@@ -72,11 +72,19 @@ export function ProjectsView() {
                     <span className="stream-tile" style={{ background: tileColor(s.name) }}>
                       {initial(s.name)}
                     </span>
-                    {s.agentRunning !== undefined && (
+                    {s.running !== undefined && (
                       <span
-                        className={`status-dot${s.agentRunning ? ' is-awake' : ''}`}
+                        className={`status-dot${
+                          s.agentRunning ? ' is-awake' : s.running ? ' is-running' : ''
+                        }`}
                         role="img"
-                        aria-label={s.agentRunning ? 'agent running' : 'agent asleep'}
+                        aria-label={
+                          s.agentRunning
+                            ? 'agent working'
+                            : s.running
+                              ? 'chamber running, agent asleep'
+                              : 'chamber stopped'
+                        }
                       />
                     )}
                     <span className="stream-name">{s.name}</span>

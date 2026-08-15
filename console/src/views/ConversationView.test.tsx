@@ -500,25 +500,38 @@ describe('the asleep banner', () => {
     })
   }
 
-  test('a sleeping agent says so above a composer that stays usable', async () => {
-    setStream({ agentRunning: false })
+  test('a sleeping agent in a running chamber says so, composer stays usable', async () => {
+    setStream({ running: true, agentRunning: false })
     render(<ConversationView streamId={1} />)
     const note = await screen.findByRole('status')
-    expect(note).toHaveTextContent('Agent is asleep — messages will wait in its inbox')
-    expect(note).not.toHaveTextContent('next wake')
+    expect(note).toHaveTextContent('Agent is asleep — messages will be read at the next wake')
+    expect(note).not.toHaveTextContent('·')
     expect(screen.getByRole('textbox')).toBeEnabled()
   })
 
   test('a scheduled wake is named', async () => {
-    setStream({ agentRunning: false, nextWake: 'in 2 h' })
+    setStream({ running: true, agentRunning: false, nextWake: 'in 2 h' })
     render(<ConversationView streamId={1} />)
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'Agent is asleep — messages will wait in its inbox · next wake in 2 h',
+      'Agent is asleep — messages will be read at the next wake · in 2 h',
     )
   })
 
+  test('a stopped chamber says so — and never shows a (stale) next wake', async () => {
+    // A dead chamber still carries whatever wake was pending when it died;
+    // naming it would promise a read that is not scheduled.
+    setStream({ running: false, agentRunning: false, nextWake: 'in 2 h' })
+    render(<ConversationView streamId={1} />)
+    const note = await screen.findByRole('status')
+    expect(note).toHaveTextContent(
+      'Chamber is not running — messages will wait in its inbox until it is started',
+    )
+    expect(note).not.toHaveTextContent('in 2 h')
+    expect(screen.getByRole('textbox')).toBeEnabled()
+  })
+
   test.each([
-    ['a running agent', { agentRunning: true }],
+    ['a working agent', { running: true, agentRunning: true }],
     ['a project whose liveness the hub never reported', {}],
   ])('%s shows no banner', async (_name, extra) => {
     setStream(extra)

@@ -57,14 +57,18 @@ describe('agent status dots', () => {
   test('one dot per project the hub reported on, labelled by state', () => {
     useAppStore.setState({
       streams: [
-        { stream_id: 1, name: 'alpha', description: 'A', agentRunning: true },
-        { stream_id: 2, name: 'beta', description: 'B', agentRunning: false },
+        { stream_id: 1, name: 'alpha', description: 'A', running: true, agentRunning: true },
+        { stream_id: 2, name: 'beta', description: 'B', running: true, agentRunning: false },
+        { stream_id: 3, name: 'gamma', description: 'C', running: false, agentRunning: false },
       ],
     })
     const { container } = render(<ProjectsView />)
-    expect(screen.getByLabelText('agent running')).toHaveClass('is-awake')
-    expect(screen.getByLabelText('agent asleep')).not.toHaveClass('is-awake')
-    expect(container.querySelectorAll('.status-dot')).toHaveLength(2)
+    expect(screen.getByLabelText('agent working')).toHaveClass('is-awake')
+    expect(screen.getByLabelText('chamber running, agent asleep')).toHaveClass('is-running')
+    const stopped = screen.getByLabelText('chamber stopped')
+    expect(stopped).not.toHaveClass('is-awake')
+    expect(stopped).not.toHaveClass('is-running')
+    expect(container.querySelectorAll('.status-dot')).toHaveLength(3)
   })
 
   test('a project whose liveness is unknown carries no dot at all', () => {
