@@ -12,9 +12,17 @@ import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
 import { TodosTab } from './controls/TodosTab'
 import { HtmlTab } from './controls/HtmlTab'
+import { SyncTab } from './controls/SyncTab'
+import { SettingsTab } from './controls/SettingsTab'
+import { LogTab } from './controls/LogTab'
 
-const TABS = ['Todos', 'Plan', 'Notes'] as const
+const TABS = ['Todos', 'Plan', 'Notes', 'Sync', 'Settings', 'Log'] as const
 export type ControlsTab = (typeof TABS)[number]
+
+/** The tab button and the panel it controls point at each other by id, so a
+ * screen reader reads the panel as belonging to the tab that opened it. */
+const tabId = (name: ControlsTab) => `controls-tab-${name.toLowerCase()}`
+const panelId = (name: ControlsTab) => `controls-panel-${name.toLowerCase()}`
 
 /** What the hub said, when it said nothing: the panel's status words. */
 const FALLBACK_MESSAGE: Record<LifecycleAction, string> = {
@@ -252,6 +260,8 @@ export function ControlsSheet({
               <button
                 key={name}
                 role="tab"
+                id={tabId(name)}
+                aria-controls={panelId(name)}
                 aria-selected={tab === name}
                 className={`tab${tab === name ? ' is-on' : ''}`}
                 onClick={() => setTab(name)}
@@ -263,13 +273,18 @@ export function ControlsSheet({
 
           {/* Only the selected tab is mounted, so each one's fetch happens when
               it is first opened rather than on every sheet open. */}
-          {tab === 'Todos' && <TodosTab chamberId={chamberId} />}
-          {tab === 'Plan' && (
-            <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
-          )}
-          {tab === 'Notes' && (
-            <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
-          )}
+          <div role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)}>
+            {tab === 'Todos' && <TodosTab chamberId={chamberId} />}
+            {tab === 'Plan' && (
+              <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
+            )}
+            {tab === 'Notes' && (
+              <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
+            )}
+            {tab === 'Sync' && <SyncTab chamberId={chamberId} />}
+            {tab === 'Settings' && <SettingsTab status={status} />}
+            {tab === 'Log' && <LogTab chamberId={chamberId} logTail={status.log_tail} />}
+          </div>
         </>
       )}
     </Sheet>

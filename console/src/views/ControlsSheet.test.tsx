@@ -320,6 +320,21 @@ describe('tabs', () => {
     expect(await screen.findByText('No NOTES.md in this chamber.')).toBeInTheDocument()
   })
 
+  test('the selected tab and its panel point at each other', async () => {
+    useAppStore.setState({ client: makeHub(status({ plan_html: '<p>the plan</p>' })) })
+    renderSheet()
+    await screen.findByText('Stopped')
+    await userEvent.click(screen.getByRole('tab', { name: 'Plan' }))
+
+    const tab = screen.getByRole('tab', { name: 'Plan' })
+    const panel = screen.getByRole('tabpanel')
+    expect(tab.id).toBeTruthy()
+    expect(panel.id).toBeTruthy()
+    expect(tab).toHaveAttribute('aria-controls', panel.id)
+    expect(panel).toHaveAttribute('aria-labelledby', tab.id)
+    expect(panel).toHaveTextContent('the plan')
+  })
+
   test('an empty plan says which file is missing', async () => {
     useAppStore.setState({ client: makeHub(status({ plan_html: '' })) })
     renderSheet()
