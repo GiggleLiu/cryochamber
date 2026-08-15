@@ -159,8 +159,6 @@ e2e/              Playwright: smoke + layout contract, hub flows, screenshot har
 scripts/          icon generation from public/icons/icon.svg
 ```
 
-Design and implementation notes live in `docs/superpowers/specs/`.
-
 ## Regenerating the app icon
 
 Edit `public/icons/icon.svg`, then:
