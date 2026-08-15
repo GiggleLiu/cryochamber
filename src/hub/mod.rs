@@ -105,8 +105,22 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             "/api/chambers/{id}/sync/{backend}/{verb}",
             post(crate::hub::routes::sync::post_sync_action),
         )
+        .route(
+            "/api/chambers/{id}/uploads",
+            post(crate::hub::routes::files::post_upload),
+        )
+        .route(
+            "/api/chambers/{id}/files/{name}",
+            get(crate::hub::routes::files::get_file),
+        )
         .route("/api/events", get(crate::hub::routes::events::get_events))
-        .with_state(app);
+        .with_state(app)
+        // Bound the buffered body so the 25 MB attachment cap binds before an
+        // unbounded upload is read into memory. The slack covers multipart
+        // framing overhead; the exact cap is enforced in `post_upload`.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::hub::routes::files::MAX_ATTACHMENT_BYTES + 1024 * 1024,
+        ));
     crate::hub::security::apply(router, configured_host)
 }
 
