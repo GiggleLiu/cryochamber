@@ -19,6 +19,10 @@ import { resetChamberEvents } from './chamberEvents'
  * list would hide the wrong project. */
 const HIDDEN_PREFIX = 'agent-console.hidden.'
 
+/** Per account, like `hiddenStreams`: whether the projects list shows the
+ * completed and archived folds. */
+const SHOW_COMPLETED_PREFIX = 'agent-console.show-archived.'
+
 export const AUTH_LOGOUT_REASON =
   'Your session is no longer valid — please sign in again.'
 
@@ -104,6 +108,9 @@ export interface AppState {
    *  re-register (e.g. expired event queue) re-fetches gaps over cached messages. */
   loadedStreams: number[]
   hiddenStreams: number[]
+  /** Owner preference: show the Completed and Archived groups in the list. */
+  showCompletedArchived: boolean
+  setShowCompletedArchived(on: boolean): void
   connection: Connection
   /** Shown on the login screen after an auth-forced logout; cleared on next setCreds. */
   loginReason: string | null
@@ -175,6 +182,18 @@ function loadHidden(creds: Credentials): number[] {
   }
 }
 
+export function showCompletedKey(creds: Credentials): string {
+  return SHOW_COMPLETED_PREFIX + accountKey(creds)
+}
+
+function loadShowCompleted(creds: Credentials): boolean {
+  try {
+    return localStorage.getItem(showCompletedKey(creds)) === 'true'
+  } catch {
+    return false
+  }
+}
+
 const initialData = {
   creds: null as Credentials | null,
   client: null as HubClient | null,
@@ -187,6 +206,7 @@ const initialData = {
   users: null as User[] | null,
   loadedStreams: [] as number[],
   hiddenStreams: [] as number[],
+  showCompletedArchived: false,
   connection: 'connecting' as Connection,
   loginReason: null as string | null,
   hubRole: null as HubRole | null,
@@ -220,6 +240,7 @@ export const useAppStore = create<AppState>()((set, get) => {
       // rather than carried over from whoever was signed in before. The role is
       // left alone: whoami sets it just before this call.
       hiddenStreams: loadHidden(c),
+      showCompletedArchived: loadShowCompleted(c),
       ...(cached ? { streams: cached.streams, messagesByStream: cached.messagesByStream } : {}),
     })
   },
@@ -378,6 +399,18 @@ export const useAppStore = create<AppState>()((set, get) => {
       return { hiddenStreams }
     }),
 
+  setShowCompletedArchived: (on) =>
+    set((state) => {
+      if (state.creds) {
+        try {
+          localStorage.setItem(showCompletedKey(state.creds), String(on))
+        } catch {
+          /* storage unavailable: the choice still applies for this session */
+        }
+      }
+      return { showCompletedArchived: on }
+    }),
+
   setConnection: (c) => set({ connection: c }),
   setOwnUserId: (id) => set({ ownUserId: id }),
   setUsers: (users) => set({ users }),
@@ -435,5 +468,5 @@ export function resetAppStore(): void {
   } catch {
     /* storage unavailable */
   }
-  useAppStore.setState({ ...initialData, hiddenStreams: [] })
+  useAppStore.setState({ ...initialData, hiddenStreams: [], showCompletedArchived: false })
 }

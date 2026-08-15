@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { useAppStore, resetAppStore, useIsOwner } from './appStore'
+import { useAppStore, resetAppStore, showCompletedKey, useIsOwner } from './appStore'
 import { loadCredentials } from './auth'
 import { loadCachedState, saveCachedState } from './cache'
 import type { Credentials, InitialState, Message } from '../api/types'
@@ -402,5 +402,26 @@ describe('useIsOwner', () => {
     act(() => useAppStore.setState({ hubRole: 'owner' }))
     rerender()
     expect(result.current).toBe(true)
+  })
+})
+
+describe('show completed & archived', () => {
+  const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'tok', sendTopic: '' }
+
+  test('defaults off and persists per account', () => {
+    useAppStore.getState().setCreds(creds)
+    expect(useAppStore.getState().showCompletedArchived).toBe(false)
+    act(() => useAppStore.getState().setShowCompletedArchived(true))
+    expect(localStorage.getItem(showCompletedKey(creds))).toBe('true')
+  })
+
+  test("signing back in re-reads this account's own choice", () => {
+    useAppStore.getState().setCreds(creds)
+    act(() => useAppStore.getState().setShowCompletedArchived(true))
+    const other: Credentials = { ...creds, apiKey: 'other-token' }
+    useAppStore.getState().setCreds(other)
+    expect(useAppStore.getState().showCompletedArchived).toBe(false)
+    useAppStore.getState().setCreds(creds)
+    expect(useAppStore.getState().showCompletedArchived).toBe(true)
   })
 })

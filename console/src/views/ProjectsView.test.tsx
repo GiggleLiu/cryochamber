@@ -113,3 +113,58 @@ describe('new chamber', () => {
     expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
   })
 })
+
+describe('groups, badge and meta line', () => {
+  const MIXED = [
+    { stream_id: 1, name: 'alpha', description: 'A', running: true, agentRunning: true },
+    { stream_id: 2, name: 'beta', description: 'B', completed: true },
+    { stream_id: 3, name: 'gamma', description: 'C', archived: true },
+  ]
+
+  test('completed and archived chambers are hidden until the owner asks for them', () => {
+    useAppStore.setState({ streams: MIXED, hubRole: 'owner', showCompletedArchived: false })
+    render(<ProjectsView />)
+    expect(screen.getByText('alpha')).toBeInTheDocument()
+    expect(screen.queryByText('beta')).toBeNull()
+    expect(screen.queryByText('gamma')).toBeNull()
+  })
+
+  test('with the toggle on they appear as their own collapsed groups', () => {
+    useAppStore.setState({ streams: MIXED, hubRole: 'owner', showCompletedArchived: true })
+    const { container } = render(<ProjectsView />)
+    expect(screen.getByText('Completed (1)')).toBeInTheDocument()
+    expect(screen.getByText('Archived (1)')).toBeInTheDocument()
+    expect(screen.getByText('beta')).toBeInTheDocument()
+    // Collapsed by default: the fold exists and is closed.
+    expect(container.querySelectorAll('details.stream-group')).toHaveLength(2)
+    expect(container.querySelector('details.stream-group')?.hasAttribute('open')).toBe(false)
+  })
+
+  test('a guest never sees the groups even with the flag set', () => {
+    useAppStore.setState({ streams: MIXED, hubRole: 'invite', showCompletedArchived: true })
+    render(<ProjectsView />)
+    expect(screen.queryByText(/^Completed/)).toBeNull()
+    expect(screen.queryByText(/^Archived/)).toBeNull()
+  })
+
+  test('an open question is badged with an explanation', () => {
+    useAppStore.setState({
+      streams: [{ stream_id: 1, name: 'alpha', description: 'A', hasOpenQuestion: true }],
+    })
+    render(<ProjectsView />)
+    const badge = screen.getByTitle('Open question — agent is waiting on you')
+    expect(badge).toHaveTextContent('?')
+  })
+
+  test('a running chamber shows its next wake; a stopped one does not', () => {
+    useAppStore.setState({
+      streams: [
+        { stream_id: 1, name: 'alpha', description: 'A', running: true, nextWake: 'in 2 h' },
+        { stream_id: 2, name: 'beta', description: 'B', running: false, nextWake: 'in 2 h' },
+      ],
+    })
+    render(<ProjectsView />)
+    expect(screen.getByText('next wake in 2 h')).toBeInTheDocument()
+    expect(screen.getAllByText(/next wake/)).toHaveLength(1)
+  })
+})
