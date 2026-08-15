@@ -37,6 +37,11 @@ Run these from inside a chamber directory unless noted otherwise.
 | `cryohub stop` | Uninstall the global hub service. |
 | `cryohub restart` | Restart the installed global hub service without reinstalling it. |
 | `cryohub status` | Show the global hub URL, chamber root, config path, log path, and service status. Also lists legacy cwd-scoped hub services from older versions. |
+| `cryohub start --public` | Enforce bearer-token auth on every `/api` route. Refuses to start until an owner token exists. Travels into the installed service unit, so the hub stays authenticated across reboots. |
+| `cryohub token owner` | Print the owner token, creating it on first use. Idempotent — repeat runs print the same secret. |
+| `cryohub token create --name <name> --chambers <id,...>` | Mint a named invite scoped to those chamber ids. Prints the token and its `#invite=` link fragment; this is the only time the secret is shown. |
+| `cryohub token list` | List invites with scope, creation time, and revocation status. Never prints token strings. |
+| `cryohub token revoke <name>` | Revoke an invite by name. Takes effect immediately, including on already-open SSE streams. Fails if no active invite has that name. |
 
 ## Agent IPC (`cryo-agent`)
 

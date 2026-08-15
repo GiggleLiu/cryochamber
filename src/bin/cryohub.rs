@@ -30,6 +30,10 @@ enum Commands {
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
+        /// Enforce bearer-token auth on every /api route (required before
+        /// exposing the hub beyond loopback). Needs `cryohub token owner`.
+        #[arg(long)]
+        public: bool,
     },
     /// Stop and remove the global hub service
     Stop,
@@ -37,6 +41,11 @@ enum Commands {
     Restart,
     /// Show whether the global hub service is installed.
     Status,
+    /// Manage access tokens for --public mode
+    Token {
+        #[command(subcommand)]
+        action: TokenAction,
+    },
     /// Run the server in the current process (internal - used by the service)
     #[command(hide = true)]
     Daemon {
@@ -44,7 +53,27 @@ enum Commands {
         host: Option<String>,
         #[arg(long)]
         port: Option<u16>,
+        #[arg(long)]
+        public: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum TokenAction {
+    /// Create (if absent) and print the owner token
+    Owner,
+    /// Create a named invite scoped to chamber ids
+    Create {
+        #[arg(long)]
+        name: String,
+        /// Comma-separated chamber ids
+        #[arg(long, value_delimiter = ',')]
+        chambers: Vec<String>,
+    },
+    /// List invites (never prints token strings)
+    List,
+    /// Revoke an invite by name
+    Revoke { name: String },
 }
 
 fn main() -> Result<()> {
@@ -54,37 +83,54 @@ fn main() -> Result<()> {
             host,
             port,
             foreground,
-        } => cmd_start(host, port, foreground),
+            public,
+        } => cmd_start(host, port, foreground, public),
         Commands::Stop => cmd_stop(),
         Commands::Restart => cmd_restart(),
         Commands::Status => cmd_status(),
-        Commands::Daemon { host, port } => cmd_daemon(host, port),
+        Commands::Token { action } => cmd_token(action),
+        Commands::Daemon { host, port, public } => cmd_daemon(host, port, public),
     }
 }
 
-fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Result<()> {
+fn cmd_start(
+    host: Option<String>,
+    port: Option<u16>,
+    foreground: bool,
+    public: bool,
+) -> Result<()> {
     let config = cryochamber::hub::config::effective_config(host, port)?;
     std::fs::create_dir_all(&config.chamber_root)?;
 
     if foreground {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(cryochamber::hub::serve(&config.host, config.port));
+        return rt.block_on(cryochamber::hub::serve(&config.host, config.port, public));
     }
 
     let exe = std::env::current_exe().context("Failed to resolve cryohub executable path")?;
     let service_dir = cryochamber::hub::paths::hub_service_dir();
     std::fs::create_dir_all(&service_dir)?;
-    let args = ["daemon"];
+    // The installed unit re-invokes this binary, so --public has to travel with
+    // it; otherwise `cryohub start --public` would come back up unauthenticated
+    // after the first reboot.
+    let args: &[&str] = if public {
+        &["daemon", "--public"]
+    } else {
+        &["daemon"]
+    };
     let log_path = cryochamber::hub::paths::hub_log_path();
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    cryochamber::service::install(SERVICE_LABEL, &service_dir, &exe, &args, &log_path, true)?;
+    cryochamber::service::install(SERVICE_LABEL, &service_dir, &exe, args, &log_path, true)?;
     let actual_log = cryochamber::service::stdio_log_path(SERVICE_LABEL, &service_dir, &log_path);
     println!(
         "Cryohub service installed: http://{}:{}",
         config.host, config.port
     );
+    if public {
+        println!("Mode: PUBLIC (bearer auth enforced on every /api route)");
+    }
     println!("Chamber root: {}", config.chamber_root.display());
     println!(
         "Config: {}",
@@ -165,8 +211,63 @@ fn print_legacy_installed() {
     println!("(These are from older Cryohub versions; remove them from their listed directories.)");
 }
 
-fn cmd_daemon(host: Option<String>, port: Option<u16>) -> Result<()> {
+fn cmd_daemon(host: Option<String>, port: Option<u16>, public: bool) -> Result<()> {
     let config = cryochamber::hub::config::effective_config(host, port)?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::hub::serve(&config.host, config.port))
+    rt.block_on(cryochamber::hub::serve(&config.host, config.port, public))
+}
+
+fn cmd_token(action: TokenAction) -> Result<()> {
+    use cryochamber::hub::tokens;
+
+    let path = tokens::default_tokens_path();
+    let mut tf = tokens::load_tokens(&path)?;
+    match action {
+        TokenAction::Owner => {
+            let token = tf.ensure_owner()?;
+            tokens::save_tokens(&path, &tf)?;
+            // Bare on stdout so `cryohub token owner` composes in a pipeline;
+            // everything explanatory goes to stderr.
+            println!("{token}");
+            eprintln!("Owner token stored in {}", path.display());
+        }
+        TokenAction::Create { name, chambers } => {
+            let invite = tf.create_invite(&name, chambers)?;
+            tokens::save_tokens(&path, &tf)?;
+            // The only moment this secret is ever printed — it is not
+            // recoverable from `token list` or the API afterwards.
+            println!("token: {}", invite.token);
+            println!("link fragment: #invite={}", invite.token);
+        }
+        TokenAction::List => {
+            if tf.invites.is_empty() {
+                println!("(no invites)");
+                return Ok(());
+            }
+            println!("NAME\tSTATUS\tCHAMBERS\tCREATED\tREVOKED");
+            for i in &tf.invites {
+                let status = if i.revoked_at.is_some() {
+                    "revoked"
+                } else {
+                    "active"
+                };
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    i.name,
+                    status,
+                    i.chambers.join(","),
+                    i.created_at,
+                    i.revoked_at.as_deref().unwrap_or("-")
+                );
+            }
+        }
+        TokenAction::Revoke { name } => {
+            if !tf.revoke(&name) {
+                anyhow::bail!("no active invite named '{name}'");
+            }
+            tokens::save_tokens(&path, &tf)?;
+            println!("revoked {name}");
+        }
+    }
+    Ok(())
 }

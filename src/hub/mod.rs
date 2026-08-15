@@ -148,14 +148,51 @@ pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::Aut
     crate::hub::auth::apply_auth(router, app, ctx)
 }
 
-pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
+/// Serve the hub. In `public` mode every `/api` route is behind the bearer
+/// guard; otherwise the hub is the loopback-only dashboard it has always been.
+///
+/// The owner-token precondition is checked *first*, before any workspace scan
+/// or socket bind: a public hub without an owner token could never be
+/// administered, and failing after the port is open would be worse than not
+/// starting at all.
+pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
+    let ctx = if public {
+        let path = crate::hub::tokens::default_tokens_path();
+        let ctx = crate::hub::auth::AuthCtx::load(&path)?;
+        if ctx
+            .store
+            .read()
+            .expect("token store poisoned")
+            .owner
+            .is_none()
+        {
+            anyhow::bail!(
+                "public mode requires an owner token — run `cryohub token owner` first \
+                 (store: {})",
+                path.display()
+            );
+        }
+        Some(ctx)
+    } else {
+        None
+    };
+
     let app = Arc::new(WebAppState::global());
     app.refresh();
-    let router = build_router_with_state(app);
+    let router = match ctx {
+        Some(ctx) => {
+            println!("Cryochamber hub: PUBLIC mode (bearer auth enforced)");
+            build_router_public(app, ctx)
+        }
+        None => build_router_with_state(app),
+    };
     let addr = format!("{host}:{port}");
-    if !host.starts_with("127.") && host != "localhost" {
+    // The warning is about binding a non-loopback interface *unauthenticated*.
+    // In public mode the bearer guard is exactly the fix it recommends, so
+    // repeating it there would train operators to ignore it.
+    if !public && !host.starts_with("127.") && host != "localhost" {
         eprintln!(
-            "Warning: cryohub is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1 unless you know what you're doing."
+            "Warning: cryohub is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1, or start with --public, unless you know what you're doing."
         );
     }
     println!("Cryochamber hub: http://{addr}");
