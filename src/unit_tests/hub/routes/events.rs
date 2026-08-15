@@ -1,5 +1,119 @@
 use super::*;
 
+use axum::response::IntoResponse;
+
+fn new_message(chamber_id: &str, body: &str) -> SseEvent {
+    SseEvent::NewMessage {
+        chamber_id: chamber_id.into(),
+        direction: "inbox".into(),
+        from: "x".into(),
+        subject: "".into(),
+        body: body.into(),
+        timestamp: "t".into(),
+        is_question: false,
+    }
+}
+
+/// Drain the SSE response body until `events` `\n\n`-terminated frames have
+/// arrived (or 2s elapse), returning the raw wire text.
+async fn drain(response: axum::response::Response, events: usize) -> String {
+    let mut stream = response.into_body().into_data_stream();
+    let mut text = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while text.matches("\n\n").count() < events {
+        let chunk = tokio::time::timeout_at(deadline, stream.next()).await;
+        match chunk {
+            Ok(Some(Ok(bytes))) => text.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(Some(Err(e))) => panic!("stream error: {e}"),
+            Ok(None) => break,
+            Err(_) => break, // timed out: return what we have
+        }
+    }
+    text
+}
+
+#[tokio::test]
+async fn invite_stream_only_carries_scoped_chambers() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+    let role = crate::hub::tokens::Role::Invite {
+        name: "Alice".into(),
+        chambers: vec!["mine".into()],
+    };
+
+    let sse = get_events(State(app.clone()), Some(axum::Extension(role))).await;
+    let response = sse.into_response();
+
+    app.tx.send(new_message("mine", "visible")).unwrap();
+    app.tx.send(new_message("other", "SECRET")).unwrap();
+    app.tx.send(SseEvent::IndexChanged).unwrap();
+
+    let text = drain(response, 2).await;
+
+    assert!(text.contains("visible"), "scoped message missing: {text}");
+    assert!(
+        text.contains("event: index"),
+        "index event must reach every client: {text}"
+    );
+    assert!(
+        !text.contains("SECRET"),
+        "out-of-scope chamber leaked into the invite stream: {text}"
+    );
+    assert!(!text.contains("\"chamber_id\":\"other\""), "got {text}");
+}
+
+#[tokio::test]
+async fn owner_and_open_mode_streams_are_unfiltered() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+
+    for role in [Some(axum::Extension(crate::hub::tokens::Role::Owner)), None] {
+        let response = get_events(State(app.clone()), role).await.into_response();
+        app.tx.send(new_message("mine", "visible")).unwrap();
+        app.tx.send(new_message("other", "also-visible")).unwrap();
+
+        let text = drain(response, 2).await;
+        assert!(text.contains("visible"), "got {text}");
+        assert!(text.contains("also-visible"), "got {text}");
+    }
+}
+
+#[tokio::test]
+async fn invite_stream_filters_status_and_log_events_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+    let role = crate::hub::tokens::Role::Invite {
+        name: "Alice".into(),
+        chambers: vec!["mine".into()],
+    };
+
+    let response = get_events(State(app.clone()), Some(axum::Extension(role)))
+        .await
+        .into_response();
+
+    app.tx
+        .send(SseEvent::LogLine {
+            chamber_id: "other".into(),
+            line: "SECRET-LOG".into(),
+        })
+        .unwrap();
+    app.tx
+        .send(SseEvent::StatusChange {
+            chamber_id: "other".into(),
+        })
+        .unwrap();
+    app.tx
+        .send(SseEvent::StatusChange {
+            chamber_id: "mine".into(),
+        })
+        .unwrap();
+
+    let text = drain(response, 1).await;
+    assert!(!text.contains("SECRET-LOG"), "log line leaked: {text}");
+    assert!(!text.contains("\"chamber_id\":\"other\""), "got {text}");
+    assert!(text.contains("\"chamber_id\":\"mine\""), "got {text}");
+}
+
 #[tokio::test]
 async fn broadcast_multiplexes_by_chamber_id() {
     let (tx, mut rx_a) = tokio::sync::broadcast::channel::<SseEvent>(16);
