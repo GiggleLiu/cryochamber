@@ -33,7 +33,6 @@ function SkeletonList() {
 
 export function ProjectsView() {
   const streams = useAppStore((s) => s.streams)
-  const hidden = useAppStore((s) => s.hiddenStreams)
   const unread = useAppStore((s) => s.unreadByStream)
   const messages = useAppStore((s) => s.messagesByStream)
   const connection = useAppStore((s) => s.connection)
@@ -43,7 +42,10 @@ export function ProjectsView() {
   const [newChamberOpen, setNewChamberOpen] = useState(false)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
   const setShowCompletedArchived = useAppStore((s) => s.setShowCompletedArchived)
-  const visible = streams.filter((s) => !hidden.includes(s.stream_id))
+  // Every chamber this token can reach. The Completed/Archived fold below is
+  // the only filing there is — a second, per-project hide switch used to live
+  // in Settings and could leave a guest staring at an empty list.
+  const visible = streams
   // The folds are an owner's filing system, never a filter on anyone else's
   // list: a guest scoped to a finished chamber still sees it as a plain row,
   // so their whole list can never disappear behind a preference they cannot

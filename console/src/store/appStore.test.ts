@@ -88,40 +88,6 @@ test('applyInitialState dedupes unread ids across topics', () => {
   expect(useAppStore.getState().unreadByStream[1]).toEqual([10, 11])
 })
 
-describe('hidden projects are per account', () => {
-  test('toggleHidden persists under this account key', () => {
-    useAppStore.getState().setCreds(creds)
-    useAppStore.getState().toggleHidden(1)
-    expect(useAppStore.getState().hiddenStreams).toEqual([1])
-    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub||ee0c38ea156277d1')!)).toEqual([1])
-    useAppStore.getState().toggleHidden(1)
-    expect(useAppStore.getState().hiddenStreams).toEqual([])
-  })
-
-  test('signing into another account re-reads its own list', () => {
-    useAppStore.getState().setCreds(creds)
-    useAppStore.getState().toggleHidden(1)
-    // Another token numbers its own chambers from 1, so its project 1 is a
-    // different project and must not arrive pre-hidden.
-    useAppStore.getState().setCreds(otherCreds)
-    expect(useAppStore.getState().hiddenStreams).toEqual([])
-    useAppStore.getState().toggleHidden(1)
-    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub|/other|953d7c088d02ba59')!)).toEqual([1])
-    // …and going back finds the first account's list intact.
-    useAppStore.getState().setCreds(creds)
-    expect(useAppStore.getState().hiddenStreams).toEqual([1])
-  })
-
-  test('logout clears the in-memory list; the next sign-in restores it', () => {
-    useAppStore.getState().setCreds(creds)
-    useAppStore.getState().toggleHidden(2)
-    useAppStore.getState().logout()
-    expect(useAppStore.getState().hiddenStreams).toEqual([])
-    useAppStore.getState().setCreds(creds)
-    expect(useAppStore.getState().hiddenStreams).toEqual([2])
-  })
-})
-
 test('message event for an un-fetched stream creates the list', () => {
   useAppStore.getState().setCreds(creds)
   useAppStore.getState().applyEvents([

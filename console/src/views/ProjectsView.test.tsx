@@ -22,12 +22,6 @@ test('renders visible streams with unread badges', () => {
   expect(screen.getByText('2')).toBeInTheDocument() // unread badge
 })
 
-test('hidden streams are filtered out', () => {
-  useAppStore.setState({ hiddenStreams: [2] })
-  render(<ProjectsView />)
-  expect(screen.queryByText('beta')).toBeNull()
-})
-
 test('tapping a card navigates to the conversation', async () => {
   render(<ProjectsView />)
   await userEvent.click(screen.getByRole('button', { name: /alpha/ }))

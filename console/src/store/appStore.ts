@@ -15,12 +15,9 @@ import { loadCachedState, saveCachedState, clearCachedState, CACHE_PREFIX } from
 import { accountKey } from '../lib/account'
 import { resetChamberEvents } from './chamberEvents'
 
-/** Per account: every token numbers its own chambers from 1, so one global
- * list would hide the wrong project. */
-const HIDDEN_PREFIX = 'agent-console.hidden.'
-
-/** Per account, like `hiddenStreams`: whether the projects list shows the
- * completed and archived folds. */
+/** Per account — every token numbers its own chambers from 1, so one global
+ * key would apply the wrong token's preference: whether the projects list
+ * shows the completed and archived folds. */
 const SHOW_COMPLETED_PREFIX = 'agent-console.show-archived.'
 
 export const AUTH_LOGOUT_REASON =
@@ -107,7 +104,6 @@ export interface AppState {
   /** Streams whose full history has been fetched; cleared on every register so a
    *  re-register (e.g. expired event queue) re-fetches gaps over cached messages. */
   loadedStreams: number[]
-  hiddenStreams: number[]
   /** Owner preference: show the Completed and Archived groups in the list. */
   showCompletedArchived: boolean
   setShowCompletedArchived(on: boolean): void
@@ -143,7 +139,6 @@ export interface AppState {
    *  messages and unreads go, and an open conversation on it returns to the
    *  projects list. */
   pruneStream(streamId: number): void
-  toggleHidden(streamId: number): void
   setConnection(c: Connection): void
   setOwnUserId(id: number): void
   setUsers(users: User[]): void
@@ -169,19 +164,6 @@ function setOutboxState(streamId: number, localId: number, next: OutboxItem['sta
   })
 }
 
-export function hiddenKey(creds: Credentials): string {
-  return HIDDEN_PREFIX + accountKey(creds)
-}
-
-function loadHidden(creds: Credentials): number[] {
-  try {
-    const raw = localStorage.getItem(hiddenKey(creds))
-    return raw ? (JSON.parse(raw) as number[]) : []
-  } catch {
-    return []
-  }
-}
-
 export function showCompletedKey(creds: Credentials): string {
   return SHOW_COMPLETED_PREFIX + accountKey(creds)
 }
@@ -205,7 +187,6 @@ const initialData = {
   ownUserId: null as number | null,
   users: null as User[] | null,
   loadedStreams: [] as number[],
-  hiddenStreams: [] as number[],
   showCompletedArchived: false,
   connection: 'connecting' as Connection,
   loginReason: null as string | null,
@@ -236,10 +217,9 @@ export const useAppStore = create<AppState>()((set, get) => {
       client: new HubClient(c),
       view: { name: 'projects' },
       loginReason: null,
-      // Hidden projects are this account's preference, so they are re-read here
-      // rather than carried over from whoever was signed in before. The role is
-      // left alone: whoami sets it just before this call.
-      hiddenStreams: loadHidden(c),
+      // The list preference is this account's own, so it is re-read here rather
+      // than carried over from whoever was signed in before. The role is left
+      // alone: whoami sets it just before this call.
       showCompletedArchived: loadShowCompleted(c),
       ...(cached ? { streams: cached.streams, messagesByStream: cached.messagesByStream } : {}),
     })
@@ -249,9 +229,6 @@ export const useAppStore = create<AppState>()((set, get) => {
     const creds = get().creds
     if (creds) clearCachedState(creds)
     clearCredentials()
-    // hiddenStreams goes back to empty with everything else: it belongs to the
-    // account that just left, and setCreds re-reads it for whoever signs in
-    // next. The stored list itself survives, like the account's other prefs.
     set({ ...initialData, loginReason: reason ?? null })
   },
 
@@ -390,15 +367,6 @@ export const useAppStore = create<AppState>()((set, get) => {
     persist()
   },
 
-  toggleHidden: (streamId) =>
-    set((state) => {
-      const hiddenStreams = state.hiddenStreams.includes(streamId)
-        ? state.hiddenStreams.filter((id) => id !== streamId)
-        : [...state.hiddenStreams, streamId]
-      if (state.creds) localStorage.setItem(hiddenKey(state.creds), JSON.stringify(hiddenStreams))
-      return { hiddenStreams }
-    }),
-
   setShowCompletedArchived: (on) =>
     set((state) => {
       if (state.creds) {
@@ -468,5 +436,5 @@ export function resetAppStore(): void {
   } catch {
     /* storage unavailable */
   }
-  useAppStore.setState({ ...initialData, hiddenStreams: [], showCompletedArchived: false })
+  useAppStore.setState({ ...initialData, showCompletedArchived: false })
 }

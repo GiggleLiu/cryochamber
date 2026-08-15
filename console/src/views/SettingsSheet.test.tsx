@@ -15,21 +15,50 @@ beforeEach(() => {
       { stream_id: 1, name: 'alpha', description: 'A' },
       { stream_id: 2, name: 'beta', description: 'B' },
     ],
-    hiddenStreams: [2],
   })
 })
 
-test('shows identity and stream checkboxes reflecting hidden state', () => {
+test('names the token, what it can do, and which hub it opens', () => {
+  useAppStore.setState({ hubRole: 'invite' })
   render(<SettingsSheet />)
   expect(screen.getByText(/me@b\.c/)).toBeInTheDocument()
-  expect(screen.getByRole('checkbox', { name: 'alpha' })).toBeChecked()
-  expect(screen.getByRole('checkbox', { name: 'beta' })).not.toBeChecked()
+  expect(screen.getByText('Guest')).toBeInTheDocument()
+  // A hub entry's prefix is empty — it means "this origin", and an empty row
+  // would tell an operator nothing about where they are signed in.
+  expect(screen.getByText(window.location.origin)).toBeInTheDocument()
 })
 
-test('toggling a checkbox flips hidden state', async () => {
+test('an owner is named as one', () => {
+  useAppStore.setState({ hubRole: 'owner' })
   render(<SettingsSheet />)
-  await userEvent.click(screen.getByRole('checkbox', { name: 'beta' }))
-  expect(useAppStore.getState().hiddenStreams).toEqual([])
+  expect(screen.getByText('Owner')).toBeInTheDocument()
+})
+
+test('the per-project hide switches are gone for good', () => {
+  // They were a Zulip-subscription idea: a guest could hide their only
+  // chamber and be left with an empty list and no way back.
+  useAppStore.setState({ hubRole: 'invite' })
+  render(<SettingsSheet />)
+  expect(screen.queryByRole('checkbox', { name: 'alpha' })).toBeNull()
+  expect(screen.queryByRole('checkbox', { name: 'beta' })).toBeNull()
+})
+
+test('guest and owner get the same sheet, minus the owner-only fold', () => {
+  useAppStore.setState({ hubRole: 'invite' })
+  const { unmount } = render(<SettingsSheet />)
+  expect(screen.getByText('Appearance')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /log out/i })).toBeInTheDocument()
+  expect(screen.queryByText('Chambers')).toBeNull()
+  unmount()
+  useAppStore.setState({ hubRole: 'owner' })
+  render(<SettingsSheet />)
+  expect(screen.getByText('Chambers')).toBeInTheDocument()
+})
+
+test('escape closes it, like every other sheet', async () => {
+  render(<SettingsSheet />)
+  await userEvent.keyboard('{Escape}')
+  expect(useAppStore.getState().settingsOpen).toBe(false)
 })
 
 test('close button dismisses the sheet', async () => {
