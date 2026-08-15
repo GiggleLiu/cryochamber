@@ -46,6 +46,43 @@ logs, messages, TODOs, notes, and lifecycle controls.
 → **CLI reference:** <https://giggleliu.github.io/cryochamber/reference/cli.html>  
 → **中文文档:** <https://giggleliu.github.io/cryochamber/zh/>
 
+## Agent Console
+
+The dashboard above is built into the `cryohub` binary and is meant for the
+machine it runs on. The **Agent Console** in [`console/`](console/README.md) is
+the other end: an installable phone app (Android + iOS) for reading and
+steering your chambers from anywhere, over the same authenticated `/api` the
+dashboard uses. One chamber is one flat conversation; a friend gets in through
+an invite link scoped to the chambers you name.
+
+Build it and point the hub at the build:
+
+```bash
+cd console && npm ci && npm run build
+```
+
+```toml
+# ~/.config/cryo/cryohub.toml
+console_dir = "/path/to/cryochamber/console/dist"
+```
+
+With `console_dir` set, cryohub serves the console at `/` instead of the
+bundled dashboard — one process for both the API and the app, no separate
+static file server. Leave it unset and nothing changes.
+
+Then mint an owner token and start the hub with auth enforced:
+
+```bash
+cryohub token owner     # prints the token once — this is your login
+cryohub start --public
+```
+
+`--public` is required before exposing the hub beyond loopback: it puts every
+`/api` route behind a bearer token. The console's own pages stay public — they
+are the login screen. See
+[`console/README.md`](console/README.md) for invites, deployment behind TLS,
+and the Zulip backend the same app also speaks.
+
 ## Features
 
 - **Agent-guided hibernation**: the agent decides when to wake next instead of running on a fixed cron schedule.

@@ -1,3 +1,11 @@
+> **This app moved here from the `zulip-app` repository.** Its commit-by-commit
+> history lives there; this directory was imported as a squashed subtree, so
+> `git log console/` starts at the import. In [Chamber Hub mode](#chamber-hub-mode)
+> the build is now served by `cryohub` itself — set `console_dir` in
+> `cryohub.toml` to this directory's `dist/` and there is no separate static
+> file server to run. Zulip mode is unchanged and still needs the reverse proxy
+> described under [Deploy](#deploy).
+
 # Agent Console
 
 An installable phone app (Android + iOS) for reading and steering the AI agents

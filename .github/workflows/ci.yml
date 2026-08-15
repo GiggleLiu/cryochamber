@@ -50,6 +50,23 @@ jobs:
           cache-bin: false
       - run: cargo test
 
+  console:
+    name: Agent Console
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      - run: npx vitest run
+      - run: npm run build
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

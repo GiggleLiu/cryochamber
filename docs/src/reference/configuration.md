@@ -87,6 +87,17 @@ For project-owned chamber collections, set `chamber_root` to a project path such
 | `public` | `false` | Whether bearer-token auth is enforced on every `/api` route. Set by `cryohub start --public`, cleared only by `cryohub start --no-public` — a plain `cryohub start` keeps whatever is saved here. |
 | `owner_name` | `"human"` | Sender name stamped on messages the owner sends in public mode. A client-supplied `from` is ignored. |
 | `public_hosts` | `[]` | Extra `Host` header values to accept, on top of loopback and `host`. Needed when a reverse proxy forwards the public hostname. |
+| `console_dir` | unset | Path to a built [Agent Console](https://github.com/GiggleLiu/cryochamber/tree/main/console) (`console/dist`). When set, the hub serves that app instead of the built-in dashboard. Unset means no change. |
+
+### Serving the Agent Console
+
+Build the console once (`cd console && npm ci && npm run build`) and point the hub at the result:
+
+```toml
+console_dir = "/path/to/cryochamber/console/dist"
+```
+
+The hub then answers `/` and any client-side route with the console's `index.html`, serves its build output from that directory, and keeps `/api` exactly as it was. Nothing outside `console_dir` is reachable — a `../` path or a symlink pointing out of it is a 404. The console's own pages stay unauthenticated even under `--public`, because they are the login screen; every `/api` route stays behind the bearer token.
 
 ### Behind a reverse proxy
 

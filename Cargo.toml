@@ -8,6 +8,10 @@ readme = "README.md"
 repository = "https://github.com/GiggleLiu/cryochamber"
 keywords = ["ai-agent", "automation", "scheduler", "daemon", "hibernation"]
 categories = ["command-line-utilities"]
+# The Agent Console is a separate Node app, served from a path at runtime
+# rather than compiled in. Publishing its sources and screenshots would add
+# megabytes that no `cargo install` can use.
+exclude = ["console/"]
 
 [[bin]]
 name = "cryo"
