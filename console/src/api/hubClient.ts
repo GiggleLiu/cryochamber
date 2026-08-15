@@ -495,7 +495,12 @@ export class HubClient {
     })
     const body = (await res.json().catch(() => ({}))) as { token?: string; error?: string }
     if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, res.status)
-    return { token: body.token ?? '' }
+    // A 200 without a token would become an `#invite=` link the sheet says
+    // it copied and can never show again — fail loudly instead.
+    if (typeof body.token !== 'string' || body.token === '') {
+      throw new ApiError('The hub did not return an invite token', res.status)
+    }
+    return { token: body.token }
   }
 
   async revokeInvite(name: string): Promise<void> {

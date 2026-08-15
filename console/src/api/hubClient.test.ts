@@ -392,6 +392,11 @@ describe('owner chamber routes', () => {
     await expect(blank.createChamber({ name: 'alpha' })).rejects.toThrow(/did not report its id/)
   })
 
+  test('createInvite rejects a 200 that carries no token', async () => {
+    const c = new HubClient(creds, mockFetch(() => new Response('{}', { status: 200 })))
+    await expect(c.createInvite('Bob', ['cham-a'])).rejects.toThrow(/did not return an invite token/)
+  })
+
   test('refreshIndex POSTs the refresh route', async () => {
     const fetchFn = mockFetch(() => [])
     await new HubClient(creds, fetchFn).refreshIndex()
