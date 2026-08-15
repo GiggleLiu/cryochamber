@@ -54,23 +54,17 @@ pub fn build_router_with_config(
     let mut configured_hosts = vec![config.host.clone()];
     configured_hosts.extend(config.public_hosts.iter().cloned());
     let router = Router::new();
-    // With a console configured, the chat UI owns `/` (it is what invite
-    // links open) and the bundled control panel moves to `/admin` — both from
-    // one hub, not either-or. The panel's exact asset paths stay registered:
-    // they shadow the console fallback for just those three names, which a
-    // Vite build can never emit (its bundles are content-hashed, its PWA
-    // icons live under `/icons/`). Without a console, the panel keeps the
-    // root as it always has.
-    let pages = |router: Router<Arc<WebAppState>>| {
-        router
+    // A configured console owns the whole non-`/api` surface: its build emits
+    // its own `/assets`, and leaving the bundled shell's pages registered would
+    // shadow them with a second, unrelated dashboard.
+    let router = match &config.console_dir {
+        Some(_) => router,
+        None => router
+            .route("/", get(crate::hub::routes::pages::get_index))
             .route("/c/{id}", get(crate::hub::routes::pages::get_index))
             .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
             .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
-            .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark))
-    };
-    let router = match &config.console_dir {
-        Some(_) => pages(router).route("/admin", get(crate::hub::routes::pages::get_index)),
-        None => pages(router).route("/", get(crate::hub::routes::pages::get_index)),
+            .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark)),
     };
     let router = router
         .route(
