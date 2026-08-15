@@ -60,16 +60,24 @@ export function TodosTab({ chamberId }: { chamberId: string }) {
     [chamberId, load],
   )
 
-  if (error) {
+  // A failed *refresh* must not blank a list that is already on screen: status
+  // events arrive every few seconds while a session runs, and one flaky reply
+  // would otherwise flicker the whole panel into an error line and back.
+  const alert = error ? (
+    <p className="alert" role="alert">
+      <AlertCircle size={18} />
+      <span className="alert-body">{error}</span>
+    </p>
+  ) : null
+  if (items === null) return alert ?? <p className="tab-empty">Loading…</p>
+  if (items.length === 0) {
     return (
-      <p className="alert" role="alert">
-        <AlertCircle size={18} />
-        <span className="alert-body">{error}</span>
-      </p>
+      <>
+        {alert}
+        <p className="tab-empty">No todos in this chamber.</p>
+      </>
     )
   }
-  if (items === null) return <p className="tab-empty">Loading…</p>
-  if (items.length === 0) return <p className="tab-empty">No todos in this chamber.</p>
 
   const { pending, done } = sortTodos(items)
   const row = (t: TodoItem) => (
@@ -81,7 +89,8 @@ export function TodosTab({ chamberId }: { chamberId: string }) {
 
   return (
     <>
-      <ul className="todo-list">{pending.map(row)}</ul>
+      {alert}
+      {pending.length > 0 && <ul className="todo-list">{pending.map(row)}</ul>}
       {done.length > 0 && (
         <details className="todo-history">
           <summary>History ({done.length})</summary>

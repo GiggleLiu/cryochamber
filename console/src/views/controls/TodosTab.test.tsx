@@ -99,3 +99,14 @@ test('a 401 signs out', async () => {
   await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
   expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
 })
+
+test('a failed refresh keeps the loaded list on screen beside the error', async () => {
+  const hub = makeHub([todo(1)])
+  useAppStore.setState({ client: hub })
+  render(<TodosTab chamberId="cham-a" />)
+  await screen.findByText('task-1')
+  vi.mocked(hub.chamberTodos).mockRejectedValueOnce(new ApiError('HTTP 500', 500))
+  emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
+  expect(await screen.findByRole('alert')).toHaveTextContent(/could not load todos/i)
+  expect(screen.getByText('task-1')).toBeInTheDocument()
+})

@@ -10,6 +10,8 @@ import { useAppStore } from '../../store/appStore'
 export function HtmlTab({ html, empty }: { html: string; empty: string }) {
   const prefix = useAppStore((s) => s.creds?.prefix ?? '')
   const clean = useMemo(() => sanitizeHtml(html, prefix), [html, prefix])
-  if (html.trim() === '') return <p className="tab-empty">{empty}</p>
+  // Judged after sanitizing: markup that reduces to nothing is as empty as
+  // no markup, and an empty styled block says less than the copy does.
+  if (clean.trim() === '') return <p className="tab-empty">{empty}</p>
   return <div className="tab-html" dangerouslySetInnerHTML={{ __html: clean }} />
 }

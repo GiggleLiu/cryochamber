@@ -34,3 +34,9 @@ test('the client sanitizes again even though the server already escaped', () => 
   expect(html).not.toContain('javascript:')
   expect(container.querySelector('.tab-html')).toHaveTextContent('hi')
 })
+
+test('markup that sanitizes down to nothing shows the empty copy', () => {
+  render(<HtmlTab html="<script>alert(1)</script>" empty="No plan.md in this chamber." />)
+  expect(screen.getByText('No plan.md in this chamber.')).toBeInTheDocument()
+  expect(document.querySelector('.tab-html')).toBeNull()
+})
