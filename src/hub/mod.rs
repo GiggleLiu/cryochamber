@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod config;
 pub mod discovery;
 pub mod lifecycle;
@@ -5,6 +6,7 @@ pub mod paths;
 pub mod routes;
 pub mod security;
 pub mod state;
+pub mod tokens;
 pub mod watchers;
 
 pub use state::{AppState, SseEvent};
@@ -33,10 +35,13 @@ pub fn build_router_local_only(workspace_dir: PathBuf) -> Router {
 
 /// Separate entry point so integration tests can inject their own `AppState`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
-    // Read the configured bind host once (loopback by default) so the security
-    // layer can allow it in addition to loopback. Falling back to loopback-only
-    // if the hub config is unreadable is safe — the default bind is loopback.
-    let configured_host = crate::hub::config::load_config().ok().map(|cfg| cfg.host);
+    // Read the hub config once. The security layer needs the bind host and any
+    // reverse-proxy hostnames; `post_send` needs the owner sender name. Falling
+    // back to defaults if the config is unreadable is safe — the default bind
+    // is loopback and the default owner name is `human`.
+    let config = crate::hub::config::load_config().unwrap_or_default();
+    let mut configured_hosts = vec![config.host.clone()];
+    configured_hosts.extend(config.public_hosts.iter().cloned());
     let router = Router::new()
         .route("/", get(crate::hub::routes::pages::get_index))
         .route("/c/{id}", get(crate::hub::routes::pages::get_index))
@@ -103,19 +108,104 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             "/api/chambers/{id}/sync/{backend}/{verb}",
             post(crate::hub::routes::sync::post_sync_action),
         )
+        .route(
+            "/api/chambers/{id}/uploads",
+            post(crate::hub::routes::files::post_upload),
+        )
+        .route(
+            "/api/chambers/{id}/files/{name}",
+            get(crate::hub::routes::files::get_file),
+        )
         .route("/api/events", get(crate::hub::routes::events::get_events))
-        .with_state(app);
-    crate::hub::security::apply(router, configured_host)
+        .route(
+            "/api/whoami",
+            get(crate::hub::routes::tokens_api::get_whoami),
+        )
+        .route(
+            "/api/tokens",
+            get(crate::hub::routes::tokens_api::get_tokens)
+                .post(crate::hub::routes::tokens_api::post_token),
+        )
+        .route(
+            "/api/tokens/{name}/revoke",
+            post(crate::hub::routes::tokens_api::post_revoke),
+        )
+        .with_state(app)
+        // Bound the buffered body so the 25 MB attachment cap binds before an
+        // unbounded upload is read into memory. The slack covers multipart
+        // framing overhead; the exact cap is enforced in `post_upload`.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::hub::routes::files::MAX_ATTACHMENT_BYTES + 1024 * 1024,
+        ))
+        .layer(axum::Extension(crate::hub::config::OwnerName(
+            config.owner_name,
+        )));
+    crate::hub::security::apply(router, configured_hosts)
 }
 
-pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
+/// Public-mode router: same routes, wrapped in the bearer-token guard.
+///
+/// The `Extension(ctx)` layer sits *inside* the guard, so by the time a handler
+/// runs the request carries both the resolved `Role` (inserted by the guard)
+/// and the live token store. Open (loopback) mode builds the router without it,
+/// which is how the token-management handlers know to answer 503.
+pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::AuthCtx>) -> Router {
+    let router = build_router_with_state(app.clone()).layer(axum::Extension(ctx.clone()));
+    crate::hub::auth::apply_auth(router, app, ctx)
+}
+
+/// Refuse public mode unless an owner token exists.
+///
+/// A public hub without one could never be administered — no invites, no
+/// revocation — so starting is worse than not starting. Both entry points
+/// check it: `serve` before binding a socket, and `cryohub start` before
+/// *installing a service*, since a KeepAlive unit that fails on boot would
+/// otherwise restart forever.
+pub fn require_owner_token() -> anyhow::Result<()> {
+    let path = crate::hub::tokens::default_tokens_path();
+    if crate::hub::tokens::load_tokens(&path)?.owner.is_none() {
+        anyhow::bail!(
+            "public mode requires an owner token — run `cryohub token owner` first \
+             (store: {})",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Serve the hub. In `public` mode every `/api` route is behind the bearer
+/// guard; otherwise the hub is the loopback-only dashboard it has always been.
+///
+/// The owner-token precondition is checked *first*, before any workspace scan
+/// or socket bind: a public hub without an owner token could never be
+/// administered, and failing after the port is open would be worse than not
+/// starting at all.
+pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
+    let ctx = if public {
+        require_owner_token()?;
+        Some(crate::hub::auth::AuthCtx::load(
+            &crate::hub::tokens::default_tokens_path(),
+        )?)
+    } else {
+        None
+    };
+
     let app = Arc::new(WebAppState::global());
     app.refresh();
-    let router = build_router_with_state(app);
+    let router = match ctx {
+        Some(ctx) => {
+            println!("Cryochamber hub: PUBLIC mode (bearer auth enforced)");
+            build_router_public(app, ctx)
+        }
+        None => build_router_with_state(app),
+    };
     let addr = format!("{host}:{port}");
-    if !host.starts_with("127.") && host != "localhost" {
+    // The warning is about binding a non-loopback interface *unauthenticated*.
+    // In public mode the bearer guard is exactly the fix it recommends, so
+    // repeating it there would train operators to ignore it.
+    if !public && !host.starts_with("127.") && host != "localhost" {
         eprintln!(
-            "Warning: cryohub is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1 unless you know what you're doing."
+            "Warning: cryohub is binding on {host} — lifecycle actions (start/stop/restart) are exposed without auth. Use 127.0.0.1, or start with --public, unless you know what you're doing."
         );
     }
     println!("Cryochamber hub: http://{addr}");

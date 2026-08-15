@@ -72,6 +72,9 @@ Cryohub settings live in `$XDG_CONFIG_HOME/cryo/cryohub.toml`, or `~/.config/cry
 host = "127.0.0.1"
 port = 8765
 chamber_root = "/Users/alice/.cryo/chambers"
+public = false
+owner_name = "human"
+public_hosts = []
 ```
 
 For project-owned chamber collections, set `chamber_root` to a project path such as `/path/to/project/.cryo/chambers`.
@@ -81,6 +84,19 @@ For project-owned chamber collections, set `chamber_root` to a project path such
 | `host` | `"127.0.0.1"` | Bind address for the global dashboard service. |
 | `port` | `8765` | TCP port for the global dashboard service. |
 | `chamber_root` | `~/.cryo/chambers` | Default location for chambers created from the dashboard UI. |
+| `public` | `false` | Whether bearer-token auth is enforced on every `/api` route. Set by `cryohub start --public`, cleared only by `cryohub start --no-public` — a plain `cryohub start` keeps whatever is saved here. |
+| `owner_name` | `"human"` | Sender name stamped on messages the owner sends in public mode. A client-supplied `from` is ignored. |
+| `public_hosts` | `[]` | Extra `Host` header values to accept, on top of loopback and `host`. Needed when a reverse proxy forwards the public hostname. |
+
+### Behind a reverse proxy
+
+The hub rejects any request whose `Host` header is neither loopback nor a configured host — that is what stops a malicious page from scripting the loopback service via DNS rebinding. A proxy that preserves the public hostname (Caddy's default) therefore needs that name allowed:
+
+```toml
+public_hosts = ["agents.example.com"]
+```
+
+The alternative is to make the proxy rewrite it — in Caddy, `header_up Host 127.0.0.1` inside the `reverse_proxy` block.
 
 ## Override config from the command line
 

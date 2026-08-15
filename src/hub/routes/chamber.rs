@@ -87,15 +87,35 @@ pub struct SendRequest {
     subject: Option<String>,
 }
 
+/// Send a message into a chamber's inbox.
+///
+/// In public mode the sender identity is the server's to decide, never the
+/// browser's: an invite is attributed to its own name, and the owner to the
+/// configured `owner_name` (default `human`). A client-supplied `from` is
+/// ignored in both cases, so nobody can sign a message as somebody else.
+///
+/// Open (loopback) mode has no role layer at all — the local user already has
+/// shell access to the chamber — so there `from` is still honored.
+///
+/// Argument order matters: axum requires the `Json` body extractor last.
 pub async fn post_send(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    role: Option<axum::Extension<crate::hub::tokens::Role>>,
+    owner_name: Option<axum::Extension<crate::hub::config::OwnerName>>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let from = match role {
+        Some(axum::Extension(crate::hub::tokens::Role::Invite { name, .. })) => name,
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)) => owner_name
+            .map(|axum::Extension(crate::hub::config::OwnerName(name))| name)
+            .unwrap_or_else(|| "human".into()),
+        None => req.from.unwrap_or_else(|| "human".into()),
+    };
     let store = MessageStore::new(path.clone());
     let msg = crate::message::Message {
-        from: req.from.unwrap_or_else(|| "human".into()),
+        from,
         subject: req.subject.unwrap_or_default(),
         body: req.body,
         timestamp: chrono::Local::now().naive_local(),
@@ -103,8 +123,9 @@ pub async fn post_send(
         is_question: false,
     };
     match store.send_in(&msg) {
-        Ok(_) => {
+        Ok(written) => {
             let _ = app.tx.send(SseEvent::NewMessage {
+                id: crate::chamber_status::message_id_for_path("inbox", &written),
                 chamber_id: entry.id,
                 direction: "inbox".into(),
                 from: msg.from.clone(),

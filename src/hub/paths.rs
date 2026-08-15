@@ -22,6 +22,10 @@ pub fn hub_config_path() -> PathBuf {
     config_root().join("cryo").join("cryohub.toml")
 }
 
+pub fn hub_tokens_path() -> PathBuf {
+    config_root().join("cryo").join("cryohub-tokens.json")
+}
+
 pub fn global_chambers_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
         return home.join(".cryo").join("chambers");

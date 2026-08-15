@@ -426,8 +426,11 @@ fn messages_json_includes_outbox_archive() {
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["body"], "archived outbox body");
     assert_eq!(arr[0]["direction"], "outbox");
+    // The id names the top-level mailbox only: archiving must not renumber a
+    // message the client has already seen over SSE.
     let id = arr[0]["id"].as_str().unwrap();
-    assert!(id.starts_with("outbox/archive/"), "id was {id}");
+    assert!(id.starts_with("outbox/"), "id was {id}");
+    assert!(!id.contains("/archive/"), "id was {id}");
 }
 
 #[test]
@@ -460,6 +463,164 @@ fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
         first, second,
         "duplicate timestamp/body messages need distinct ids"
     );
+}
+
+/// Workspace with one discoverable chamber. Returns `(tempdir, app, id, dir)`.
+fn chamber_app(name: &str) -> (tempfile::TempDir, Arc<AppState>, String, std::path::PathBuf) {
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join(name);
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
+    let dir = chamber.canonicalize().unwrap();
+    (workspace, app, id, dir)
+}
+
+#[tokio::test]
+async fn send_stamps_invite_name_ignoring_client_from() {
+    // An invite may not impersonate anyone: whatever `from` the client sends
+    // is discarded and the invite's own name is stamped on the message.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let role = crate::hub::tokens::Role::Invite {
+        name: "Alice".into(),
+        chambers: vec![id.clone()],
+    };
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "owner-imposter"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(role)),
+        None,
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].1.from, "Alice");
+    assert_eq!(inbox[0].1.body, "hi");
+}
+
+#[tokio::test]
+async fn send_without_role_keeps_default_human() {
+    // Local (open) mode and the owner keep today's behavior.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let Json(v) = post_send(State(app), AxumPath(id), None, None, Json(payload))
+        .await
+        .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].1.from, "human");
+}
+
+#[tokio::test]
+async fn send_broadcasts_the_mailbox_id_of_the_written_message() {
+    // The pushed event and `GET /api/chambers/{id}/messages` must agree on the
+    // id, otherwise the client renders the message twice until the next full
+    // refetch.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let mut rx = app.tx.subscribe();
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let Json(v) = post_send(State(app.clone()), AxumPath(id), None, None, Json(payload))
+        .await
+        .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let expected = messages_json(&dir)[0]["id"].as_str().unwrap().to_string();
+    assert!(expected.starts_with("inbox/"), "got {expected}");
+    match rx.recv().await.unwrap() {
+        SseEvent::NewMessage { id, .. } => assert_eq!(id, expected),
+        other => panic!("expected NewMessage, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn send_as_owner_stamps_the_configured_owner_name() {
+    // In public mode the owner's identity is the server's to decide. Honoring
+    // the client's `from` would let anyone holding the owner token sign a
+    // message as an invite, or as a person who does not exist.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "Mallory"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        Some(axum::Extension(crate::hub::config::OwnerName(
+            "ops-desk".into(),
+        ))),
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(
+        inbox[0].1.from, "ops-desk",
+        "the owner must send as the configured owner_name, not as the body's `from`"
+    );
+}
+
+#[tokio::test]
+async fn send_as_owner_falls_back_to_human_without_a_configured_name() {
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "Mallory"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        None,
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox[0].1.from, "human");
+}
+
+#[tokio::test]
+async fn send_in_open_mode_still_honors_client_supplied_from() {
+    // Loopback mode layers no `Role` at all: the local user already has shell
+    // access to the chamber, and `cryo send --from` has always been theirs to
+    // set. Only the authenticated surface stamps identity.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "operator"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        None,
+        Some(axum::Extension(crate::hub::config::OwnerName(
+            "ops-desk".into(),
+        ))),
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox[0].1.from, "operator");
 }
 
 #[test]

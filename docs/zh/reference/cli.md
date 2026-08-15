@@ -37,6 +37,11 @@
 | `cryohub stop` | 卸载全局 hub 服务。 |
 | `cryohub restart` | 重启已安装的全局 hub 服务，无需重新安装。 |
 | `cryohub status` | 显示全局 hub 的 URL、chamber 根目录、配置文件路径、日志路径和服务状态。同时列出旧版本遗留的、以当前目录为作用域的 hub 服务。 |
+| `cryohub start --public` | 对所有 `/api` 路由强制启用 bearer token 鉴权。没有 owner token 时拒绝启动。该标志会写入安装的服务单元，因此重启后依然保持鉴权。 |
+| `cryohub token owner` | 打印 owner token，首次运行时创建。幂等——重复运行打印同一个密钥。 |
+| `cryohub token create --name <名称> --chambers <id,...>` | 创建一个限定到这些 chamber id 的具名邀请。打印 token 及其 `#invite=` 链接片段；这是密钥唯一一次显示的时机。 |
+| `cryohub token list` | 列出邀请及其作用域、创建时间和吊销状态。绝不打印 token 字符串。 |
+| `cryohub token revoke <名称>` | 按名称吊销邀请。立即生效，包括已经打开的 SSE 流。若没有同名的有效邀请则失败。 |
 
 ## 智能体 IPC（`cryo-agent`）
 

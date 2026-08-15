@@ -54,7 +54,7 @@ fn classify_message_event_paths_filters_kind_extension_and_direction() {
 }
 
 #[tokio::test]
-async fn watcher_emits_new_message_event_with_chamber_id() {
+async fn watcher_emits_new_message_event_with_chamber_id_and_mailbox_id() {
     let dir = tempfile::tempdir().unwrap();
     crate::message::ensure_dirs(dir.path()).unwrap();
 
@@ -88,14 +88,22 @@ async fn watcher_emits_new_message_event_with_chamber_id() {
         .expect("timed out waiting for watcher event")
         .expect("channel closed");
 
+    // The id must be the one the messages list reports for the same file, so
+    // the client can dedupe the pushed message against a later refetch.
+    let listed = crate::chamber_status::messages(dir.path());
+    assert_eq!(listed.len(), 1);
+
     match event {
         SseEvent::NewMessage {
+            id,
             chamber_id,
             direction,
             ..
         } => {
             assert_eq!(chamber_id, "cham-1");
             assert_eq!(direction, "inbox");
+            assert!(!id.is_empty(), "watcher must emit a mailbox id");
+            assert_eq!(id, listed[0].id);
         }
         other => panic!("expected NewMessage, got {:?}", other),
     }

@@ -30,6 +30,15 @@ enum Commands {
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
+        /// Enforce bearer-token auth on every /api route (required before
+        /// exposing the hub beyond loopback). Needs `cryohub token owner`.
+        /// Saved to cryohub.toml, so later starts stay public.
+        #[arg(long)]
+        public: bool,
+        /// Turn public mode back off. Disabling auth is never implicit: a
+        /// plain `cryohub start` keeps whatever mode is saved.
+        #[arg(long, conflicts_with = "public")]
+        no_public: bool,
     },
     /// Stop and remove the global hub service
     Stop,
@@ -37,6 +46,11 @@ enum Commands {
     Restart,
     /// Show whether the global hub service is installed.
     Status,
+    /// Manage access tokens for --public mode
+    Token {
+        #[command(subcommand)]
+        action: TokenAction,
+    },
     /// Run the server in the current process (internal - used by the service)
     #[command(hide = true)]
     Daemon {
@@ -44,7 +58,27 @@ enum Commands {
         host: Option<String>,
         #[arg(long)]
         port: Option<u16>,
+        #[arg(long)]
+        public: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum TokenAction {
+    /// Create (if absent) and print the owner token
+    Owner,
+    /// Create a named invite scoped to chamber ids
+    Create {
+        #[arg(long)]
+        name: String,
+        /// Comma-separated chamber ids
+        #[arg(long, value_delimiter = ',')]
+        chambers: Vec<String>,
+    },
+    /// List invites (never prints token strings)
+    List,
+    /// Revoke an invite by name
+    Revoke { name: String },
 }
 
 fn main() -> Result<()> {
@@ -54,37 +88,76 @@ fn main() -> Result<()> {
             host,
             port,
             foreground,
-        } => cmd_start(host, port, foreground),
+            public,
+            no_public,
+        } => cmd_start(host, port, foreground, public_override(public, no_public)),
         Commands::Stop => cmd_stop(),
         Commands::Restart => cmd_restart(),
         Commands::Status => cmd_status(),
-        Commands::Daemon { host, port } => cmd_daemon(host, port),
+        Commands::Token { action } => cmd_token(action),
+        Commands::Daemon { host, port, public } => cmd_daemon(host, port, public.then_some(true)),
     }
 }
 
-fn cmd_start(host: Option<String>, port: Option<u16>, foreground: bool) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port)?;
+/// Turn the two mode flags into an override for the saved config. Absent both,
+/// `None` leaves the saved mode alone — public mode must survive a plain
+/// restart, and turning it off must be deliberate.
+fn public_override(public: bool, no_public: bool) -> Option<bool> {
+    match (public, no_public) {
+        (true, _) => Some(true),
+        (false, true) => Some(false),
+        (false, false) => None,
+    }
+}
+
+fn cmd_start(
+    host: Option<String>,
+    port: Option<u16>,
+    foreground: bool,
+    public: Option<bool>,
+) -> Result<()> {
+    let config = cryochamber::hub::config::effective_config(host, port, public)?;
     std::fs::create_dir_all(&config.chamber_root)?;
+
+    // Before binding a socket AND before installing a service: a public hub
+    // with no owner token can never be administered, and an installed unit
+    // would just crash-loop under KeepAlive.
+    if config.public {
+        cryochamber::hub::require_owner_token()?;
+    }
 
     if foreground {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(cryochamber::hub::serve(&config.host, config.port));
+        return rt.block_on(cryochamber::hub::serve(
+            &config.host,
+            config.port,
+            config.public,
+        ));
     }
 
     let exe = std::env::current_exe().context("Failed to resolve cryohub executable path")?;
     let service_dir = cryochamber::hub::paths::hub_service_dir();
     std::fs::create_dir_all(&service_dir)?;
-    let args = ["daemon"];
+    // The installed unit re-invokes this binary. The mode is persisted in
+    // cryohub.toml, but pass it explicitly too so the unit is self-describing.
+    let args: &[&str] = if config.public {
+        &["daemon", "--public"]
+    } else {
+        &["daemon"]
+    };
     let log_path = cryochamber::hub::paths::hub_log_path();
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    cryochamber::service::install(SERVICE_LABEL, &service_dir, &exe, &args, &log_path, true)?;
+    cryochamber::service::install(SERVICE_LABEL, &service_dir, &exe, args, &log_path, true)?;
     let actual_log = cryochamber::service::stdio_log_path(SERVICE_LABEL, &service_dir, &log_path);
     println!(
         "Cryohub service installed: http://{}:{}",
         config.host, config.port
     );
+    if config.public {
+        println!("Mode: PUBLIC (bearer auth enforced on every /api route)");
+    }
     println!("Chamber root: {}", config.chamber_root.display());
     println!(
         "Config: {}",
@@ -134,6 +207,14 @@ fn cmd_status() -> Result<()> {
         println!("Cryohub service: not installed");
     }
     println!("URL: http://{}:{}", config.host, config.port);
+    println!(
+        "Mode: {}",
+        if config.public {
+            "public (bearer auth)"
+        } else {
+            "open (loopback)"
+        }
+    );
     println!("Chamber root: {}", config.chamber_root.display());
     println!(
         "Config: {}",
@@ -165,8 +246,84 @@ fn print_legacy_installed() {
     println!("(These are from older Cryohub versions; remove them from their listed directories.)");
 }
 
-fn cmd_daemon(host: Option<String>, port: Option<u16>) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port)?;
+fn cmd_daemon(host: Option<String>, port: Option<u16>, public: Option<bool>) -> Result<()> {
+    let config = cryochamber::hub::config::effective_config(host, port, public)?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::hub::serve(&config.host, config.port))
+    rt.block_on(cryochamber::hub::serve(
+        &config.host,
+        config.port,
+        config.public,
+    ))
+}
+
+/// Unwrap a token transaction. Both failure modes abort the command; only the
+/// wording differs, and a persistence failure additionally guarantees that
+/// nothing was written, so the operator can safely retry.
+fn unwrap_mutation<T>(result: Result<T, cryochamber::hub::auth::MutateError>) -> Result<T> {
+    use cryochamber::hub::auth::MutateError;
+    match result {
+        Ok(value) => Ok(value),
+        Err(MutateError::Rejected(e)) => Err(e),
+        Err(MutateError::Persist(e)) => {
+            Err(e.context("token store could not be written; no change was made"))
+        }
+    }
+}
+
+fn cmd_token(action: TokenAction) -> Result<()> {
+    use cryochamber::hub::{auth::AuthCtx, tokens};
+
+    // Go through `AuthCtx` rather than load/mutate/save by hand, so the CLI
+    // gets the same transaction as the API: the change is persisted before it
+    // is considered to have happened.
+    let path = tokens::default_tokens_path();
+    let ctx = AuthCtx::load(&path)?;
+    match action {
+        TokenAction::Owner => {
+            let token = unwrap_mutation(ctx.mutate(|store| store.ensure_owner()))?;
+            // Bare on stdout so `cryohub token owner` composes in a pipeline;
+            // everything explanatory goes to stderr.
+            println!("{token}");
+            eprintln!("Owner token stored in {}", path.display());
+        }
+        TokenAction::Create { name, chambers } => {
+            let invite = unwrap_mutation(ctx.mutate(|store| store.create_invite(&name, chambers)))?;
+            // The only moment this secret is ever printed — it is not
+            // recoverable from `token list` or the API afterwards.
+            println!("token: {}", invite.token);
+            println!("link fragment: #invite={}", invite.token);
+        }
+        TokenAction::List => {
+            ctx.with_store(|store| {
+                if store.invites.is_empty() {
+                    println!("(no invites)");
+                    return;
+                }
+                println!("NAME\tSTATUS\tCHAMBERS\tCREATED\tREVOKED");
+                for i in &store.invites {
+                    let status = if i.revoked_at.is_some() {
+                        "revoked"
+                    } else {
+                        "active"
+                    };
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}",
+                        i.name,
+                        status,
+                        i.chambers.join(","),
+                        i.created_at,
+                        i.revoked_at.as_deref().unwrap_or("-")
+                    );
+                }
+            });
+        }
+        TokenAction::Revoke { name } => {
+            unwrap_mutation(ctx.mutate(|store| {
+                anyhow::ensure!(store.revoke(&name), "no active invite named '{name}'");
+                Ok(())
+            }))?;
+            println!("revoked {name}");
+        }
+    }
+    Ok(())
 }

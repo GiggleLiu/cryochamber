@@ -35,7 +35,7 @@ fn normalize_host_lowercases_and_unwraps_brackets() {
 
 #[test]
 fn build_allowlist_always_contains_loopback() {
-    let allowed = build_allowlist(None);
+    let allowed = build_allowlist(vec![]);
     assert!(allowed.iter().any(|h| h == "127.0.0.1"));
     assert!(allowed.iter().any(|h| h == "localhost"));
     assert!(allowed.iter().any(|h| h == "::1"));
@@ -43,12 +43,22 @@ fn build_allowlist_always_contains_loopback() {
 
 #[test]
 fn build_allowlist_adds_configured_host_without_duplicating_loopback() {
-    let allowed = build_allowlist(Some("cryo.example.com".to_string()));
+    let allowed = build_allowlist(vec!["cryo.example.com".to_string()]);
     assert!(allowed.iter().any(|h| h == "cryo.example.com"));
 
     // A configured loopback host does not create a duplicate entry.
-    let allowed = build_allowlist(Some("127.0.0.1".to_string()));
+    let allowed = build_allowlist(vec!["127.0.0.1".to_string()]);
     assert_eq!(allowed.iter().filter(|h| *h == "127.0.0.1").count(), 1);
+
+    // Every configured host lands in the list: the bind host plus each
+    // `public_hosts` entry a reverse proxy may forward.
+    let allowed = build_allowlist(vec![
+        "127.0.0.1".to_string(),
+        "agents.example.com".to_string(),
+        "hub.example.org".to_string(),
+    ]);
+    assert!(allowed.iter().any(|h| h == "agents.example.com"));
+    assert!(allowed.iter().any(|h| h == "hub.example.org"));
 }
 
 #[test]
@@ -63,12 +73,49 @@ fn request_host_reads_header_then_uri_authority() {
 
 #[test]
 fn host_is_allowed_accepts_loopback_and_configured_rejects_others() {
-    let allowed = build_allowlist(Some("cryo.example.com".to_string()));
+    let allowed = build_allowlist(vec!["cryo.example.com".to_string()]);
 
     assert!(host_is_allowed("127.0.0.1", &allowed));
     assert!(host_is_allowed("LOCALHOST", &allowed));
     assert!(host_is_allowed("cryo.example.com", &allowed));
     assert!(!host_is_allowed("evil.example.com", &allowed));
+}
+
+#[tokio::test]
+async fn a_configured_public_host_passes_the_guard_and_an_unconfigured_one_does_not() {
+    // The documented deployment is Caddy → loopback. Caddy preserves the public
+    // hostname by default, so without `public_hosts` every proxied request is
+    // 403'd by the DNS-rebinding guard — and from the outside that is
+    // indistinguishable from an auth failure.
+    use axum::http::StatusCode;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    async fn call(router: axum::Router, host: &str) -> StatusCode {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/chambers")
+            .header("host", host)
+            .body(Body::empty())
+            .unwrap();
+        router.oneshot(req).await.unwrap().status()
+    }
+
+    let route = || axum::Router::new().route("/api/chambers", get(|| async { "[]" }));
+
+    let configured = apply(route(), vec!["agents.example.com".to_string()]);
+    assert_eq!(
+        call(configured, "agents.example.com").await,
+        StatusCode::OK,
+        "a host listed in public_hosts must be accepted"
+    );
+
+    let not_configured = apply(route(), vec![]);
+    assert_eq!(
+        call(not_configured, "agents.example.com").await,
+        StatusCode::FORBIDDEN,
+        "an unlisted host must still be refused"
+    );
 }
 
 #[test]

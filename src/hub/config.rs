@@ -10,6 +10,21 @@ pub struct HubConfig {
     pub port: u16,
     #[serde(default = "default_chamber_root")]
     pub chamber_root: PathBuf,
+    /// Sender name stamped on messages the owner sends in public mode. The
+    /// owner's identity is the server's to decide, not the browser's.
+    #[serde(default = "default_owner_name")]
+    pub owner_name: String,
+    /// Extra `Host` header values the hub accepts, on top of loopback and the
+    /// bind host. A reverse proxy that preserves the public hostname (the
+    /// documented Caddy deployment does) otherwise trips the DNS-rebinding
+    /// guard and every request comes back 403.
+    #[serde(default)]
+    pub public_hosts: Vec<String>,
+    /// Whether bearer auth is enforced. Persisted, so a later plain
+    /// `cryohub start` — or a reboot — cannot silently drop the hub back to
+    /// open mode while a proxy is still publishing it to the internet.
+    #[serde(default)]
+    pub public: bool,
 }
 
 fn default_host() -> String {
@@ -24,15 +39,27 @@ fn default_chamber_root() -> PathBuf {
     crate::hub::paths::global_chambers_dir()
 }
 
+fn default_owner_name() -> String {
+    "human".to_string()
+}
+
 impl Default for HubConfig {
     fn default() -> Self {
         Self {
             host: default_host(),
             port: default_port(),
             chamber_root: default_chamber_root(),
+            owner_name: default_owner_name(),
+            public_hosts: Vec::new(),
+            public: false,
         }
     }
 }
+
+/// The configured owner sender name, layered into every request so
+/// `post_send` can stamp it without re-reading the config file.
+#[derive(Debug, Clone)]
+pub struct OwnerName(pub String);
 
 pub fn load_config() -> Result<HubConfig> {
     let path = crate::hub::paths::hub_config_path();
@@ -60,7 +87,16 @@ pub fn load_or_create_config() -> Result<HubConfig> {
     Ok(config)
 }
 
-pub fn effective_config(host: Option<String>, port: Option<u16>) -> Result<HubConfig> {
+/// Load the hub config, apply any CLI overrides, and persist them.
+///
+/// `public` is `None` when neither `--public` nor `--no-public` was given, in
+/// which case the saved mode stands: turning auth *off* has to be an explicit
+/// act, never a side effect of restarting without the flag.
+pub fn effective_config(
+    host: Option<String>,
+    port: Option<u16>,
+    public: Option<bool>,
+) -> Result<HubConfig> {
     let mut config = load_or_create_config()?;
     let mut changed = false;
     if let Some(host) = host {
@@ -69,6 +105,10 @@ pub fn effective_config(host: Option<String>, port: Option<u16>) -> Result<HubCo
     }
     if let Some(port) = port {
         config.port = port;
+        changed = true;
+    }
+    if let Some(public) = public {
+        config.public = public;
         changed = true;
     }
     if changed {
