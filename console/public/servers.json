@@ -1,0 +1,4 @@
+[
+  { "name": "QEC Harness", "prefix": "/zulip/qec", "sendTopic": "" },
+  { "name": "Chamber Hub", "prefix": "", "kind": "hub", "sendTopic": "" }
+]

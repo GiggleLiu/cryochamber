@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Agent Console</title>
+  <!-- Full-bleed ground: platforms apply their own mask, and the glyph sits
+       inside the maskable safe zone (the central 80% circle). -->
+  <rect width="512" height="512" fill="#07c160"/>
+  <g transform="translate(88 88) scale(7)">
+    <rect x="3" y="5" width="42" height="33" rx="10" fill="#ffffff"/>
+    <path d="M13.5 36.5h10L14.6 44.3a1.4 1.4 0 0 1-2.3-1.1v-5.3z" fill="#ffffff"/>
+    <g stroke="#07c160" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M16.5 15.5l6 6-6 6"/>
+      <path d="M26.5 27.5h7"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,39 @@
+app.example.com {
+	encode zstd gzip
+	root * /srv/zulip-app/dist
+
+	# Allowlisted Zulip upstreams — one handle_path block per entry in
+	# public/servers.json. NEVER add a catch-all proxy here: this must not
+	# become an open relay.
+	handle_path /zulip/qec/* {
+		reverse_proxy https://qec-harness.zulipchat.com {
+			header_up Host qec-harness.zulipchat.com
+		}
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Chamber Hub mode — the same static build in front of a local cryohub instead
+# of Zulip. Separate site block, and normally a separate host: the hub speaks
+# for one machine's chambers, and its /api must not be reachable through the
+# Zulip host above. Replace agents.example.com with your own name (it needs an
+# A/AAAA record pointing here before Caddy can get a certificate).
+agents.example.com {
+	encode zstd gzip
+
+	# Loopback only: cryohub binds 127.0.0.1:8765 and is never exposed
+	# directly. Caddy terminates TLS and is the only way in.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8765
+	}
+
+	handle {
+		root * /srv/agent-console
+		try_files {path} /index.html
+		file_server
+	}
+}
