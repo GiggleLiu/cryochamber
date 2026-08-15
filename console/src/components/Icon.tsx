@@ -102,21 +102,25 @@ export const Plus = (p: IconProps) => (
  * its tail is the bubble tail the message list deliberately does not draw.
  */
 export function Logo({ size = 56, className }: IconProps) {
+  // The cryochamber mark: concentric shells cooling inward, from the outer
+  // casing to the frozen core. Kept in its own palette rather than
+  // `currentColor` — it is a brand mark, not an icon.
   return (
     <svg
       className={className}
       width={size}
       height={size}
-      viewBox="0 0 48 48"
+      viewBox="0 0 100 100"
       aria-hidden="true"
       focusable="false"
     >
-      <rect x="3" y="5" width="42" height="33" rx="10" fill="currentColor" />
-      <path d="M13.5 36.5h10L14.6 44.3a1.4 1.4 0 0 1-2.3-1.1v-5.3z" fill="currentColor" />
-      <g stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" fill="none">
-        <path d="M16.5 15.5l6 6-6 6" />
-        <path d="M26.5 27.5h7" />
-      </g>
+      <circle cx="50" cy="50" r="45" fill="#1a2744" />
+      <circle cx="50" cy="48.75" r="40.5" fill="#ffffff" />
+      <circle cx="50" cy="47.5" r="37" fill="#2d5a8e" />
+      <circle cx="50" cy="43.75" r="26.25" fill="#5ba3d9" />
+      <circle cx="50" cy="41.25" r="15" fill="#a8d8ea" />
+      <circle cx="50" cy="40.5" r="6.25" fill="#e0f0f8" />
     </svg>
   )
 }
+

@@ -857,7 +857,8 @@ input, select, textarea { font: inherit; color: inherit; }
   background: var(--surface);
 }
 .login-head { margin-bottom: var(--sp-8); }
-.login-mark { display: block; color: var(--brand); margin-bottom: var(--sp-4); }
+/* The mark carries its own palette; nothing here may tint it. */
+.login-mark { display: block; margin-bottom: var(--sp-4); }
 .login-head h1 {
   font-size: var(--fs-xl);
   font-weight: 650;
