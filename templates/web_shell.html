@@ -93,8 +93,9 @@
 <div class="modal-backdrop" id="token-gate" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="token-gate-title">
     <h3 id="token-gate-title">Access token required</h3>
-    <p class="token-gate-hint">This hub runs in public mode. Paste a token from
-      <code>cryohub token owner</code> (or an invite) to continue.</p>
+    <p class="token-gate-hint">This hub runs in public mode. Paste the token from
+      <code>cryohub token owner</code> to continue. Invite tokens open the chat
+      console, not this control panel.</p>
     <div class="modal-field">
       <label for="token-gate-input">Token</label>
       <input id="token-gate-input" type="password" placeholder="hex token" autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -345,7 +346,14 @@
   // rides in the Authorization header only — never in a URL.
   const TOKEN_KEY = 'cryohub.dashboard.token';
   function storedToken() {
-    try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+    // sessionStorage is the fallback for browsers that block persistent
+    // storage: the token then lives for this tab only.
+    try { if (localStorage.getItem(TOKEN_KEY)) return localStorage.getItem(TOKEN_KEY); } catch (e) { /* blocked */ }
+    try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+  }
+  function dropToken() {
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* blocked */ }
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* blocked */ }
   }
   function authHeaders(extra) {
     const t = storedToken();
@@ -358,6 +366,10 @@
   (function initTokenGate() {
     const input = document.getElementById('token-gate-input');
     const errBox = document.getElementById('token-gate-error');
+    function fail(msg) {
+      errBox.textContent = msg;
+      errBox.hidden = false;
+    }
     async function submit() {
       const token = input.value.trim();
       errBox.hidden = true;
@@ -367,11 +379,28 @@
       const res = await fetch('/api/whoami', { headers: { Authorization: 'Bearer ' + token } })
         .catch(() => null);
       if (!res || !res.ok) {
-        errBox.textContent = 'That token was not accepted. Check it and try again.';
-        errBox.hidden = false;
+        fail('That token was not accepted. Check it and try again.');
         return;
       }
-      try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* private mode fallback */ }
+      // Owner only. An invite would pass whoami but the panel is built on
+      // owner-only routes (sync, lifecycle, new-chamber) — accepting it here
+      // would hand the guest a dashboard that breaks on first click.
+      const who = await res.json().catch(() => ({}));
+      if (who.role !== 'owner') {
+        fail('That is an invite token. The control panel needs the owner token; invite links open the chat console instead.');
+        return;
+      }
+      let saved = false;
+      try { localStorage.setItem(TOKEN_KEY, token); saved = true; } catch (e) { /* blocked */ }
+      if (!saved) {
+        try { sessionStorage.setItem(TOKEN_KEY, token); saved = true; } catch (e) { /* blocked */ }
+      }
+      if (!saved) {
+        // Reloading now would discard the only copy of the token and re-raise
+        // the gate forever; say what is actually wrong instead.
+        fail('Your browser is blocking site storage; allow it for this site to use the dashboard.');
+        return;
+      }
       // Reload rather than re-run boot piecemeal: every fetch and the event
       // stream pick up the token uniformly on a fresh start.
       window.location.reload();
@@ -394,7 +423,7 @@
     if (res.status === 401) {
       // Wrong, revoked, or absent token: drop it so the gate re-prompts
       // instead of replaying a dead credential forever.
-      try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+      dropToken();
       showTokenGate();
       throw new Error(`${url}: 401`);
     }
@@ -1689,9 +1718,9 @@
           headers: authHeaders({ Accept: 'text/event-stream' }),
         });
         if (res.status === 401) {
-          // The gate is already up (fetchJSON hit 401 first at boot, or the
-          // token was just revoked). No point reconnecting with the same
-          // dead credential; the post-token reload starts a fresh stream.
+          // Absent, wrong, or just-revoked credential. No point reconnecting
+          // with it; the post-token reload starts a fresh stream.
+          dropToken();
           showTokenGate();
           return;
         }
@@ -1947,11 +1976,19 @@
 
       btnCreate.disabled = true;
       try {
+        // Not fetchJSON: creation branches on 201-vs-error bodies. The auth
+        // header still has to ride along, or this is the one panel action
+        // that 401s in public mode.
         const r = await fetch('/api/chambers/new', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Cryo-CSRF': '1' },
+          headers: authHeaders({ 'Content-Type': 'application/json', 'X-Cryo-CSRF': '1' }),
           body: JSON.stringify(payload),
         });
+        if (r.status === 401) {
+          dropToken();
+          showTokenGate();
+          return;
+        }
         const body = await r.json().catch(() => ({}));
         if (r.status === 201) {
           hideModal();

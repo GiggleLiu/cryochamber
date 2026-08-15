@@ -131,18 +131,55 @@ pub fn render_markdown_safe(src: &str) -> String {
         return String::new();
     }
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-    let parser = Parser::new_ext(src, opts).map(|event| match event {
+    // CommonMark links do not nest, so a single flag pairs each neutralized
+    // link-start with its end tag.
+    let mut in_unsafe_link = false;
+    let parser = Parser::new_ext(src, opts).map(move |event| match event {
         Event::Html(s) | Event::InlineHtml(s) => Event::Text(s),
         // Drop raw images — they're a side-channel for fetching arbitrary URLs
         // from the operator's browser, and plan.md is reference text, not a
         // gallery. Keeps the rendered output minimal and predictable.
         Event::Start(Tag::Image { .. }) => Event::Start(Tag::Emphasis),
         Event::End(TagEnd::Image) => Event::End(TagEnd::Emphasis),
+        // A `javascript:` (or other non-web-scheme) destination clicked in
+        // the hub UI runs in the hub's origin, where the operator's bearer
+        // token lives. Chamber files are agent-written, i.e. untrusted; an
+        // unsafe link renders as plain emphasis instead.
+        Event::Start(Tag::Link { ref dest_url, .. }) if !safe_link_dest(dest_url) => {
+            in_unsafe_link = true;
+            Event::Start(Tag::Emphasis)
+        }
+        Event::End(TagEnd::Link) if in_unsafe_link => {
+            in_unsafe_link = false;
+            Event::End(TagEnd::Emphasis)
+        }
         other => other,
     });
     let mut out = String::with_capacity(src.len() + src.len() / 4);
     html::push_html(&mut out, parser);
     out
+}
+
+/// Whether a markdown link destination is safe to emit as an `href`.
+///
+/// Browsers strip ASCII whitespace and control characters when parsing URLs,
+/// so `jav\tascript:` reaches the click as `javascript:` — the same stripping
+/// happens here before the scheme is read. A destination with a scheme must
+/// use one of the plain web schemes; scheme-less destinations (relative
+/// paths, fragments) stay, since they cannot carry a script scheme.
+fn safe_link_dest(dest: &str) -> bool {
+    let cleaned: String = dest
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_control())
+        .collect();
+    let lower = cleaned.to_ascii_lowercase();
+    match lower.find(':') {
+        // A ':' after '/', '?' or '#' is path/query/fragment data, not a scheme.
+        Some(colon) if !lower[..colon].contains(['/', '?', '#']) => {
+            matches!(&lower[..colon], "http" | "https" | "mailto")
+        }
+        _ => true,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

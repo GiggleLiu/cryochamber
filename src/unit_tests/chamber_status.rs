@@ -169,6 +169,52 @@ fn render_markdown_safe_drops_image_urls() {
 }
 
 #[test]
+fn render_markdown_safe_neutralizes_script_scheme_links() {
+    // A clicked javascript:/data: link executes in the hub's origin, where
+    // the operator's bearer token lives. Whitespace smuggling and mixed case
+    // must not get past the scheme check either.
+    for src in [
+        "[click](javascript:alert(1))",
+        "[click](JaVaScRiPt:alert(1))",
+        "[click](java\tscript:alert(1))",
+        "[click](data:text/html,<script>alert(1)</script>)",
+        "[click](vbscript:msgbox(1))",
+    ] {
+        let out = render_markdown_safe(src);
+        assert!(!out.contains("<a"), "{src} must not render a link: {out}");
+        let lower = out.to_ascii_lowercase();
+        assert!(
+            !lower.contains("javascript:")
+                && !lower.contains("data:")
+                && !lower.contains("vbscript:"),
+            "{src} leaked its scheme: {out}"
+        );
+        assert!(out.contains("click"), "{src} should keep the text: {out}");
+    }
+}
+
+#[test]
+fn render_markdown_safe_keeps_ordinary_links() {
+    for (src, needle) in [
+        (
+            "[docs](https://example.com/a)",
+            "href=\"https://example.com/a\"",
+        ),
+        ("[home](http://example.com)", "href=\"http://example.com\""),
+        ("[mail](mailto:a@b.c)", "href=\"mailto:a@b.c\""),
+        ("[rel](/c/some-chamber)", "href=\"/c/some-chamber\""),
+        // ':' inside a query string is data, not a scheme.
+        ("[q](/search?t=a:b)", "href=\"/search?t=a:b\""),
+    ] {
+        let out = render_markdown_safe(src);
+        assert!(
+            out.contains(needle),
+            "{src} should keep its href, got: {out}"
+        );
+    }
+}
+
+#[test]
 fn parse_settings_rows_handles_scalars_and_provider() {
     // Top-level scalars become individual rows. The `provider` table redacts
     // env *values* (which can hold API keys) but lists env *keys* so the
