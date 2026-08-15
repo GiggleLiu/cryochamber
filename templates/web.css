@@ -1119,6 +1119,16 @@ body {
 .modal-field + .modal-field {
   margin-top: 12px;
 }
+.token-gate-hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+.token-gate-hint code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
 .modal-provider-details {
   margin-top: 14px;
   border: 1px solid var(--line);
