@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from './store/appStore'
 import { loadCredentials } from './store/auth'
 import { loadServers } from './api/servers'
@@ -35,6 +35,8 @@ export default function App() {
   const view = useAppStore((s) => s.view)
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
+  const hubRole = useAppStore((s) => s.hubRole)
+  const streamCount = useAppStore((s) => s.streams.length)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
   const [downloadNote, setDownloadNote] = useState<string | null>(null)
 
@@ -81,6 +83,21 @@ export default function App() {
       .then((who) => useAppStore.getState().setHubRole(who.role))
       .catch((e) => logoutIfAuthError(e, INVALID_INVITE_REASON))
   }, [creds, client])
+
+  // A guest's link is tied to one chamber, so landing them in a list of one is
+  // a step that says nothing. Once per app start, and only from the default
+  // view: a guest who taps Back to the list is meant to stay there, and a
+  // re-register after a reconnect must not yank them out of it. An invite that
+  // covers several chambers still gets the list, because then the list means
+  // something.
+  const landed = useRef(false)
+  useEffect(() => {
+    if (landed.current || hubRole !== 'invite' || streamCount !== 1) return
+    const store = useAppStore.getState()
+    if (store.view.name !== 'projects') return
+    landed.current = true
+    store.navigate({ name: 'conversation', streamId: store.streams[0].stream_id })
+  }, [hubRole, streamCount])
 
   // Last line of defense against SPA-rebooting attachment clicks: whatever
   // rendered the anchor (message body, a stale bundle, future views), a click

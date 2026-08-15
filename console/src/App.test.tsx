@@ -119,6 +119,58 @@ describe('invite-link onboarding', () => {
     for (const [url] of vi.mocked(fetch).mock.calls) expect(String(url)).not.toContain(TOKEN)
   })
 
+  /** whoami + a chamber list, the two calls a boot makes. */
+  function stubHub(role: 'invite' | 'owner', chambers: Array<{ id: string; name: string }>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const u = String(url)
+        if (u.endsWith('/api/whoami')) {
+          return new Response(JSON.stringify({ role, name: 'Alice' }), { status: 200 })
+        }
+        if (u.endsWith('/api/chambers')) {
+          return new Response(JSON.stringify(chambers), { status: 200 })
+        }
+        return new Response(JSON.stringify([]), { status: 200 })
+      }),
+    )
+  }
+
+  test('a guest scoped to one chamber lands in that conversation', async () => {
+    // Their link is tied to one chamber; a list of one says nothing and costs
+    // them a tap.
+    window.location.hash = `#invite=${TOKEN}`
+    stubHub('invite', [{ id: '%2Ftmp%2Falpha', name: 'alpha' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: /alpha/ })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Projects' })).toBeNull()
+  })
+
+  test('a guest scoped to several chambers still gets the list', async () => {
+    window.location.hash = `#invite=${TOKEN}`
+    stubHub('invite', [
+      { id: '%2Ftmp%2Falpha', name: 'alpha' },
+      { id: '%2Ftmp%2Fbeta', name: 'beta' },
+    ])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+  })
+
+  test('an owner with one chamber is left on the list', async () => {
+    // The owner's entry point is the hub, not any one chamber — and theirs is
+    // where New chamber and the folds live.
+    stubHub('owner', [{ id: '%2Ftmp%2Falpha', name: 'alpha' }])
+    useAppStore.getState().setCreds({
+      kind: 'hub',
+      prefix: '',
+      email: 'human',
+      apiKey: 'ab'.repeat(16),
+      sendTopic: '',
+    })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+  })
+
   test('a revoked invite link shows login with a reason', async () => {
     window.location.hash = `#invite=${'cd'.repeat(16)}`
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
