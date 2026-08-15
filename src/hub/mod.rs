@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod discovery;
 pub mod lifecycle;
+pub mod mime;
 pub mod paths;
 pub mod routes;
 pub mod security;
@@ -34,20 +35,38 @@ pub fn build_router_local_only(workspace_dir: PathBuf) -> Router {
 }
 
 /// Separate entry point so integration tests can inject their own `AppState`.
+///
+/// Reads the hub config once. The security layer needs the bind host and any
+/// reverse-proxy hostnames; `post_send` needs the owner sender name. Falling
+/// back to defaults if the config is unreadable is safe — the default bind
+/// is loopback and the default owner name is `human`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
-    // Read the hub config once. The security layer needs the bind host and any
-    // reverse-proxy hostnames; `post_send` needs the owner sender name. Falling
-    // back to defaults if the config is unreadable is safe — the default bind
-    // is loopback and the default owner name is `human`.
-    let config = crate::hub::config::load_config().unwrap_or_default();
+    build_router_with_config(app, crate::hub::config::load_config().unwrap_or_default())
+}
+
+/// As [`build_router_with_state`], with the config supplied rather than read
+/// from disk, so tests can exercise a configuration without installing one on
+/// the machine running them.
+pub fn build_router_with_config(
+    app: Arc<WebAppState>,
+    config: crate::hub::config::HubConfig,
+) -> Router {
     let mut configured_hosts = vec![config.host.clone()];
     configured_hosts.extend(config.public_hosts.iter().cloned());
-    let router = Router::new()
-        .route("/", get(crate::hub::routes::pages::get_index))
-        .route("/c/{id}", get(crate::hub::routes::pages::get_index))
-        .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
-        .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
-        .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark))
+    let router = Router::new();
+    // A configured console owns the whole non-`/api` surface: its build emits
+    // its own `/assets`, and leaving the bundled shell's pages registered would
+    // shadow them with a second, unrelated dashboard.
+    let router = match &config.console_dir {
+        Some(_) => router,
+        None => router
+            .route("/", get(crate::hub::routes::pages::get_index))
+            .route("/c/{id}", get(crate::hub::routes::pages::get_index))
+            .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
+            .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
+            .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark)),
+    };
+    let router = router
         .route(
             "/api/chambers",
             get(crate::hub::routes::chambers::get_chambers),
@@ -130,7 +149,16 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             "/api/tokens/{name}/revoke",
             post(crate::hub::routes::tokens_api::post_revoke),
         )
-        .with_state(app)
+        .with_state(app);
+    // The console fallback needs no `AppState`, so it is attached after
+    // `with_state` and only ever sees paths no hub route claimed.
+    let router = match config.console_dir {
+        Some(dir) => {
+            router.fallback(move |req| crate::hub::routes::console::serve(dir.clone(), req))
+        }
+        None => router,
+    };
+    let router = router
         // Bound the buffered body so the 25 MB attachment cap binds before an
         // unbounded upload is read into memory. The slack covers multipart
         // framing overhead; the exact cap is enforced in `post_upload`.
@@ -150,7 +178,21 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
 /// and the live token store. Open (loopback) mode builds the router without it,
 /// which is how the token-management handlers know to answer 503.
 pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::AuthCtx>) -> Router {
-    let router = build_router_with_state(app.clone()).layer(axum::Extension(ctx.clone()));
+    build_router_public_with_config(
+        app,
+        ctx,
+        crate::hub::config::load_config().unwrap_or_default(),
+    )
+}
+
+/// As [`build_router_public`], with the config supplied rather than read from
+/// disk. See [`build_router_with_config`].
+pub fn build_router_public_with_config(
+    app: Arc<WebAppState>,
+    ctx: Arc<crate::hub::auth::AuthCtx>,
+    config: crate::hub::config::HubConfig,
+) -> Router {
+    let router = build_router_with_config(app.clone(), config).layer(axum::Extension(ctx.clone()));
     crate::hub::auth::apply_auth(router, app, ctx)
 }
 

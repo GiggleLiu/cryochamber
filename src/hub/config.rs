@@ -25,6 +25,12 @@ pub struct HubConfig {
     /// open mode while a proxy is still publishing it to the internet.
     #[serde(default)]
     pub public: bool,
+    /// A built Agent Console (`console/dist`) to serve instead of the bundled
+    /// `web_shell.html` dashboard. Unset means the hub is exactly what it has
+    /// always been — the console is opt-in, and pointing at a directory that
+    /// is not a finished build is the only way to get it wrong.
+    #[serde(default)]
+    pub console_dir: Option<PathBuf>,
 }
 
 fn default_host() -> String {
@@ -52,6 +58,7 @@ impl Default for HubConfig {
             owner_name: default_owner_name(),
             public_hosts: Vec::new(),
             public: false,
+            console_dir: None,
         }
     }
 }

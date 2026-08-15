@@ -106,6 +106,7 @@ fn hub_config_save_round_trips_config_file() {
         owner_name: "ops-desk".to_string(),
         public_hosts: vec!["agents.example.com".to_string()],
         public: true,
+        console_dir: Some(custom_root.path().join("console/dist")),
     };
 
     cryochamber::hub::config::save_config(&cfg).unwrap();
@@ -113,6 +114,21 @@ fn hub_config_save_round_trips_config_file() {
     let path = cryochamber::hub::paths::hub_config_path();
     assert!(path.exists());
     assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+/// A config file written before `console_dir` existed must keep loading, and
+/// must keep meaning "serve the bundled shell" rather than failing to parse.
+#[test]
+fn hub_config_without_console_dir_loads_as_none() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "host = \"127.0.0.1\"\nport = 8765\n").unwrap();
+
+    let cfg = cryochamber::hub::config::load_config().unwrap();
+
+    assert_eq!(cfg.console_dir, None);
 }
 
 #[test]

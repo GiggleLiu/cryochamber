@@ -13,6 +13,7 @@ use axum::{
 };
 use serde_json::json;
 
+use crate::hub::mime::mime_for;
 use crate::hub::state::AppState;
 
 pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
@@ -216,26 +217,6 @@ pub async fn post_upload(
         })));
     }
     Err(StatusCode::BAD_REQUEST)
-}
-
-fn mime_for(name: &str) -> &'static str {
-    match name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "pdf" => "application/pdf",
-        "txt" | "md" | "log" => "text/plain; charset=utf-8",
-        "json" => "application/json",
-        _ => "application/octet-stream",
-    }
 }
 
 /// `GET /api/chambers/{id}/files/{name}` — serve a stored attachment.

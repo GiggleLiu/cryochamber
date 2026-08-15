@@ -832,3 +832,70 @@ async fn a_decoded_form_scope_is_honored_by_guard_list_and_stream() {
         "out-of-scope chamber leaked: {text}"
     );
 }
+
+/// The console is the *login page* of a public hub: it has to load before the
+/// visitor has a token to load it with. `classify` calls every non-`/api` path
+/// Public, so this is really a check that serving the console from disk did
+/// not accidentally move it behind the guard.
+#[tokio::test]
+async fn the_console_is_reachable_without_a_token_in_public_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dist = tmp.path().join("dist");
+    std::fs::create_dir_all(dist.join("assets")).unwrap();
+    std::fs::write(dist.join("index.html"), "<!doctype html><h1>console</h1>").unwrap();
+    std::fs::write(dist.join("assets/index-abc123.js"), "export const x = 1;").unwrap();
+
+    let mut tf = TokenFile::default();
+    tf.ensure_owner().unwrap();
+    let tokens_path = tmp.path().join("tokens.json");
+    save_tokens(&tokens_path, &tf).unwrap();
+    let ctx = AuthCtx::load(&tokens_path).unwrap();
+
+    let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
+    let config = cryochamber::hub::config::HubConfig {
+        console_dir: Some(dist.clone()),
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+    let router = cryochamber::hub::build_router_public_with_config(app, ctx, config);
+
+    // Entry point, a client-side route, and a build asset — the three requests
+    // a cold browser makes before it can present any credential at all.
+    for (uri, needle) in [
+        ("/", "<h1>console</h1>"),
+        ("/c/anything", "<h1>console</h1>"),
+        ("/assets/index-abc123.js", "export const x = 1;"),
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("host", "127.0.0.1")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "{uri} must be served without an Authorization header"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains(needle), "{uri} body was {body}");
+    }
+
+    // The API is still guarded — serving static files must not have widened
+    // the Public class beyond the pages themselves.
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/chambers")
+        .header("host", "127.0.0.1")
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "the API must still require a token when the console is served"
+    );
+}
