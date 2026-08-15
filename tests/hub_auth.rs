@@ -858,11 +858,16 @@ async fn the_console_is_reachable_without_a_token_in_public_mode() {
     };
     let router = cryochamber::hub::build_router_public_with_config(app, ctx, config);
 
-    // Entry point, a client-side route, and a build asset — the three requests
-    // a cold browser makes before it can present any credential at all.
+    // Entry point, a client-side route, and a build asset — the requests a
+    // cold browser makes before it can present any credential at all. The
+    // control panel (`/admin`, and `/c/{id}` where its chamber navigation
+    // lands) is Public too: it collects the token in-page, so the HTML must
+    // arrive without one while every /api call stays guarded.
     for (uri, needle) in [
         ("/", "<h1>console</h1>"),
-        ("/c/anything", "<h1>console</h1>"),
+        ("/settings", "<h1>console</h1>"),
+        ("/admin", "<title>Cryohub</title>"),
+        ("/c/anything", "<title>Cryohub</title>"),
         ("/assets/index-abc123.js", "export const x = 1;"),
     ] {
         let req = Request::builder()

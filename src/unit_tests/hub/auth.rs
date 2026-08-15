@@ -84,7 +84,8 @@ fn router_with_scope(
     let ctx = AuthCtx::load(&path).unwrap();
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
-    let router = crate::hub::build_router_with_state(app.clone());
+    let router =
+        crate::hub::build_router_with_config(app.clone(), crate::hub::config::HubConfig::default());
     (apply_auth(router, app, ctx), owner, invite.token)
 }
 

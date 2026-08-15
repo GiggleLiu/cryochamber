@@ -74,14 +74,37 @@ async fn root_serves_the_console_index() {
 
 #[tokio::test]
 async fn extensionless_paths_fall_back_to_the_spa_entry() {
-    // The console routes `/c/...` and `/user_uploads/...` client-side, so a
-    // deep link (or a reload on one) must land on `index.html`, not a 404.
-    for uri in ["/c/alpha", "/user_uploads/42/report", "/settings"] {
+    // A deep link (or a reload on one) must land on `index.html`, not a 404.
+    // `/c/...` is NOT here: that namespace belongs to the control panel.
+    for uri in ["/settings", "/projects", "/share"] {
         let (_ws, _dist, router) = console_router();
         let (status, _, body) = get(router, uri).await;
         assert_eq!(status, StatusCode::OK, "{uri} should serve the SPA entry");
         assert!(body.contains("<h1>console</h1>"), "{uri} body was {body}");
     }
+}
+
+#[tokio::test]
+async fn admin_serves_the_control_panel_beside_the_console() {
+    // Both UIs from one hub: the console owns `/` (what invite links open),
+    // the bundled control panel answers at `/admin` — and at `/c/{id}`, where
+    // its own chamber navigation pushes URLs and reloads must return to it.
+    for uri in ["/admin", "/c/alpha"] {
+        let (_ws, _dist, router) = console_router();
+        let (status, ctype, body) = get(router, uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri} should serve the panel");
+        assert!(ctype.starts_with("text/html"), "{uri} content-type {ctype}");
+        assert!(
+            body.contains("<title>Cryohub</title>"),
+            "{uri} body: {body}"
+        );
+    }
+    // The panel's fixed asset names shadow the fallback for those paths only —
+    // a Vite build never emits them (hashed bundles, icons under `/icons/`).
+    let (_ws, _dist, router) = console_router();
+    let (status, ctype, _) = get(router, "/assets/web.css").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(ctype.starts_with("text/css"), "content-type was {ctype}");
 }
 
 #[tokio::test]

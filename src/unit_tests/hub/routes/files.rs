@@ -20,7 +20,11 @@ fn setup() -> (tempfile::TempDir, axum::Router, String) {
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
     let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
-    (tmp, crate::hub::build_router_with_state(app), id)
+    (
+        tmp,
+        crate::hub::build_router_with_config(app, crate::hub::config::HubConfig::default()),
+        id,
+    )
 }
 
 /// The repo has no multipart client helper, so build the wire format by hand.

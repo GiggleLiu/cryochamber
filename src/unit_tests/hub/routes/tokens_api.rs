@@ -32,7 +32,7 @@ fn public_router(tmp: &tempfile::TempDir) -> (axum::Router, String, String, Path
 fn open_router(tmp: &tempfile::TempDir) -> axum::Router {
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
-    crate::hub::build_router_with_state(app)
+    crate::hub::build_router_with_config(app, crate::hub::config::HubConfig::default())
 }
 
 async fn send(
