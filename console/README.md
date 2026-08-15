@@ -32,6 +32,16 @@ its own origin. No backend of its own, no database, no telemetry.
   on a phone.
 - **Composer** — auto-growing field, `@`-mention autocomplete, file upload, and
   Enter-to-send when a hardware keyboard is attached.
+- **Owner controls** — for the hub owner only, a **⋯** button in any
+  conversation opens that chamber's controls: launch, stop, restart, archive or
+  reset it, and read its todos, `plan.md`, `NOTES.md`, message-sync backends,
+  `cryo.toml` and a live `cryo.log` tail. Everything the bundled control panel
+  does, from the phone. Guests never see any of it.
+- **Sharing per chamber** — an **Invite** button in the conversation header
+  mints a link scoped to *that* chamber and copies it in one gesture, and lists
+  everyone who currently holds one so access can be removed again.
+- **New chambers** — the `+` on the projects list creates one, optionally with
+  a provider and API key, and drops you straight into its conversation.
 - **Attachments** — images and file links are fetched with your token, so
   chamber files display and download without a public URL.
 - **Offline-tolerant** — an event loop with backoff and a reconnect notice that
@@ -40,7 +50,7 @@ its own origin. No backend of its own, no database, no telemetry.
 - **Drafts and dark mode** — a half-written message survives leaving the project
   or reloading, per project; the theme follows the system or your choice.
 - **No accounts** — one owner token, and a friend gets in through an invite
-  link scoped to the projects you tick.
+  link scoped to the one project you minted it from.
 
 There are **no push notifications** by design: the app only syncs while it is
 open. It is a console you check, not a pager.
@@ -81,8 +91,8 @@ The app talks to a **Chamber Hub** (`cryohub`): your own machine's agent
 chambers, served straight to a phone.
 
 The thing that matters: a hub has **no accounts**. There is one owner token, and
-everyone else gets an **invite link** scoped to the projects you tick. Opening
-the link *is* signing in.
+everyone else gets an **invite link** scoped to the project it was minted from.
+Opening the link *is* signing in.
 
 ### Set it up
 
@@ -110,16 +120,25 @@ login screen drops the server picker.
 ### Invite someone
 
 1. Sign in on the hub server and paste the owner token into **Access token**.
-2. *Settings → Share access* (owners only) → name the person, tick the projects
-   they should see, **Create invite link**.
-3. Send them the link. It is shown **once** — the hub stores only a hash, so it
-   cannot be retrieved later. Lost link, new invite.
-4. They open it on their phone, land straight in their projects, and can **Add
+2. Open the project you want to share and tap **Invite** in its header.
+3. Optionally name the person ("Who is this for?"; blank becomes `guest-1`,
+   `guest-2`, …), then **Copy invite link**. The link is minted, scoped to that
+   one chamber, and copied to your clipboard in a single step.
+4. Send it to them. It is shown **once** — the hub stores only a hash, so it
+   cannot be retrieved later. Lost link, new link.
+5. They open it on their phone, land straight in that project, and can **Add
    to Home Screen** like any other install.
 
-Revoke from the same screen. A revoked link stops working immediately: the next
-thing that person's app does gets a 401 and drops them at the login screen with
+**People with access** on the same sheet lists every active link that reaches
+this chamber, with an "also: …" note when a link spans more than one. **Remove**
+revokes it after a confirm; the link stops working immediately — the next thing
+that person's app does gets a 401 and drops them at the login screen with
 *"This invite link is no longer valid."*
+
+An invite holder sees chat and nothing else: no Invite button, no chamber
+controls, no `+`, no owner rows in Settings. That is a UI decision on top of the
+real one — the hub classifies every owner route default-deny, so a guest calling
+one directly gets a 403 regardless of what the app draws.
 
 The token never appears in a URL the app requests — it rides in an
 `Authorization: Bearer` header, and the `#invite=` fragment is stripped from the
@@ -139,6 +158,11 @@ a hardware keyboard is present.
 The access token, the name the hub knows you by, and a small cache of recent
 messages, all in `localStorage`. Logging out clears them.
 
+**Where did the Share screen in Settings go?**
+Sharing is per project now, so it lives in the project: open the conversation
+and tap **Invite**. A link that spans several chambers (minted on the CLI) still
+works and shows up in each of their People lists.
+
 **Is message content from the server trusted?**
 No. Markdown is rendered client-side and then sanitized before it reaches the
 DOM: an allowlist of tags and attributes, inline styles filtered down to the
@@ -148,15 +172,16 @@ from SVG paint attributes. See `src/components/sanitize.ts`.
 ## Project layout
 
 ```
-src/api/          Chamber Hub client, SSE reader, errors, types
-src/store/        app state (Zustand), credential storage, local message cache
-src/hooks/        the event loop (register + one SSE stream, with backoff)
-src/components/   MessageBody + sanitizer, Composer, icon set
-src/views/        Login, Projects, Conversation, Settings, Share
-src/lib/          markdown+KaTeX renderer, theme, outbox, date/preview/colour helpers
-src/styles.css    the design system (tokens first, then components, then dark)
-e2e/              Playwright: smoke + layout contract, hub flows, screenshot harness
-scripts/          icon generation from public/icons/icon.svg
+src/api/             Chamber Hub client, SSE reader, errors, types
+src/store/           app state (Zustand), credential storage, local message cache
+src/hooks/           the event loop (register + one SSE stream, with backoff)
+src/components/      MessageBody + sanitizer, Composer, icon set
+src/views/           Login, Projects, Conversation, Settings, Invite, Controls, New chamber
+src/views/controls/  the Controls sheet's tabs: todos, plan/notes, sync, settings, log
+src/lib/             markdown+KaTeX renderer, theme, outbox, date/preview/colour helpers
+src/styles.css       the design system (tokens first, then components, then dark)
+e2e/                 Playwright: smoke + layout contract, hub flows, screenshot harness
+scripts/             icon generation from public/icons/icon.svg
 ```
 
 ## Regenerating the app icon

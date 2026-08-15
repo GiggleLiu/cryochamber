@@ -40,6 +40,10 @@ interface HubMock {
   created: unknown[]
   /** How many times the chamber index was fetched (i.e. registers). */
   registers: number
+  /** Lifecycle actions taken, as `<chamber>/<action>`. */
+  actions: string[]
+  /** Invite names revoked, in order. */
+  revoked: string[]
 }
 
 interface HubOptions {
@@ -50,10 +54,19 @@ interface HubOptions {
   /** After the first SSE stream ends, answer the next one with 401 — the token
    *  being revoked while the session is live. */
   revokeAfterFirstStream?: boolean
+  /** Whether cham-a is already running when its status is first read. */
+  running?: boolean
+  /** Seed for the People-with-access list `GET /api/tokens` answers with. */
+  invites?: Array<{
+    name: string
+    chambers: string[]
+    created_at: string
+    revoked_at: string | null
+  }>
 }
 
 async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
-  const mock: HubMock = { sent: [], created: [], registers: 0 }
+  const mock: HubMock = { sent: [], created: [], registers: 0, actions: [], revoked: [] }
 
   await page.route('**/servers.json', (r) => r.fulfill({ json: HUB_SERVERS }))
 
@@ -92,7 +105,43 @@ async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
       mock.created.push(JSON.parse(r.request().postData() ?? 'null'))
       return r.fulfill({ json: { ok: true, token: 'ff'.repeat(16) } })
     }
-    return r.fulfill({ json: { invites: [] } })
+    return r.fulfill({ json: { invites: opts.invites ?? [] } })
+  })
+
+  // The chamber the owner acts on. `running` flips once `start` is posted, so
+  // the pill genuinely follows the server rather than the click.
+  let running = opts.running ?? false
+  await page.route('**/api/chambers/cham-a/status', (r) =>
+    r.fulfill({
+      json: {
+        running,
+        agent_running: running,
+        session: 7,
+        agent: 'opencode',
+        log_tail: 'session 7 started',
+        daily_digests: [{ date: '2026-08-15', total_sessions: 2, failed_sessions: 0, latest_session: 7 }],
+        next_wake: running ? 'in 2 h' : null,
+        notes_html: '<p>agent notes</p>',
+        plan_html: '<p>the plan</p>',
+        has_config: true,
+        settings_rows: [{ key: 'agent', value: '"opencode"', kind: 'scalar' }],
+        task: null,
+        session_summary: null,
+        completed: false,
+        completion_summary: null,
+      },
+    }),
+  )
+  await page.route('**/api/chambers/cham-a/todos', (r) => r.fulfill({ json: [] }))
+  await page.route('**/api/chambers/cham-a/sync', (r) => r.fulfill({ json: [] }))
+  await page.route('**/api/chambers/cham-a/start', (r) => {
+    mock.actions.push('cham-a/start')
+    running = true
+    return r.fulfill({ json: { ok: true, message: 'Started' } })
+  })
+  await page.route('**/api/tokens/*/revoke', (r) => {
+    mock.revoked.push(decodeURIComponent(r.request().url().split('/api/tokens/')[1].split('/')[0]))
+    return r.fulfill({ json: { ok: true } })
   })
 
   let streams = 0
@@ -208,38 +257,98 @@ test('a malformed invite fragment is stripped and explained', async ({ page }) =
   await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
 })
 
-test('an owner mints a chamber-scoped invite from that chamber\'s header', async ({ page }) => {
+test('an owner mints a chamber-scoped invite link from the conversation header', async ({
+  page,
+}) => {
   const hub = await mockHub(page, { role: 'owner' })
   await page.goto(`/#invite=${OWNER_TOKEN}`)
 
+  // The owner sees the whole index; the invite below is scoped to one chamber.
   await expect(page.locator('.stream-list li')).toHaveCount(2)
-
-  // Sharing lives where the thing being shared is: the conversation itself.
   await page.getByRole('button', { name: /autoresearch/ }).click()
   await page.getByRole('button', { name: 'Invite' }).click()
 
-  await expect(page.getByRole('dialog', { name: 'Invite' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Invite to autoresearch' })).toBeVisible()
-
-  await page.getByLabel('Who is this for?').fill('Bob')
   await page.getByRole('button', { name: 'Copy invite link' }).click()
 
   await expect(page.getByLabel('Invite link')).toHaveValue(
     `${new URL(page.url()).origin}/#invite=${'ff'.repeat(16)}`,
   )
-  // Scoped to exactly the chamber whose header minted it, never the whole index.
-  expect(hub.created).toEqual([{ name: 'Bob', chambers: ['cham-a'] }])
+  // Named by default and scoped to exactly this chamber — never the index.
+  expect(hub.created).toEqual([{ name: 'guest-1', chambers: ['cham-a'] }])
+  // A token is a credential: it may not appear in the address bar either.
+  expect(page.url()).not.toContain('ff'.repeat(16))
 })
 
-test('an invited user has no Invite button in the header the owner mints from', async ({
+test('an owner launches a chamber from Controls and sees it working', async ({ page }) => {
+  const hub = await mockHub(page, { role: 'owner' })
+  await page.goto(`/#invite=${OWNER_TOKEN}`)
+  await page.getByRole('button', { name: /autoresearch/ }).click()
+  await page.getByRole('button', { name: 'Chamber controls' }).click()
+
+  await expect(page.getByText('Stopped')).toBeVisible()
+  await page.getByRole('button', { name: 'Launch' }).click()
+
+  await expect.poll(() => hub.actions).toEqual(['cham-a/start'])
+  // The pill moves because the refetched status says so, not because we clicked.
+  await expect(page.getByText('Working')).toBeVisible()
+  await expect(page.getByText('Session #7')).toBeVisible()
+
+  // The tabs read the same status payload.
+  await page.getByRole('tab', { name: 'Plan' }).click()
+  await expect(page.getByText('the plan')).toBeVisible()
+  await page.getByRole('tab', { name: 'Log' }).click()
+  await expect(page.getByRole('log')).toContainText('session 7 started')
+})
+
+test('an owner sees the owner-only affordances on the projects list and in Settings', async ({
   page,
 }) => {
+  await mockHub(page, { role: 'owner' })
+  await page.goto(`/#invite=${OWNER_TOKEN}`)
+
+  // Deliberately the same three locators the guest test below asserts are
+  // absent: a negative only means "hidden from guests" if the identical query
+  // finds the control for an owner.
+  await expect(page.getByRole('button', { name: 'New chamber' })).toBeVisible()
+  await page.getByRole('button', { name: /settings/i }).click()
+  await expect(page.getByRole('checkbox', { name: 'Show completed & archived' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Refresh chambers' })).toBeVisible()
+})
+
+test('an invited user sees no owner controls anywhere', async ({ page }) => {
   await mockHub(page, { role: 'invite' })
   await page.goto(`/#invite=${TOKEN}`)
-  await page.getByRole('button', { name: /autoresearch/ }).click()
 
-  // The header rendered — this is the same conversation header that carries the
-  // owner's Invite button in the test above, so its absence here is the point.
-  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+  // Projects list: no way to create a chamber.
+  await expect(page.getByRole('button', { name: 'New chamber' })).toHaveCount(0)
+  await page.getByRole('button', { name: /settings/i }).click()
+  await expect(page.getByRole('button', { name: /log out/i })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Show completed & archived' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Refresh chambers' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Close' }).click()
+
+  // Conversation header: chat only.
+  await page.getByRole('button', { name: /autoresearch/ }).click()
   await expect(page.getByRole('button', { name: 'Invite' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Chamber controls' })).toHaveCount(0)
+})
+
+test('removing someone from People with access revokes their link', async ({ page }) => {
+  const hub = await mockHub(page, {
+    role: 'owner',
+    invites: [
+      { name: 'Mei', chambers: ['cham-a'], created_at: '2026-08-15T09:00:00Z', revoked_at: null },
+    ],
+  })
+  await page.goto(`/#invite=${OWNER_TOKEN}`)
+  await page.getByRole('button', { name: /autoresearch/ }).click()
+  await page.getByRole('button', { name: 'Invite' }).click()
+
+  await expect(page.getByText('Mei')).toBeVisible()
+  await page.getByRole('button', { name: 'Remove', exact: true }).click()
+  // Destructive and immediate, so it asks first.
+  await expect(page.getByText('Remove Mei? Their link stops working immediately.')).toBeVisible()
+  await page.getByRole('button', { name: 'Remove Mei' }).click()
+  await expect.poll(() => hub.revoked).toEqual(['Mei'])
 })
