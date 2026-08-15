@@ -363,6 +363,11 @@ describe('owner chamber routes', () => {
       mockFetch(() => new Response(JSON.stringify({ error: 'chamber already exists' }), { status: 400 })),
     )
     await expect(bad.createChamber({ name: 'alpha' })).rejects.toThrow('chamber already exists')
+
+    // 201 with an empty id is a real server path (index refresh missed the
+    // new chamber); it must not read as success.
+    const blank = new HubClient(creds, mockFetch(() => new Response(JSON.stringify({ id: '' }), { status: 201 })))
+    await expect(blank.createChamber({ name: 'alpha' })).rejects.toThrow(/did not report its id/)
   })
 
   test('refreshIndex POSTs the refresh route', async () => {

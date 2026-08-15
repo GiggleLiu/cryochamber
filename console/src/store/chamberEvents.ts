@@ -40,8 +40,9 @@ export function emitChamberEvent(event: ChamberEvent): void {
   for (const listener of Array.from(set)) {
     try {
       listener(event)
-    } catch {
-      /* a broken subscriber is its own problem */
+    } catch (e) {
+      // A broken subscriber must not silence the others — but not silently.
+      console.warn('chamber event listener threw', e)
     }
   }
 }

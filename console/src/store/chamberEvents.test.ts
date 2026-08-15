@@ -27,14 +27,20 @@ test('two sheets on one chamber both hear it, and unsubscribing only removes one
   expect(second).toHaveBeenCalledTimes(2)
 })
 
-test('a throwing listener does not stop the others', () => {
-  const after = vi.fn()
-  subscribeChamberEvents('cham-a', () => {
-    throw new Error('render blew up')
-  })
-  subscribeChamberEvents('cham-a', after)
-  expect(() => emitChamberEvent({ type: 'status', chamberId: 'cham-a' })).not.toThrow()
-  expect(after).toHaveBeenCalledTimes(1)
+test('a throwing listener does not stop the others, and is not silent', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    const after = vi.fn()
+    subscribeChamberEvents('cham-a', () => {
+      throw new Error('render blew up')
+    })
+    subscribeChamberEvents('cham-a', after)
+    expect(() => emitChamberEvent({ type: 'status', chamberId: 'cham-a' })).not.toThrow()
+    expect(after).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledTimes(1)
+  } finally {
+    warn.mockRestore()
+  }
 })
 
 test('emitting with no subscribers is a no-op', () => {

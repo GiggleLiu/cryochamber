@@ -463,7 +463,13 @@ export class HubClient {
     if (!res.ok) {
       throw new ApiError(body.error ?? `HTTP ${res.status}`, res.status)
     }
-    return { id: String(body.id ?? '') }
+    // The hub answers 201 with an empty id when the new chamber is missing
+    // from its refreshed index (`post_new` falls back to default). Reporting
+    // that as success would hand the caller a chamber it cannot open.
+    if (typeof body.id !== 'string' || body.id === '') {
+      throw new ApiError('Chamber was created but the hub did not report its id', res.status)
+    }
+    return { id: body.id }
   }
 
   /** Re-scan the workspace. The hub also emits an `index` SSE event, which is
