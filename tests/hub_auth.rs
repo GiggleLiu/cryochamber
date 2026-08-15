@@ -177,6 +177,42 @@ impl Matrix {
         resp.into_body().into_data_stream()
     }
 
+    /// `POST /api/chambers/{id}/uploads` with one multipart `file` field.
+    async fn upload(
+        &self,
+        who: As,
+        chamber: &str,
+        filename: &str,
+        bytes: &[u8],
+    ) -> (StatusCode, String) {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/chambers/{chamber}/uploads"))
+            .header("host", "127.0.0.1")
+            .header("x-cryo-csrf", "1")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            );
+        if let Some(t) = self.token(who) {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        let resp = self
+            .router
+            .clone()
+            .oneshot(
+                req.body(Body::from(multipart_body(filename, bytes)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     fn inbox(&self, name: &str) -> Vec<cryochamber::message::Message> {
         let dir = self.workspace.join(name).canonicalize().unwrap();
         cryochamber::message::read_inbox(&dir)
@@ -185,6 +221,29 @@ impl Matrix {
             .map(|(_, m)| m)
             .collect()
     }
+}
+
+const BOUNDARY: &str = "cryoboundary123";
+
+/// The multipart wire format for a single `file` field — the repo ships no
+/// multipart client, so build it by hand.
+fn multipart_body(filename: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{BOUNDARY}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\ncontent-type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    body
+}
+
+/// The stored name an upload response advertises.
+fn stored_name(body: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["name"].as_str().expect("name in upload response").into()
 }
 
 fn new_message(chamber_id: &str, body: &str) -> SseEvent {
@@ -312,19 +371,32 @@ async fn matrix_chamber_routes() {
         "out-of-scope send must not write to beta"
     );
 
-    // Owner may write to either, and keeps control of the `from` field.
+    // Owner may write to either — but in public mode the sender is the
+    // server-configured owner name, not whatever the body claims. Comparing
+    // against the loaded config rather than a literal keeps this honest on a
+    // machine whose `owner_name` is customized.
     let (status, _) = m
         .call(
             As::Owner,
             "POST",
             &beta_send,
-            Some(r#"{"body":"owner note"}"#),
+            Some(r#"{"body":"owner note","from":"Mallory"}"#),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "owner POST {beta_send}");
     let beta_inbox = m.inbox("beta");
     assert_eq!(beta_inbox.len(), 1);
-    assert_eq!(beta_inbox[0].from, "human", "owner defaults to `human`");
+    assert_ne!(
+        beta_inbox[0].from, "Mallory",
+        "the owner's client-supplied `from` must be ignored in public mode"
+    );
+    assert_eq!(
+        beta_inbox[0].from,
+        cryochamber::hub::config::load_config()
+            .unwrap_or_default()
+            .owner_name,
+        "the owner sends as the configured owner_name (default `human`)"
+    );
 
     assert_eq!(
         m.status(As::Anonymous, "POST", &alpha_send).await,
@@ -404,6 +476,95 @@ async fn matrix_list_and_events() {
 }
 
 // ---------------------------------------------------------------------------
+// Row group 2b: attachments (upload + download)
+// ---------------------------------------------------------------------------
+
+/// Attachments are chamber-scoped like messages, and they carry file *content*
+/// — the one surface where a scope leak hands over bytes rather than metadata.
+/// Both verbs go through the production router here, not the open one.
+#[tokio::test]
+async fn matrix_attachment_routes() {
+    let m = setup();
+
+    // --- owner: the positive control for every negative below -------------
+    let (status, body) = m
+        .upload(As::Owner, &m.alpha, "owner.txt", b"owner-in-alpha")
+        .await;
+    assert_eq!(status, StatusCode::OK, "owner upload to alpha: {body}");
+    let alpha_file = stored_name(&body);
+
+    let (status, body) = m
+        .upload(As::Owner, &m.beta, "secret.txt", b"BETA-SECRET-BYTES")
+        .await;
+    assert_eq!(status, StatusCode::OK, "owner upload to beta: {body}");
+    let beta_file = stored_name(&body);
+
+    let alpha_url = format!("/api/chambers/{}/files/{alpha_file}", m.alpha);
+    let beta_url = format!("/api/chambers/{}/files/{beta_file}", m.beta);
+
+    let (status, body) = m.call(As::Owner, "GET", &beta_url, None).await;
+    assert_eq!(status, StatusCode::OK, "owner GET {beta_url}");
+    assert_eq!(
+        body, "BETA-SECRET-BYTES",
+        "the file really exists, so the invite's 404 below is a scope decision"
+    );
+
+    // --- in-scope invite: may upload to and download from alpha -----------
+    let (status, body) = m
+        .upload(As::Invite, &m.alpha, "guest.txt", b"guest-bytes")
+        .await;
+    assert_eq!(status, StatusCode::OK, "in-scope invite upload: {body}");
+    let guest_file = stored_name(&body);
+
+    let (status, body) = m
+        .call(
+            As::Invite,
+            "GET",
+            &format!("/api/chambers/{}/files/{guest_file}", m.alpha),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "invite reads back its own upload");
+    assert_eq!(body, "guest-bytes");
+
+    let (status, _) = m.call(As::Invite, "GET", &alpha_url, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an in-scope invite shares the chamber's attachments with the owner"
+    );
+
+    // --- out-of-scope invite: 404 on both verbs, and nothing is written ---
+    let (status, _) = m
+        .upload(As::Invite, &m.beta, "sneak.txt", b"SHOULD-NOT-LAND")
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "out-of-scope upload must be 404, never 403"
+    );
+    let (status, body) = m.call(As::Invite, "GET", &beta_url, None).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "out-of-scope download must be 404"
+    );
+    assert!(
+        !body.contains("BETA-SECRET-BYTES"),
+        "beta's file content leaked: {body}"
+    );
+
+    // --- anonymous: 401 on both -------------------------------------------
+    let (status, _) = m.upload(As::Anonymous, &m.alpha, "anon.txt", b"anon").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "anonymous upload");
+    assert_eq!(
+        m.status(As::Anonymous, "GET", &alpha_url).await,
+        StatusCode::UNAUTHORIZED,
+        "anonymous GET {alpha_url}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Row group 3: owner-only routes (default-deny)
 // ---------------------------------------------------------------------------
 
@@ -412,6 +573,11 @@ async fn matrix_list_and_events() {
 /// alpha is the chamber the invite *is* scoped to, so a 403 here is about the
 /// role, never about the scope.
 const OWNER_ONLY: &[(&str, &str)] = &[
+    // Sync actions drive a background daemon for the whole chamber; an invite
+    // has no business starting or stopping one. The guard runs outside the
+    // router, so a non-owner is rejected before `post_sync_action` can act —
+    // which is why listing it here triggers no side effect.
+    ("POST", "/api/chambers/{id}/sync/zulip/pull"),
     ("POST", "/api/chambers/{id}/start"),
     ("POST", "/api/chambers/{id}/stop"),
     ("POST", "/api/chambers/{id}/restart"),
