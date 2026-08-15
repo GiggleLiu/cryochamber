@@ -128,6 +128,28 @@ test('guest-N skips names already taken in this chamber', () => {
   ).toBe('guest-3')
 })
 
+test('guest-N counts every active invite, including ones scoped to another chamber', async () => {
+  // The hub refuses a duplicate name across ALL active invites, not just the
+  // ones this chamber can see, so a name in use elsewhere still costs an N.
+  const hub = makeHub([{ ...BOTH, name: 'guest-1', chambers: ['cham-b'] }, ALICE])
+  useAppStore.setState({ client: hub })
+  const create = vi.spyOn(hub, 'createInvite')
+  renderSheet()
+  const rows = await screen.findAllByRole('listitem')
+  // guest-1 is not one of this chamber's people...
+  expect(rows).toHaveLength(1)
+  await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+  // ...but its name is still taken.
+  expect(create).toHaveBeenCalledWith('guest-2', ['cham-a'])
+})
+
+test('copy waits for the list rather than guessing a name that may be taken', async () => {
+  const hub = useAppStore.getState().client as HubClient
+  vi.spyOn(hub, 'listInvites').mockReturnValue(new Promise<Invite[]>(() => {}))
+  renderSheet()
+  expect(screen.getByRole('button', { name: 'Copy invite link' })).toBeDisabled()
+})
+
 test('a clipboard that refuses says so and keeps the link selectable', async () => {
   writeText.mockRejectedValue(new Error('denied'))
   renderSheet()
@@ -177,6 +199,73 @@ describe('errors', () => {
     renderSheet()
     await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
     expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+    // Signed out is the whole answer: no inline complaint underneath it.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(/Could not load who has access/)).toBeNull()
+  })
+
+  test('a failed list load says so instead of loading for ever', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    vi.spyOn(hub, 'listInvites').mockRejectedValue(new ApiError('HTTP 500', 500))
+    renderSheet()
+    expect(
+      await screen.findByText('Could not load who has access. Check your connection and try again.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Loading…')).toBeNull()
+    // Not knowing who is on the list is no reason to refuse a new one.
+    expect(screen.getByRole('button', { name: 'Copy invite link' })).toBeEnabled()
+  })
+
+  test('a failed remove says so and leaves the person on the list', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    vi.spyOn(hub, 'revokeInvite').mockRejectedValue(new ApiError('HTTP 500', 500))
+    renderSheet()
+    const rows = await screen.findAllByRole('listitem')
+    const alice = rows.find((r) => r.textContent?.includes('Alice'))!
+    await userEvent.click(within(alice).getByRole('button', { name: 'Remove' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Alice' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not remove Alice. Check your connection and try again.',
+    )
+    expect(screen.getByText('Alice')).toBeInTheDocument()
+  })
+
+  test('a name the hub already has is reported as that, not as a network problem', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    // The hub answers a duplicate with a bare 400 — no words of its own.
+    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError('HTTP 400', 400))
+    renderSheet()
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'That label is already in use — pick another.',
+    )
+  })
+
+  test('a silent 4xx that is not a 400 is not blamed on the label', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    // Owner rights lost mid-session: the hub answers 403, with no words.
+    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError('HTTP 403', 403))
+    renderSheet()
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The hub refused to create this invite link.',
+    )
+  })
+
+  test('a 4xx the hub explains is quoted in the hub\'s own words', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    vi.spyOn(hub, 'createInvite').mockRejectedValue(
+      new ApiError("an active invite named 'Bob' already exists", 400),
+    )
+    renderSheet()
+    await screen.findAllByRole('listitem')
+    await userEvent.type(screen.getByLabelText('Who is this for?'), 'Bob')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "an active invite named 'Bob' already exists",
+    )
   })
 
   test('a failed mint stays in the sheet and re-enables the button', async () => {

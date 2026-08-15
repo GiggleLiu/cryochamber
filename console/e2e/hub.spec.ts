@@ -208,32 +208,38 @@ test('a malformed invite fragment is stripped and explained', async ({ page }) =
   await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
 })
 
-test('an owner sees every chamber and can mint an invite link; an invited user cannot', async ({
-  page,
-}) => {
+test('an owner mints a chamber-scoped invite from that chamber\'s header', async ({ page }) => {
   const hub = await mockHub(page, { role: 'owner' })
   await page.goto(`/#invite=${OWNER_TOKEN}`)
 
   await expect(page.locator('.stream-list li')).toHaveCount(2)
 
-  await page.getByRole('button', { name: /settings/i }).click()
-  await page.getByRole('button', { name: /share access/i }).click()
+  // Sharing lives where the thing being shared is: the conversation itself.
+  await page.getByRole('button', { name: /autoresearch/ }).click()
+  await page.getByRole('button', { name: 'Invite' }).click()
 
-  await page.getByLabel(/^name$/i).fill('Bob')
-  await page.getByRole('checkbox', { name: 'autoresearch' }).check()
-  await page.getByRole('button', { name: /create invite link/i }).click()
+  await expect(page.getByRole('dialog', { name: 'Invite' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Invite to autoresearch' })).toBeVisible()
 
-  await expect(page.getByLabel(/invite link/i)).toHaveValue(
+  await page.getByLabel('Who is this for?').fill('Bob')
+  await page.getByRole('button', { name: 'Copy invite link' }).click()
+
+  await expect(page.getByLabel('Invite link')).toHaveValue(
     `${new URL(page.url()).origin}/#invite=${'ff'.repeat(16)}`,
   )
-  // Scoped to exactly the chamber that was ticked, never the whole index.
+  // Scoped to exactly the chamber whose header minted it, never the whole index.
   expect(hub.created).toEqual([{ name: 'Bob', chambers: ['cham-a'] }])
 })
 
-test('an invited user never sees the Share screen', async ({ page }) => {
+test('an invited user has no Invite button in the header the owner mints from', async ({
+  page,
+}) => {
   await mockHub(page, { role: 'invite' })
   await page.goto(`/#invite=${TOKEN}`)
-  await page.getByRole('button', { name: /settings/i }).click()
-  await expect(page.getByRole('button', { name: /log out/i })).toBeVisible()
-  await expect(page.getByRole('button', { name: /share access/i })).toHaveCount(0)
+  await page.getByRole('button', { name: /autoresearch/ }).click()
+
+  // The header rendered — this is the same conversation header that carries the
+  // owner's Invite button in the test above, so its absence here is the point.
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Invite' })).toHaveCount(0)
 })

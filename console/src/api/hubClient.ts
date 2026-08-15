@@ -483,12 +483,19 @@ export class HubClient {
     return body.invites as Invite[]
   }
 
+  /** Mints an invite. A rejected name (the hub refuses a duplicate among active
+   * invites) comes back as a 400, sometimes with words of its own and sometimes
+   * bare — same contract as `createChamber`: the hub's text when there is any,
+   * the bare status when there is not, so the caller can tell the two apart. */
   async createInvite(name: string, chambers: string[]): Promise<{ token: string }> {
-    return this.request('/api/tokens', {
+    const res = await this.send('/api/tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, chambers }),
     })
+    const body = (await res.json().catch(() => ({}))) as { token?: string; error?: string }
+    if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, res.status)
+    return { token: body.token ?? '' }
   }
 
   async revokeInvite(name: string): Promise<void> {

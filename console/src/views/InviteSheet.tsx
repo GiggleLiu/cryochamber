@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HubClient, type Invite } from '../api/hubClient'
+import { ApiError } from '../api/errors'
 import { useAppStore } from '../store/appStore'
 import { logoutIfAuthError } from '../lib/authGuard'
 import { relativeTimeLabel } from '../lib/format'
@@ -7,13 +8,33 @@ import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
 
 /** First unused `guest-<N>`, so an unnamed link still gets a name the owner can
- * recognise in the list — and one the hub will accept (it refuses a duplicate
- * among *active* invites, which is exactly the set passed in here). */
+ * recognise in the list — and one the hub will accept. It refuses a duplicate
+ * among *all* active invites, chamber scope notwithstanding, so this must be
+ * fed the whole active list and not the slice this sheet displays. */
 export function defaultInviteLabel(invites: Invite[]): string {
   const taken = new Set(invites.map((i) => i.name))
   let n = 1
   while (taken.has(`guest-${n}`)) n += 1
   return `guest-${n}`
+}
+
+/**
+ * What to say when the mint failed. A 4xx is the hub's considered answer about
+ * this request, so telling the owner to check their connection would send them
+ * to fix something that is not broken. The hub's own words win when it sent
+ * any; its token route answers a bare 400 for exactly one reason — the name is
+ * taken — while a silent 403 (owner rights lost mid-session) is a refusal that
+ * renaming would not cure, so it must not be dressed up as one.
+ */
+function mintErrorMessage(e: unknown): string {
+  if (e instanceof ApiError && e.httpStatus >= 400 && e.httpStatus < 500) {
+    const said = e.message.trim()
+    if (said && said !== `HTTP ${e.httpStatus}`) return said
+    return e.httpStatus === 400
+      ? 'That label is already in use — pick another.'
+      : 'The hub refused to create this invite link.'
+  }
+  return 'Could not create the invite link. Check your connection and try again.'
 }
 
 /**
@@ -35,7 +56,10 @@ export function InviteSheet({
 }) {
   const client = useAppStore((s) => s.client)
   const streams = useAppStore((s) => s.streams)
-  const [invites, setInvites] = useState<Invite[] | null>(null)
+  // Every active invite, not just this chamber's: the name of one scoped
+  // elsewhere is still a name this hub will refuse.
+  const [active, setActive] = useState<Invite[] | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
   const [label, setLabel] = useState('')
   const [link, setLink] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -45,22 +69,31 @@ export function InviteSheet({
   const [error, setError] = useState<string | null>(null)
   const hub = client instanceof HubClient ? client : null
 
-  /** Active invites whose scope covers this chamber. Revoked ones are not
-   * "people with access", so they are not shown at all. */
+  /** Every invite still live. Revoked ones are not "people with access", so
+   * they are not shown at all — and they free their name on the hub too. */
   const refresh = useCallback(() => {
     if (!hub) return
     hub
       .listInvites()
-      .then((all) =>
-        setInvites(all.filter((i) => i.revoked_at === null && i.chambers.includes(chamberId))),
-      )
+      .then((all) => {
+        setActive(all.filter((i) => i.revoked_at === null))
+        setListError(null)
+      })
       .catch((e) => {
         if (logoutIfAuthError(e)) return
-        setError('Could not load who has access. Check your connection and try again.')
+        setListError('Could not load who has access. Check your connection and try again.')
       })
-  }, [hub, chamberId])
+  }, [hub])
 
   useEffect(refresh, [refresh])
+
+  /** The people this sheet is about: active invites whose scope covers this
+   * chamber. */
+  const people = active?.filter((i) => i.chambers.includes(chamberId)) ?? null
+  // Minting before the list arrives would pick a `guest-N` blind, and the hub
+  // would reject the collision. A list that failed to load is different: the
+  // names are simply unknown, and a 400 then says so honestly.
+  const listPending = active === null && listError === null
 
   /** Names of the other chambers an invite also reaches, resolved through the
    * ids the last register() mapped; chambers outside our own scope simply do
@@ -75,13 +108,13 @@ export function InviteSheet({
   }
 
   async function copyLink() {
-    if (!hub || busy) return
+    if (!hub || busy || listPending) return
     setBusy(true)
     setError(null)
     setCopied(false)
     setCopyFailed(false)
     try {
-      const name = label.trim() || defaultInviteLabel(invites ?? [])
+      const name = label.trim() || defaultInviteLabel(active ?? [])
       const { token } = await hub.createInvite(name, [chamberId])
       const minted = `${window.location.origin}/#invite=${token}`
       setLink(minted)
@@ -99,7 +132,7 @@ export function InviteSheet({
       }
     } catch (e) {
       if (logoutIfAuthError(e)) return
-      setError('Could not create the invite link. Check your connection and try again.')
+      setError(mintErrorMessage(e))
     } finally {
       setBusy(false)
     }
@@ -142,7 +175,7 @@ export function InviteSheet({
         </label>
       </div>
       <div className="sheet-action">
-        <button className="btn-primary" onClick={copyLink} disabled={busy}>
+        <button className="btn-primary" onClick={copyLink} disabled={busy || listPending}>
           {busy ? 'Creating…' : 'Copy invite link'}
         </button>
       </div>
@@ -171,15 +204,21 @@ export function InviteSheet({
       )}
 
       <p className="group-label">People with access</p>
-      {invites === null || invites.length === 0 ? (
+      {listError ? (
+        // The list failed, so say that here rather than leaving "Loading…" to
+        // spin for ever over a list that is never coming.
+        <div className="group">
+          <p className="row row-muted" role="alert">{listError}</p>
+        </div>
+      ) : people === null || people.length === 0 ? (
         <div className="group">
           <p className="row row-muted">
-            {invites === null ? 'Loading…' : 'Nobody else has access. Copy a link to invite someone.'}
+            {people === null ? 'Loading…' : 'Nobody else has access. Copy a link to invite someone.'}
           </p>
         </div>
       ) : (
         <ul className="group">
-          {invites.map((invite) => {
+          {people.map((invite) => {
             const also = alsoNames(invite)
             return (
               <li key={invite.name}>

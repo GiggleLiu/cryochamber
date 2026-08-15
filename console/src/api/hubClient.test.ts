@@ -232,6 +232,28 @@ test('invite management wrappers hit the token routes', async () => {
   expect(calls).toContain('POST /api/tokens/Cara/revoke')
 })
 
+test('createInvite surfaces the hub\'s own words on a rejected name', async () => {
+  // A duplicate name is a considered answer, not a broken connection, and the
+  // hub sometimes says why — so the caller gets those words verbatim.
+  const explained = new HubClient(
+    creds,
+    mockFetch(
+      () =>
+        new Response(JSON.stringify({ error: "an active invite named 'Bob' already exists" }), {
+          status: 400,
+        }),
+    ),
+  )
+  await expect(explained.createInvite('Bob', ['cham-a'])).rejects.toThrow(
+    "an active invite named 'Bob' already exists",
+  )
+
+  // The hub's token routes actually answer a bare 400: then the status is all
+  // there is to report, and the caller decides how to phrase it.
+  const bare = new HubClient(creds, mockFetch(() => new Response('', { status: 400 })))
+  await expect(bare.createInvite('Bob', ['cham-a'])).rejects.toThrow('HTTP 400')
+})
+
 describe('SSE message mapping', () => {
   const chambers = [{ id: 'cham-a', name: 'alpha' }]
 
