@@ -223,6 +223,30 @@ test('logout stores a reason and setCreds clears it', () => {
   expect(useAppStore.getState().loginReason).toBeNull()
 })
 
+describe('updateStreamStatus', () => {
+  test('merges liveness into the matching projects and touches nothing else', () => {
+    useAppStore.getState().setCreds(creds)
+    useAppStore.getState().applyInitialState(initial)
+    useAppStore.getState().updateStreamStatus([
+      { stream_id: 1, agentRunning: false, nextWake: 'in 2 h' },
+    ])
+    const [alpha, beta] = useAppStore.getState().streams
+    expect(alpha).toEqual({
+      stream_id: 1, name: 'alpha', description: 'A', agentRunning: false, nextWake: 'in 2 h',
+    })
+    // Not in the update: left exactly as it was, not reset to "unknown".
+    expect(beta).toEqual({ stream_id: 2, name: 'beta', description: 'B' })
+  })
+
+  test('a status for a project we do not have is ignored', () => {
+    useAppStore.getState().applyInitialState(initial)
+    useAppStore.getState().updateStreamStatus([
+      { stream_id: 99, agentRunning: true, nextWake: null },
+    ])
+    expect(useAppStore.getState().streams.map((s) => s.stream_id)).toEqual([1, 2])
+  })
+})
+
 describe('pruneStream', () => {
   test('removes the project everywhere and leaves its open conversation', () => {
     useAppStore.getState().setCreds(creds)

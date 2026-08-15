@@ -104,6 +104,13 @@ interface ChamberMessage {
   is_question: boolean
 }
 
+interface Chamber {
+  id: string
+  name: string
+  agent_running?: boolean
+  next_wake_display?: string | null
+}
+
 export interface Invite {
   name: string
   chambers: string[]
@@ -158,17 +165,41 @@ export class HubClient {
   }
 
   async register(): Promise<InitialState> {
-    const chambers = (await this.request('/api/chambers')) as Array<{ id: string; name: string }>
+    const chambers = await this.chambers()
     this.byName.clear()
     this.byStreamId.clear()
     const subscriptions: StreamSub[] = chambers.map((c) => {
       const sid = numericStreamId(c.id, this.account)
       this.byName.set(c.name, c.id)
       this.byStreamId.set(sid, c.id)
-      return { stream_id: sid, name: c.name, description: '' }
+      return {
+        stream_id: sid,
+        name: c.name,
+        description: '',
+        agentRunning: c.agent_running,
+        nextWake: c.next_wake_display ?? null,
+      }
     })
     // No server-side unread state on the hub: it is tracked client-side.
     return { subscriptions, unread: [] }
+  }
+
+  private async chambers(): Promise<Chamber[]> {
+    return (await this.request('/api/chambers')) as Chamber[]
+  }
+
+  /** Liveness only, for the `status` events the stream fires when a chamber
+   * wakes or falls asleep: the same index, re-read, without disturbing the
+   * projects the store already has. */
+  async chamberStatuses(): Promise<
+    Array<{ stream_id: number; agentRunning: boolean; nextWake: string | null }>
+  > {
+    const chambers = await this.chambers()
+    return chambers.map((c) => ({
+      stream_id: numericStreamId(c.id, this.account),
+      agentRunning: c.agent_running === true,
+      nextWake: c.next_wake_display ?? null,
+    }))
   }
 
   chamberIdFor(streamId: number): string | undefined {

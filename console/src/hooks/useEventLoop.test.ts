@@ -52,6 +52,53 @@ test('registers chambers and applies SSE message events', async () => {
   unmount()
 })
 
+test('a status event refreshes chamber liveness into the store', async () => {
+  let indexReads = 0
+  const fetchMock = vi.fn(async (url: string) => {
+    if (String(url).includes('/api/events')) {
+      return liveStream(['event: status\ndata: {"chamber_id":"cham-a"}\n\n'])
+    }
+    indexReads += 1
+    // Awake at register; asleep by the time the status event lands.
+    return new Response(
+      JSON.stringify([
+        { id: 'cham-a', name: 'alpha', agent_running: indexReads === 1, next_wake_display: 'in 2 h' },
+      ]),
+      { status: 200 },
+    )
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient(creds) })
+  const { unmount } = renderHook(() => useEventLoop())
+  // The banner would otherwise keep claiming the agent is awake until the next
+  // register, which can be minutes away.
+  await waitFor(() => expect(useAppStore.getState().streams[0]?.agentRunning).toBe(false))
+  expect(useAppStore.getState().streams[0]).toMatchObject({ name: 'alpha', nextWake: 'in 2 h' })
+  expect(indexReads).toBeGreaterThan(1)
+  unmount()
+})
+
+test('a failed status refresh is swallowed and leaves the loop running', async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (String(url).includes('/api/events')) {
+      return liveStream(['event: status\ndata: {"chamber_id":"cham-a"}\n\n'])
+    }
+    // Register succeeds once; the status refresh behind it fails.
+    return fetchMock.mock.calls.filter(([u]) => !String(u).includes('/api/events')).length > 1
+      ? new Response('', { status: 500 })
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha', agent_running: true }]), { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient(creds) })
+  const { unmount } = renderHook(() => useEventLoop())
+  await waitFor(() => expect(useAppStore.getState().streams[0]?.agentRunning).toBe(true))
+  // The stale value survives, and the connection is not torn down.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(useAppStore.getState().streams[0].agentRunning).toBe(true)
+  expect(useAppStore.getState().creds).not.toBeNull()
+  unmount()
+})
+
 test('a 401 on register logs the user out', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
   useAppStore.setState({ client: new HubClient(creds) })

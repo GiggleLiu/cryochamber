@@ -327,6 +327,17 @@ export function ConversationView({ streamId }: { streamId: number }) {
       )}
       </div>
 
+      {/* Persistent, and the composer stays enabled: queuing for a sleeping
+          agent is the intended way to use it, so this states where the message
+          goes rather than standing in its way. */}
+      {stream.agentRunning === false && (
+        <p className="asleep-note" role="status">
+          {`Agent is asleep — messages will wait in its inbox${
+            stream.nextWake ? ` · next wake ${stream.nextWake}` : ''
+          }`}
+        </p>
+      )}
+
       <Composer streamName={name} streamId={streamId} />
     </div>
   )

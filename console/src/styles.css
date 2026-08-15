@@ -277,6 +277,23 @@ input, select, textarea { font: inherit; color: inherit; }
   user-select: none;
 }
 
+/* Liveness, parked on the project tile's corner: present only once the hub has
+   said, so a project whose status is unknown carries no dot at all. */
+.status-dot {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  box-sizing: content-box;
+  width: 8px;
+  height: 8px;
+  margin: -2px -2px 0 0;
+  background: var(--line-strong);
+  border: 2px solid var(--surface);
+  border-radius: var(--r-full);
+}
+.status-dot.is-awake { background: var(--brand); }
+
 .stream-name {
   grid-column: 2;
   min-width: 0;
@@ -677,6 +694,20 @@ input, select, textarea { font: inherit; color: inherit; }
 .codehilite .gs { font-weight: bold; }
 .codehilite .gu { color: #800080; font-weight: bold; }
 .codehilite .gt { color: #0044dd; }
+
+/* A standing note above the composer, not a toast: it stays for as long as the
+   agent sleeps, so it reads as part of the chrome rather than as an alert. */
+.asleep-note {
+  flex: none;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  color: var(--ink-3);
+  text-align: center;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+}
 
 /* ==========================================================================
    Composer

@@ -53,6 +53,26 @@ test('skeleton rows stand in for the list until the first register lands', () =>
   expect(screen.queryByText(/no projects/i)).toBeNull()
 })
 
+describe('agent status dots', () => {
+  test('one dot per project the hub reported on, labelled by state', () => {
+    useAppStore.setState({
+      streams: [
+        { stream_id: 1, name: 'alpha', description: 'A', agentRunning: true },
+        { stream_id: 2, name: 'beta', description: 'B', agentRunning: false },
+      ],
+    })
+    const { container } = render(<ProjectsView />)
+    expect(screen.getByLabelText('agent running')).toHaveClass('is-awake')
+    expect(screen.getByLabelText('agent asleep')).not.toHaveClass('is-awake')
+    expect(container.querySelectorAll('.status-dot')).toHaveLength(2)
+  })
+
+  test('a project whose liveness is unknown carries no dot at all', () => {
+    const { container } = render(<ProjectsView />)
+    expect(container.querySelector('.status-dot')).toBeNull()
+  })
+})
+
 test('a cached last message replaces the description as the row preview', () => {
   useAppStore.setState({
     messagesByStream: {

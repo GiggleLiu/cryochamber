@@ -73,6 +73,15 @@ export function useEventLoop(): void {
               (event, payload) => {
                 markHealthy()
                 if (event === 'index') throw new ReregisterSignal()
+                if (event === 'status') {
+                  // Fire and forget: a refresh that fails only leaves the
+                  // liveness banner stale until the next status event.
+                  client
+                    .chamberStatuses()
+                    .then((l) => store.getState().updateStreamStatus(l))
+                    .catch(() => {})
+                  return
+                }
                 if (event !== 'message') return
                 try {
                   const m = JSON.parse(payload) as {

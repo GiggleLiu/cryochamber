@@ -492,6 +492,42 @@ test('a mailbox returns its whole history, so nothing offers to load earlier', a
   expect(screen.queryByRole('button', { name: /load earlier/i })).toBeNull()
 })
 
+describe('the asleep banner', () => {
+  function setStream(extra: Record<string, unknown>) {
+    useAppStore.setState({
+      client: fakeClient(),
+      streams: [{ stream_id: 1, name: 'alpha', description: 'A', ...extra }],
+    })
+  }
+
+  test('a sleeping agent says so above a composer that stays usable', async () => {
+    setStream({ agentRunning: false })
+    render(<ConversationView streamId={1} />)
+    const note = await screen.findByRole('status')
+    expect(note).toHaveTextContent('Agent is asleep — messages will wait in its inbox')
+    expect(note).not.toHaveTextContent('next wake')
+    expect(screen.getByRole('textbox')).toBeEnabled()
+  })
+
+  test('a scheduled wake is named', async () => {
+    setStream({ agentRunning: false, nextWake: 'in 2 h' })
+    render(<ConversationView streamId={1} />)
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Agent is asleep — messages will wait in its inbox · next wake in 2 h',
+    )
+  })
+
+  test.each([
+    ['a running agent', { agentRunning: true }],
+    ['a project whose liveness the hub never reported', {}],
+  ])('%s shows no banner', async (_name, extra) => {
+    setStream(extra)
+    render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+})
+
 describe('outbox bubbles', () => {
   test('a sending item renders a pending self bubble', async () => {
     useAppStore.setState({ client: fakeClient() })

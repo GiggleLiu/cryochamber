@@ -38,6 +38,10 @@ export interface StreamSub {
   stream_id: number
   name: string
   description: string
+  /** Whether the chamber's agent is awake. Absent until the hub says. */
+  agentRunning?: boolean
+  /** Display form of the next scheduled wake, when one is scheduled. */
+  nextWake?: string | null
 }
 
 export interface UnreadStreamEntry {

@@ -118,6 +118,8 @@ export interface AppState {
   setSettingsOpen(open: boolean): void
   setShareOpen(open: boolean): void
   applyInitialState(s: InitialState): void
+  /** Merge fresh liveness into the projects already on screen. */
+  updateStreamStatus(list: Array<{ stream_id: number; agentRunning: boolean; nextWake: string | null }>): void
   setMessages(streamId: number, msgs: Message[]): void
   applyEvents(events: AppEvent[]): void
   clearUnread(streamId: number): void
@@ -246,6 +248,18 @@ export const useAppStore = create<AppState>()((set, get) => {
       loadedStreams: [],
     })
     persist()
+  },
+
+  updateStreamStatus: (list) => {
+    const byId = new Map(list.map((s) => [s.stream_id, s]))
+    set((state) => ({
+      streams: state.streams.map((s) => {
+        const status = byId.get(s.stream_id)
+        return status
+          ? { ...s, agentRunning: status.agentRunning, nextWake: status.nextWake }
+          : s
+      }),
+    }))
   },
 
   setMessages: (streamId, msgs) => {
