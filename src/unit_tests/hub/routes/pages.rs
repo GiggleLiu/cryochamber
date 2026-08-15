@@ -750,3 +750,107 @@ fn shell_supports_chinese_language_toggle() {
         "static translations should be applied on load"
     );
 }
+
+#[test]
+fn shell_renders_message_bodies_as_rich_markdown_with_katex() {
+    assert!(
+        SHELL_HTML.contains("/assets/vendor/katex.min.css")
+            && SHELL_HTML.contains("/assets/vendor/katex.min.js"),
+        "KaTeX (CSS + JS) should load from locally served vendor assets, not a CDN"
+    );
+    assert!(
+        SHELL_HTML.contains("/assets/vendor/marked.min.js")
+            && SHELL_HTML.contains("/assets/vendor/purify.min.js"),
+        "marked + DOMPurify should load from locally served vendor assets, not a CDN"
+    );
+    assert!(
+        !SHELL_HTML.contains("cdn.jsdelivr.net"),
+        "the hub should not depend on a CDN at runtime"
+    );
+    assert!(
+        SHELL_HTML.contains("function renderMessageBody(md)"),
+        "message bodies should have a rich markdown + math renderer"
+    );
+    assert!(
+        SHELL_HTML.contains("window.marked.parse(text, { gfm: true, breaks: true })")
+            && SHELL_HTML.contains("window.DOMPurify.sanitize(html)"),
+        "agent markdown should run through marked and be DOMPurify-sanitized before insertion"
+    );
+    assert!(
+        SHELL_HTML.contains("window.marked.use({ renderer: { html: text => escapeHtml(text) } })"),
+        "raw HTML tokens should be escaped by a renderer override, not a pre-escape that double-escapes code"
+    );
+    assert!(
+        SHELL_HTML.contains("katex.renderToString(raw"),
+        "math delimiters should be rendered by KaTeX before the markdown pass"
+    );
+    assert!(
+        SHELL_HTML.contains("(`{3,}|~{3,})[\\s\\S]*?\\1|(`+)[^`\\n]*?\\2"),
+        "fenced blocks and inline code should be protected so math inside code stays literal"
+    );
+    assert!(
+        SHELL_HTML.contains("!\\[([^\\]]*)\\]\\([^)]*\\)/g"),
+        "image syntax should be dropped (no attachment endpoint) with the alt text kept"
+    );
+    assert!(
+        SHELL_HTML.contains("body.textContent = m.body || ''; // CDN libs unavailable"),
+        "plain-text fallback should remain when the rendering libs are unavailable"
+    );
+    assert!(
+        SHELL_HTML.contains("body.classList.add('rich')"),
+        "rich bodies should carry a marker class so CSS can switch white-space handling"
+    );
+    assert!(
+        WEB_CSS.contains(".msg-body.rich") && WEB_CSS.contains("white-space: normal"),
+        "rich bodies should hand line breaks to markdown elements instead of pre-wrap"
+    );
+    assert!(
+        WEB_CSS.contains(".msg-body.rich .katex-display"),
+        "display math should have overflow handling so long formulas scroll"
+    );
+}
+
+#[test]
+fn shell_pins_vendored_renderer_libs() {
+    // The hub serves these locally (no runtime CDN dependency). Assert the
+    // vendored files carry the versions pinned in templates/vendor/README.md
+    // so a silent vendor bump can't go unnoticed.
+    assert!(
+        KATEX_JS.contains("0.16.11")
+            && KATEX_CSS.contains("0.16.11")
+            && MARKED_JS.contains("v12.0.2"),
+        "vendored renderer libs should match the versions pinned in templates/vendor/README.md"
+    );
+    assert!(
+        PURIFY_JS.contains("DOMPurify 3.1.6"),
+        "DOMPurify should match the version pinned in templates/vendor/README.md"
+    );
+}
+
+#[test]
+fn every_katex_font_referenced_in_css_is_embedded() {
+    // katex.min.css references url(fonts/KaTeX_*.woff2) plus .woff/.ttf
+    // fallbacks the browser never needs (woff2 is listed first and universally
+    // supported). Every woff2 must be embedded so the hub can serve it without
+    // a network. Keeps a KaTeX upgrade honest: a font added to the stylesheet
+    // but not vendored fails this test.
+    let mut checked = 0;
+    for chunk in KATEX_CSS.split("url(fonts/").skip(1) {
+        let file = chunk
+            .split(')')
+            .next()
+            .expect("malformed url() in katex css");
+        if !file.ends_with(".woff2") {
+            continue; // .woff/.ttf fallbacks — never fetched when woff2 works
+        }
+        let bytes = crate::hub::routes::fonts::get(file)
+            .unwrap_or_else(|| panic!("katex.min.css references {file} but it is not embedded"));
+        assert_eq!(
+            &bytes[0..4],
+            b"wOF2",
+            "{file} should be a real woff2 font (wrong file vendored?)"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 20, "expected the full KaTeX woff2 font set");
+}

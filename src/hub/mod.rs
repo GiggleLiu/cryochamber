@@ -44,6 +44,26 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
         .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark))
         .route(
+            "/assets/vendor/katex.min.css",
+            get(crate::hub::routes::pages::get_katex_css),
+        )
+        .route(
+            "/assets/vendor/katex.min.js",
+            get(crate::hub::routes::pages::get_katex_js),
+        )
+        .route(
+            "/assets/vendor/marked.min.js",
+            get(crate::hub::routes::pages::get_marked_js),
+        )
+        .route(
+            "/assets/vendor/purify.min.js",
+            get(crate::hub::routes::pages::get_purify_js),
+        )
+        .route(
+            "/assets/vendor/fonts/{name}",
+            get(crate::hub::routes::pages::get_font),
+        )
+        .route(
             "/api/chambers",
             get(crate::hub::routes::chambers::get_chambers),
         )

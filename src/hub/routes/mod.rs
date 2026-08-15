@@ -3,5 +3,6 @@
 pub mod chamber;
 pub mod chambers;
 pub mod events;
+pub mod fonts;
 pub mod pages;
 pub mod sync;
