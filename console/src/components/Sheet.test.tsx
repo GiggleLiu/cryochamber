@@ -24,3 +24,15 @@ test('the close button calls onClose', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)
 })
+
+test('Escape closes the sheet, and focus starts inside it', async () => {
+  const onClose = vi.fn()
+  render(
+    <Sheet title="Chamber controls" label="Chamber controls" onClose={onClose}>
+      <p>body</p>
+    </Sheet>,
+  )
+  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus()
+  await userEvent.keyboard('{Escape}')
+  expect(onClose).toHaveBeenCalledTimes(1)
+})

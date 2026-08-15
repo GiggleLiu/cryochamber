@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Close } from './Icon'
 
 /**
@@ -19,11 +19,29 @@ export function Sheet({
   onClose: () => void
   children: ReactNode
 }) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  // aria-modal promises modal behaviour: focus lands inside on open, and
+  // Escape dismisses. Without both, the attribute only hides the page from
+  // assistive tech while keyboard users are still stranded behind it.
+  useEffect(() => {
+    closeRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
   return (
     <div className="sheet" role="dialog" aria-label={label} aria-modal="true">
       <header className="topbar">
         <h2>{title}</h2>
-        <button className="icon-btn bar-end" aria-label="Close" onClick={onClose}>
+        <button
+          ref={closeRef}
+          type="button"
+          className="icon-btn bar-end"
+          aria-label="Close"
+          onClick={onClose}
+        >
           <Close />
         </button>
       </header>
