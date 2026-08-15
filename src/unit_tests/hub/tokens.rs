@@ -71,6 +71,33 @@ fn save_load_roundtrip_with_0600() {
 }
 
 #[test]
+#[cfg(unix)]
+fn save_replaces_loose_file_and_stays_0600() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("tokens.json");
+    // Pre-existing file with loose permissions and junk content: replacing it
+    // must yield a 0600 file with valid JSON, not the old permissive mode.
+    std::fs::write(&path, "this is not json").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let mut tf = TokenFile::default();
+    tf.ensure_owner().unwrap();
+    tf.create_invite("Bob", vec!["x".into()]).unwrap();
+    save_tokens(&path, &tf).unwrap();
+
+    let loaded = load_tokens(&path).unwrap();
+    assert_eq!(loaded.owner, tf.owner);
+    assert_eq!(loaded.invites.len(), 1);
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    // The temp file was renamed into place, leaving no strays behind.
+    let leftovers: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().collect();
+    assert_eq!(leftovers.len(), 1);
+}
+
+#[test]
 fn load_missing_file_yields_default() {
     let tmp = tempfile::tempdir().unwrap();
     let tf = load_tokens(&tmp.path().join("nope.json")).unwrap();

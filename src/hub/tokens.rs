@@ -134,12 +134,70 @@ pub fn save_tokens(path: &Path, tokens: &TokenFile) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let raw = serde_json::to_string_pretty(tokens)?;
-    std::fs::write(path, raw)?;
+
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let base = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("tokens.json");
+
+        // Write to a uniquely-named temp file in the same directory, created
+        // 0600 from the start. This avoids (a) the permission window where a
+        // new target exists as 0644 before set_permissions runs, (b) a chmod
+        // failure leaving already-written credentials too permissive, and (c)
+        // truncating/destroying the previous valid store on write failure
+        // (the rename below replaces it atomically).
+        let mut attempt = 0u32;
+        let (tmp_path, mut file) = loop {
+            let tmp_path = parent.join(format!(".{base}.tmp.{}.{attempt}", std::process::id()));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+            {
+                Ok(f) => break (tmp_path, f),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    attempt += 1;
+                    if attempt > 100 {
+                        return Err(e)
+                            .with_context(|| format!("create unique temp file {tmp_path:?}"));
+                    }
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| format!("create temp file {tmp_path:?}"));
+                }
+            }
+        };
+
+        let write_result = (|| -> std::io::Result<()> {
+            file.write_all(raw.as_bytes())?;
+            file.flush()?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        if let Err(e) = write_result {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e).with_context(|| format!("write temp file {tmp_path:?}"));
+        }
+        drop(file);
+
+        std::fs::rename(&tmp_path, path).with_context(|| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("rename {tmp_path:?} -> {path:?}")
+        })?;
     }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, raw)?;
+    }
+
     Ok(())
 }
 
