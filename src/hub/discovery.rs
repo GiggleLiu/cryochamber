@@ -30,6 +30,29 @@ pub fn decode_id(id: &str) -> Option<PathBuf> {
         .map(|s| PathBuf::from(s.into_owned()))
 }
 
+/// Reduce a chamber reference to the one form the index keys on: the
+/// percent-encoded id produced by [`encode_id`].
+///
+/// A chamber may be named in two ways — the encoded index id
+/// (`%2Fhome%2Fme%2Falpha`) or the plain decoded path (`/home/me/alpha`) — and
+/// invite scopes are written by hand on the CLI, so both reach the server.
+/// Every scope comparison runs through this function, so an invite cannot end
+/// up passing the route guard while its chamber is missing from the list and
+/// its SSE stream.
+///
+/// Inputs that are neither (a bare name like `alpha`, used in unit tests) map
+/// to themselves: `encode_id` only escapes characters a plain name lacks.
+pub fn canonical_scope(reference: &str) -> String {
+    if let Some(path) = decode_id(reference) {
+        let re_encoded = encode_id(&path);
+        // Already canonical: decoding then re-encoding is the identity.
+        if re_encoded == reference {
+            return re_encoded;
+        }
+    }
+    encode_id(Path::new(reference))
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SyncBadge {
     pub backend: String,

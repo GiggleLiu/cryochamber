@@ -426,8 +426,11 @@ fn messages_json_includes_outbox_archive() {
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["body"], "archived outbox body");
     assert_eq!(arr[0]["direction"], "outbox");
+    // The id names the top-level mailbox only: archiving must not renumber a
+    // message the client has already seen over SSE.
     let id = arr[0]["id"].as_str().unwrap();
-    assert!(id.starts_with("outbox/archive/"), "id was {id}");
+    assert!(id.starts_with("outbox/"), "id was {id}");
+    assert!(!id.contains("/archive/"), "id was {id}");
 }
 
 #[test]

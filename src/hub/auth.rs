@@ -71,18 +71,20 @@ pub fn classify(method: &Method, path: &str) -> Access {
     }
 }
 
-/// Does this invite scope cover chamber path-param `id`? Ids may arrive
-/// percent-decoded (axum decodes path params), so try the re-encoded form
-/// too — mirrors `AppState::resolve`.
+/// Does this invite scope cover chamber `id`?
 ///
-/// `id` must already be in decoded form; callers reading it straight off the
-/// raw URI go through [`decode_chamber_id`] first.
+/// Both sides are reduced to the canonical (encoded) form first, so it does not
+/// matter whether the caller passes an encoded index id (the chamber list, the
+/// SSE filter, the raw URI segment the guard reads) or a decoded path (what
+/// axum's `Path` extractor hands a handler), nor which form the scope was
+/// written in. `create_invite` canonicalizes scopes on the way in; stored
+/// scopes are canonicalized here too so invites minted before that change keep
+/// working.
 pub fn scope_covers(chambers: &[String], id: &str) -> bool {
-    if chambers.iter().any(|c| c == id) {
-        return true;
-    }
-    let re_encoded = crate::hub::discovery::encode_id(std::path::Path::new(id));
-    chambers.contains(&re_encoded)
+    let wanted = crate::hub::discovery::canonical_scope(&decode_chamber_id(id));
+    chambers
+        .iter()
+        .any(|c| crate::hub::discovery::canonical_scope(c) == wanted)
 }
 
 /// Percent-decode a chamber id captured from the raw request URI, exactly
@@ -124,7 +126,7 @@ async fn guard(ctx: &AuthCtx, mut req: Request, next: Next) -> Response {
         (_, Role::Owner) => true,
         (Access::AnyToken, _) => true,
         (Access::Chamber(id), Role::Invite { chambers, .. }) => {
-            if scope_covers(chambers, &decode_chamber_id(id)) {
+            if scope_covers(chambers, id) {
                 true
             } else {
                 // 404, not 403: invites must not be able to probe chamber ids.

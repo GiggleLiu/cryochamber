@@ -37,6 +37,30 @@ fn resolve_owner_invite_revoked_and_unknown() {
 }
 
 #[test]
+fn create_invite_stores_scopes_in_canonical_encoded_form() {
+    // An operator may paste either the encoded index id or the plain chamber
+    // path into `token create --chambers`. Both must land in the store as the
+    // encoded id, which is what the chamber list and the SSE filter compare.
+    let mut tf = TokenFile::default();
+    let encoded = crate::hub::discovery::encode_id(std::path::Path::new("/srv/chambers/alpha"));
+    let inv = tf
+        .create_invite("Alice", vec!["/srv/chambers/alpha".into()])
+        .unwrap();
+    assert_eq!(inv.chambers, vec![encoded.clone()]);
+
+    let inv = tf.create_invite("Bob", vec![encoded.clone()]).unwrap();
+    assert_eq!(
+        inv.chambers,
+        vec![encoded],
+        "already-canonical input is kept"
+    );
+
+    // A bare name (no path separators) is its own canonical form.
+    let inv = tf.create_invite("Carol", vec!["c1".into()]).unwrap();
+    assert_eq!(inv.chambers, vec!["c1".to_string()]);
+}
+
+#[test]
 fn ensure_owner_is_idempotent() {
     let mut tf = TokenFile::default();
     let a = tf.ensure_owner().unwrap();

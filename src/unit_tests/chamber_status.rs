@@ -330,6 +330,35 @@ fn messages_are_sorted_chronologically_and_tagged_with_sessions() {
 }
 
 #[test]
+fn message_ids_survive_the_daemon_archiving_the_message() {
+    // The SSE `message` event fires when the file lands in `inbox/`, but the
+    // daemon moves it to `inbox/archive/` moments later. If the id changed with
+    // the move, the client would render the same message twice after a refetch.
+    let dir = tempfile::tempdir().unwrap();
+    crate::message::ensure_dirs(dir.path()).unwrap();
+    let path = crate::message::write_message(
+        dir.path(),
+        "inbox",
+        &test_message("operator", "hi", "2026-04-20T13:00:00"),
+    )
+    .unwrap();
+
+    let before = messages(dir.path())[0].id.clone();
+    assert!(before.starts_with("inbox/"), "got {before}");
+
+    let archive = dir.path().join("messages").join("inbox").join("archive");
+    std::fs::create_dir_all(&archive).unwrap();
+    std::fs::rename(&path, archive.join(path.file_name().unwrap())).unwrap();
+
+    let after = messages(dir.path())[0].id.clone();
+    assert_eq!(after, before, "archiving must not change a message's id");
+    assert!(
+        !after.contains("/archive/"),
+        "archive must not appear in the id: {after}"
+    );
+}
+
+#[test]
 fn overview_agent_running_requires_live_daemon() {
     let dir = tempfile::tempdir().unwrap();
     let mut st = test_state(1);

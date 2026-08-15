@@ -39,15 +39,9 @@ struct Matrix {
     beta: String,
 }
 
-/// Two chambers (`alpha`, `beta`), an owner token, and one invite scoped to
-/// `alpha`. The index is populated from a workspace scan rather than
-/// `registry::list()`, so the test is isolated from whatever chambers exist on
-/// the developer's machine (same approach as `tests/hub_multi_chamber.rs`).
-///
-/// Watchers are deliberately *not* wired: the SSE rows drive `app.tx` directly,
-/// and a filesystem watcher racing in with its own events would make those
-/// assertions nondeterministic.
-fn setup() -> Matrix {
+/// As [`setup`], but the invite's scope is written in the given form. `setup`
+/// itself uses the canonical (encoded) id.
+fn setup_with_scope(scope_of: impl Fn(&str) -> String) -> Matrix {
     let tmp = tempfile::tempdir().unwrap();
     for name in ["alpha", "beta"] {
         let d = tmp.path().join(name);
@@ -77,7 +71,7 @@ fn setup() -> Matrix {
     let mut tf = TokenFile::default();
     let owner = tf.ensure_owner().unwrap();
     let invite = tf
-        .create_invite("Alice", vec![alpha.clone()])
+        .create_invite("Alice", vec![scope_of(&alpha)])
         .unwrap()
         .token;
     let tokens_path = tmp.path().join("tokens.json");
@@ -95,6 +89,18 @@ fn setup() -> Matrix {
         alpha,
         beta,
     }
+}
+
+/// Two chambers (`alpha`, `beta`), an owner token, and one invite scoped to
+/// `alpha`. The index is populated from a workspace scan rather than
+/// `registry::list()`, so the test is isolated from whatever chambers exist on
+/// the developer's machine (same approach as `tests/hub_multi_chamber.rs`).
+///
+/// Watchers are deliberately *not* wired: the SSE rows drive `app.tx` directly,
+/// and a filesystem watcher racing in with its own events would make those
+/// assertions nondeterministic.
+fn setup() -> Matrix {
+    setup_with_scope(|alpha| alpha.to_string())
 }
 
 /// Who is making the request.
@@ -536,4 +542,63 @@ async fn matrix_public_surface() {
     let (status, body) = m.call(As::Invite, "GET", "/api/whoami", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Alice"), "{body}");
+}
+
+// ---------------------------------------------------------------------------
+// Row group 5: scope forms
+// ---------------------------------------------------------------------------
+
+/// A scope may be handed to `token create` as the decoded chamber path
+/// (`/home/me/chambers/alpha`) rather than the encoded index id. Before the
+/// canonicalization fix, such an invite passed the route guard (which decoded
+/// the path param) but saw an empty chamber list and received no SSE events,
+/// because those two filters compared the encoded id directly. All three must
+/// now agree.
+#[tokio::test]
+async fn a_decoded_form_scope_is_honored_by_guard_list_and_stream() {
+    let m = setup_with_scope(|alpha| {
+        let decoded = discovery::decode_id(alpha)
+            .expect("chamber ids are percent-encoded paths")
+            .to_string_lossy()
+            .into_owned();
+        assert_ne!(
+            decoded, alpha,
+            "test needs an id that actually gets encoded"
+        );
+        decoded
+    });
+
+    // 1. route guard
+    let uri = format!("/api/chambers/{}/messages", m.alpha);
+    assert_eq!(
+        m.status(As::Invite, "GET", &uri).await,
+        StatusCode::OK,
+        "decoded-form scope must pass the route guard"
+    );
+
+    // 2. chamber list
+    let (status, body) = m.call(As::Invite, "GET", "/api/chambers", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let list: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let list = list.as_array().unwrap();
+    assert_eq!(
+        list.len(),
+        1,
+        "decoded-form scope must still list its chamber: {body}"
+    );
+    assert_eq!(list[0]["id"], m.alpha);
+
+    // 3. SSE stream
+    let mut stream = m.events(As::Invite).await;
+    m.app.tx.send(new_message(&m.beta, "BETA-SECRET")).unwrap();
+    m.app.tx.send(new_message(&m.alpha, "ALPHA-EVENT")).unwrap();
+    let text = drain(&mut stream, 1, 2000).await;
+    assert!(
+        text.contains("ALPHA-EVENT"),
+        "decoded-form scope must still receive its chamber's events: {text}"
+    );
+    assert!(
+        !text.contains("BETA-SECRET"),
+        "out-of-scope chamber leaked: {text}"
+    );
 }

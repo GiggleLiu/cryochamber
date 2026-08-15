@@ -92,6 +92,14 @@ impl TokenFile {
         {
             bail!("an active invite named '{name}' already exists");
         }
+        // Store scopes in the canonical (encoded) form the chamber index keys
+        // on. An operator may type either form on the CLI; normalizing here is
+        // what lets the guard, the chamber list and the SSE filter all compare
+        // the same string.
+        let chambers: Vec<String> = chambers
+            .iter()
+            .map(|c| crate::hub::discovery::canonical_scope(c))
+            .collect();
         let invite = Invite {
             token: generate_token()?,
             name: name.to_string(),
