@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod config;
 pub mod discovery;
 pub mod lifecycle;
@@ -107,6 +108,12 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         .route("/api/events", get(crate::hub::routes::events::get_events))
         .with_state(app);
     crate::hub::security::apply(router, configured_host)
+}
+
+/// Public-mode router: same routes, wrapped in the bearer-token guard.
+pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::AuthCtx>) -> Router {
+    let router = build_router_with_state(app.clone());
+    crate::hub::auth::apply_auth(router, app, ctx)
 }
 
 pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
