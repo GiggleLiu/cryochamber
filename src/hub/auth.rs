@@ -51,7 +51,10 @@ pub enum Access {
 /// invite may use; every other `/api` route is owner-only BY DEFAULT so a
 /// future route added without thinking about auth fails closed.
 pub fn classify(method: &Method, path: &str) -> Access {
-    if !path.starts_with("/api") {
+    // Segment-exact prefix: `/api` and `/api/...` are guarded, but `/apiary`
+    // and `/api-v2` are ordinary public paths (a substring match would guard
+    // — and 401 — every page whose name merely begins with "api").
+    if path != "/api" && !path.starts_with("/api/") {
         return Access::Public;
     }
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
@@ -71,6 +74,9 @@ pub fn classify(method: &Method, path: &str) -> Access {
 /// Does this invite scope cover chamber path-param `id`? Ids may arrive
 /// percent-decoded (axum decodes path params), so try the re-encoded form
 /// too — mirrors `AppState::resolve`.
+///
+/// `id` must already be in decoded form; callers reading it straight off the
+/// raw URI go through [`decode_chamber_id`] first.
 pub fn scope_covers(chambers: &[String], id: &str) -> bool {
     if chambers.iter().any(|c| c == id) {
         return true;
@@ -79,11 +85,24 @@ pub fn scope_covers(chambers: &[String], id: &str) -> bool {
     chambers.iter().any(|c| *c == re_encoded)
 }
 
+/// Percent-decode a chamber id captured from the raw request URI, exactly
+/// once, so it reaches `scope_covers` in the same form axum's `Path`
+/// extractor hands to handlers (and `AppState::resolve`). Re-encoding an
+/// already-encoded id would double-encode it (`%2F` → `%252F`) and never
+/// match a stored scope. Ids with invalid percent escapes are left as-is.
+pub fn decode_chamber_id(id: &str) -> String {
+    urlencoding::decode(id)
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| id.to_string())
+}
+
 pub fn apply_auth(router: Router, _app: Arc<AppState>, ctx: Arc<AuthCtx>) -> Router {
-    router.layer(axum::middleware::from_fn(move |req: Request, next: Next| {
-        let ctx = ctx.clone();
-        async move { guard(&ctx, req, next).await }
-    }))
+    router.layer(axum::middleware::from_fn(
+        move |req: Request, next: Next| {
+            let ctx = ctx.clone();
+            async move { guard(&ctx, req, next).await }
+        },
+    ))
 }
 
 async fn guard(ctx: &AuthCtx, mut req: Request, next: Next) -> Response {
@@ -105,7 +124,7 @@ async fn guard(ctx: &AuthCtx, mut req: Request, next: Next) -> Response {
         (_, Role::Owner) => true,
         (Access::AnyToken, _) => true,
         (Access::Chamber(id), Role::Invite { chambers, .. }) => {
-            if scope_covers(chambers, id) {
+            if scope_covers(chambers, &decode_chamber_id(id)) {
                 true
             } else {
                 // 404, not 403: invites must not be able to probe chamber ids.
