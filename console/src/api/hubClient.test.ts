@@ -84,7 +84,7 @@ describe('chamber liveness', () => {
     // not repaint every project as a stopped chamber.
     const c = new HubClient(creds, mockFetch(() => [{ id: 'cham-a', name: 'alpha' }]))
     const [status] = await c.chamberStatuses()
-    expect(status.stream_id).toBe(numericStreamId('cham-a', ACCOUNT))
+    expect(status.stream_id).toBe((await c.register()).subscriptions[0].stream_id)
     expect(status.running).toBeUndefined()
     expect(status.agentRunning).toBeUndefined()
     expect(status.nextWake).toBeNull()
@@ -151,13 +151,36 @@ test('a second client instance agrees on the number for the same mailbox id', as
   expect((await b.getMessages('alpha')).map((m) => m.id)).toEqual(first)
 })
 
-test('chamber stream ids are namespaced per account', () => {
+test('stream ids are unique across the accounts the app remembers', () => {
+  // The app lists the chambers of every token it remembers in ONE list, so a
+  // number must mean one chamber of one token. Per-token numbering — which
+  // this replaced — gave two different chambers the same id, and with it one
+  // message cache and one draft.
   expect(numericStreamId('cham-a', ACCOUNT)).toBe(1)
-  // A different token's chamber numbering starts over, in its own map — one
-  // global map let two backends share (and clobber) each other's ids.
-  expect(numericStreamId('cham-z', 'hub||Bob')).toBe(1)
-  expect(numericStreamId('cham-b', ACCOUNT)).toBe(2)
+  expect(numericStreamId('cham-z', 'hub||Bob')).toBe(2)
+  // Even the same chamber seen through another token is its own row: which
+  // token can open it is part of what the number identifies.
+  expect(numericStreamId('cham-a', 'hub||Bob')).toBe(3)
+  // …and every one of them is stable on re-ask.
   expect(numericStreamId('cham-a', ACCOUNT)).toBe(1)
+  expect(numericStreamId('cham-z', 'hub||Bob')).toBe(2)
+})
+
+test('an unsent draft follows its chamber to the new numbering', () => {
+  // The pre-merge build numbered per token; a draft keyed by the old number
+  // would otherwise be stranded on a row that no longer exists.
+  localStorage.setItem(
+    'agent-console.hub-ids.hub||Carol',
+    JSON.stringify({ next: 2, byChamber: { 'cham-q': 1 } }),
+  )
+  localStorage.setItem('agent-console.draft.hub||Carol.1', 'half a sentence')
+  // Another token got number 1 first, which is exactly the collision the new
+  // numbering exists to prevent.
+  numericStreamId('cham-other', 'hub||Dave')
+  const id = numericStreamId('cham-q', 'hub||Carol')
+  expect(id).not.toBe(1)
+  expect(localStorage.getItem(`agent-console.draft.hub||Carol.${id}`)).toBe('half a sentence')
+  expect(localStorage.getItem('agent-console.draft.hub||Carol.1')).toBeNull()
 })
 
 test('sendMessage posts body with CSRF header and 401 throws an auth error', async () => {

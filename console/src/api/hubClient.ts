@@ -2,9 +2,18 @@ import { ApiError } from './errors'
 import { accountKey, fnv1a } from '../lib/account'
 import type { Credentials, InitialState, Message, StreamSub, User } from './types'
 
-/** Both maps are namespaced per account: hub chamber numbering starts at 1 and
- * would otherwise be shared with — and read by — a different token. */
-const IDS_PREFIX = 'agent-console.hub-ids.'
+/** Stream ids are allocated from ONE map for every account on this hub, keyed
+ * by account *and* chamber. The app shows the chambers of every token it
+ * remembers in a single list, so two tokens numbering their own chambers from
+ * 1 would collide — same number, different chamber, one message cache. */
+const IDS_KEY = 'agent-console.hub-ids.v2'
+
+/** The pre-merge, per-account id maps. Only read now, to carry a draft over to
+ * the number its chamber was renumbered to. */
+const LEGACY_IDS_PREFIX = 'agent-console.hub-ids.'
+
+/** Message ids stay per account: they are local to one token's conversation
+ * and never share a list. */
 const MSG_IDS_PREFIX = 'agent-console.hub-msgids.'
 
 /** History window size. The store's cache-merge logic keys off this: a fetch
@@ -17,6 +26,13 @@ export const HISTORY_FETCH_COUNT = 50
 export const CLIENT_UNRESOLVED = 'CLIENT_UNRESOLVED'
 
 interface IdMap {
+  next: number
+  /** `<accountKey>\u0000<chamberId>` -> stream id. */
+  byKey: Record<string, number>
+}
+
+/** Shape of the per-account maps written before ids went global. */
+interface LegacyIdMap {
   next: number
   byChamber: Record<string, number>
 }
@@ -48,18 +64,41 @@ function save(key: string, value: unknown): void {
 
 /** Numeric stream id for a chamber. The store keys streams, the unread map and
  * the local message cache by number, so the mapping is persisted and ids are
- * handed out from 1 upward on first sight — stable across reloads. */
+ * handed out from 1 upward on first sight — stable across reloads, and unique
+ * across every token this app remembers.
+ */
 export function numericStreamId(chamberId: string, account: string): number {
-  const key = IDS_PREFIX + account
-  const map = load<IdMap>(key, { next: 1, byChamber: {} })
-  const existing = map.byChamber[chamberId]
+  const map = load<IdMap>(IDS_KEY, { next: 1, byKey: {} })
+  const key = `${account}\u0000${chamberId}`
+  const existing = map.byKey[key]
   if (existing !== undefined) return existing
   const id = map.next
-  map.byChamber[chamberId] = id
+  map.byKey[key] = id
   map.next = id + 1
-  save(key, map)
+  save(IDS_KEY, map)
+  carryLegacyDraft(account, chamberId, id)
   return id
 }
+
+/** Move an unsent draft onto the chamber's new number, once, when this build
+ * first renumbers it. An unsent message is the one thing here a user would
+ * miss; caches simply refetch. */
+function carryLegacyDraft(account: string, chamberId: string, newId: number): void {
+  try {
+    const legacy = localStorage.getItem(LEGACY_IDS_PREFIX + account)
+    if (!legacy) return
+    const oldId = (JSON.parse(legacy) as LegacyIdMap).byChamber?.[chamberId]
+    if (oldId === undefined || oldId === newId) return
+    const from = `agent-console.draft.${account}.${oldId}`
+    const draft = localStorage.getItem(from)
+    if (draft === null) return
+    localStorage.setItem(`agent-console.draft.${account}.${newId}`, draft)
+    localStorage.removeItem(from)
+  } catch {
+    /* storage unavailable: the draft stays where it was */
+  }
+}
+
 
 
 
