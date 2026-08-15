@@ -1,0 +1,481 @@
+diff --git a/src/components/MessageBody.test.tsx b/src/components/MessageBody.test.tsx
+index 0b46184..d797c89 100644
+--- a/src/components/MessageBody.test.tsx
++++ b/src/components/MessageBody.test.tsx
+@@ -40,6 +40,76 @@ test('keeps KaTeX spans', () => {
+   expect(sanitizeZulipHtml(fx.katexMath, PREFIX)).toContain('katex')
+ })
+ 
++describe('math / markdown rendering fidelity', () => {
++  test('keeps inline styles that carry KaTeX layout', () => {
++    const out = sanitizeZulipHtml(fx.katexDisplayMath, PREFIX)
++    expect(out).toContain('style="height:0.8141em;"')
++    expect(out).toContain('style="top:-3.063em;margin-right:0.05em;"')
++  })
++
++  test('removes the .katex-mathml fallback so raw TeX does not leak as text', () => {
++    const out = sanitizeZulipHtml(fx.katexDisplayMath, PREFIX)
++    expect(out).not.toContain('katex-mathml')
++    expect(out).not.toContain('annotation')
++    expect(out).not.toContain('x^2')
++    expect(out).not.toContain('<math')
++    expect(out).not.toContain('</math>')
++  })
++
++  test('keeps the .katex-html visible layout intact', () => {
++    const out = sanitizeZulipHtml(fx.katexDisplayMath, PREFIX)
++    expect(out).toContain('katex-html')
++    expect(out).toContain('aria-hidden="true"')
++    expect(out).toContain('msupsub')
++    expect(out).toContain('katex-display')
++  })
++
++  test('keeps KaTeX SVG sqrt structure (svg, path, viewBox, preserveAspectRatio, d)', () => {
++    const out = sanitizeZulipHtml(fx.katexSvgSqrt, PREFIX)
++    expect(out).toContain('<svg')
++    expect(out).toContain('<path')
++    expect(out).toContain('viewBox="0 0 400000 1080"')
++    expect(out).toContain('preserveAspectRatio="xMinYMin slice"')
++    expect(out).toContain('d="M95,702c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14"')
++    expect(out).toContain('xmlns="http://www.w3.org/2000/svg"')
++    expect(out).toContain('style="min-width:0.853em;height:1.08em;"')
++  })
++
++  test('keeps markdown table structure (thead/tbody/th/td)', () => {
++    const out = sanitizeZulipHtml(fx.tableMarkup, PREFIX)
++    expect(out).toContain('<table>')
++    expect(out).toContain('<thead>')
++    expect(out).toContain('<tbody>')
++    expect(out).toContain('<th>')
++    expect(out).toContain('<td>')
++  })
++
++  test('converts spritesheet emoji spans to Unicode characters', () => {
++    const out = sanitizeZulipHtml(fx.emojiThumbsUp, PREFIX)
++    expect(out).toContain('👍')
++    expect(out).not.toContain(':thumbs_up:')
++    expect(out).not.toContain('emoji-1f44d')
++  })
++
++  test('converts multi-codepoint emoji spans to a combined Unicode sequence', () => {
++    const out = sanitizeZulipHtml(fx.emojiFlagCn, PREFIX)
++    expect(out).toContain('🇨🇳')
++    expect(out).not.toContain(':cn:')
++  })
++
++  test('converts emoji img elements to their alt text', () => {
++    const out = sanitizeZulipHtml(fx.emojiImg, PREFIX)
++    expect(out).toContain('🎉')
++    expect(out).not.toContain('<img')
++  })
++
++  test('keeps style attributes but still strips event handlers', () => {
++    const out = sanitizeZulipHtml('<div style="color:red" onclick="alert(1)">hi</div>', PREFIX)
++    expect(out).toContain('style="color:red"')
++    expect(out).not.toContain('onclick')
++  })
++})
++
+ test('rewrites relative upload links and images to the proxy prefix', () => {
+   expect(sanitizeZulipHtml(fx.uploadLink, PREFIX)).toContain('href="/zulip/qec/user_uploads/2/ab/report.pdf"')
+   expect(sanitizeZulipHtml(fx.inlineImage, PREFIX)).toContain('src="/zulip/qec/user_uploads/2/ab/plot.png"')
+diff --git a/src/components/MessageBody.tsx b/src/components/MessageBody.tsx
+index b5bc499..c38683d 100644
+--- a/src/components/MessageBody.tsx
++++ b/src/components/MessageBody.tsx
+@@ -6,12 +6,44 @@ const ALLOWED_TAGS = [
+   'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+   'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'hr', 'sup', 'sub',
+   'time', 'details', 'summary',
++  // SVG: KaTeX renders stretchy delimiters / sqrt bars as inline SVG
++  'svg', 'path', 'line', 'g',
+ ]
+-const ALLOWED_ATTR = ['href', 'src', 'alt', 'title', 'class', 'start', 'datetime', 'aria-hidden', 'data-code-language']
++const ALLOWED_ATTR = [
++  'href', 'src', 'alt', 'title', 'class', 'start', 'datetime', 'aria-hidden', 'data-code-language',
++  // inline styles carry all of KaTeX's math layout; SVG attrs keep the vector glyphs
++  'style', 'viewBox', 'd', 'width', 'height', 'preserveAspectRatio', 'xmlns',
++  'x1', 'y1', 'x2', 'y2', 'stroke-width', 'fill',
++]
++
++// Zulip spritesheet emoji: class tokens like `emoji-1f44d` / `emoji-1f1e8-1f1f3`
++// encode one or more hex codepoints (Zulip.com ships the spritesheet CSS; we
++// don't, so without this the user would see the raw `:thumbs_up:` marker).
++const EMOJI_CLASS_RE = /^emoji-([0-9a-f]+(?:-[0-9a-f]+)*)$/
+ 
+ export function sanitizeZulipHtml(html: string, prefix: string): string {
+   const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })
+   const doc = new DOMParser().parseFromString(clean, 'text/html')
++  // The visible math is .katex-html; .katex-mathml is the MathML fallback whose
++  // raw-TeX <annotation> would otherwise leak as duplicate text after the
++  // (unallowlisted) math tags are stripped.
++  for (const el of Array.from(doc.querySelectorAll('.katex-mathml'))) {
++    el.remove()
++  }
++  // Replace spritesheet emoji spans with their Unicode characters.
++  for (const el of Array.from(doc.querySelectorAll('[class]'))) {
++    const token = Array.from(el.classList).find((c) => EMOJI_CLASS_RE.test(c))
++    if (!token) continue
++    const codepoints = token
++      .slice('emoji-'.length)
++      .split('-')
++      .map((h) => parseInt(h, 16))
++    el.replaceWith(document.createTextNode(String.fromCodePoint(...codepoints)))
++  }
++  // Some realms emit <img class="emoji" alt="..."> instead of spans.
++  for (const img of Array.from(doc.querySelectorAll('img.emoji'))) {
++    img.replaceWith(document.createTextNode(img.getAttribute('alt') ?? ''))
++  }
+   for (const a of Array.from(doc.querySelectorAll('a'))) {
+     const href = a.getAttribute('href') ?? ''
+     if (href.startsWith('/')) a.setAttribute('href', prefix + href)
+diff --git a/src/styles.css b/src/styles.css
+index 8176313..5e0c8e1 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -34,23 +34,103 @@ button { font: inherit; cursor: pointer; }
+ }
+ 
+ .conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+-.message-scroll { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; }
+-.message { margin-bottom: 0.75rem; }
+-.message-meta { font-size: 0.8rem; color: #6b7280; }
+-.message-meta .sender { font-weight: 600; color: #111827; }
++.message-scroll { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; background: #ededed; }
++
++/* WeChat-style chat bubbles */
++.time-pill {
++  width: fit-content; margin: 0.5rem auto; padding: 0.15rem 0.6rem;
++  background: rgba(0, 0, 0, 0.25); color: #fff; font-size: 0.75rem;
++  border-radius: 999px; text-align: center;
++}
++.msg-row { display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.6rem; }
++.msg-self { flex-direction: row-reverse; }
++.avatar {
++  width: 38px; height: 38px; border-radius: 4px; flex-shrink: 0;
++  display: flex; align-items: center; justify-content: center;
++  color: #fff; font-weight: 600; font-size: 1rem; user-select: none;
++}
++.msg-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
++.msg-other .msg-col { align-items: flex-start; }
++.msg-self .msg-col { align-items: flex-end; }
++.sender-label { font-size: 0.75rem; color: #9ca3af; margin-bottom: 0.15rem; }
++.bubble {
++  position: relative; max-width: 78%; border-radius: 8px;
++  padding: 0.5em 0.75em; overflow-wrap: break-word;
++}
++.msg-other .bubble { background: #fff; }
++.msg-self .bubble { background: #95ec69; }
++.bubble::before {
++  content: ''; position: absolute; top: 12px; width: 0; height: 0;
++  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
++}
++.msg-other .bubble::before { left: -6px; border-right: 6px solid #fff; }
++.msg-self .bubble::before { right: -6px; border-left: 6px solid #95ec69; }
++/* keep pre/code/tables inside bubbles within the bubble's max-width */
++.bubble .message-body pre, .bubble .message-body table { max-width: 100%; }
+ .message-body { overflow-wrap: break-word; }
+ .message-body img { max-width: 100%; height: auto; }
+ .message-body pre { overflow-x: auto; background: #f3f4f6; padding: 0.5rem; border-radius: 0.5rem; }
+ .message-body code { background: #f3f4f6; border-radius: 0.25rem; padding: 0 0.2rem; }
+ .message-body blockquote { border-left: 3px solid #d1d5db; margin: 0.25rem 0; padding-left: 0.75rem; color: #4b5563; }
+ 
+-/* Minimal pygments palette for Zulip's .codehilite spans */
+-.codehilite .k, .codehilite .kn, .codehilite .kd { color: #7c3aed; }
+-.codehilite .s, .codehilite .s1, .codehilite .s2, .codehilite .sd { color: #b45309; }
+-.codehilite .nf, .codehilite .nc { color: #1d4ed8; }
+-.codehilite .c, .codehilite .c1, .codehilite .cm { color: #6b7280; font-style: italic; }
+-.codehilite .mi, .codehilite .mf { color: #047857; }
+-.codehilite .o, .codehilite .p { color: #374151; }
++/* KaTeX display math: block-level, scrollable horizontally when too wide */
++.message-body .katex-display {
++  display: block; margin: 0.5em 0; overflow-x: auto; text-align: center;
++}
++
++/* Markdown typography polish */
++.message-body p { margin: 0.25em 0; }
++.message-body h1 { font-size: 1.25em; margin-top: 0.5em; }
++.message-body h2 { font-size: 1.15em; margin-top: 0.5em; }
++.message-body h3 { font-size: 1.05em; margin-top: 0.5em; }
++.message-body h4 { font-size: 1em; margin-top: 0.5em; }
++.message-body h5 { font-size: 0.95em; margin-top: 0.5em; }
++.message-body h6 { font-size: 0.9em; margin-top: 0.5em; }
++.message-body ul, .message-body ol { margin: 0.25em 0; padding-left: 1.4em; }
++.message-body table {
++  border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%;
++}
++.message-body th, .message-body td { border: 1px solid #d1d5db; padding: 0.3em 0.6em; }
++.message-body th { background: #f3f4f6; }
++
++/* Complete Pygments "default" theme palette for Zulip's .codehilite spans */
++.codehilite .k, .codehilite .kc, .codehilite .kd, .codehilite .kn,
++.codehilite .kp, .codehilite .kr, .codehilite .nb, .codehilite .nt { color: #008000; }
++.codehilite .kt { color: #b00040; }
++.codehilite .na { color: #7d9029; }
++.codehilite .nc, .codehilite .nf, .codehilite .nn { color: #0000ff; }
++.codehilite .nd, .codehilite .ow { color: #aa22ff; }
++.codehilite .ne { color: #d2413a; }
++.codehilite .nl { color: #a0a000; }
++.codehilite .ni { color: #999999; }
++.codehilite .no { color: #880000; }
++.codehilite .nv { color: #19177c; }
++.codehilite .o { color: #666666; }
++.codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .cpf,
++.codehilite .c1, .codehilite .cs { color: #408080; font-style: italic; }
++.codehilite .cp { color: #bc7a00; }
++.codehilite .s, .codehilite .sa, .codehilite .sb, .codehilite .sc,
++.codehilite .dl, .codehilite .sd, .codehilite .s2, .codehilite .sh,
++.codehilite .s1 { color: #ba2121; }
++.codehilite .se { color: #bb6622; }
++.codehilite .si, .codehilite .sr { color: #bb6688; }
++.codehilite .sx { color: #008000; }
++.codehilite .ss { color: #19177c; }
++.codehilite .m, .codehilite .mb, .codehilite .mf, .codehilite .mh,
++.codehilite .mi, .codehilite .mo, .codehilite .il { color: #666666; }
++.codehilite .w { color: #bbbbbb; }
++.codehilite .err { color: #ff0000; }
++.codehilite .gd { color: #a00000; }
++.codehilite .ge { font-style: italic; }
++.codehilite .gr { color: #ff0000; }
++.codehilite .gh { color: #000080; }
++.codehilite .gi { color: #00a000; }
++.codehilite .go { color: #888888; }
++.codehilite .gp { color: #000080; }
++.codehilite .gs { font-weight: bold; }
++.codehilite .gu { color: #800080; }
++.codehilite .gt { color: #0044dd; }
++.codehilite .gc { color: #888888; }
+ 
+ .composer {
+   display: flex; gap: 0.5rem; padding: 0.5rem 1rem;
+diff --git a/src/test/fixtures/zulipHtml.ts b/src/test/fixtures/zulipHtml.ts
+index 70ae214..64ebbb4 100644
+--- a/src/test/fixtures/zulipHtml.ts
++++ b/src/test/fixtures/zulipHtml.ts
+@@ -18,3 +18,39 @@ export const hostileScript = '<p>hi</p><script>window.hacked = true</script>'
+ export const hostileImgHandler = '<img src="x" onerror="window.hacked = true">'
+ 
+ export const hostileJsHref = '<a href="javascript:window.hacked=1">click</a>'
++
++// Realistic KaTeX display math output: .katex-mathml carries the MathML
++// fallback (with a raw-TeX <annotation>) that must be dropped; .katex-html
++// carries the visible layout, whose positioning lives in inline styles.
++export const katexDisplayMath =
++  '<span class="katex-display"><span class="katex">' +
++  '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML">' +
++  '<semantics><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>' +
++  '<annotation encoding="application/x-tex">x^2</annotation></semantics></math></span>' +
++  '<span class="katex-html" aria-hidden="true"><span class="base">' +
++  '<span class="strut" style="height:0.8141em;"></span>' +
++  '<span class="mord"><span class="mord mathnormal">x</span>' +
++  '<span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;">' +
++  '<span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span>' +
++  '<span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span>' +
++  '</span></span></span></span></span></span></span></span></span></span>'
++
++// KaTeX sqrt stretchy-delimiter SVG (hide-tail span wrapping an svg/path).
++export const katexSvgSqrt =
++  '<span class="hide-tail" style="min-width:0.853em;height:1.08em;">' +
++  '<svg xmlns="http://www.w3.org/2000/svg" width="400em" height="1.08em" ' +
++  'viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice">' +
++  '<path d="M95,702c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14"/>' +
++  '</svg></span>'
++
++export const tableMarkup =
++  '<table><thead><tr><th>name</th><th>score</th></tr></thead>' +
++  '<tbody><tr><td>a</td><td>1</td></tr><tr><td>b</td><td>2</td></tr></tbody></table>'
++
++export const emojiThumbsUp =
++  '<p><span class="emoji emoji-1f44d" title="thumbs up">:thumbs_up:</span></p>'
++
++export const emojiFlagCn = '<p><span class="emoji emoji-1f1e8-1f1f3">:cn:</span></p>'
++
++export const emojiImg =
++  '<p><img class="emoji" alt="🎉" src="/static/generated/emoji/tada.png"></p>'
+diff --git a/src/views/ConversationView.test.tsx b/src/views/ConversationView.test.tsx
+index 82d8037..90b3825 100644
+--- a/src/views/ConversationView.test.tsx
++++ b/src/views/ConversationView.test.tsx
+@@ -5,10 +5,11 @@ import { useAppStore, resetAppStore } from '../store/appStore'
+ import type { ZulipClient } from '../api/client'
+ import type { ZulipMessage } from '../api/types'
+ 
+-function makeMsg(id: number): ZulipMessage {
++function makeMsg(id: number, overrides: Partial<ZulipMessage> = {}): ZulipMessage {
+   return {
+     id, sender_full_name: 'Agent', sender_email: 'bot@b.c',
+     timestamp: 1755100000 + id, content: `<p>msg-${id}</p>`, stream_id: 1, subject: '',
++    ...overrides,
+   }
+ }
+ 
+@@ -30,6 +31,94 @@ beforeEach(() => {
+   })
+ })
+ 
++describe('WeChat-style chat bubbles', () => {
++  test('marks own messages msg-self and other messages msg-other', async () => {
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { sender_email: 'bot@b.c', sender_full_name: 'Agent' }),
++        makeMsg(2, { sender_email: 'me@b.c', sender_full_name: 'Human' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    const rows = container.querySelectorAll('.msg-row')
++    expect(rows).toHaveLength(2)
++    expect(rows[0].className).toContain('msg-other')
++    expect(rows[1].className).toContain('msg-self')
++  })
++
++  test('shows a sender label only above other people\'s bubbles', async () => {
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { sender_email: 'bot@b.c', sender_full_name: 'Agent' }),
++        makeMsg(2, { sender_email: 'me@b.c', sender_full_name: 'Human' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    const labels = container.querySelectorAll('.sender-label')
++    expect(labels).toHaveLength(1)
++    expect(labels[0].textContent).toBe('Agent')
++  })
++
++  test('avatar shows the sender\'s first character uppercased', async () => {
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { sender_full_name: 'ada lovelace' }),
++        makeMsg(2, { sender_email: 'me@b.c', sender_full_name: 'Human' }),
++        makeMsg(3, { sender_full_name: 'Another' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    const avatars = container.querySelectorAll('.avatar')
++    expect(avatars).toHaveLength(3)
++    expect(avatars[0].textContent).toBe('A')
++    expect(avatars[1].textContent).toBe('H')
++    // deterministic per-sender color: msg-1 and msg-3 share sender 'bot@b.c'
++    expect((avatars[2] as HTMLElement).style.backgroundColor).toBe(
++      (avatars[0] as HTMLElement).style.backgroundColor,
++    )
++    expect((avatars[1] as HTMLElement).style.backgroundColor).toMatch(/^rgb\(/)
++  })
++
++  test('renders a time pill before the first message and before gaps of 300s+', async () => {
++    const base = 1755100000
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { timestamp: base }),
++        makeMsg(2, { timestamp: base + 60 }), // 1 minute later: no new pill
++        makeMsg(3, { timestamp: base + 60 + 600 }), // 10 minutes later: new pill
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-3')
++    const pills = container.querySelectorAll('.time-pill')
++    expect(pills).toHaveLength(2)
++    for (const pill of pills) {
++      expect(pill.textContent!.trim()).toMatch(/^(\d{1,2}\/\d{1,2} )?\d{2}:\d{2}$/)
++    }
++  })
++
++  test('only the leading time pill when messages are close together', async () => {
++    const base = 1755100000
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { timestamp: base }),
++        makeMsg(2, { timestamp: base + 30 }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-2')
++    expect(container.querySelectorAll('.time-pill')).toHaveLength(1)
++  })
++})
++
+ test('loads newest messages on mount and renders them sanitized', async () => {
+   const client = fakeClient()
+   useAppStore.setState({ client })
+diff --git a/src/views/ConversationView.tsx b/src/views/ConversationView.tsx
+index 0c62b83..67878ed 100644
+--- a/src/views/ConversationView.tsx
++++ b/src/views/ConversationView.tsx
+@@ -1,9 +1,32 @@
+-import { useEffect, useState } from 'react'
++import { Fragment, useEffect, useState } from 'react'
+ import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+ import { isAuthError } from '../api/client'
+ import { MessageBody } from '../components/MessageBody'
+ import { Composer } from '../components/Composer'
+ 
++// Fixed avatar palette; color is picked deterministically from the sender email.
++const AVATAR_COLORS = ['#4f46e5', '#059669', '#b45309', '#be185d', '#2563eb', '#7c3aed', '#dc2626', '#0d9488']
++
++function avatarColor(email: string): string {
++  let hash = 0
++  for (let i = 0; i < email.length; i += 1) {
++    hash = (hash * 31 + email.charCodeAt(i)) >>> 0
++  }
++  return AVATAR_COLORS[hash % AVATAR_COLORS.length]
++}
++
++// Time pills: HH:MM on the same calendar day, otherwise M/D HH:MM.
++function timePillText(timestamp: number): string {
++  const d = new Date(timestamp * 1000)
++  const now = new Date()
++  const sameDay =
++    d.getFullYear() === now.getFullYear() &&
++    d.getMonth() === now.getMonth() &&
++    d.getDate() === now.getDate()
++  const hm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
++  return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
++}
++
+ export function ConversationView({ streamId }: { streamId: number }) {
+   const stream = useAppStore((s) => s.streams.find((x) => x.stream_id === streamId))
+   const messages = useAppStore((s) => s.messagesByStream[streamId])
+@@ -95,15 +118,27 @@ export function ConversationView({ streamId }: { streamId: number }) {
+         )}
+         {loadError && <p className="error" role="alert">{loadError}</p>}
+         {!loaded && !loadError && <p className="empty">Loading…</p>}
+-        {messages?.map((m) => (
+-          <div className="message" key={m.id}>
+-            <div className="message-meta">
+-              <span className="sender">{m.sender_full_name}</span>{' '}
+-              {new Date(m.timestamp * 1000).toLocaleString()}
+-            </div>
+-            <MessageBody html={m.content} prefix={creds.prefix} authHeader={client?.authHeaderValue()} />
+-          </div>
+-        ))}
++        {messages?.map((m, i) => {
++          const prev = messages[i - 1]
++          const showPill = i === 0 || m.timestamp - prev.timestamp >= 300
++          const isSelf = m.sender_email === creds.email
++          return (
++            <Fragment key={m.id}>
++              {showPill && <div className="time-pill">{timePillText(m.timestamp)}</div>}
++              <div className={`msg-row ${isSelf ? 'msg-self' : 'msg-other'}`}>
++                <div className="avatar" style={{ background: avatarColor(m.sender_email) }}>
++                  {(m.sender_full_name || m.sender_email)[0].toUpperCase()}
++                </div>
++                <div className="msg-col">
++                  {!isSelf && <div className="sender-label">{m.sender_full_name}</div>}
++                  <div className="bubble">
++                    <MessageBody html={m.content} prefix={creds.prefix} authHeader={client?.authHeaderValue()} />
++                  </div>
++                </div>
++              </div>
++            </Fragment>
++          )
++        })}
+       </div>
+       <Composer streamName={name} />
+     </div>

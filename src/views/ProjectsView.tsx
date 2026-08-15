@@ -1,0 +1,92 @@
+import { useAppStore } from '../store/appStore'
+import { Gear, Inbox } from '../components/Icon'
+import { initial, listTimeLabel, previewText, tileColor } from '../lib/format'
+
+function SkeletonList() {
+  return (
+    <div className="stream-list" aria-hidden="true">
+      {[0, 1, 2, 3].map((i) => (
+        <div className="skeleton-row" key={i}>
+          <div className="skeleton skeleton-tile" />
+          <div className="skeleton-lines">
+            <div className="skeleton" />
+            <div className="skeleton" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function ProjectsView() {
+  const streams = useAppStore((s) => s.streams)
+  const hidden = useAppStore((s) => s.hiddenStreams)
+  const unread = useAppStore((s) => s.unreadByStream)
+  const messages = useAppStore((s) => s.messagesByStream)
+  const connection = useAppStore((s) => s.connection)
+  const navigate = useAppStore((s) => s.navigate)
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
+  const visible = streams.filter((s) => !hidden.includes(s.stream_id))
+  // Nothing to show yet *and* still connecting means the first register is in
+  // flight — show the shape of the list rather than an empty state that would
+  // be contradicted a moment later. Once offline, the empty state plus the
+  // reconnecting banner is the honest report.
+  const loading = streams.length === 0 && connection === 'connecting'
+
+  return (
+    <div className="projects">
+      <header className="topbar">
+        <h1>Projects</h1>
+        <button
+          className="icon-btn bar-end"
+          aria-label="Settings"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Gear />
+        </button>
+      </header>
+
+      <div className="projects-scroll">
+        {loading && <SkeletonList />}
+
+        {!loading && visible.length === 0 && (
+          <div className="empty-state">
+            <Inbox size={40} />
+            <h2>No projects yet</h2>
+            <p>Subscribe to a stream in Zulip and it shows up here as a project.</p>
+          </div>
+        )}
+
+        {visible.length > 0 && (
+          <ul className="stream-list">
+            {visible.map((s) => {
+              const count = unread[s.stream_id]?.length ?? 0
+              const last = messages[s.stream_id]?.at(-1)
+              const preview = last ? previewText(last.content) : s.description
+              return (
+                <li key={s.stream_id}>
+                  <button
+                    className="stream-card"
+                    onClick={() => navigate({ name: 'conversation', streamId: s.stream_id })}
+                  >
+                    <span className="stream-tile" style={{ background: tileColor(s.name) }}>
+                      {initial(s.name)}
+                    </span>
+                    <span className="stream-name">{s.name}</span>
+                    {last && <span className="stream-meta">{listTimeLabel(last.timestamp)}</span>}
+                    {count > 0 && (
+                      <span className="unread-badge" aria-label={`${count} unread`}>
+                        {count}
+                      </span>
+                    )}
+                    <span className="stream-desc">{preview}</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,71 @@
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { ProjectsView } from './ProjectsView'
+import { useAppStore, resetAppStore } from '../store/appStore'
+
+beforeEach(() => {
+  resetAppStore()
+  useAppStore.setState({
+    streams: [
+      { stream_id: 1, name: 'alpha', description: 'Project A' },
+      { stream_id: 2, name: 'beta', description: 'Project B' },
+    ],
+    unreadByStream: { 1: [10, 11] },
+    connection: 'live',
+  })
+})
+
+test('renders visible streams with unread badges', () => {
+  render(<ProjectsView />)
+  expect(screen.getByText('alpha')).toBeInTheDocument()
+  expect(screen.getByText('Project A')).toBeInTheDocument()
+  expect(screen.getByText('2')).toBeInTheDocument() // unread badge
+})
+
+test('hidden streams are filtered out', () => {
+  useAppStore.setState({ hiddenStreams: [2] })
+  render(<ProjectsView />)
+  expect(screen.queryByText('beta')).toBeNull()
+})
+
+test('tapping a card navigates to the conversation', async () => {
+  render(<ProjectsView />)
+  await userEvent.click(screen.getByRole('button', { name: /alpha/ }))
+  expect(useAppStore.getState().view).toEqual({ name: 'conversation', streamId: 1 })
+})
+
+test('gear opens settings', async () => {
+  render(<ProjectsView />)
+  await userEvent.click(screen.getByRole('button', { name: /settings/i }))
+  expect(useAppStore.getState().settingsOpen).toBe(true)
+})
+
+test('empty state message when nothing visible', () => {
+  useAppStore.setState({ streams: [] })
+  render(<ProjectsView />)
+  expect(screen.getByText(/no projects/i)).toBeInTheDocument()
+})
+
+test('skeleton rows stand in for the list until the first register lands', () => {
+  useAppStore.setState({ streams: [], connection: 'connecting' })
+  const { container } = render(<ProjectsView />)
+  expect(container.querySelectorAll('.skeleton-row').length).toBeGreaterThan(0)
+  expect(screen.queryByText(/no projects/i)).toBeNull()
+})
+
+test('a cached last message replaces the description as the row preview', () => {
+  useAppStore.setState({
+    messagesByStream: {
+      1: [
+        {
+          id: 5, sender_full_name: 'Agent', sender_email: 'bot@b.c',
+          timestamp: 1755100000, content: '<p>Sweep <strong>finished</strong>.</p>',
+          stream_id: 1, subject: '',
+        },
+      ],
+    },
+  })
+  render(<ProjectsView />)
+  expect(screen.getByText('Sweep finished.')).toBeInTheDocument()
+  expect(screen.queryByText('Project A')).toBeNull()
+})

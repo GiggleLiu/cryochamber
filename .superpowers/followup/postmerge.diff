@@ -1,0 +1,4655 @@
+diff --git a/README.md b/README.md
+index d78e585..d814db4 100644
+--- a/README.md
++++ b/README.md
+@@ -1,40 +1,126 @@
+-# Agent Console (Zulip Agent PWA)
++# Agent Console
+ 
+-A minimal installable web app for phones (Android + iOS) to read and send
+-messages in Zulip project streams that drive remote AI agents. One stream =
+-one project = one flat conversation. Spec:
+-`docs/superpowers/specs/2026-08-14-zulip-agent-pwa-design.md`.
++An installable phone app (Android + iOS) for reading and steering the AI agents
++that work in your Zulip streams. **One stream = one project = one flat
++conversation** — no topics to pick, no threads to lose track of.
++
++It is a static site: a Vite + React build that talks to a Zulip server through a
++same-origin reverse proxy. No backend of its own, no database, no telemetry.
++
++<p align="center">
++  <img src="docs/screenshots/projects.png" alt="Projects list with unread badges" width="260">
++  <img src="docs/screenshots/conversation.png" alt="Conversation with chat bubbles and an attached plot" width="260">
++  <img src="docs/screenshots/report.png" alt="A long agent report with markdown, display math and a code block" width="260">
++</p>
++
++## What it does
++
++- **Projects list** — every stream you subscribe to, with unread counts and the
++  last message as a preview. Hide the ones you do not care about in Settings.
++- **One conversation per project** — opens on the newest message, follows new
++  ones while you are at the bottom, and offers a jump chip instead of yanking
++  the view when you have scrolled back.
++- **Full Zulip rendering** — markdown, tables, syntax-highlighted code, LaTeX
++  via KaTeX, emoji and @-mentions. Long agent reports render as full-width
++  cards so wide code and tables stay readable on a phone.
++- **Composer** — auto-growing field, `@`-mention autocomplete, file upload, and
++  Enter-to-send when a hardware keyboard is attached.
++- **Attachments** — images and file links are fetched with your credentials, so
++  private uploads display and download without a public URL.
++- **Offline-tolerant** — a long-poll event loop with backoff and a reconnect
++  notice that does not shove the page around.
++
++There are **no push notifications** by design: the app only syncs while it is
++open. It is a console you check, not a pager.
+ 
+-## Develop
++## Quick start
+ 
+ ```sh
+ npm install
+ npm run dev        # http://localhost:5173 — /zulip/qec proxies to the real server
+-npm test           # unit + component tests
+-npm run e2e        # Playwright smoke (mocked API)
++npm test           # unit and component tests (Vitest)
++npm run e2e        # Playwright end-to-end tests against mocked Zulip APIs
++npm run build      # type-check, then emit static files to dist/
+ ```
+ 
++Sign in with your Zulip email and password. The app exchanges them for an API
++key once and stores only the key; the password is never persisted. If your realm
++uses SSO, use **Paste an API key instead** and take the key from Zulip's
++*Settings → Account & privacy → API key*.
++
+ ## Deploy
+ 
+ 1. `npm run build` → static files in `dist/`.
+ 2. Copy `dist/` to the host, e.g. `/srv/zulip-app/dist`.
+ 3. Install Caddy; copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`, set the
+    real domain, and `systemctl reload caddy`. HTTPS is automatic.
+-4. Friends open the URL, sign in with their Zulip email + password, and
+-   "Add to Home Screen".
++4. Open the URL on a phone and use **Add to Home Screen**.
++
++The reverse proxy is not optional. It is what makes the Zulip API same-origin,
++which is what lets the browser send credentials without CORS preflight and keeps
++the API key out of any third-party context.
+ 
+ ## Adding another Zulip server
+ 
+-1. Add a `handle_path /zulip/<key>/*` block to `deploy/Caddyfile`
+-   pointing at the new upstream; reload Caddy.
++1. Add a `handle_path /zulip/<key>/*` block to `deploy/Caddyfile` pointing at
++   the new upstream; reload Caddy.
+ 2. Add a matching entry to `public/servers.json`
+    (`{"name": "...", "prefix": "/zulip/<key>", "sendTopic": ""}`) and redeploy
+    `dist/`.
+ 
+-The two lists must stay in sync. Never add a catch-all proxy.
++The two lists must stay in sync, and every prefix must be an explicit block.
++**Never add a catch-all proxy** — it would turn the app's origin into an open
++relay to arbitrary hosts.
++
++## FAQ
++
++**Why is a project missing from the list?**
++The app shows the streams you are subscribed to on Zulip. Subscribe there, or
++check *Settings → Projects* in case it is hidden.
++
++**Where do messages I send land?**
++In the stream's `sendTopic` from `servers.json`. `""` is Zulip's "general chat"
++empty topic; set e.g. `"chat"` for servers older than Zulip 8.
++
++**Can I use it on a desktop browser?**
++Yes — the layout is phone-first but it works at any width, and Enter sends when
++a hardware keyboard is present.
+ 
+-## Notes
++**Does it store my password?**
++No. It is exchanged for an API key at sign-in; only the key and your email are
++kept in `localStorage`. Logging out clears both.
++
++**Is message HTML from the server trusted?**
++No. Everything Zulip renders is sanitized before it reaches the DOM: an
++allowlist of tags and attributes, inline styles filtered down to the properties
++KaTeX needs (no URLs, no fixed positioning), and `url()` stripped from SVG paint
++attributes. See `src/components/sanitize.ts`.
++
++## Project layout
++
++```
++src/api/          Zulip REST client, event queue, types
++src/store/        app state (Zustand) and credential storage
++src/hooks/        the long-poll event loop
++src/components/   MessageBody + sanitizer, Composer, icon set
++src/views/        Login, Projects, Conversation, Settings
++src/lib/          date, preview and colour helpers
++src/styles.css    the design system (tokens first, then components)
++e2e/              Playwright: smoke + layout contract, and a screenshot harness
++scripts/          icon generation from public/icons/icon.svg
++```
++
++Design and implementation notes live in
++`docs/superpowers/specs/2026-08-14-zulip-agent-pwa-design.md`.
++
++## Regenerating the app icon
++
++Edit `public/icons/icon.svg`, then:
++
++```sh
++node scripts/generate-icons.mjs   # rewrites icon-180/192/512.png
++```
+ 
+-- No push notifications by design; the app only syncs while open.
+-- `sendTopic` is the topic every app-sent message uses (`""` = Zulip's
+-  "general chat" empty topic; set e.g. `"chat"` for older servers).
++It renders through the Chromium that Playwright already installs, so there is no
++extra dependency. The PNGs are committed, so a plain `npm run build` never needs
++a browser.
+diff --git a/docs/screenshots/conversation.png b/docs/screenshots/conversation.png
+new file mode 100644
+index 0000000..902aa89
+Binary files /dev/null and b/docs/screenshots/conversation.png differ
+diff --git a/docs/screenshots/projects.png b/docs/screenshots/projects.png
+new file mode 100644
+index 0000000..a57d130
+Binary files /dev/null and b/docs/screenshots/projects.png differ
+diff --git a/docs/screenshots/report.png b/docs/screenshots/report.png
+new file mode 100644
+index 0000000..8a4337f
+Binary files /dev/null and b/docs/screenshots/report.png differ
+diff --git a/e2e/fixtures.ts b/e2e/fixtures.ts
+new file mode 100644
+index 0000000..c0fc612
+--- /dev/null
++++ b/e2e/fixtures.ts
+@@ -0,0 +1,202 @@
++import type { Page, Route } from '@playwright/test'
++
++/** Frozen wall clock for deterministic time pills / day separators. */
++export const NOW = new Date('2026-08-15T14:32:00Z')
++const T = Math.floor(NOW.getTime() / 1000)
++const MIN = 60
++const HOUR = 60 * MIN
++
++/** 1×1 transparent PNG — stands in for an uploaded plot. */
++const PNG_1PX =
++  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
++
++/** A 640×360 slate placeholder so the image bubble has real proportions. */
++const PLOT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
++  <rect width="640" height="360" fill="#0f2318"/>
++  <g stroke="#1f4a33" stroke-width="1">
++    ${Array.from({ length: 7 }, (_, i) => `<line x1="60" y1="${40 + i * 45}" x2="600" y2="${40 + i * 45}"/>`).join('')}
++  </g>
++  <polyline fill="none" stroke="#95ec69" stroke-width="3"
++    points="60,300 130,272 200,244 270,190 340,168 410,120 480,104 550,72 600,64"/>
++  <polyline fill="none" stroke="#5ac8fa" stroke-width="3" stroke-dasharray="6 5"
++    points="60,310 130,300 200,286 270,268 340,250 410,228 480,214 550,196 600,188"/>
++  <text x="60" y="336" fill="#7c9c8a" font-family="monospace" font-size="14">rounds 0 → 400</text>
++</svg>`
++
++const LONG_AGENT_MESSAGE = `<h2>Decoder sweep complete</h2>
++<p>I ran the <strong>surface-17</strong> sweep across all four noise models. Two configurations beat the current baseline; the rest are within noise.</p>
++<ul>
++<li><strong>MWPM + reweighting</strong> — logical error rate <code>1.8e-4</code>, best overall</li>
++<li><strong>Union-find</strong> — 3.1× faster, <code>2.4e-4</code></li>
++<li>Neural decoder — did not converge inside the 2 h budget</li>
++</ul>
++<p>The threshold estimate comes from fitting</p>
++<span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mi>L</mi></msub><mo>=</mo><mi>A</mi><msup><mrow><mo>(</mo><mi>p</mi><mi mathvariant="normal">/</mi><msub><mi>p</mi><mi>th</mi></msub><mo>)</mo></mrow><mrow><mo>(</mo><mi>d</mi><mo>+</mo><mn>1</mn><mo>)</mo><mi mathvariant="normal">/</mi><mn>2</mn></mrow></msup></mrow><annotation encoding="application/x-tex">p_L = A (p/p_{th})^{(d+1)/2}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">L</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:1.0641em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord mathnormal">p</span><span class="mord">/</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">th</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose"><span class="mclose">)</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mopen mtight">(</span><span class="mord mathnormal mtight">d</span><span class="mbin mtight">+</span><span class="mord mtight">1</span><span class="mclose mtight">)</span><span class="mord mtight">/2</span></span></span></span></span></span></span></span></span></span></span></span></span>
++<p>with the fit driven by this loop:</p>
++<div class="codehilite" data-code-language="Python"><pre><span></span><code><span class="k">def</span> <span class="nf">threshold_fit</span><span class="p">(</span><span class="n">rounds</span><span class="p">,</span> <span class="n">distances</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">7</span><span class="p">)):</span>
++    <span class="sd">&quot;&quot;&quot;Least-squares fit of the sub-threshold scaling ansatz.&quot;&quot;&quot;</span>
++    <span class="n">samples</span> <span class="o">=</span> <span class="p">[</span><span class="n">simulate</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">rounds</span><span class="o">=</span><span class="n">rounds</span><span class="p">,</span> <span class="n">shots</span><span class="o">=</span><span class="mi">200_000</span><span class="p">)</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">distances</span><span class="p">]</span>
++    <span class="k">return</span> <span class="n">curve_fit</span><span class="p">(</span><span class="n">ansatz</span><span class="p">,</span> <span class="n">distances</span><span class="p">,</span> <span class="n">samples</span><span class="p">,</span> <span class="n">p0</span><span class="o">=</span><span class="p">[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.011</span><span class="p">])</span>
++</code></pre></div>
++<table><thead><tr><th>decoder</th><th>p_L</th><th>runtime</th><th>threshold</th></tr></thead><tbody>
++<tr><td>MWPM + reweighting</td><td>1.8e-4</td><td>44 min</td><td>1.09%</td></tr>
++<tr><td>Union-find</td><td>2.4e-4</td><td>14 min</td><td>1.02%</td></tr>
++<tr><td>Neural</td><td>—</td><td>&gt;2 h</td><td>—</td></tr>
++</tbody></table>
++<blockquote><p>Full logs are on the runner under <code>/scratch/sweeps/2026-08-14</code>.</p></blockquote>`
++
++export interface Msg {
++  id: number
++  sender_full_name: string
++  sender_email: string
++  timestamp: number
++  content: string
++  stream_id: number
++  subject: string
++}
++
++function msg(
++  id: number,
++  who: 'agent' | 'me' | 'peer',
++  offsetSeconds: number,
++  content: string,
++): Msg {
++  const senders = {
++    agent: ['Research Agent', 'agent@qec.example'],
++    me: ['Jin-Guo Liu', 'me@qec.example'],
++    peer: ['Mei Chen', 'mei@qec.example'],
++  } as const
++  return {
++    id,
++    sender_full_name: senders[who][0],
++    sender_email: senders[who][1],
++    timestamp: T + offsetSeconds,
++    content,
++    stream_id: 1,
++    subject: '',
++  }
++}
++
++export const thread: Msg[] = [
++  msg(101, 'me', -27 * HOUR, '<p>Kick off the decoder sweep when the cluster frees up.</p>'),
++  msg(102, 'agent', -26 * HOUR, '<p>Queued. I&#39;ll report once all four noise models finish.</p>'),
++  msg(103, 'agent', -3 * HOUR, LONG_AGENT_MESSAGE),
++  msg(
++    104,
++    'me',
++    -2 * HOUR - 50 * MIN,
++    '<p>Nice. Can you plot logical error rate against rounds for the top two?</p>',
++  ),
++  msg(
++    105,
++    'agent',
++    -2 * HOUR - 44 * MIN,
++    '<p>Here it is — solid is MWPM, dashed is union-find.</p>' +
++      '<div class="message_inline_image"><a href="/user_uploads/2/ab/plot.png" title="plot.png">' +
++      '<img src="/user_uploads/2/ab/plot.png"></a></div>',
++  ),
++  msg(106, 'me', -2 * HOUR - 40 * MIN, '<p>Perfect.</p>'),
++  msg(
++    107,
++    'peer',
++    -12 * MIN,
++    '<p><span class="user-mention" data-user-id="9" title="@Jin-Guo Liu">@Jin-Guo Liu</span> ' +
++      'should we push the distance-9 run tonight? <span class="emoji emoji-1f680">:rocket:</span></p>',
++  ),
++  msg(108, 'agent', -2 * MIN, '<p>Cluster has 6 free nodes — enough for distance 9.</p>'),
++]
++
++export const subscriptions = [
++  { stream_id: 1, name: 'qec-decoders', description: 'Surface-code decoder sweeps and threshold fits' },
++  { stream_id: 2, name: 'tensor-networks', description: 'Contraction-order search for large PEPS' },
++  { stream_id: 3, name: 'paper-drafts', description: 'Manuscript review agent' },
++  { stream_id: 4, name: 'infra', description: 'Cluster babysitting, quotas, and job triage' },
++]
++
++export const users = [
++  { user_id: 9, full_name: 'Jin-Guo Liu', email: 'me@qec.example' },
++  { user_id: 11, full_name: 'Mei Chen', email: 'mei@qec.example' },
++  { user_id: 12, full_name: 'Research Agent', email: 'agent@qec.example' },
++  { user_id: 13, full_name: 'Marek Nowak', email: 'marek@qec.example' },
++  { user_id: 14, full_name: 'Maya Rodriguez', email: 'maya@qec.example' },
++]
++
++export interface MockOptions {
++  /** Fail the message history fetch, to capture the error state. */
++  failHistory?: boolean
++  /** Never resolve the history fetch, to capture the loading state. */
++  hangHistory?: boolean
++  /** Keep the event queue registration pending, to capture "Reconnecting…". */
++  hangRegister?: boolean
++}
++
++export async function mockZulip(page: Page, opts: MockOptions = {}): Promise<void> {
++  await page.clock.setFixedTime(NOW)
++
++  await page.route('**/servers.json', (r) =>
++    r.fulfill({ json: [{ name: 'QEC Harness', prefix: '/zulip/qec', sendTopic: '' }] }),
++  )
++  await page.route('**/zulip/qec/api/v1/fetch_api_key', (r) =>
++    r.fulfill({ json: { result: 'success', api_key: 'k1', email: 'me@qec.example' } }),
++  )
++  await page.route('**/zulip/qec/api/v1/register', async (r: Route) => {
++    if (opts.hangRegister) return
++    await r.fulfill({
++      json: {
++        result: 'success',
++        queue_id: 'q1',
++        last_event_id: -1,
++        subscriptions,
++        unread_msgs: {
++          streams: [
++            { stream_id: 1, topic: '', unread_message_ids: [107, 108] },
++            { stream_id: 2, topic: '', unread_message_ids: [201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212] },
++            { stream_id: 4, topic: '', unread_message_ids: [301] },
++          ],
++        },
++      },
++    })
++  })
++  // Long-poll: answer once, then park.
++  let eventCalls = 0
++  await page.route('**/zulip/qec/api/v1/events**', async (r) => {
++    eventCalls += 1
++    if (eventCalls === 1) {
++      await r.fulfill({ json: { result: 'success', events: [{ id: 0, type: 'heartbeat' }] } })
++    }
++  })
++  await page.route('**/zulip/qec/api/v1/users', (r) =>
++    r.fulfill({ json: { result: 'success', members: users } }),
++  )
++  await page.route('**/zulip/qec/api/v1/users/me', (r) =>
++    r.fulfill({ json: { result: 'success', user_id: 9, email: 'me@qec.example' } }),
++  )
++  await page.route('**/zulip/qec/api/v1/messages?**', async (r) => {
++    if (opts.hangHistory) return
++    if (opts.failHistory) {
++      await r.fulfill({ status: 500, json: { result: 'error', msg: 'Server error' } })
++      return
++    }
++    await r.fulfill({ json: { result: 'success', messages: thread } })
++  })
++  await page.route('**/zulip/qec/api/v1/messages', (r) =>
++    r.fulfill({ json: { result: 'success', id: 999 } }),
++  )
++  await page.route('**/zulip/qec/api/v1/mark_stream_as_read', (r) =>
++    r.fulfill({ json: { result: 'success' } }),
++  )
++  await page.route('**/user_uploads/**', (r) =>
++    r.fulfill({ contentType: 'image/svg+xml', body: PLOT_SVG }),
++  )
++  await page.route('**/icons/**', (r) =>
++    r.fulfill({ contentType: 'image/png', body: Buffer.from(PNG_1PX, 'base64') }),
++  )
++}
++
++/** Sign in and land on the projects list. */
++export async function signIn(page: Page): Promise<void> {
++  await page.goto('/')
++  await page.getByLabel(/email/i).fill('me@qec.example')
++  await page.getByLabel(/password/i).fill('correct-horse')
++  await page.getByRole('button', { name: /sign in/i }).click()
++}
+diff --git a/e2e/screenshots.spec.ts b/e2e/screenshots.spec.ts
+new file mode 100644
+index 0000000..825fefc
+--- /dev/null
++++ b/e2e/screenshots.spec.ts
+@@ -0,0 +1,134 @@
++import { test, expect, type Page } from '@playwright/test'
++import { mockZulip, signIn } from './fixtures'
++
++/**
++ * Visual harness: captures every screen of the app at a phone viewport so the
++ * UI can be reviewed as images rather than as markup. Not an assertion suite —
++ * `smoke.spec.ts` owns the behavioural contract — but running it does prove
++ * every screen still renders.
++ *
++ *   npx playwright test screenshots        # → test-results/screenshots/
++ *   SHOT_DIR=/tmp/shots npx playwright test screenshots
++ */
++const OUT = process.env.SHOT_DIR ?? 'test-results/screenshots'
++
++test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
++
++async function shot(page: Page, name: string, fullPage = false): Promise<void> {
++  // Let entrance transitions settle so shots are not caught mid-animation.
++  await page.waitForTimeout(400)
++  await page.screenshot({ path: `${OUT}/${name}.png`, fullPage })
++}
++
++async function openConversation(page: Page): Promise<void> {
++  await page.getByRole('button', { name: /qec-decoders/ }).click()
++  await expect(page.getByText('Decoder sweep complete')).toBeVisible()
++}
++
++test('login', async ({ page }) => {
++  await mockZulip(page)
++  await page.goto('/')
++  await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
++  await shot(page, '01-login')
++
++  // Keyboard focus, so the focus-visible ring is what gets captured.
++  await page.keyboard.press('Tab')
++  await page.keyboard.press('Tab')
++  await shot(page, '02-login-focus')
++})
++
++test('login error', async ({ page }) => {
++  await mockZulip(page)
++  await page.route('**/zulip/qec/api/v1/fetch_api_key', (r) =>
++    r.fulfill({ status: 403, json: { result: 'error', msg: 'Your username or password is incorrect.' } }),
++  )
++  await signIn(page)
++  await expect(page.getByRole('alert')).toBeVisible()
++  await shot(page, '03-login-error')
++})
++
++test('projects', async ({ page }) => {
++  await mockZulip(page)
++  await signIn(page)
++  await expect(page.getByRole('button', { name: /qec-decoders/ })).toBeVisible()
++  await shot(page, '04-projects')
++})
++
++test('projects empty', async ({ page }) => {
++  await mockZulip(page)
++  await page.route('**/zulip/qec/api/v1/register', (r) =>
++    r.fulfill({
++      json: {
++        result: 'success',
++        queue_id: 'q1',
++        last_event_id: -1,
++        subscriptions: [],
++        unread_msgs: { streams: [] },
++      },
++    }),
++  )
++  await signIn(page)
++  await shot(page, '05-projects-empty')
++})
++
++test('conversation', async ({ page }) => {
++  await mockZulip(page)
++  await signIn(page)
++  await openConversation(page)
++  await shot(page, '06-conversation-latest')
++  await shot(page, '07-conversation-full', true)
++})
++
++test('conversation scrolled back through the thread', async ({ page }) => {
++  await mockZulip(page)
++  await signIn(page)
++  await openConversation(page)
++  // The top of the thread carries the day separator and the load-earlier row.
++  await page.locator('.message-scroll').evaluate((el) => { el.scrollTop = 0 })
++  await shot(page, '16-conversation-top')
++  await page.getByText('Decoder sweep complete').scrollIntoViewIfNeeded()
++  await shot(page, '08-conversation-markdown')
++  await page.locator('.message-body table').first().scrollIntoViewIfNeeded()
++  await shot(page, '09-conversation-table')
++})
++
++test('conversation loading', async ({ page }) => {
++  await mockZulip(page, { hangHistory: true })
++  await signIn(page)
++  await page.getByRole('button', { name: /qec-decoders/ }).click()
++  await shot(page, '10-conversation-loading')
++})
++
++test('conversation error', async ({ page }) => {
++  await mockZulip(page, { failHistory: true })
++  await signIn(page)
++  await page.getByRole('button', { name: /qec-decoders/ }).click()
++  await expect(page.getByRole('alert')).toBeVisible()
++  await shot(page, '11-conversation-error')
++})
++
++test('composer with text and mention panel', async ({ page }) => {
++  await mockZulip(page)
++  await signIn(page)
++  await openConversation(page)
++  const box = page.getByRole('textbox', { name: /message/i })
++  await box.fill('Go ahead with distance 9 tonight, and ping me when the first round lands.')
++  await shot(page, '12-composer-multiline')
++  await box.fill('Looping in @M')
++  await expect(page.getByRole('listbox')).toBeVisible()
++  await shot(page, '13-composer-mentions')
++})
++
++test('reconnecting banner', async ({ page }) => {
++  await mockZulip(page, { hangRegister: true })
++  await signIn(page)
++  await shot(page, '14-reconnecting')
++})
++
++test('settings', async ({ page }) => {
++  await mockZulip(page)
++  await signIn(page)
++  await page.getByRole('button', { name: /settings/i }).click()
++  await expect(page.getByRole('dialog')).toBeVisible()
++  await shot(page, '15-settings')
++})
+diff --git a/e2e/smoke.spec.ts b/e2e/smoke.spec.ts
+index d235449..d1e6c04 100644
+--- a/e2e/smoke.spec.ts
++++ b/e2e/smoke.spec.ts
+@@ -1,4 +1,5 @@
+ import { test, expect } from '@playwright/test'
++import { mockZulip, signIn } from './fixtures'
+ 
+ const message = {
+   id: 7,
+@@ -59,3 +60,46 @@ test('login → projects → conversation → send', async ({ page }) => {
+   await page.getByRole('button', { name: /^send$/i }).click()
+   await expect(page.getByRole('textbox')).toHaveValue('')
+ })
++
++test.describe('phone layout contract', () => {
++  test.use({ viewport: { width: 390, height: 844 } })
++
++  test('nothing overflows sideways and every control is thumb-sized', async ({ page }) => {
++    await mockZulip(page)
++    await signIn(page)
++    await page.getByRole('button', { name: /qec-decoders/ }).click()
++    await expect(page.getByText('Decoder sweep complete')).toBeVisible()
++
++    // Wide code lines and a four-column table must scroll inside their own
++    // container, never widen the page.
++    const overflow = await page.evaluate(() => {
++      const doc = document.documentElement
++      return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth }
++    })
++    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
++
++    for (const scroller of await page.locator('.message-body pre, .message-body table').all()) {
++      const box = await scroller.boundingBox()
++      expect(box!.width).toBeLessThanOrEqual(390)
++    }
++
++    // Bar actions and composer controls carry a 44px touch target.
++    const controls = page.locator('.icon-btn, .send-btn, .stream-card, .mention-option')
++    for (const control of await controls.all()) {
++      const box = await control.boundingBox()
++      expect(box!.height, await control.getAttribute('aria-label')).toBeGreaterThanOrEqual(44)
++      expect(box!.width).toBeGreaterThanOrEqual(44)
++    }
++  })
++
++  test('the projects list does not overflow either', async ({ page }) => {
++    await mockZulip(page)
++    await signIn(page)
++    await expect(page.getByRole('button', { name: /qec-decoders/ })).toBeVisible()
++    const overflow = await page.evaluate(() => ({
++      scrollWidth: document.documentElement.scrollWidth,
++      clientWidth: document.documentElement.clientWidth,
++    }))
++    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
++  })
++})
+diff --git a/index.html b/index.html
+index d4e4910..adf7fbe 100644
+--- a/index.html
++++ b/index.html
+@@ -4,9 +4,11 @@
+     <meta charset="UTF-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+     <title>Agent Console</title>
++    <meta name="description" content="Read and steer your project agents — one Zulip stream, one conversation." />
+     <link rel="manifest" href="/manifest.webmanifest" />
++    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+     <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+-    <meta name="theme-color" content="#4f46e5" />
++    <meta name="theme-color" content="#f5f5f6" />
+     <meta name="apple-mobile-web-app-capable" content="yes" />
+     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+   </head>
+diff --git a/public/icons/icon-180.png b/public/icons/icon-180.png
+index c2ddc72..76ce949 100644
+Binary files a/public/icons/icon-180.png and b/public/icons/icon-180.png differ
+diff --git a/public/icons/icon-192.png b/public/icons/icon-192.png
+index e755168..b23e28a 100644
+Binary files a/public/icons/icon-192.png and b/public/icons/icon-192.png differ
+diff --git a/public/icons/icon-512.png b/public/icons/icon-512.png
+index 745c0b9..e2d49cc 100644
+Binary files a/public/icons/icon-512.png and b/public/icons/icon-512.png differ
+diff --git a/public/icons/icon.svg b/public/icons/icon.svg
+new file mode 100644
+index 0000000..d518ee9
+--- /dev/null
++++ b/public/icons/icon.svg
+@@ -0,0 +1,14 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
++  <title>Agent Console</title>
++  <!-- Full-bleed ground: platforms apply their own mask, and the glyph sits
++       inside the maskable safe zone (the central 80% circle). -->
++  <rect width="512" height="512" fill="#07c160"/>
++  <g transform="translate(88 88) scale(7)">
++    <rect x="3" y="5" width="42" height="33" rx="10" fill="#ffffff"/>
++    <path d="M13.5 36.5h10L14.6 44.3a1.4 1.4 0 0 1-2.3-1.1v-5.3z" fill="#ffffff"/>
++    <g stroke="#07c160" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
++      <path d="M16.5 15.5l6 6-6 6"/>
++      <path d="M26.5 27.5h7"/>
++    </g>
++  </g>
++</svg>
+diff --git a/public/manifest.webmanifest b/public/manifest.webmanifest
+index c0306a3..88a9734 100644
+--- a/public/manifest.webmanifest
++++ b/public/manifest.webmanifest
+@@ -1,12 +1,17 @@
+ {
+   "name": "Agent Console",
+   "short_name": "Agents",
++  "description": "Read and steer your project agents — one Zulip stream, one conversation.",
+   "start_url": "/",
++  "scope": "/",
+   "display": "standalone",
+-  "background_color": "#f8fafc",
+-  "theme_color": "#4f46e5",
++  "orientation": "portrait",
++  "background_color": "#ffffff",
++  "theme_color": "#f5f5f6",
+   "icons": [
+-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
++    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
++    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
++    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
++    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+   ]
+ }
+diff --git a/scripts/generate-icons.mjs b/scripts/generate-icons.mjs
+new file mode 100644
+index 0000000..958debe
+--- /dev/null
++++ b/scripts/generate-icons.mjs
+@@ -0,0 +1,39 @@
++/**
++ * Renders public/icons/icon.svg to the PNG sizes the manifest and iOS need.
++ *
++ *   node scripts/generate-icons.mjs
++ *
++ * Uses the Chromium that @playwright/test already installs, so this adds no
++ * dependency. Re-run it whenever icon.svg changes; the PNGs are committed so a
++ * plain `npm run build` never needs a browser.
++ */
++import { chromium } from '@playwright/test'
++import { mkdir, readFile, writeFile } from 'node:fs/promises'
++import { dirname, join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++
++const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
++const ICON_DIR = join(ROOT, 'public', 'icons')
++const SIZES = [180, 192, 512]
++
++const svg = await readFile(join(ICON_DIR, 'icon.svg'), 'utf8')
++await mkdir(ICON_DIR, { recursive: true })
++
++const browser = await chromium.launch()
++try {
++  for (const size of SIZES) {
++    const page = await browser.newPage({
++      viewport: { width: size, height: size },
++      deviceScaleFactor: 1,
++    })
++    await page.setContent(
++      `<!doctype html><style>html,body{margin:0;padding:0;width:${size}px;height:${size}px}
++       svg{display:block;width:${size}px;height:${size}px}</style>${svg}`,
++    )
++    await writeFile(join(ICON_DIR, `icon-${size}.png`), await page.screenshot())
++    await page.close()
++    console.log(`icon-${size}.png`)
++  }
++} finally {
++  await browser.close()
++}
+diff --git a/src/App.tsx b/src/App.tsx
+index 729e2b5..8a7c227 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -27,7 +27,7 @@ export default function App() {
+   return (
+     <div className="app">
+       {connection !== 'live' && (
+-        <div className="banner" role="status">Reconnecting…</div>
++        <div className="banner" role="status">Reconnecting</div>
+       )}
+       {view.name === 'conversation' ? (
+         <ConversationView streamId={view.streamId} />
+diff --git a/src/api/client.ts b/src/api/client.ts
+index 25f1e01..f223c64 100644
+--- a/src/api/client.ts
++++ b/src/api/client.ts
+@@ -1,4 +1,4 @@
+-import type { Credentials, InitialState, StreamSub, ZulipEvent, ZulipMessage } from './types'
++import type { Credentials, InitialState, StreamSub, ZulipEvent, ZulipMessage, ZulipUser } from './types'
+ 
+ export class ZulipApiError extends Error {
+   constructor(
+@@ -118,6 +118,40 @@ export class ZulipClient {
+     })
+   }
+ 
++  async getOwnUser(): Promise<{ user_id: number }> {
++    const body = await this.request('/users/me')
++    return { user_id: body.user_id as number }
++  }
++
++  async getUsers(): Promise<ZulipUser[]> {
++    const body = await this.request('/users')
++    const members = (body.members ?? []) as Array<{
++      user_id?: number
++      full_name?: string
++      email?: string
++      is_bot?: boolean
++      is_active?: boolean
++    }>
++    return members
++      .filter((m) => m.is_active !== false)
++      .map((m) => ({
++        user_id: m.user_id as number,
++        full_name: m.full_name ?? '',
++        email: m.email ?? '',
++        is_bot: m.is_bot ?? false,
++      }))
++  }
++
++  async uploadFile(file: File): Promise<string> {
++    const form = new FormData()
++    form.append('file', file)
++    // No manual Content-Type: the browser must set the multipart boundary.
++    // request() only injects the Authorization header, so leave headers out.
++    const body = await this.request('/user_uploads', { method: 'POST', body: form })
++    // Server version differences: modern Zulip returns `uri`, older ones `url`.
++    return (body.uri ?? body.url) as string
++  }
++
+   async register(): Promise<InitialState> {
+     const body = await this.request('/register', {
+       method: 'POST',
+diff --git a/src/api/client.upload.test.ts b/src/api/client.upload.test.ts
+new file mode 100644
+index 0000000..ea3ef9b
+--- /dev/null
++++ b/src/api/client.upload.test.ts
+@@ -0,0 +1,56 @@
++import { ZulipClient, ZulipApiError } from './client'
++import type { Credentials } from './types'
++
++const creds: Credentials = { prefix: '/zulip/qec', email: 'a@b.c', apiKey: 'k', sendTopic: '' }
++
++function jsonResponse(body: unknown, status = 200): Response {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: { 'Content-Type': 'application/json' },
++  })
++}
++
++function file(name = 'report.pdf'): File {
++  return new File(['pdf-bytes'], name, { type: 'application/pdf' })
++}
++
++test('uploadFile posts a FormData body with auth and returns the uri', async () => {
++  const fetchFn = vi.fn(async () =>
++    jsonResponse({ result: 'success', uri: '/user_uploads/2/ab/report.pdf' }),
++  )
++  const client = new ZulipClient(creds, fetchFn as unknown as typeof fetch)
++  const f = file()
++  const uri = await client.uploadFile(f)
++  expect(uri).toBe('/user_uploads/2/ab/report.pdf')
++  const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
++  expect(url).toBe('/zulip/qec/api/v1/user_uploads')
++  expect(init.method).toBe('POST')
++  expect(init.body).toBeInstanceOf(FormData)
++  expect((init.body as FormData).get('file')).toBe(f)
++  // No manual Content-Type: the browser must set the multipart boundary.
++  const headers = init.headers as Record<string, string>
++  expect(headers.Authorization).toBe('Basic ' + btoa('a@b.c:k'))
++  expect(headers['Content-Type']).toBeUndefined()
++})
++
++test('uploadFile falls back to body.url when uri is absent', async () => {
++  const fetchFn = vi.fn(async () =>
++    jsonResponse({ result: 'success', url: '/user_uploads/9/cc/x.txt' }),
++  )
++  const client = new ZulipClient(creds, fetchFn as unknown as typeof fetch)
++  expect(await client.uploadFile(file('x.txt'))).toBe('/user_uploads/9/cc/x.txt')
++})
++
++test('uploadFile maps Zulip errors to ZulipApiError', async () => {
++  const fetchFn = vi.fn(async () =>
++    jsonResponse(
++      { result: 'error', msg: 'File too large', code: 'REQUEST_VALIDATION_ERROR' },
++      400,
++    ),
++  )
++  const client = new ZulipClient(creds, fetchFn as unknown as typeof fetch)
++  const err = await client.uploadFile(file('big.pdf')).catch((e) => e)
++  expect(err).toBeInstanceOf(ZulipApiError)
++  expect((err as ZulipApiError).httpStatus).toBe(400)
++  expect((err as ZulipApiError).message).toBe('File too large')
++})
+diff --git a/src/api/client.users.test.ts b/src/api/client.users.test.ts
+new file mode 100644
+index 0000000..a636cdc
+--- /dev/null
++++ b/src/api/client.users.test.ts
+@@ -0,0 +1,49 @@
++import { ZulipClient } from './client'
++import type { Credentials } from './types'
++
++const creds: Credentials = { prefix: '/zulip/qec', email: 'a@b.c', apiKey: 'k', sendTopic: '' }
++
++function jsonResponse(body: unknown, status = 200): Response {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: { 'Content-Type': 'application/json' },
++  })
++}
++
++test('getOwnUser hits /users/me with auth and returns the user id', async () => {
++  const fetchFn = vi.fn(async () =>
++    jsonResponse({ result: 'success', user_id: 7, email: 'a@b.c' }),
++  )
++  const client = new ZulipClient(creds, fetchFn as unknown as typeof fetch)
++  const out = await client.getOwnUser()
++  expect(out).toEqual({ user_id: 7 })
++  const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
++  expect(url).toBe('/zulip/qec/api/v1/users/me')
++  expect((init.headers as Record<string, string>).Authorization).toBe(
++    'Basic ' + btoa('a@b.c:k'),
++  )
++})
++
++test('getUsers hits /users with auth, maps members, drops inactive ones', async () => {
++  const fetchFn = vi.fn(async () =>
++    jsonResponse({
++      result: 'success',
++      members: [
++        { user_id: 1, full_name: 'Alice Doe', email: 'alice@b.c', is_bot: false, is_active: true },
++        { user_id: 2, full_name: 'Research Bot', email: 'bot@b.c', is_bot: true },
++        { user_id: 3, full_name: 'Gone', email: 'gone@b.c', is_bot: false, is_active: false },
++      ],
++    }),
++  )
++  const client = new ZulipClient(creds, fetchFn as unknown as typeof fetch)
++  const out = await client.getUsers()
++  expect(out).toEqual([
++    { user_id: 1, full_name: 'Alice Doe', email: 'alice@b.c', is_bot: false },
++    { user_id: 2, full_name: 'Research Bot', email: 'bot@b.c', is_bot: true },
++  ])
++  const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
++  expect(url).toBe('/zulip/qec/api/v1/users')
++  expect((init.headers as Record<string, string>).Authorization).toBe(
++    'Basic ' + btoa('a@b.c:k'),
++  )
++})
+diff --git a/src/api/types.ts b/src/api/types.ts
+index 43c76b9..4a0bf79 100644
+--- a/src/api/types.ts
++++ b/src/api/types.ts
+@@ -21,6 +21,13 @@ export interface ZulipMessage {
+   subject: string
+ }
+ 
++export interface ZulipUser {
++  user_id: number
++  full_name: string
++  email: string
++  is_bot: boolean
++}
++
+ export interface StreamSub {
+   stream_id: number
+   name: string
+diff --git a/src/components/Composer.test.tsx b/src/components/Composer.test.tsx
+index b43f44a..b9e7d20 100644
+--- a/src/components/Composer.test.tsx
++++ b/src/components/Composer.test.tsx
+@@ -1,16 +1,24 @@
+ import { render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+-import { Composer } from './Composer'
++import { Composer, filterUsers, mentionQueryAt } from './Composer'
+ import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+ import { ZulipApiError, type ZulipClient } from '../api/client'
++import type { ZulipUser } from '../api/types'
+ 
+ function fakeClient(overrides: Partial<Record<keyof ZulipClient, unknown>> = {}) {
+   return {
+     sendMessage: vi.fn(async () => 42),
++    getUsers: vi.fn(async () => []),
+     ...overrides,
+   } as unknown as ZulipClient
+ }
+ 
++const users: ZulipUser[] = [
++  { user_id: 1, full_name: 'Alice Doe', email: 'alice@b.c', is_bot: false },
++  { user_id: 2, full_name: 'Alex Mercer', email: 'alex@b.c', is_bot: false },
++  { user_id: 3, full_name: 'Bob', email: 'bob@b.c', is_bot: false },
++]
++
+ beforeEach(() => {
+   resetAppStore()
+   useAppStore.setState({
+@@ -44,3 +52,259 @@ test('non-auth send failure keeps composer text and shows the retry state', asyn
+   expect(box).toHaveValue('keep me')
+   expect(useAppStore.getState().creds).not.toBeNull()
+ })
++
++describe('mention query helpers', () => {
++  test('mentionQueryAt only matches right after an @', () => {
++    expect(mentionQueryAt('ping @al', 8)).toBe('al')
++    expect(mentionQueryAt('ping @', 6)).toBe('')
++    expect(mentionQueryAt('plain words', 11)).toBeNull()
++    expect(mentionQueryAt('ping @al extra', 14)).toBe('al extra')
++  })
++
++  test('filterUsers lists prefix matches first, then includes, capped at 8', () => {
++    const list: ZulipUser[] = [
++      { user_id: 1, full_name: 'Alex', email: 'a@b.c', is_bot: false },
++      { user_id: 2, full_name: 'Vitaly', email: 'v@b.c', is_bot: false },
++      { user_id: 3, full_name: 'Alice', email: 'al@b.c', is_bot: false },
++      { user_id: 4, full_name: 'Zed', email: 'z@b.c', is_bot: false },
++    ]
++    expect(filterUsers(list, 'al').map((u) => u.full_name)).toEqual(['Alex', 'Alice', 'Vitaly'])
++    const many: ZulipUser[] = Array.from({ length: 12 }, (_, i) => ({
++      user_id: i, full_name: `User ${i}`, email: '', is_bot: false,
++    }))
++    expect(filterUsers(many, '')).toHaveLength(8)
++  })
++})
++
++describe('@-mention autocomplete', () => {
++  test('typing @al opens a filtered panel; Enter inserts the Zulip mention', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ping @al')
++    const options = await screen.findAllByRole('option')
++    expect(options.map((o) => o.textContent)).toEqual(['Alice Doe', 'Alex Mercer'])
++    expect(client.getUsers).toHaveBeenCalledTimes(1)
++    await userEvent.keyboard('{Enter}')
++    expect(box).toHaveValue('ping @**Alice Doe** ')
++    expect(screen.queryByRole('listbox')).toBeNull()
++  })
++
++  test('ArrowDown moves the active row and Enter confirms it', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ping @al')
++    await screen.findAllByRole('option')
++    await userEvent.keyboard('{ArrowDown}')
++    const options = screen.getAllByRole('option')
++    expect(options[0].className).not.toContain('active')
++    expect(options[1].className).toContain('active')
++    await userEvent.keyboard('{Enter}')
++    expect(box).toHaveValue('ping @**Alex Mercer** ')
++  })
++
++  test('Tab confirms the selected user', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, '@al')
++    await screen.findAllByRole('option')
++    await userEvent.tab()
++    expect(box).toHaveValue('@**Alice Doe** ')
++  })
++
++  test('click confirms the clicked user', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ping @al')
++    const options = await screen.findAllByRole('option')
++    await userEvent.click(options[1])
++    expect(box).toHaveValue('ping @**Alex Mercer** ')
++  })
++
++  test('Escape closes the panel without inserting', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ping @al')
++    await screen.findAllByRole('option')
++    await userEvent.keyboard('{Escape}')
++    expect(screen.queryByRole('listbox')).toBeNull()
++    expect(box).toHaveValue('ping @al')
++  })
++
++  test('no panel opens while typing plain words without @', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'hello world')
++    expect(screen.queryByRole('listbox')).toBeNull()
++    expect(client.getUsers).not.toHaveBeenCalled()
++  })
++
++  test('panel closes once the @ is deleted', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, '@al')
++    await screen.findAllByRole('option')
++    await userEvent.keyboard('{Backspace}{Backspace}{Backspace}')
++    expect(screen.queryByRole('listbox')).toBeNull()
++  })
++
++  test('send still sends the mention text after autocomplete', async () => {
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ping @al')
++    await screen.findAllByRole('option')
++    await userEvent.keyboard('{Enter}')
++    await userEvent.click(screen.getByRole('button', { name: /send/i }))
++    await waitFor(() => expect(box).toHaveValue(''))
++    expect(client.sendMessage).toHaveBeenCalledWith('alpha', 'ping @**Alice Doe** ')
++  })
++})
++
++describe('file upload', () => {
++  const attach = (): HTMLInputElement =>
++    screen.getByLabelText('Attach file', { selector: 'input' }) as HTMLInputElement
++
++  test('successful upload inserts the markdown link at the caret', async () => {
++    const client = fakeClient({
++      uploadFile: vi.fn(async () => '/user_uploads/2/ab/report.pdf'),
++    })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'see ')
++    await userEvent.upload(attach(), new File(['pdf'], 'report.pdf', { type: 'application/pdf' }))
++    await waitFor(() =>
++      expect(box).toHaveValue('see [report.pdf](/user_uploads/2/ab/report.pdf)'),
++    )
++    expect(client.uploadFile).toHaveBeenCalledTimes(1)
++  })
++
++  test('failed upload shows the server message and leaves text unchanged', async () => {
++    const client = fakeClient({
++      uploadFile: vi.fn().mockRejectedValue(new ZulipApiError('File too large', 400)),
++    })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'keep this')
++    await userEvent.upload(attach(), new File(['x'], 'big.pdf', { type: 'application/pdf' }))
++    expect(await screen.findByText('File too large')).toBeInTheDocument()
++    expect(box).toHaveValue('keep this')
++  })
++
++  test('send is disabled while uploading and re-enabled after', async () => {
++    let resolveUpload!: (uri: string) => void
++    const client = fakeClient({
++      uploadFile: vi.fn(() => new Promise<string>((r) => { resolveUpload = r })),
++    })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'hello')
++    const sendBtn = screen.getByRole('button', { name: /send/i })
++    expect(sendBtn).toBeEnabled()
++    await userEvent.upload(attach(), new File(['x'], 'a.txt', { type: 'text/plain' }))
++    expect(sendBtn).toBeDisabled()
++    expect(screen.getByRole('status')).toHaveTextContent(/uploading a\.txt/i)
++    resolveUpload('/user_uploads/1/aa/a.txt')
++    await waitFor(() => expect(sendBtn).toBeEnabled())
++    expect(screen.queryByRole('status')).toBeNull()
++    expect(box).toHaveValue('hello [a.txt](/user_uploads/1/aa/a.txt)')
++  })
++
++  test('re-picking the same file works (input is reset)', async () => {
++    const client = fakeClient({ uploadFile: vi.fn(async () => '/user_uploads/1/aa/a.txt') })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    const input = attach()
++    const f = new File(['x'], 'a.txt', { type: 'text/plain' })
++    await userEvent.upload(input, f)
++    await waitFor(() => expect(box).toHaveValue('[a.txt](/user_uploads/1/aa/a.txt)'))
++    await userEvent.upload(input, f)
++    await waitFor(() =>
++      expect(box).toHaveValue(
++        '[a.txt](/user_uploads/1/aa/a.txt) [a.txt](/user_uploads/1/aa/a.txt)',
++      ),
++    )
++  })
++})
++
++describe('Enter to send', () => {
++  /** Pretend a hardware keyboard is attached (or not). */
++  function stubPointer(fine: boolean) {
++    vi.stubGlobal('matchMedia', (query: string) => ({
++      matches: fine,
++      media: query,
++      onchange: null,
++      addListener: vi.fn(),
++      removeListener: vi.fn(),
++      addEventListener: vi.fn(),
++      removeEventListener: vi.fn(),
++      dispatchEvent: vi.fn(),
++    }))
++  }
++
++  afterEach(() => vi.unstubAllGlobals())
++
++  test('Enter sends on a hardware keyboard', async () => {
++    stubPointer(true)
++    const client = fakeClient()
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ship it{Enter}')
++    await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith('alpha', 'ship it'))
++    expect(box).toHaveValue('')
++  })
++
++  test('Shift+Enter inserts a newline instead of sending', async () => {
++    stubPointer(true)
++    const client = fakeClient()
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'line one{Shift>}{Enter}{/Shift}line two')
++    expect(box).toHaveValue('line one\nline two')
++    expect(client.sendMessage).not.toHaveBeenCalled()
++  })
++
++  test('on a touch keyboard Enter is a newline, since there is no modifier', async () => {
++    stubPointer(false)
++    const client = fakeClient()
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'line one{Enter}line two')
++    expect(box).toHaveValue('line one\nline two')
++    expect(client.sendMessage).not.toHaveBeenCalled()
++  })
++
++  test('Enter with the mention panel open confirms the mention, never sends', async () => {
++    stubPointer(true)
++    const client = fakeClient({ getUsers: vi.fn(async () => users) })
++    useAppStore.setState({ client })
++    render(<Composer streamName="alpha" />)
++    const box = screen.getByRole('textbox')
++    await userEvent.type(box, 'ping @al')
++    await screen.findAllByRole('option')
++    await userEvent.keyboard('{Enter}')
++    expect(box).toHaveValue('ping @**Alice Doe** ')
++    expect(client.sendMessage).not.toHaveBeenCalled()
++  })
++})
+diff --git a/src/components/Composer.tsx b/src/components/Composer.tsx
+index d73cc63..baae176 100644
+--- a/src/components/Composer.tsx
++++ b/src/components/Composer.tsx
+@@ -1,12 +1,199 @@
+-import { useState } from 'react'
++import { useEffect, useMemo, useRef, useState } from 'react'
+ import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+ import { isAuthError } from '../api/client'
++import { AlertCircle, ArrowUp, Paperclip } from './Icon'
++import type { ZulipUser } from '../api/types'
++
++/**
++ * True when the device most likely has a hardware keyboard, where Enter is
++ * expected to send and Shift+Enter to insert a newline. On a touch keyboard
++ * Enter must stay a newline — there is no modifier to fall back on.
++ */
++function hasHardwareKeyboard(): boolean {
++  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
++  return window.matchMedia('(hover: hover) and (pointer: fine)').matches
++}
++
++/**
++ * Returns the @-mention query immediately before `caret` in `text`, or null
++ * when the caret is not right after an `@`. Letters, numbers, underscores and
++ * spaces are allowed so multi-word names autocomplete.
++ */
++export function mentionQueryAt(text: string, caret: number): string | null {
++  const m = /@([\p{L}\p{N}_ ]*)$/u.exec(text.slice(0, caret))
++  return m ? m[1] : null
++}
++
++/** Users whose full_name case-insensitively includes the query; prefix matches
++ *  rank first, capped at the panel's 8-row limit. */
++export function filterUsers(users: ZulipUser[], query: string): ZulipUser[] {
++  const q = query.trim().toLowerCase()
++  if (!q) return users.slice(0, 8)
++  const prefix = users.filter((u) => u.full_name.toLowerCase().startsWith(q))
++  const rest = users.filter(
++    (u) => !u.full_name.toLowerCase().startsWith(q) && u.full_name.toLowerCase().includes(q),
++  )
++  return [...prefix, ...rest].slice(0, 8)
++}
+ 
+ export function Composer({ streamName }: { streamName: string }) {
+   const client = useAppStore((s) => s.client)
++  const users = useAppStore((s) => s.users)
++  const setUsers = useAppStore((s) => s.setUsers)
+   const [text, setText] = useState('')
+   const [failed, setFailed] = useState(false)
+   const [sending, setSending] = useState(false)
++  const [uploading, setUploading] = useState(false)
++  const [uploadName, setUploadName] = useState('')
++  const [uploadError, setUploadError] = useState<string | null>(null)
++  const [mentionOpen, setMentionOpen] = useState(false)
++  const [mentionQuery, setMentionQuery] = useState('')
++  const [mentionIndex, setMentionIndex] = useState(0)
++  const textareaRef = useRef<HTMLTextAreaElement>(null)
++  const fileInputRef = useRef<HTMLInputElement>(null)
++  const usersRequested = useRef(false)
++  const pendingCaret = useRef<number | null>(null)
++
++  const matches = useMemo(() => filterUsers(users ?? [], mentionQuery), [users, mentionQuery])
++  const panelVisible = mentionOpen && matches.length > 0
++
++  // After a programmatic insert (mention confirm), place the caret at the end
++  // of the inserted text so further typing appends naturally.
++  useEffect(() => {
++    const ta = textareaRef.current
++    if (ta && pendingCaret.current !== null) {
++      ta.setSelectionRange(pendingCaret.current, pendingCaret.current)
++      pendingCaret.current = null
++    }
++  })
++
++  // Grow the field with its content, up to the max-height the stylesheet sets
++  // (~5 lines), after which it scrolls.
++  useEffect(() => {
++    const ta = textareaRef.current
++    if (!ta) return
++    ta.style.height = 'auto'
++    ta.style.height = `${ta.scrollHeight}px`
++  }, [text])
++
++  function fetchUsers() {
++    if (!client || usersRequested.current) return
++    usersRequested.current = true
++    try {
++      client
++        .getUsers()
++        .then((list) => setUsers(list))
++        .catch(() => closeMention())
++    } catch {
++      closeMention()
++    }
++  }
++
++  function closeMention() {
++    setMentionOpen(false)
++    setMentionQuery('')
++    setMentionIndex(0)
++  }
++
++  /** Insert `[name](uri)` at the caret, space-separated from surrounding text. */
++  function insertLink(name: string, uri: string) {
++    const ta = textareaRef.current
++    const caret = ta ? ta.selectionStart : text.length
++    const before = text.slice(0, caret)
++    const after = text.slice(caret)
++    const link = `[${name}](${uri})`
++    const full =
++      (before.length > 0 && !/\s$/.test(before) ? ' ' : '') +
++      link +
++      (after.length > 0 && !/^\s/.test(after) ? ' ' : '')
++    pendingCaret.current = caret + full.length
++    setText(before + full + after)
++  }
++
++  async function onFilePick(e: React.ChangeEvent<HTMLInputElement>) {
++    const file = e.target.files?.[0]
++    // Reset immediately so the same file can be re-picked.
++    e.target.value = ''
++    if (!file || !client || uploading) return
++    setUploading(true)
++    setUploadName(file.name)
++    setUploadError(null)
++    try {
++      const uri = await client.uploadFile(file)
++      insertLink(file.name, uri)
++    } catch (err) {
++      if (isAuthError(err)) {
++        useAppStore.getState().logout(AUTH_LOGOUT_REASON)
++        return
++      }
++      setUploadError(err instanceof Error ? err.message : String(err))
++    } finally {
++      setUploading(false)
++      setUploadName('')
++    }
++  }
++
++  function confirmUser(user: ZulipUser) {
++    const ta = textareaRef.current
++    if (!ta) return
++    const caret = ta.selectionStart
++    const m = /@([\p{L}\p{N}_ ]*)$/u.exec(text.slice(0, caret))
++    if (!m) {
++      closeMention()
++      return
++    }
++    const start = caret - m[0].length
++    const full = `@**${user.full_name}** `
++    pendingCaret.current = start + full.length
++    setText(text.slice(0, start) + full + text.slice(caret))
++    closeMention()
++  }
++
++  function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
++    const ta = e.target
++    const value = ta.value
++    setText(value)
++    const query = mentionQueryAt(value, ta.selectionStart)
++    if (query !== null) {
++      setMentionOpen(true)
++      setMentionQuery(query)
++      setMentionIndex(0)
++      if (users === null) fetchUsers()
++    } else {
++      closeMention()
++    }
++  }
++
++  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
++    if (!panelVisible) {
++      // Enter sends on a hardware keyboard; Shift+Enter always inserts a
++      // newline. `isComposing` guards IME candidate selection, where Enter
++      // commits the candidate rather than the message.
++      if (
++        e.key === 'Enter' &&
++        !e.shiftKey &&
++        !e.nativeEvent.isComposing &&
++        hasHardwareKeyboard()
++      ) {
++        e.preventDefault()
++        void send()
++      }
++      return
++    }
++    if (e.key === 'ArrowDown') {
++      e.preventDefault()
++      setMentionIndex((i) => Math.min(i + 1, matches.length - 1))
++    } else if (e.key === 'ArrowUp') {
++      e.preventDefault()
++      setMentionIndex((i) => Math.max(i - 1, 0))
++    } else if (e.key === 'Enter' || e.key === 'Tab') {
++      e.preventDefault()
++      confirmUser(matches[Math.min(mentionIndex, matches.length - 1)])
++    } else if (e.key === 'Escape') {
++      e.preventDefault()
++      closeMention()
++    }
++  }
+ 
+   async function send() {
+     if (!client || !text.trim() || sending) return
+@@ -27,17 +214,72 @@ export function Composer({ streamName }: { streamName: string }) {
+   }
+ 
+   return (
+-    <div>
+-      {failed && <p className="error" role="alert">Send failed — check connection and retry.</p>}
++    <div className="composer-dock">
++      {failed && (
++        <p className="composer-alert" role="alert">
++          <AlertCircle size={15} />
++          Send failed — check your connection and retry.
++        </p>
++      )}
++      {uploadError && (
++        <p className="composer-alert" role="alert">
++          <AlertCircle size={15} />
++          {uploadError}
++        </p>
++      )}
++      {uploading && (
++        <p className="upload-status" role="status">Uploading {uploadName}…</p>
++      )}
++      {panelVisible && (
++        <div className="mention-panel" role="listbox" aria-label="Mention users">
++          {matches.map((u, i) => (
++            <div
++              key={u.user_id}
++              role="option"
++              aria-selected={i === mentionIndex}
++              className={`mention-option${i === mentionIndex ? ' active' : ''}`}
++              onMouseDown={(e) => e.preventDefault()}
++              onClick={() => confirmUser(u)}
++            >
++              {u.full_name}
++            </div>
++          ))}
++        </div>
++      )}
+       <div className="composer">
++        <button
++          type="button"
++          className="icon-btn"
++          aria-label="Attach file"
++          onClick={() => fileInputRef.current?.click()}
++          disabled={uploading}
++        >
++          <Paperclip size={21} />
++        </button>
++        <input
++          ref={fileInputRef}
++          type="file"
++          aria-label="Attach file"
++          hidden
++          onChange={onFilePick}
++        />
+         <textarea
+-          rows={2}
++          ref={textareaRef}
++          rows={1}
+           value={text}
++          aria-label="Message"
+           placeholder="Message the agent…"
+-          onChange={(e) => setText(e.target.value)}
++          onChange={onChange}
++          onKeyDown={onKeyDown}
+         />
+-        <button onClick={send} disabled={sending || !text.trim()}>
+-          {failed ? 'Retry' : 'Send'}
++        <button
++          type="button"
++          className={`send-btn${failed ? ' is-retry' : ''}`}
++          aria-label={failed ? 'Retry' : 'Send'}
++          onClick={send}
++          disabled={sending || uploading || !text.trim()}
++        >
++          <ArrowUp size={21} />
+         </button>
+       </div>
+     </div>
+diff --git a/src/components/Icon.tsx b/src/components/Icon.tsx
+new file mode 100644
+index 0000000..393fb82
+--- /dev/null
++++ b/src/components/Icon.tsx
+@@ -0,0 +1,101 @@
++/**
++ * The app's icon family: one grid (24×24), one stroke weight, round joins.
++ * Inline SVG rather than an icon font or package — zero bytes of dependency
++ * and the strokes inherit `currentColor` from whatever button holds them.
++ */
++type IconProps = { size?: number; className?: string }
++
++function Svg({ size = 24, className, children }: IconProps & { children: React.ReactNode }) {
++  return (
++    <svg
++      className={className}
++      width={size}
++      height={size}
++      viewBox="0 0 24 24"
++      fill="none"
++      stroke="currentColor"
++      strokeWidth={1.75}
++      strokeLinecap="round"
++      strokeLinejoin="round"
++      aria-hidden="true"
++      focusable="false"
++    >
++      {children}
++    </svg>
++  )
++}
++
++export const ChevronLeft = (p: IconProps) => (
++  <Svg {...p}><path d="M15 5l-7 7 7 7" /></Svg>
++)
++
++export const ArrowDown = (p: IconProps) => (
++  <Svg {...p}><path d="M12 5v14M6 13l6 6 6-6" /></Svg>
++)
++
++export const ArrowUp = (p: IconProps) => (
++  <Svg {...p}><path d="M12 19V5M6 11l6-6 6 6" /></Svg>
++)
++
++export const Gear = (p: IconProps) => (
++  <Svg {...p}>
++    <circle cx="12" cy="12" r="3.1" />
++    <path d="M19.6 14.2a1.5 1.5 0 0 0 .3 1.65l.05.06a1.8 1.8 0 1 1-2.55 2.55l-.06-.06a1.5 1.5 0 0 0-1.65-.3 1.5 1.5 0 0 0-.91 1.37v.17a1.8 1.8 0 0 1-3.6 0v-.09a1.5 1.5 0 0 0-.98-1.37 1.5 1.5 0 0 0-1.65.3l-.06.06a1.8 1.8 0 1 1-2.55-2.55l.06-.06a1.5 1.5 0 0 0 .3-1.65 1.5 1.5 0 0 0-1.37-.91h-.17a1.8 1.8 0 0 1 0-3.6h.09a1.5 1.5 0 0 0 1.37-.98 1.5 1.5 0 0 0-.3-1.65l-.06-.06a1.8 1.8 0 1 1 2.55-2.55l.06.06a1.5 1.5 0 0 0 1.65.3h.07a1.5 1.5 0 0 0 .91-1.37v-.17a1.8 1.8 0 0 1 3.6 0v.09a1.5 1.5 0 0 0 .91 1.37 1.5 1.5 0 0 0 1.65-.3l.06-.06a1.8 1.8 0 1 1 2.55 2.55l-.06.06a1.5 1.5 0 0 0-.3 1.65v.07a1.5 1.5 0 0 0 1.37.91h.17a1.8 1.8 0 0 1 0 3.6h-.09a1.5 1.5 0 0 0-1.37.91z" />
++  </Svg>
++)
++
++export const Paperclip = (p: IconProps) => (
++  <Svg {...p}>
++    <path d="M20.4 11.6l-8.5 8.5a5 5 0 0 1-7.07-7.07l8.49-8.49a3.33 3.33 0 1 1 4.71 4.71l-8.48 8.49a1.67 1.67 0 1 1-2.36-2.36l7.78-7.78" />
++  </Svg>
++)
++
++export const Close = (p: IconProps) => (
++  <Svg {...p}><path d="M18 6L6 18M6 6l12 12" /></Svg>
++)
++
++export const AlertCircle = (p: IconProps) => (
++  <Svg {...p}>
++    <circle cx="12" cy="12" r="9" />
++    <path d="M12 7.5v5" />
++    <circle cx="12" cy="16.2" r="0.9" fill="currentColor" stroke="none" />
++  </Svg>
++)
++
++export const Inbox = (p: IconProps) => (
++  <Svg {...p}>
++    <path d="M3 13h4.5l1.6 2.6h5.8L16.5 13H21" />
++    <path d="M5.4 5h13.2l2.4 8v4.6A2.4 2.4 0 0 1 18.6 20H5.4A2.4 2.4 0 0 1 3 17.6V13z" />
++  </Svg>
++)
++
++export const Message = (p: IconProps) => (
++  <Svg {...p}>
++    <path d="M20.5 11.6a7.9 7.9 0 0 1-8.5 7.9 9 9 0 0 1-2.6-.4L4.5 21l1.4-4.1a7.7 7.7 0 0 1-1.4-4.4 8 8 0 0 1 8.5-7.9 8 8 0 0 1 7.5 7z" />
++  </Svg>
++)
++
++/**
++ * The product mark: a chat bubble containing a shell prompt. The app is a
++ * conversation you type commands into, so the glyph says exactly that — and
++ * its tail is the bubble tail the message list deliberately does not draw.
++ */
++export function Logo({ size = 56, className }: IconProps) {
++  return (
++    <svg
++      className={className}
++      width={size}
++      height={size}
++      viewBox="0 0 48 48"
++      aria-hidden="true"
++      focusable="false"
++    >
++      <rect x="3" y="5" width="42" height="33" rx="10" fill="currentColor" />
++      <path d="M13.5 36.5h10L14.6 44.3a1.4 1.4 0 0 1-2.3-1.1v-5.3z" fill="currentColor" />
++      <g stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" fill="none">
++        <path d="M16.5 15.5l6 6-6 6" />
++        <path d="M26.5 27.5h7" />
++      </g>
++    </svg>
++  )
++}
+diff --git a/src/components/MessageBody.test.tsx b/src/components/MessageBody.test.tsx
+index 0b46184..fafb0b6 100644
+--- a/src/components/MessageBody.test.tsx
++++ b/src/components/MessageBody.test.tsx
+@@ -1,6 +1,6 @@
+ import { render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+-import { MessageBody, sanitizeZulipHtml } from './MessageBody'
++import { MessageBody, filenameFromHref, sanitizeZulipHtml } from './MessageBody'
+ import * as fx from '../test/fixtures/zulipHtml'
+ 
+ const PREFIX = '/zulip/qec'
+@@ -40,6 +40,168 @@ test('keeps KaTeX spans', () => {
+   expect(sanitizeZulipHtml(fx.katexMath, PREFIX)).toContain('katex')
+ })
+ 
++describe('math / markdown rendering fidelity', () => {
++  test('keeps inline styles that carry KaTeX layout', () => {
++    const out = sanitizeZulipHtml(fx.katexDisplayMath, PREFIX)
++    expect(out).toContain('style="height:0.8141em;"')
++    expect(out).toContain('style="top:-3.063em;margin-right:0.05em;"')
++  })
++
++  test('removes the .katex-mathml fallback so raw TeX does not leak as text', () => {
++    const out = sanitizeZulipHtml(fx.katexDisplayMath, PREFIX)
++    expect(out).not.toContain('katex-mathml')
++    expect(out).not.toContain('annotation')
++    expect(out).not.toContain('x^2')
++    expect(out).not.toContain('<math')
++    expect(out).not.toContain('</math>')
++  })
++
++  test('keeps the .katex-html visible layout intact', () => {
++    const out = sanitizeZulipHtml(fx.katexDisplayMath, PREFIX)
++    expect(out).toContain('katex-html')
++    expect(out).toContain('aria-hidden="true"')
++    expect(out).toContain('msupsub')
++    expect(out).toContain('katex-display')
++  })
++
++  test('keeps KaTeX SVG sqrt structure (svg, path, viewBox, preserveAspectRatio, d)', () => {
++    const out = sanitizeZulipHtml(fx.katexSvgSqrt, PREFIX)
++    expect(out).toContain('<svg')
++    expect(out).toContain('<path')
++    expect(out).toContain('viewBox="0 0 400000 1080"')
++    expect(out).toContain('preserveAspectRatio="xMinYMin slice"')
++    expect(out).toContain('d="M95,702c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14"')
++    expect(out).toContain('xmlns="http://www.w3.org/2000/svg"')
++    expect(out).toContain('style="min-width:0.853em;height:1.08em;"')
++  })
++
++  test('keeps markdown table structure (thead/tbody/th/td)', () => {
++    const out = sanitizeZulipHtml(fx.tableMarkup, PREFIX)
++    expect(out).toContain('<table>')
++    expect(out).toContain('<thead>')
++    expect(out).toContain('<tbody>')
++    expect(out).toContain('<th>')
++    expect(out).toContain('<td>')
++  })
++
++  test('converts spritesheet emoji spans to Unicode characters', () => {
++    const out = sanitizeZulipHtml(fx.emojiThumbsUp, PREFIX)
++    expect(out).toContain('👍')
++    expect(out).not.toContain(':thumbs_up:')
++    expect(out).not.toContain('emoji-1f44d')
++  })
++
++  test('converts multi-codepoint emoji spans to a combined Unicode sequence', () => {
++    const out = sanitizeZulipHtml(fx.emojiFlagCn, PREFIX)
++    expect(out).toContain('🇨🇳')
++    expect(out).not.toContain(':cn:')
++  })
++
++  test('converts emoji img elements to their alt text', () => {
++    const out = sanitizeZulipHtml(fx.emojiImg, PREFIX)
++    expect(out).toContain('🎉')
++    expect(out).not.toContain('<img')
++  })
++
++  test('keeps layout style attributes but still strips event handlers', () => {
++    const out = sanitizeZulipHtml(
++      '<div style="height:1.2em" onclick="alert(1)">hi</div>',
++      PREFIX,
++    )
++    expect(out).toContain('style="height:1.2em;"')
++    expect(out).not.toContain('onclick')
++  })
++})
++
++describe('inline style filtering', () => {
++  test('keeps KaTeX-typical declarations verbatim', () => {
++    for (const style of [
++      'height:0.8141em;',
++      'top:-3.063em;margin-right:0.05em;',
++      'min-width:0.853em;height:1.08em;',
++      'vertical-align:-0.3em;',
++      'position:relative;',
++      'width:100%;padding:0 0.2em;',
++      'transform:scale(-1);',
++    ]) {
++      const out = sanitizeZulipHtml(`<span style="${style}">x</span>`, PREFIX)
++      expect(out, style).toContain(`style="${style.endsWith(';') ? style : style + ';'}"`)
++    }
++  })
++
++  test('strips a style carrying a remote url() beacon', () => {
++    const out = sanitizeZulipHtml(
++      '<span style="background-image:url(https://x/beacon)">x</span>',
++      PREFIX,
++    )
++    expect(out).not.toContain('url(')
++    expect(out).not.toContain('beacon')
++    expect(out).not.toContain('style=')
++  })
++
++  test('neutralizes an overlay style (position:fixed;inset:0)', () => {
++    const out = sanitizeZulipHtml('<div style="position:fixed;inset:0">x</div>', PREFIX)
++    expect(out).not.toContain('fixed')
++    expect(out).not.toContain('inset')
++    expect(out).not.toContain('style=')
++  })
++
++  test('drops the whole style attribute when any declaration fails', () => {
++    const out = sanitizeZulipHtml(
++      '<span style="height:1em;background:red">x</span>',
++      PREFIX,
++    )
++    expect(out).not.toContain('style=')
++  })
++
++  test.each([
++    ['non-allowlisted property', 'background-color:red'],
++    ['sticky positioning', 'position:sticky'],
++    ['escaped url', 'background-image:u\\rl(https://x/y)'],
++    ['css comment smuggling', 'height:1em/*x*/;background:url(https://x/y)'],
++    ['important override', 'height:1em !important'],
++    ['transform with a non-numeric arg', 'transform:translate(attr(x))'],
++    ['unknown transform function', 'transform:perspective(1px)'],
++  ])('rejects style: %s', (_name, style) => {
++    const out = sanitizeZulipHtml(`<span style="${style}">x</span>`, PREFIX)
++    expect(out).not.toContain('style=')
++  })
++
++  test('strips url() paint references from SVG fill attributes', () => {
++    const out = sanitizeZulipHtml(
++      '<svg><path fill="url(https://x/y)" d="M0,0"/></svg>',
++      PREFIX,
++    )
++    expect(out).not.toContain('url(')
++    expect(out).not.toContain('fill=')
++    expect(out).toContain('d="M0,0"')
++  })
++
++  test('keeps plain SVG fill colors', () => {
++    const out = sanitizeZulipHtml('<svg><path fill="currentColor" d="M0,0"/></svg>', PREFIX)
++    expect(out).toContain('fill="currentColor"')
++  })
++})
++
++describe('emoji codepoint decoding', () => {
++  test.each([
++    ['out of Unicode range', 'emoji-110000'],
++    ['lone surrogate', 'emoji-d800'],
++    ['absurdly large hex', 'emoji-fffffffffffff'],
++    ['too many codepoints', 'emoji-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8'],
++  ])('leaves the element untouched for %s', (_name, cls) => {
++    const html = `<p><span class="emoji ${cls}">:x:</span></p>`
++    expect(() => sanitizeZulipHtml(html, PREFIX)).not.toThrow()
++    const out = sanitizeZulipHtml(html, PREFIX)
++    expect(out).toContain(':x:')
++  })
++
++  test('still decodes valid codepoints at the range boundary', () => {
++    const out = sanitizeZulipHtml('<p><span class="emoji-10ffff">:x:</span></p>', PREFIX)
++    expect(out).not.toContain(':x:')
++  })
++})
++
+ test('rewrites relative upload links and images to the proxy prefix', () => {
+   expect(sanitizeZulipHtml(fx.uploadLink, PREFIX)).toContain('href="/zulip/qec/user_uploads/2/ab/report.pdf"')
+   expect(sanitizeZulipHtml(fx.inlineImage, PREFIX)).toContain('src="/zulip/qec/user_uploads/2/ab/plot.png"')
+@@ -68,6 +230,45 @@ test('component renders sanitized HTML', () => {
+   expect(container.querySelector('.message-body pre')).not.toBeNull()
+ })
+ 
++test('keeps mention spans with their classes and data-user-id', () => {
++  const out = sanitizeZulipHtml(fx.userMention, PREFIX)
++  expect(out).toContain('class="user-mention"')
++  expect(out).toContain('data-user-id="42"')
++  expect(out).toContain('title="@Alice Doe"')
++})
++
++test('keeps group-mention spans', () => {
++  const out = sanitizeZulipHtml(fx.userGroupMention, PREFIX)
++  expect(out).toContain('class="user-group-mention"')
++})
++
++test('selfUserId match adds the mention-me highlight class', () => {
++  const out = sanitizeZulipHtml(fx.userMention, PREFIX, 42)
++  expect(out).toContain('mention-me')
++  expect(out).toContain('user-mention mention-me')
++  expect(out).toContain('data-user-id="42"')
++})
++
++test('non-matching selfUserId leaves mentions unhighlighted', () => {
++  const out = sanitizeZulipHtml(fx.userMention, PREFIX, 7)
++  expect(out).not.toContain('mention-me')
++  expect(out).toContain('data-user-id="42"')
++})
++
++test('selfUserId does not highlight group mentions (no data-user-id)', () => {
++  const out = sanitizeZulipHtml(fx.userGroupMention, PREFIX, 1)
++  expect(out).not.toContain('mention-me')
++})
++
++test('component selfUserId prop highlights own mentions', () => {
++  const { container } = render(
++    <MessageBody html={fx.userMention} prefix={PREFIX} selfUserId={42} />,
++  )
++  const mention = container.querySelector('.user-mention')!
++  expect(mention.className).toContain('mention-me')
++  expect(mention.getAttribute('data-user-id')).toBe('42')
++})
++
+ test('user_uploads image loads via authenticated fetch into a blob src', async () => {
+   const fetchMock = vi.fn(async () => okBlobResponse())
+   vi.stubGlobal('fetch', fetchMock)
+@@ -91,20 +292,39 @@ test('non-upload images are left untouched', () => {
+   expect(fetchMock).not.toHaveBeenCalled()
+ })
+ 
+-test('user_uploads anchor click fetches with auth and opens the blob in a new tab', async () => {
+-  const fetchMock = vi.fn(async () => okBlobResponse())
++test('user_uploads anchor click downloads the file via a blob anchor', async () => {
++  let resolveFetch!: (r: Response) => void
++  const fetchMock = vi.fn(() => new Promise<Response>((r) => { resolveFetch = r }))
+   vi.stubGlobal('fetch', fetchMock)
+   const open = vi.fn()
+   const originalOpen = window.open
+   window.open = open as typeof window.open
++  const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+   try {
+     render(<MessageBody html={fx.uploadLink} prefix={PREFIX} authHeader={AUTH} />)
+-    await userEvent.click(screen.getByText('report.pdf'))
+-    await waitFor(() => expect(open).toHaveBeenCalledWith('blob:mock-1', '_blank'))
++    const linkEl = screen.getByText('report.pdf') as HTMLAnchorElement
++    await userEvent.click(linkEl)
++    // while the authenticated fetch is in flight the link shows a progress label
++    await waitFor(() => expect(linkEl.textContent).toBe('Downloading…'))
++    resolveFetch(okBlobResponse())
++    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1))
++    const clicked = clickSpy.mock.instances[0] as unknown as HTMLAnchorElement
++    expect(clicked.download).toBe('report.pdf')
++    expect(clicked.href).toBe('blob:mock-1')
+     expect(fetchMock).toHaveBeenCalledWith('/zulip/qec/user_uploads/2/ab/report.pdf', {
+       headers: { Authorization: AUTH },
+     })
++    // label restored and the blob URL revoked; no window.open
++    await waitFor(() => expect(linkEl.textContent).toBe('report.pdf'))
++    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-1')
++    expect(open).not.toHaveBeenCalled()
+   } finally {
+     window.open = originalOpen
++    clickSpy.mockRestore()
+   }
+ })
++
++test('filenameFromHref takes the last URL-decoded path segment', () => {
++  expect(filenameFromHref('/zulip/qec/user_uploads/2/ab/report.pdf')).toBe('report.pdf')
++  expect(filenameFromHref('/zulip/qec/user_uploads/2/ab/my%20file.pdf')).toBe('my file.pdf')
++})
+diff --git a/src/components/MessageBody.tsx b/src/components/MessageBody.tsx
+index b5bc499..3904e02 100644
+--- a/src/components/MessageBody.tsx
++++ b/src/components/MessageBody.tsx
+@@ -1,29 +1,7 @@
+ import { useEffect, useRef } from 'react'
+-import DOMPurify from 'dompurify'
++import { sanitizeZulipHtml } from './sanitize'
+ 
+-const ALLOWED_TAGS = [
+-  'a', 'p', 'br', 'span', 'div', 'strong', 'em', 'del', 'code', 'pre',
+-  'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+-  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'hr', 'sup', 'sub',
+-  'time', 'details', 'summary',
+-]
+-const ALLOWED_ATTR = ['href', 'src', 'alt', 'title', 'class', 'start', 'datetime', 'aria-hidden', 'data-code-language']
+-
+-export function sanitizeZulipHtml(html: string, prefix: string): string {
+-  const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })
+-  const doc = new DOMParser().parseFromString(clean, 'text/html')
+-  for (const a of Array.from(doc.querySelectorAll('a'))) {
+-    const href = a.getAttribute('href') ?? ''
+-    if (href.startsWith('/')) a.setAttribute('href', prefix + href)
+-    a.setAttribute('target', '_blank')
+-    a.setAttribute('rel', 'noopener noreferrer')
+-  }
+-  for (const img of Array.from(doc.querySelectorAll('img'))) {
+-    const src = img.getAttribute('src') ?? ''
+-    if (src.startsWith('/')) img.setAttribute('src', prefix + src)
+-  }
+-  return doc.body.innerHTML
+-}
++export { sanitizeZulipHtml } from './sanitize'
+ 
+ function fetchBlob(url: string, authHeader: string): Promise<Blob> {
+   return fetch(url, { headers: { Authorization: authHeader } }).then((res) => {
+@@ -32,17 +10,29 @@ function fetchBlob(url: string, authHeader: string): Promise<Blob> {
+   })
+ }
+ 
++/** Last path segment of an upload href, URL-decoded (used as download name). */
++export function filenameFromHref(href: string): string {
++  const last = href.split('/').filter(Boolean).pop() ?? ''
++  try {
++    return decodeURIComponent(last)
++  } catch {
++    return last
++  }
++}
++
+ export function MessageBody({
+   html,
+   prefix,
+   authHeader,
++  selfUserId,
+ }: {
+   html: string
+   prefix: string
+   authHeader?: string
++  selfUserId?: number
+ }) {
+   const ref = useRef<HTMLDivElement>(null)
+-  const sanitized = sanitizeZulipHtml(html, prefix)
++  const sanitized = sanitizeZulipHtml(html, prefix, selfUserId)
+ 
+   useEffect(() => {
+     const root = ref.current
+@@ -75,13 +65,27 @@ export function MessageBody({
+       if (!href.startsWith(uploadPrefix)) continue
+       const onClick = (ev: Event) => {
+         ev.preventDefault()
++        // Image links wrap an <img>; swapping their text would destroy it.
++        const hasImage = a.querySelector('img') !== null
++        const original = a.textContent
++        if (!hasImage) a.textContent = 'Downloading…'
+         fetchBlob(href, authHeader)
+           .then((blob) => {
+-            window.open(URL.createObjectURL(blob), '_blank')
++            const url = URL.createObjectURL(blob)
++            const link = document.createElement('a')
++            link.href = url
++            link.download = filenameFromHref(href)
++            document.body.appendChild(link)
++            link.click()
++            link.remove()
++            URL.revokeObjectURL(url)
+           })
+           .catch(() => {
+             // link simply does nothing on failure; no navigation without auth
+           })
++          .finally(() => {
++            if (!hasImage) a.textContent = original
++          })
+       }
+       a.addEventListener('click', onClick)
+       cancels.push(() => a.removeEventListener('click', onClick))
+diff --git a/src/components/sanitize.ts b/src/components/sanitize.ts
+new file mode 100644
+index 0000000..63a66b7
+--- /dev/null
++++ b/src/components/sanitize.ts
+@@ -0,0 +1,230 @@
++import DOMPurify from 'dompurify'
++
++const ALLOWED_TAGS = [
++  'a', 'p', 'br', 'span', 'div', 'strong', 'em', 'del', 'code', 'pre',
++  'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
++  'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'hr', 'sup', 'sub',
++  'time', 'details', 'summary',
++  // SVG: KaTeX renders stretchy delimiters / sqrt bars as inline SVG
++  'svg', 'path', 'line', 'g',
++]
++const ALLOWED_ATTR = [
++  'href', 'src', 'alt', 'title', 'class', 'start', 'datetime', 'aria-hidden', 'data-code-language',
++  // mentions carry the referenced user id so we can highlight the signed-in user
++  'data-user-id',
++  // inline styles carry all of KaTeX's math layout; SVG attrs keep the vector glyphs
++  'style', 'viewBox', 'd', 'width', 'height', 'preserveAspectRatio', 'xmlns',
++  'x1', 'y1', 'x2', 'y2', 'stroke-width', 'fill',
++]
++
++// Zulip spritesheet emoji: class tokens like `emoji-1f44d` / `emoji-1f1e8-1f1f3`
++// encode one or more hex codepoints (Zulip.com ships the spritesheet CSS; we
++// don't, so without this the user would see the raw `:thumbs_up:` marker).
++const EMOJI_CLASS_RE = /^emoji-([0-9a-f]+(?:-[0-9a-f]+)*)$/
++const MAX_EMOJI_CODEPOINTS = 8
++const MAX_CODEPOINT = 0x10ffff
++
++/**
++ * Decodes an `emoji-<hex>[-<hex>…]` class token to its Unicode string, or null
++ * when the token is not a well-formed codepoint sequence. Zulip is the source
++ * of these tokens, but a malicious message can carry any hex the class regex
++ * accepts — `emoji-110000` or `emoji-d800` would make String.fromCodePoint
++ * throw a RangeError and take the whole conversation view down with it.
++ */
++export function decodeEmojiToken(token: string): string | null {
++  const groups = token.split('-')
++  if (groups.length === 0 || groups.length > MAX_EMOJI_CODEPOINTS) return null
++  const codepoints: number[] = []
++  for (const group of groups) {
++    if (!/^[0-9a-f]{1,6}$/.test(group)) return null
++    const cp = parseInt(group, 16)
++    if (!Number.isInteger(cp) || cp < 0 || cp > MAX_CODEPOINT) return null
++    // Lone surrogates are not scalar values; fromCodePoint accepts them but the
++    // resulting string is ill-formed UTF-16.
++    if (cp >= 0xd800 && cp <= 0xdfff) return null
++    codepoints.push(cp)
++  }
++  try {
++    return String.fromCodePoint(...codepoints)
++  } catch {
++    return null
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Inline style filtering
++//
++// KaTeX carries all of its math layout in inline styles, so we cannot drop the
++// `style` attribute — but an unfiltered one is an injection surface all by
++// itself (`background-image:url(https://tracker/beacon)` exfiltrates the fact
++// that a message was read; `position:fixed;inset:0` lets message content
++// overlay the whole app and phish taps). So: allowlist the properties KaTeX
++// needs, and validate every value against a grammar that admits nothing but
++// numbers, units and known keywords.
++// ---------------------------------------------------------------------------
++
++/** Properties whose value may be a whitespace-separated list of lengths. */
++const LENGTH_PROPS = new Set([
++  'height', 'width', 'min-width', 'max-width', 'min-height', 'max-height',
++  'top', 'left', 'right', 'bottom',
++  'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
++  'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
++  'font-size', 'vertical-align',
++  'border-width', 'border-top-width', 'border-right-width',
++  'border-bottom-width', 'border-left-width',
++])
++
++/** Properties restricted to a fixed set of keywords. */
++const KEYWORD_PROPS: Record<string, Set<string>> = {
++  // `fixed`/`sticky` would let message content escape its bubble and overlay
++  // the app chrome, so they are deliberately absent.
++  position: new Set(['static', 'relative', 'absolute']),
++  display: new Set([
++    'inline', 'inline-block', 'block', 'none',
++    'table', 'table-row', 'table-cell', 'flex', 'inline-flex',
++  ]),
++  'font-style': new Set(['normal', 'italic', 'oblique']),
++  'vertical-align': new Set([
++    'baseline', 'top', 'middle', 'bottom', 'sub', 'super',
++    'text-top', 'text-bottom',
++  ]),
++  'font-size': new Set([
++    'xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large',
++    'smaller', 'larger',
++  ]),
++  'border-width': new Set(['thin', 'medium', 'thick']),
++}
++
++const LENGTH_UNITS = 'em|rem|ex|ch|px|pt|pc|in|cm|mm|%'
++const LENGTH_RE = new RegExp(`^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:${LENGTH_UNITS})?$`)
++const ANGLE_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:deg|rad|grad|turn)?$/
++const TRANSFORM_FNS = new Set([
++  'scale', 'scalex', 'scaley', 'translate', 'translatex', 'translatey',
++  'rotate', 'skewx', 'skewy', 'matrix',
++])
++const TRANSFORM_CALL_RE = /([a-z]+)\(([^()]*)\)/gi
++
++/** A bare number, length, or `auto` — the vocabulary of KaTeX's layout styles. */
++function isLengthValue(value: string): boolean {
++  const tokens = value.split(/\s+/).filter(Boolean)
++  if (tokens.length === 0 || tokens.length > 4) return false
++  return tokens.every((t) => t === 'auto' || LENGTH_RE.test(t))
++}
++
++/** `scale(-1)`, `translate(0,0.5em)` … with strictly numeric arguments. */
++function isTransformValue(value: string): boolean {
++  const compact = value.replace(/\s+/g, '')
++  TRANSFORM_CALL_RE.lastIndex = 0
++  let consumed = 0
++  let calls = 0
++  let match: RegExpExecArray | null
++  while ((match = TRANSFORM_CALL_RE.exec(compact)) !== null) {
++    if (!TRANSFORM_FNS.has(match[1].toLowerCase())) return false
++    const args = match[2].split(',').filter(Boolean)
++    if (args.length === 0 || args.length > 6) return false
++    if (!args.every((a) => LENGTH_RE.test(a) || ANGLE_RE.test(a))) return false
++    consumed += match[0].length
++    calls += 1
++  }
++  // Reject anything outside the recognised calls (stray text, extra parens).
++  return calls > 0 && consumed === compact.length
++}
++
++function isAllowedDeclaration(prop: string, value: string): boolean {
++  if (value.length === 0) return false
++  if (KEYWORD_PROPS[prop]?.has(value)) return true
++  if (prop === 'transform') return isTransformValue(value)
++  return LENGTH_PROPS.has(prop) && isLengthValue(value)
++}
++
++/**
++ * Returns the subset of `style` that is safe to keep, or null when any
++ * declaration fails the allowlist (in which case the caller drops the whole
++ * attribute — partial application of a hostile style is not a state we want to
++ * reason about).
++ */
++export function filterStyleAttribute(style: string): string | null {
++  // Cheap structural rejections first: URLs, CSS escapes, comments, at-rules
++  // and `!important` have no place in the styles KaTeX emits.
++  if (/url\s*\(/i.test(style)) return null
++  if (/[\\<>{}@!]/.test(style)) return null
++  if (style.includes('/*') || style.includes('*/')) return null
++
++  const kept: string[] = []
++  for (const raw of style.split(';')) {
++    const decl = raw.trim()
++    if (!decl) continue
++    const colon = decl.indexOf(':')
++    if (colon <= 0) return null
++    const prop = decl.slice(0, colon).trim().toLowerCase()
++    const value = decl.slice(colon + 1).trim().toLowerCase()
++    if (!isAllowedDeclaration(prop, value)) return null
++    kept.push(`${prop}:${value}`)
++  }
++  return kept.length > 0 ? kept.join(';') + ';' : null
++}
++
++/** SVG presentation attributes that accept a `url(#…)` paint reference. */
++const PAINT_ATTRS = ['fill', 'stroke', 'filter', 'mask', 'clip-path']
++
++export function sanitizeZulipHtml(html: string, prefix: string, selfUserId?: number): string {
++  const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })
++  const doc = new DOMParser().parseFromString(clean, 'text/html')
++  // The visible math is .katex-html; .katex-mathml is the MathML fallback whose
++  // raw-TeX <annotation> would otherwise leak as duplicate text after the
++  // (unallowlisted) math tags are stripped.
++  for (const el of Array.from(doc.querySelectorAll('.katex-mathml'))) {
++    el.remove()
++  }
++  // Filter inline styles down to the KaTeX layout allowlist.
++  for (const el of Array.from(doc.querySelectorAll('[style]'))) {
++    const filtered = filterStyleAttribute(el.getAttribute('style') ?? '')
++    if (filtered === null) {
++      el.removeAttribute('style')
++    } else {
++      el.setAttribute('style', filtered)
++    }
++  }
++  // Paint attributes can smuggle a URL past the style filter.
++  for (const attr of PAINT_ATTRS) {
++    for (const el of Array.from(doc.querySelectorAll(`[${attr}]`))) {
++      if (/url\s*\(/i.test(el.getAttribute(attr) ?? '')) el.removeAttribute(attr)
++    }
++  }
++  // Replace spritesheet emoji spans with their Unicode characters.
++  for (const el of Array.from(doc.querySelectorAll('[class]'))) {
++    const token = Array.from(el.classList).find((c) => EMOJI_CLASS_RE.test(c))
++    if (!token) continue
++    const decoded = decodeEmojiToken(token.slice('emoji-'.length))
++    // Malformed codepoints: leave the element exactly as it is rather than
++    // crash the view.
++    if (decoded === null) continue
++    el.replaceWith(document.createTextNode(decoded))
++  }
++  // Some realms emit <img class="emoji" alt="..."> instead of spans.
++  for (const img of Array.from(doc.querySelectorAll('img.emoji'))) {
++    img.replaceWith(document.createTextNode(img.getAttribute('alt') ?? ''))
++  }
++  // Highlight the signed-in user's own mentions (Zulip renders these as
++  // spans with data-user-id; group mentions carry no user id).
++  if (selfUserId !== undefined) {
++    for (const el of Array.from(
++      doc.querySelectorAll('span.user-mention, span.user-group-mention'),
++    )) {
++      if (el.getAttribute('data-user-id') === String(selfUserId)) {
++        el.classList.add('mention-me')
++      }
++    }
++  }
++  for (const a of Array.from(doc.querySelectorAll('a'))) {
++    const href = a.getAttribute('href') ?? ''
++    if (href.startsWith('/')) a.setAttribute('href', prefix + href)
++    a.setAttribute('target', '_blank')
++    a.setAttribute('rel', 'noopener noreferrer')
++  }
++  for (const img of Array.from(doc.querySelectorAll('img'))) {
++    const src = img.getAttribute('src') ?? ''
++    if (src.startsWith('/')) img.setAttribute('src', prefix + src)
++  }
++  return doc.body.innerHTML
++}
+diff --git a/src/lib/format.test.ts b/src/lib/format.test.ts
+new file mode 100644
+index 0000000..f85a9c6
+--- /dev/null
++++ b/src/lib/format.test.ts
+@@ -0,0 +1,96 @@
++import { initial, listTimeLabel, previewText, separatorLabel, tileColor } from './format'
++
++// 2026-08-15 14:32 local time.
++const NOW = new Date(2026, 7, 15, 14, 32)
++const at = (d: Date): number => Math.floor(d.getTime() / 1000)
++
++describe('separatorLabel', () => {
++  test('names today when there is no previous message to compare against', () => {
++    expect(separatorLabel(at(new Date(2026, 7, 15, 9, 5)), NOW)).toBe('Today 09:05')
++  })
++
++  test('drops to a bare time when the previous message is the same day', () => {
++    const prev = at(new Date(2026, 7, 15, 8, 0))
++    expect(separatorLabel(at(new Date(2026, 7, 15, 9, 5)), NOW, prev)).toBe('09:05')
++  })
++
++  test('still names the day when the previous message was the day before', () => {
++    const prev = at(new Date(2026, 7, 14, 23, 50))
++    expect(separatorLabel(at(new Date(2026, 7, 15, 0, 10)), NOW, prev)).toBe('Today 00:10')
++  })
++
++  test('the previous calendar day is named, not dated', () => {
++    expect(separatorLabel(at(new Date(2026, 7, 14, 19, 32)), NOW)).toBe('Yesterday 19:32')
++  })
++
++  test('inside the past week uses the weekday', () => {
++    // 2026-08-11 is a Tuesday.
++    expect(separatorLabel(at(new Date(2026, 7, 11, 8, 0)), NOW)).toBe('Tue 08:00')
++  })
++
++  test('older in the same year uses day and month', () => {
++    expect(separatorLabel(at(new Date(2026, 2, 3, 23, 59)), NOW)).toBe('3 Mar 23:59')
++  })
++
++  test('a different year carries the year', () => {
++    expect(separatorLabel(at(new Date(2025, 7, 14, 19, 32)), NOW)).toBe('14 Aug 2025 19:32')
++  })
++
++  test('crossing midnight counts as a different day even minutes apart', () => {
++    expect(separatorLabel(at(new Date(2026, 7, 14, 23, 58)), NOW)).toBe('Yesterday 23:58')
++  })
++})
++
++describe('listTimeLabel', () => {
++  test.each([
++    [new Date(2026, 7, 15, 9, 5), '09:05'],
++    [new Date(2026, 7, 14, 19, 32), 'Yesterday'],
++    [new Date(2026, 7, 11, 8, 0), 'Tue'],
++    [new Date(2026, 2, 3, 23, 59), '3 Mar'],
++    [new Date(2025, 7, 14, 19, 32), '14/8/25'],
++  ])('%s → %s', (when, expected) => {
++    expect(listTimeLabel(at(when), NOW)).toBe(expected)
++  })
++})
++
++describe('previewText', () => {
++  test('flattens rendered markdown to a single line', () => {
++    expect(
++      previewText('<p>Sweep <strong>done</strong>.</p>\n<ul><li>a</li>\n<li>b</li></ul>'),
++    ).toBe('Sweep done. a b')
++  })
++
++  test('markup and entities never leak into the preview', () => {
++    expect(previewText('<p>a &amp; b</p><script>evil()</script>')).toBe('a & b')
++  })
++
++  test('empty content yields an empty string', () => {
++    expect(previewText('')).toBe('')
++  })
++})
++
++describe('tileColor', () => {
++  test('is deterministic per key and stays inside the palette', () => {
++    expect(tileColor('qec-decoders')).toBe(tileColor('qec-decoders'))
++    expect(tileColor('qec-decoders')).toMatch(/^#[0-9a-f]{6}$/)
++  })
++
++  test('different keys generally land on different colours', () => {
++    const colors = new Set(['alpha', 'beta', 'gamma', 'delta'].map(tileColor))
++    expect(colors.size).toBeGreaterThan(1)
++  })
++})
++
++describe('initial', () => {
++  test('uppercases the first character of the name', () => {
++    expect(initial('ada lovelace')).toBe('A')
++  })
++
++  test('falls back to the second argument when the name is empty', () => {
++    expect(initial('', 'bot@b.c')).toBe('B')
++  })
++
++  test('with nothing to work from it still renders a character', () => {
++    expect(initial('')).toBe('?')
++  })
++})
+diff --git a/src/lib/format.ts b/src/lib/format.ts
+new file mode 100644
+index 0000000..5248204
+--- /dev/null
++++ b/src/lib/format.ts
+@@ -0,0 +1,94 @@
++/**
++ * Date and text formatting shared by the conversation and project list.
++ *
++ * Month and weekday names are spelled out here rather than taken from
++ * `toLocaleDateString` so a label reads identically on every device — the app
++ * is English-only, and a separator that silently changes shape with the host
++ * locale is a bug waiting to be filed against the day-grouping logic.
++ */
++const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
++const MONTHS = [
++  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
++  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
++]
++
++const DAY_MS = 24 * 60 * 60 * 1000
++
++function hhmm(d: Date): string {
++  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
++}
++
++/** Whole calendar days between `then` and `now`, in local time. */
++function daysAgo(then: Date, now: Date): number {
++  const a = new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime()
++  const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
++  return Math.round((b - a) / DAY_MS)
++}
++
++/**
++ * The separator shown above a message that opens a new day or follows a gap.
++ *
++ * It names the day whenever the day changes — `Today 19:32`, `Yesterday 19:32`,
++ * `Fri 19:32`, `14 Aug 19:32`, `14 Aug 2025 19:32` — and drops to a bare
++ * `19:32` when `previous` puts the message on the same calendar day. Without
++ * `previous`, a mid-thread gap on the current day would read as a bare time
++ * directly under a "Yesterday" separator, which tells the reader nothing.
++ */
++export function separatorLabel(
++  timestamp: number,
++  now: Date = new Date(),
++  previous?: number,
++): string {
++  const d = new Date(timestamp * 1000)
++  const time = hhmm(d)
++  if (previous !== undefined && daysAgo(d, new Date(previous * 1000)) === 0) return time
++  const days = daysAgo(d, now)
++  if (days === 0) return `Today ${time}`
++  if (days === 1) return `Yesterday ${time}`
++  if (days > 1 && days < 7) return `${DAYS[d.getDay()]} ${time}`
++  if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${MONTHS[d.getMonth()]} ${time}`
++  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${time}`
++}
++
++/** The compact right-hand timestamp on a project row. */
++export function listTimeLabel(timestamp: number, now: Date = new Date()): string {
++  const d = new Date(timestamp * 1000)
++  const days = daysAgo(d, now)
++  if (days === 0) return hhmm(d)
++  if (days === 1) return 'Yesterday'
++  if (days > 1 && days < 7) return DAYS[d.getDay()]
++  if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${MONTHS[d.getMonth()]}`
++  return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`
++}
++
++/**
++ * Plain-text one-liner for a project row, from Zulip's rendered message HTML.
++ * Parsed, never executed: `text/html` parsing runs no scripts and loads no
++ * resources, and only `textContent` is read back out.
++ */
++export function previewText(html: string): string {
++  const doc = new DOMParser().parseFromString(html, 'text/html')
++  // Script and style bodies are text nodes too; they are code, not a preview.
++  for (const el of Array.from(doc.querySelectorAll('script, style'))) el.remove()
++  return (doc.body.textContent ?? '').replace(/\s+/g, ' ').trim()
++}
++
++/** Deterministic tile/avatar colour, keyed on an identity string. */
++const TILE_COLORS = [
++  '#3f7d5c', '#4a6fa5', '#8a5a3c', '#6b5b95',
++  '#2f7f8f', '#8a6d3b', '#7a4b6b', '#4d6b4d',
++]
++
++export function tileColor(key: string): string {
++  let hash = 0
++  for (let i = 0; i < key.length; i += 1) {
++    hash = (hash * 31 + key.charCodeAt(i)) >>> 0
++  }
++  return TILE_COLORS[hash % TILE_COLORS.length]
++}
++
++/** First character of a display name, uppercased; falls back to the key. */
++export function initial(name: string, fallback = ''): string {
++  const source = name || fallback
++  return source ? source[0].toUpperCase() : '?'
++}
+diff --git a/src/store/appStore.test.ts b/src/store/appStore.test.ts
+index 18f8b9f..15b5851 100644
+--- a/src/store/appStore.test.ts
++++ b/src/store/appStore.test.ts
+@@ -136,6 +136,21 @@ test('logout clears everything including stored credentials', () => {
+   expect(loadCredentials()).toBeNull()
+ })
+ 
++test('setOwnUserId stores the id and logout resets it', () => {
++  useAppStore.getState().setOwnUserId(7)
++  expect(useAppStore.getState().ownUserId).toBe(7)
++  useAppStore.getState().logout()
++  expect(useAppStore.getState().ownUserId).toBeNull()
++})
++
++test('setUsers stores users and logout resets them to null', () => {
++  const list = [{ user_id: 1, full_name: 'Alice', email: 'a@b.c', is_bot: false }]
++  useAppStore.getState().setUsers(list)
++  expect(useAppStore.getState().users).toEqual(list)
++  useAppStore.getState().logout()
++  expect(useAppStore.getState().users).toBeNull()
++})
++
+ test('logout stores a reason and setCreds clears it', () => {
+   useAppStore.getState().setCreds(creds)
+   useAppStore.getState().logout('session expired')
+diff --git a/src/store/appStore.ts b/src/store/appStore.ts
+index cdbd029..18280b9 100644
+--- a/src/store/appStore.ts
++++ b/src/store/appStore.ts
+@@ -8,6 +8,7 @@ import {
+   type StreamSub,
+   type ZulipEvent,
+   type ZulipMessage,
++  type ZulipUser,
+ } from '../api/types'
+ import { saveCredentials, clearCredentials } from './auth'
+ 
+@@ -40,6 +41,10 @@ export interface AppState {
+   streams: StreamSub[]
+   unreadByStream: Record<number, number[]>
+   messagesByStream: Record<number, ZulipMessage[]>
++  /** Id of the signed-in user; null until fetched once per session. */
++  ownUserId: number | null
++  /** Realm members for @-mention autocomplete; null until lazily fetched. */
++  users: ZulipUser[] | null
+   /** Streams whose full history has been fetched; cleared on every register so a
+    *  re-register (e.g. expired event queue) re-fetches gaps over cached messages. */
+   loadedStreams: number[]
+@@ -58,6 +63,8 @@ export interface AppState {
+   clearUnread(streamId: number): void
+   toggleHidden(streamId: number): void
+   setConnection(c: Connection): void
++  setOwnUserId(id: number): void
++  setUsers(users: ZulipUser[]): void
+ }
+ 
+ function loadHidden(): number[] {
+@@ -77,6 +84,8 @@ const initialData = {
+   streams: [] as StreamSub[],
+   unreadByStream: {} as Record<number, number[]>,
+   messagesByStream: {} as Record<number, ZulipMessage[]>,
++  ownUserId: null as number | null,
++  users: null as ZulipUser[] | null,
+   loadedStreams: [] as number[],
+   hiddenStreams: [] as number[],
+   connection: 'connecting' as Connection,
+@@ -186,6 +195,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
+     }),
+ 
+   setConnection: (c) => set({ connection: c }),
++  setOwnUserId: (id) => set({ ownUserId: id }),
++  setUsers: (users) => set({ users }),
+ }))
+ 
+ export function resetAppStore(): void {
+diff --git a/src/styles.css b/src/styles.css
+index 8176313..0ead223 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -1,81 +1,1070 @@
+-* { box-sizing: border-box; }
+-html, body, #root { height: 100%; margin: 0; }
++/* ==========================================================================
++   Agent Console — design tokens
++
++   Palette is the WeChat family (the conversation is the product, so the
++   message canvas and the self-bubble green are fixed points) narrowed to an
++   "agent console" register: green is reserved for actions and the user's own
++   voice, everything else is neutral so agent output reads as the content.
++
++   Type pairs the platform UI face with a monospace utility face. The mono is
++   not decoration: it marks everything the machine produced or measured —
++   timestamps, counts, code, the version string — which is exactly the
++   distinction this product is about.
++   ========================================================================== */
++:root {
++  color-scheme: light;
++
++  /* Color ---------------------------------------------------------------- */
++  --brand: #07c160;          /* WeChat action green */
++  --brand-press: #06a552;
++  --brand-tint: #e7f8ee;
++  --bubble-self: #95ec69;
++  --bubble-self-press: #86dc5c;
++
++  --canvas: #ededed;         /* conversation ground */
++  --surface: #ffffff;
++  --surface-2: #f5f5f6;      /* app ground behind grouped lists */
++  --surface-press: #ebebec;
++  --code-bg: #f4f5f6;
++  --skeleton-a: #e8e9ea;     /* placeholder shimmer, on white surfaces */
++  --skeleton-b: #f1f2f3;
++
++  --ink: #16171a;            /* 15.9:1 on white */
++  --ink-2: #43474d;          /* 8.9:1 on white */
++  --ink-3: #5f646a;          /* 4.8:1 on white, 4.7:1 on canvas */
++  --on-brand: #ffffff;
++
++  --line: #e3e4e6;
++  --line-strong: #d2d4d7;
++
++  --link: #576b95;           /* WeChat link blue */
++  --danger: #d92d20;
++  --danger-tint: #fdecea;
++  --warn: #9a5b00;
++  --warn-tint: #fdf3e3;
++
++  /* Type ----------------------------------------------------------------- */
++  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
++    "Helvetica Neue", Arial, sans-serif;
++  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
++    "Liberation Mono", monospace;
++
++  --fs-2xs: 0.6875rem;  /* 11 — badges, meta, separators */
++  --fs-xs: 0.75rem;     /* 12 — sender labels, captions */
++  --fs-sm: 0.8125rem;   /* 13 — secondary rows, code */
++  --fs-md: 0.9375rem;   /* 15 — list titles, controls */
++  --fs-base: 1.0625rem; /* 17 — message text */
++  --fs-lg: 1.0625rem;   /* 17 — bar titles */
++  --fs-xl: 1.75rem;     /* 28 — wordmark */
++
++  --lh-tight: 1.25;
++  --lh: 1.45;
++  --lh-loose: 1.55;
++
++  /* Space — 4px rhythm --------------------------------------------------- */
++  --sp-1: 0.25rem;
++  --sp-2: 0.5rem;
++  --sp-3: 0.75rem;
++  --sp-4: 1rem;
++  --sp-5: 1.25rem;
++  --sp-6: 1.5rem;
++  --sp-8: 2rem;
++  --sp-10: 2.5rem;
++
++  /* Radius --------------------------------------------------------------- */
++  --r-xs: 4px;
++  --r-sm: 8px;
++  --r-md: 12px;
++  --r-lg: 16px;
++  --r-xl: 22px;
++  --r-full: 999px;
++
++  /* Elevation ------------------------------------------------------------ */
++  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
++  --shadow-2: 0 6px 20px rgba(16, 24, 40, 0.10), 0 1px 3px rgba(16, 24, 40, 0.06);
++  --shadow-3: 0 -4px 28px rgba(16, 24, 40, 0.14);
++
++  /* Motion --------------------------------------------------------------- */
++  --dur-1: 120ms;
++  --dur-2: 200ms;
++  --ease: cubic-bezier(0.2, 0, 0, 1);
++
++  /* Ergonomics ----------------------------------------------------------- */
++  --tap: 44px;
++  --focus-ring: 0 0 0 3px rgba(7, 193, 96, 0.38);
++  --bar-h: 3rem;
++}
++
++/* ==========================================================================
++   Base
++   ========================================================================== */
++*, *::before, *::after { box-sizing: border-box; }
++
++html, body, #root { height: 100%; }
++
+ body {
+-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+-  background: #f8fafc; color: #111827;
++  margin: 0;
++  font-family: var(--font-ui);
++  font-size: var(--fs-base);
++  line-height: var(--lh);
++  color: var(--ink);
++  background: var(--surface-2);
++  -webkit-font-smoothing: antialiased;
++  -webkit-text-size-adjust: 100%;
++  overscroll-behavior-y: none;
+ }
+-button { font: inherit; cursor: pointer; }
+-.app { display: flex; flex-direction: column; height: 100%; }
+ 
++h1, h2, h3, h4, h5, h6, p, ul, ol { margin: 0; }
++ul, ol { padding: 0; list-style: none; }
++
++button {
++  font: inherit;
++  color: inherit;
++  margin: 0;
++  cursor: pointer;
++  background: none;
++  border: none;
++  padding: 0;
++  -webkit-tap-highlight-color: transparent;
++}
++
++input, select, textarea { font: inherit; color: inherit; }
++
++:focus-visible {
++  outline: none;
++  box-shadow: var(--focus-ring);
++  border-radius: var(--r-xs);
++}
++
++.app {
++  position: relative;
++  display: flex;
++  flex-direction: column;
++  height: 100%;
++  background: var(--surface-2);
++}
++
++/* A square, centred, ≥44px icon button — every bar action uses it. */
++.icon-btn {
++  display: grid;
++  place-items: center;
++  flex: none;
++  width: var(--tap);
++  height: var(--tap);
++  border-radius: var(--r-full);
++  color: var(--ink);
++  transition: background-color var(--dur-1) var(--ease);
++}
++.icon-btn:active { background: rgba(0, 0, 0, 0.06); }
++.icon-btn:disabled { opacity: 0.35; cursor: default; }
++
++/* ==========================================================================
++   Top bar — light, translucent, with fixed-width action slots so the title
++   stays optically centred whether or not there is a back button.
++   ========================================================================== */
+ .topbar {
+-  display: flex; align-items: center; gap: 0.5rem;
+-  padding: 0.75rem 1rem; padding-top: calc(0.75rem + env(safe-area-inset-top));
+-  background: #4f46e5; color: #fff; position: sticky; top: 0;
++  position: sticky;
++  top: 0;
++  z-index: 20;
++  display: grid;
++  grid-template-columns: var(--tap) 1fr var(--tap);
++  align-items: center;
++  min-height: var(--bar-h);
++  padding-top: env(safe-area-inset-top);
++  background: rgba(245, 245, 246, 0.86);
++  backdrop-filter: saturate(180%) blur(20px);
++  -webkit-backdrop-filter: saturate(180%) blur(20px);
++  border-bottom: 1px solid var(--line);
+ }
+-.topbar h1, .topbar h2 { font-size: 1.1rem; margin: 0; flex: 1; }
+-.topbar button { background: none; border: none; color: #fff; font-size: 1.2rem; }
++.topbar h1, .topbar h2 {
++  grid-column: 2;
++  min-width: 0;
++  font-size: var(--fs-lg);
++  font-weight: 600;
++  letter-spacing: -0.01em;
++  text-align: center;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.topbar .bar-start { grid-column: 1; justify-self: start; }
++.topbar .bar-end { grid-column: 3; justify-self: end; }
+ 
++/* Reconnecting notice: floats under the bar so it never reflows the list. */
+ .banner {
+-  background: #b45309; color: #fff; text-align: center;
+-  padding: 0.25rem; font-size: 0.85rem;
++  position: absolute;
++  top: calc(var(--bar-h) + env(safe-area-inset-top) + var(--sp-2));
++  left: 50%;
++  z-index: 30;
++  display: flex;
++  align-items: center;
++  gap: var(--sp-2);
++  padding: var(--sp-1) var(--sp-3);
++  font-size: var(--fs-xs);
++  font-weight: 500;
++  color: var(--warn);
++  background: var(--warn-tint);
++  border: 1px solid rgba(154, 91, 0, 0.18);
++  border-radius: var(--r-full);
++  box-shadow: var(--shadow-2);
++  transform: translateX(-50%);
++  animation: banner-in var(--dur-2) var(--ease);
++}
++.banner::before {
++  content: "";
++  width: 6px;
++  height: 6px;
++  border-radius: var(--r-full);
++  background: currentColor;
++  animation: pulse 1.4s ease-in-out infinite;
++}
++
++/* ==========================================================================
++   Projects — an edge-to-edge list; separators inset past the tile so the
++   column of tiles reads as one continuous rail.
++   ========================================================================== */
++.projects { display: flex; flex-direction: column; min-height: 0; flex: 1; }
++.projects-scroll {
++  display: flex;
++  flex-direction: column;
++  flex: 1;
++  overflow-y: auto;
++  -webkit-overflow-scrolling: touch;
++}
++
++.stream-list { flex: none; background: var(--surface); }
++/* Separator starts where the text column does, so the tiles read as one rail. */
++.stream-list li + li .stream-card { border-top: 1px solid var(--line); }
++.stream-list li + li .stream-card::before {
++  content: "";
++  position: absolute;
++  top: -1px;
++  left: 0;
++  width: calc(var(--sp-4) + 44px + var(--sp-3));
++  border-top: 1px solid var(--surface);
+ }
+ 
+-.stream-list { list-style: none; margin: 0; padding: 0.5rem; }
+ .stream-card {
+-  display: grid; grid-template-columns: 1fr auto; gap: 0.25rem;
+-  width: 100%; text-align: left; margin-bottom: 0.5rem; padding: 0.75rem 1rem;
+-  background: #fff; border: 1px solid #e5e7eb; border-radius: 0.75rem;
++  position: relative;
++  display: grid;
++  grid-template-columns: 44px 1fr auto;
++  grid-template-rows: auto auto;
++  column-gap: var(--sp-3);
++  align-items: center;
++  width: 100%;
++  padding: var(--sp-3) var(--sp-4);
++  text-align: left;
++  transition: background-color var(--dur-1) var(--ease);
++}
++.stream-card:active { background: var(--surface-press); }
++
++.stream-tile {
++  grid-row: 1 / 3;
++  display: grid;
++  place-items: center;
++  width: 44px;
++  height: 44px;
++  border-radius: var(--r-md);
++  font-family: var(--font-mono);
++  font-size: var(--fs-md);
++  font-weight: 600;
++  color: var(--on-brand);
++  text-transform: uppercase;
++  user-select: none;
++}
++
++.stream-name {
++  grid-column: 2;
++  min-width: 0;
++  font-size: var(--fs-md);
++  font-weight: 600;
++  letter-spacing: -0.01em;
++  overflow: hidden;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++.stream-desc {
++  grid-column: 2;
++  min-width: 0;
++  margin-top: 2px;
++  font-size: var(--fs-sm);
++  line-height: var(--lh-tight);
++  color: var(--ink-3);
++  overflow: hidden;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++.stream-meta {
++  grid-column: 3;
++  grid-row: 1;
++  font-family: var(--font-mono);
++  font-size: var(--fs-2xs);
++  color: var(--ink-3);
++  white-space: nowrap;
+ }
+-.stream-name { font-weight: 600; }
+-.stream-desc { grid-column: 1 / -1; color: #6b7280; font-size: 0.85rem; }
+ .unread-badge {
+-  background: #4f46e5; color: #fff; border-radius: 999px;
+-  padding: 0 0.5rem; font-size: 0.8rem; align-self: center;
++  grid-column: 3;
++  grid-row: 2;
++  justify-self: end;
++  min-width: 20px;
++  margin-top: 4px;
++  /* With no timestamp above it the badge has the whole right column, so centre
++     it on the row rather than leaving it hanging at the description's baseline. */
++}
++.stream-card:not(:has(.stream-meta)) .unread-badge {
++  grid-row: 1 / 3;
++  align-self: center;
++  margin-top: 0;
++  padding: 0 6px;
++  font-family: var(--font-mono);
++  font-size: var(--fs-2xs);
++  font-weight: 600;
++  line-height: 20px;
++  text-align: center;
++  color: var(--on-brand);
++  background: var(--danger);
++  border-radius: var(--r-full);
+ }
+ 
++/* ==========================================================================
++   Conversation
++   ========================================================================== */
+ .conversation { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+-.message-scroll { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; }
+-.message { margin-bottom: 0.75rem; }
+-.message-meta { font-size: 0.8rem; color: #6b7280; }
+-.message-meta .sender { font-weight: 600; color: #111827; }
++
++/* The scroller's own box scrolls, so the jump chip lives in this wrapper —
++   otherwise it would scroll away with the messages it points at. */
++.thread {
++  position: relative;
++  display: flex;
++  flex-direction: column;
++  flex: 1;
++  min-height: 0;
++}
++
++.message-scroll {
++  flex: 1;
++  overflow-y: auto;
++  overscroll-behavior-y: contain;
++  -webkit-overflow-scrolling: touch;
++  padding: var(--sp-2) var(--sp-3) var(--sp-4);
++  background: var(--canvas);
++}
++
++/* Day / time separator: bare text, not a pill. The canvas is busy enough. */
++.time-pill {
++  margin: var(--sp-4) auto var(--sp-3);
++  font-family: var(--font-mono);
++  font-size: var(--fs-2xs);
++  letter-spacing: 0.04em;
++  color: var(--ink-3);
++  text-align: center;
++  text-transform: uppercase;
++}
++
++.load-earlier {
++  display: block;
++  margin: var(--sp-1) auto var(--sp-2);
++  padding: var(--sp-1) var(--sp-3);
++  font-size: var(--fs-xs);
++  color: var(--ink-3);
++  border-radius: var(--r-full);
++}
++.load-earlier:active { background: rgba(0, 0, 0, 0.05); }
++.load-earlier:disabled { opacity: 0.6; }
++
++.msg-row {
++  display: flex;
++  align-items: flex-start;
++  gap: var(--sp-2);
++  margin-bottom: var(--sp-3);
++  animation: msg-in var(--dur-2) var(--ease);
++}
++.msg-row.msg-grouped { margin-top: calc(var(--sp-3) * -1 + 3px); }
++.msg-self { flex-direction: row-reverse; }
++
++.avatar {
++  display: grid;
++  place-items: center;
++  flex: none;
++  width: 34px;
++  height: 34px;
++  border-radius: var(--r-md);
++  font-family: var(--font-mono);
++  font-size: var(--fs-sm);
++  font-weight: 600;
++  color: var(--on-brand);
++  user-select: none;
++}
++.avatar-hidden { visibility: hidden; }
++
++.msg-col { display: flex; flex-direction: column; flex: 1; min-width: 0; }
++.msg-other .msg-col { align-items: flex-start; }
++.msg-self .msg-col { align-items: flex-end; }
++
++.sender-label {
++  margin: 0 var(--sp-1) 3px;
++  font-size: var(--fs-xs);
++  color: var(--ink-3);
++}
++
++.bubble {
++  position: relative;
++  max-width: 82%;
++  padding: var(--sp-2) var(--sp-3);
++  font-size: var(--fs-base);
++  line-height: var(--lh-loose);
++  border-radius: var(--r-lg);
++  overflow-wrap: break-word;
++}
++.msg-other .bubble {
++  background: var(--surface);
++  border-top-left-radius: var(--r-xs);
++  box-shadow: var(--shadow-1);
++}
++.msg-self .bubble {
++  background: var(--bubble-self);
++  border-top-right-radius: var(--r-xs);
++}
++.msg-grouped .bubble { border-radius: var(--r-lg); }
++
++/* A message carrying block content (code, table, math, an image) is a report,
++   not a chat line: it gets the full column and its own quiet card. */
++/* Chat lines have faces; reports have bylines. A message carrying block
++   content gives up the avatar gutter so its code and tables get the width. */
++.msg-rich { gap: 0; }
++.msg-rich .avatar { display: none; }
++.msg-rich .sender-label { margin-left: 2px; }
++.msg-rich .bubble {
++  max-width: 100%;
++  width: 100%;
++  padding: var(--sp-3);
++  /* No tail notch: a report is not pointing at anyone. */
++  border-radius: var(--r-lg);
++}
++
++/* Jump-to-latest: appears only when the reader has scrolled away. */
++.jump-latest {
++  position: absolute;
++  right: var(--sp-3);
++  bottom: var(--sp-3);
++  z-index: 10;
++  display: flex;
++  align-items: center;
++  gap: var(--sp-1);
++  height: 34px;
++  padding: 0 var(--sp-3) 0 var(--sp-2);
++  font-size: var(--fs-xs);
++  font-weight: 500;
++  color: var(--ink);
++  background: var(--surface);
++  border-radius: var(--r-full);
++  box-shadow: var(--shadow-2);
++  animation: drop-in var(--dur-2) var(--ease);
++}
++.jump-latest.has-new { color: var(--brand-press); }
++
++/* ==========================================================================
++   Message body — Zulip's rendered markdown
++   ========================================================================== */
+ .message-body { overflow-wrap: break-word; }
+-.message-body img { max-width: 100%; height: auto; }
+-.message-body pre { overflow-x: auto; background: #f3f4f6; padding: 0.5rem; border-radius: 0.5rem; }
+-.message-body code { background: #f3f4f6; border-radius: 0.25rem; padding: 0 0.2rem; }
+-.message-body blockquote { border-left: 3px solid #d1d5db; margin: 0.25rem 0; padding-left: 0.75rem; color: #4b5563; }
+-
+-/* Minimal pygments palette for Zulip's .codehilite spans */
+-.codehilite .k, .codehilite .kn, .codehilite .kd { color: #7c3aed; }
+-.codehilite .s, .codehilite .s1, .codehilite .s2, .codehilite .sd { color: #b45309; }
+-.codehilite .nf, .codehilite .nc { color: #1d4ed8; }
+-.codehilite .c, .codehilite .c1, .codehilite .cm { color: #6b7280; font-style: italic; }
+-.codehilite .mi, .codehilite .mf { color: #047857; }
+-.codehilite .o, .codehilite .p { color: #374151; }
++.message-body > *:first-child { margin-top: 0; }
++.message-body > *:last-child { margin-bottom: 0; }
++.message-body p { margin: 0.4em 0; }
++.message-body a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
++
++.message-body h1, .message-body h2, .message-body h3,
++.message-body h4, .message-body h5, .message-body h6 {
++  margin: 0.8em 0 0.35em;
++  font-weight: 650;
++  line-height: var(--lh-tight);
++  letter-spacing: -0.01em;
++}
++.message-body h1 { font-size: 1.2em; }
++.message-body h2 { font-size: 1.12em; }
++.message-body h3 { font-size: 1.05em; }
++.message-body h4, .message-body h5, .message-body h6 { font-size: 1em; }
++
++.message-body ul, .message-body ol { margin: 0.4em 0; padding-left: 1.35em; }
++.message-body ul { list-style: disc; }
++.message-body ol { list-style: decimal; }
++.message-body li { margin: 0.2em 0; }
++.message-body li::marker { color: var(--ink-3); }
++
++.message-body hr { margin: 0.8em 0; border: 0; border-top: 1px solid var(--line); }
++
++.message-body blockquote {
++  margin: 0.5em 0;
++  padding: 0.1em 0 0.1em 0.8em;
++  color: var(--ink-2);
++  border-left: 3px solid var(--line-strong);
++}
++
++.message-body img { max-width: 100%; height: auto; border-radius: var(--r-sm); }
++.message-body .message_inline_image { margin: 0.4em 0; }
++.message-body .message_inline_image a { display: block; }
++
++/* Code — inline chips stay in the text colour so they do not compete with
++   links; blocks scroll horizontally rather than wrapping mid-token. */
++.message-body code {
++  font-family: var(--font-mono);
++  font-size: 0.82em;
++  padding: 0.12em 0.32em;
++  background: var(--code-bg);
++  border-radius: var(--r-xs);
++}
++.message-body pre {
++  --scroll-bg: var(--code-bg);
++  margin: 0.5em 0;
++  padding: var(--sp-3);
++  overflow-x: auto;
++  overscroll-behavior-x: contain;
++  -webkit-overflow-scrolling: touch;
++  background-color: var(--code-bg);
++  border: 1px solid var(--line);
++  border-radius: var(--r-sm);
++  scrollbar-width: thin;
++}
++
++/* Sideways-scrollable blocks earn an edge shadow that appears only when there
++   is more to see: the cover gradients scroll with the content (`local`) and
++   uncover the fixed shadows (`scroll`) as soon as it moves. */
++.message-body pre,
++.message-body table,
++.message-body .katex-display {
++  background-image:
++    linear-gradient(to right, var(--scroll-bg) 40%, transparent),
++    linear-gradient(to left, var(--scroll-bg) 40%, transparent),
++    radial-gradient(farthest-side at 0 50%, rgba(16, 24, 40, 0.13), transparent),
++    radial-gradient(farthest-side at 100% 50%, rgba(16, 24, 40, 0.13), transparent);
++  background-position: 0 0, 100% 0, 0 0, 100% 0;
++  background-repeat: no-repeat;
++  background-size: 30px 100%, 30px 100%, 13px 100%, 13px 100%;
++  background-attachment: local, local, scroll, scroll;
++}
++.msg-self .bubble { --scroll-bg: var(--bubble-self); }
++.message-body pre code {
++  display: block;
++  padding: 0;
++  font-size: var(--fs-sm);
++  line-height: 1.5;
++  white-space: pre;
++  background: none;
++  border-radius: 0;
++}
++
++.message-body table {
++  --scroll-bg: var(--surface);
++  display: block;
++  width: max-content;
++  max-width: 100%;
++  margin: 0.5em 0;
++  overflow-x: auto;
++  overscroll-behavior-x: contain;
++  -webkit-overflow-scrolling: touch;
++  border-collapse: collapse;
++  font-size: var(--fs-sm);
++  scrollbar-width: thin;
++}
++.message-body th, .message-body td {
++  padding: 0.4em 0.7em;
++  border: 1px solid var(--line);
++  text-align: left;
++  white-space: nowrap;
++}
++.message-body th {
++  font-weight: 600;
++  border-bottom-color: var(--line-strong);
++}
++
++.message-body .katex-display {
++  --scroll-bg: var(--surface);
++  display: block;
++  margin: 0.6em 0;
++  padding-bottom: 2px;
++  overflow-x: auto;
++  overscroll-behavior-x: contain;
++  text-align: center;
++}
++
++/* @-mentions; the signed-in user's own mention gets the amber self-highlight. */
++.message-body .user-mention, .message-body .user-group-mention {
++  padding: 0 0.2em;
++  color: var(--link);
++  background: rgba(87, 107, 149, 0.1);
++  border-radius: var(--r-xs);
++  font-weight: 500;
++}
++.message-body .mention-me { color: #7a4d00; background: #ffe6a0; }
++
++/* Pygments "default" theme for Zulip's .codehilite spans — colors *and* the
++   bold/italic emphasis of the canonical stylesheet. */
++.codehilite .k, .codehilite .kc, .codehilite .kd, .codehilite .kn,
++.codehilite .kr { color: #008000; font-weight: bold; }
++.codehilite .kp, .codehilite .nb { color: #008000; }
++.codehilite .nt { color: #008000; font-weight: bold; }
++.codehilite .kt { color: #b00040; }
++.codehilite .na { color: #7d9029; }
++.codehilite .nc, .codehilite .nn { color: #0000ff; font-weight: bold; }
++.codehilite .nf { color: #0000ff; }
++.codehilite .nd { color: #aa22ff; }
++.codehilite .ow { color: #aa22ff; font-weight: bold; }
++.codehilite .ne { color: #d2413a; font-weight: bold; }
++.codehilite .nl { color: #a0a000; }
++.codehilite .ni { color: #999999; font-weight: bold; }
++.codehilite .no { color: #880000; }
++.codehilite .nv { color: #19177c; }
++.codehilite .o { color: #666666; }
++.codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .cpf,
++.codehilite .c1, .codehilite .cs { color: #408080; font-style: italic; }
++.codehilite .cp { color: #bc7a00; }
++.codehilite .s, .codehilite .sa, .codehilite .sb, .codehilite .sc,
++.codehilite .dl, .codehilite .s2, .codehilite .sh,
++.codehilite .s1 { color: #ba2121; }
++.codehilite .sd { color: #ba2121; font-style: italic; }
++.codehilite .se { color: #bb6622; font-weight: bold; }
++.codehilite .si { color: #bb6688; font-weight: bold; }
++.codehilite .sr { color: #bb6688; }
++.codehilite .sx { color: #008000; }
++.codehilite .ss { color: #19177c; }
++.codehilite .m, .codehilite .mb, .codehilite .mf, .codehilite .mh,
++.codehilite .mi, .codehilite .mo, .codehilite .il { color: #666666; }
++.codehilite .w { color: #bbbbbb; }
++.codehilite .err { border: 1px solid #ff0000; }
++.codehilite .gd { color: #a00000; }
++.codehilite .ge { font-style: italic; }
++.codehilite .gr { color: #ff0000; }
++.codehilite .gh { color: #000080; font-weight: bold; }
++.codehilite .gi { color: #00a000; }
++.codehilite .go { color: #888888; }
++.codehilite .gp { color: #000080; font-weight: bold; }
++.codehilite .gs { font-weight: bold; }
++.codehilite .gu { color: #800080; font-weight: bold; }
++.codehilite .gt { color: #0044dd; }
++
++/* ==========================================================================
++   Composer
++   ========================================================================== */
++.composer-dock {
++  position: relative;
++  flex: none;
++  background: var(--surface);
++  border-top: 1px solid var(--line);
++  padding-bottom: env(safe-area-inset-bottom);
++}
+ 
+ .composer {
+-  display: flex; gap: 0.5rem; padding: 0.5rem 1rem;
+-  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+-  border-top: 1px solid #e5e7eb; background: #fff;
++  display: flex;
++  align-items: flex-end;
++  gap: var(--sp-1);
++  padding: var(--sp-2) var(--sp-2);
++}
++
++.composer textarea {
++  flex: 1;
++  min-width: 0;
++  max-height: 8.5rem;      /* ≈5 lines before the field starts scrolling */
++  padding: 0.55rem var(--sp-3);
++  font-size: var(--fs-base);
++  line-height: 1.35;
++  resize: none;
++  overflow-y: auto;
++  background: var(--surface-2);
++  border: 1px solid transparent;
++  border-radius: var(--r-xl);
++  transition: border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
++}
++.composer textarea:focus {
++  outline: none;
++  background: var(--surface);
++  border-color: var(--brand);
++  box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.15);
++}
++.composer textarea::placeholder { color: var(--ink-3); }
++
++.send-btn {
++  display: grid;
++  place-items: center;
++  flex: none;
++  width: var(--tap);
++  height: var(--tap);
++  color: var(--on-brand);
++  background: var(--brand);
++  border-radius: var(--r-full);
++  transition: background-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
++}
++.send-btn:active:not(:disabled) { background: var(--brand-press); transform: scale(0.94); }
++.send-btn:disabled {
++  color: var(--ink-3);
++  background: var(--surface-2);
++  box-shadow: inset 0 0 0 1px var(--line);
++  cursor: default;
++}
++.send-btn.is-retry { background: var(--danger); color: var(--on-brand); }
++
++/* Upload progress: an indeterminate rail pinned to the dock's top edge, so it
++   reports without pushing the composer around. */
++.upload-status {
++  display: flex;
++  align-items: center;
++  gap: var(--sp-2);
++  padding: var(--sp-2) var(--sp-4) 0;
++  font-size: var(--fs-xs);
++  color: var(--ink-3);
++}
++.upload-status::before {
++  content: "";
++  flex: none;
++  width: 14px;
++  height: 14px;
++  border: 2px solid var(--line-strong);
++  border-top-color: var(--brand);
++  border-radius: var(--r-full);
++  animation: spin 700ms linear infinite;
++}
++
++.composer-alert {
++  display: flex;
++  align-items: center;
++  gap: var(--sp-2);
++  padding: var(--sp-2) var(--sp-4) 0;
++  font-size: var(--fs-xs);
++  color: var(--danger);
+ }
+-.composer textarea { flex: 1; resize: none; border: 1px solid #d1d5db; border-radius: 0.5rem; padding: 0.5rem; font: inherit; }
+-.composer button { background: #4f46e5; color: #fff; border: none; border-radius: 0.5rem; padding: 0 1rem; }
+-.composer button:disabled { opacity: 0.5; }
+ 
+-.login { max-width: 22rem; margin: 10vh auto; display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; }
+-.login label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+-.login input, .login select { padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font: inherit; }
+-.login button[type="submit"] { background: #4f46e5; color: #fff; border: none; border-radius: 0.5rem; padding: 0.6rem; }
++.mention-panel {
++  position: absolute;
++  left: var(--sp-2);
++  right: var(--sp-2);
++  bottom: calc(100% + var(--sp-1));
++  z-index: 25;
++  max-height: 15rem;
++  padding: var(--sp-1);
++  overflow-y: auto;
++  background: var(--surface);
++  border: 1px solid var(--line);
++  border-radius: var(--r-md);
++  box-shadow: var(--shadow-2);
++  animation: drop-in var(--dur-1) var(--ease);
++}
++.mention-option {
++  display: flex;
++  align-items: center;
++  min-height: var(--tap);
++  padding: 0 var(--sp-3);
++  font-size: var(--fs-md);
++  border-radius: var(--r-sm);
++  cursor: pointer;
++}
++.mention-option.active { color: var(--brand-press); background: var(--brand-tint); }
++
++/* ==========================================================================
++   Login
++   ========================================================================== */
++.login-screen {
++  display: flex;
++  flex-direction: column;
++  justify-content: center;
++  min-height: 100%;
++  padding: var(--sp-8) var(--sp-6)
++    calc(var(--sp-8) + env(safe-area-inset-bottom));
++  background: var(--surface);
++}
++.login-head { margin-bottom: var(--sp-8); }
++.login-mark { display: block; color: var(--brand); margin-bottom: var(--sp-4); }
++.login-head h1 {
++  font-size: var(--fs-xl);
++  font-weight: 650;
++  letter-spacing: -0.025em;
++}
++.login-tagline {
++  margin-top: var(--sp-2);
++  font-size: var(--fs-md);
++  line-height: var(--lh);
++  color: var(--ink-3);
++}
++
++
++.login { display: flex; flex-direction: column; gap: var(--sp-4); }
++.field { display: flex; flex-direction: column; gap: 6px; }
++.field > span {
++  font-size: var(--fs-sm);
++  font-weight: 500;
++  color: var(--ink-2);
++}
++.field input, .field select {
++  height: 48px;
++  padding: 0 var(--sp-3);
++  font-size: var(--fs-base);
++  background: var(--surface);
++  border: 1px solid var(--line-strong);
++  border-radius: var(--r-md);
++  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
++}
++.field input:focus, .field select:focus {
++  outline: none;
++  border-color: var(--brand);
++  box-shadow: var(--focus-ring);
++}
++
++.btn-primary {
++  display: grid;
++  place-items: center;
++  min-height: 48px;
++  margin-top: var(--sp-2);
++  padding: 0 var(--sp-4);
++  font-size: var(--fs-md);
++  font-weight: 600;
++  color: var(--on-brand);
++  background: var(--brand);
++  border-radius: var(--r-md);
++  transition: background-color var(--dur-1) var(--ease);
++}
++.btn-primary:active:not(:disabled) { background: var(--brand-press); }
++.btn-primary:disabled { opacity: 0.55; cursor: default; }
+ 
++.btn-quiet {
++  align-self: center;
++  min-height: var(--tap);
++  padding: 0 var(--sp-3);
++  font-size: var(--fs-md);
++  font-weight: 500;
++  color: var(--brand-press);
++  border-radius: var(--r-sm);
++}
++
++/* ==========================================================================
++   Settings sheet — grouped rows on a sunken ground (the platform idiom for
++   "a list of settings", which is exactly what this is).
++   ========================================================================== */
+ .sheet {
+-  position: fixed; inset: 0; background: #fff; z-index: 10;
+-  display: flex; flex-direction: column; gap: 0.5rem; overflow-y: auto;
+-}
+-.sheet ul { list-style: none; padding: 0 1rem; margin: 0; }
+-.sheet li { padding: 0.4rem 0; }
+-.sheet h3, .sheet .identity { padding: 0 1rem; }
+-
+-.empty { color: #6b7280; text-align: center; padding: 2rem 1rem; }
+-.error { color: #b91c1c; font-size: 0.9rem; }
+-.link { background: none; border: none; color: #4f46e5; text-decoration: underline; padding: 0; }
+-.danger { margin: 1rem; padding: 0.6rem; background: #fff; color: #b91c1c; border: 1px solid #b91c1c; border-radius: 0.5rem; }
+-.load-earlier { margin: 0.5rem auto; display: block; background: none; border: 1px solid #d1d5db; border-radius: 999px; padding: 0.25rem 1rem; color: #4b5563; }
++  position: fixed;
++  inset: 0;
++  z-index: 40;
++  display: flex;
++  flex-direction: column;
++  background: var(--surface-2);
++  animation: sheet-in var(--dur-2) var(--ease);
++}
++.sheet-scroll {
++  flex: 1;
++  overflow-y: auto;
++  -webkit-overflow-scrolling: touch;
++  padding: var(--sp-5) 0 calc(var(--sp-8) + env(safe-area-inset-bottom));
++}
++
++.group-label {
++  padding: 0 var(--sp-4) var(--sp-2);
++  font-size: var(--fs-xs);
++  font-weight: 500;
++  letter-spacing: 0.03em;
++  color: var(--ink-3);
++  text-transform: uppercase;
++}
++.group {
++  background: var(--surface);
++  border-top: 1px solid var(--line);
++  border-bottom: 1px solid var(--line);
++}
++.group + .group-label { padding-top: var(--sp-6); }
++.group li + li .row, .group .row + .row { border-top: 1px solid var(--line); }
++
++.row {
++  display: flex;
++  align-items: center;
++  gap: var(--sp-3);
++  width: 100%;
++  min-height: 50px;
++  padding: var(--sp-2) var(--sp-4);
++  font-size: var(--fs-md);
++  text-align: left;
++}
++.row-value {
++  margin-left: auto;
++  font-family: var(--font-mono);
++  font-size: var(--fs-sm);
++  color: var(--ink-3);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.row-muted { color: var(--ink-3); font-size: var(--fs-sm); }
++.row-danger { justify-content: center; color: var(--danger); font-weight: 500; }
++.row-danger:active { background: var(--surface-press); }
++
++.group-spaced { margin-top: var(--sp-6); }
++.group-hint {
++  padding: var(--sp-2) var(--sp-4) 0;
++  font-size: var(--fs-xs);
++  line-height: var(--lh);
++  color: var(--ink-3);
++}
++
++/* Native checkbox restyled as a track-and-knob switch — no extra markup, so
++   it stays a real checkbox for assistive tech. */
++.switch {
++  flex: none;
++  appearance: none;
++  -webkit-appearance: none;
++  position: relative;
++  width: 46px;
++  height: 28px;
++  margin: 0 0 0 auto;
++  background: var(--line-strong);
++  border-radius: var(--r-full);
++  cursor: pointer;
++  transition: background-color var(--dur-2) var(--ease);
++}
++.switch::after {
++  content: "";
++  position: absolute;
++  top: 2px;
++  left: 2px;
++  width: 24px;
++  height: 24px;
++  background: var(--surface);
++  border-radius: var(--r-full);
++  box-shadow: var(--shadow-1);
++  transition: transform var(--dur-2) var(--ease);
++}
++.switch:checked { background: var(--brand); }
++.switch:checked::after { transform: translateX(18px); }
++
++.app-version {
++  margin-top: var(--sp-6);
++  font-family: var(--font-mono);
++  font-size: var(--fs-2xs);
++  color: var(--ink-3);
++  text-align: center;
++}
++
++/* ==========================================================================
++   States — empty, error, loading
++   ========================================================================== */
++.empty-state {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: var(--sp-2);
++  margin: auto;
++  padding: var(--sp-10) var(--sp-6);
++  text-align: center;
++}
++.empty-state svg { color: var(--line-strong); }
++.empty-state h2 {
++  margin-top: var(--sp-2);
++  font-size: var(--fs-md);
++  font-weight: 600;
++}
++.empty-state p {
++  max-width: 17rem;
++  font-size: var(--fs-sm);
++  line-height: var(--lh);
++  color: var(--ink-3);
++}
++
++.alert {
++  display: flex;
++  align-items: flex-start;
++  gap: var(--sp-2);
++  margin: var(--sp-3) var(--sp-4);
++  padding: var(--sp-3);
++  font-size: var(--fs-sm);
++  line-height: var(--lh);
++  color: var(--danger);
++  background: var(--danger-tint);
++  border: 1px solid rgba(217, 45, 32, 0.16);
++  border-radius: var(--r-md);
++}
++.alert svg { flex: none; margin-top: 1px; }
++.alert-body { min-width: 0; }
++.alert-body strong { font-weight: 600; }
++.login-screen .alert { margin: 0 0 var(--sp-5); }
++.alert-detail { margin-top: 2px; color: var(--ink-3); }
++.alert-action {
++  min-height: 32px;
++  margin-top: var(--sp-1);
++  font-size: var(--fs-sm);
++  font-weight: 600;
++  color: var(--danger);
++  text-decoration: underline;
++  text-underline-offset: 3px;
++}
++
++/* Skeletons mirror the real rows, so the layout does not jump on arrival. */
++.skeleton {
++  background: linear-gradient(
++    90deg,
++    var(--skeleton-a) 25%,
++    var(--skeleton-b) 37%,
++    var(--skeleton-a) 63%
++  );
++  background-size: 400% 100%;
++  border-radius: var(--r-xs);
++  animation: shimmer 1.4s ease-in-out infinite;
++}
++.skeleton-row {
++  display: grid;
++  grid-template-columns: 44px 1fr;
++  column-gap: var(--sp-3);
++  align-items: center;
++  padding: var(--sp-3) var(--sp-4);
++  border-top: 1px solid var(--line);
++}
++.skeleton-row:first-child { border-top: 0; }
++.skeleton-tile { width: 44px; height: 44px; border-radius: var(--r-md); }
++.skeleton-lines { display: flex; flex-direction: column; gap: 7px; }
++.skeleton-lines .skeleton:nth-child(1) { width: 42%; height: 13px; }
++.skeleton-lines .skeleton:nth-child(2) { width: 76%; height: 11px; }
++
++.skeleton-thread {
++  display: flex;
++  flex-direction: column;
++  gap: var(--sp-3);
++  padding: var(--sp-4) 0;
++  /* The thread sits on the darker canvas, so the placeholders need their own
++     contrast range or they vanish into it. */
++  --skeleton-a: #e0e1e2;
++  --skeleton-b: #e9eaeb;
++}
++.skeleton-msg { display: flex; align-items: flex-start; gap: var(--sp-2); }
++.skeleton-msg-self { justify-content: flex-end; }
++.skeleton-avatar { flex: none; width: 34px; height: 34px; border-radius: var(--r-md); }
++.skeleton-bubble { height: 46px; border-radius: var(--r-lg); }
++.skeleton-bubble.w-1 { width: 58%; }
++.skeleton-bubble.w-2 { width: 44%; height: 36px; }
++.skeleton-bubble.w-3 { width: 72%; height: 74px; }
++
++/* ==========================================================================
++   Motion
++   ========================================================================== */
++@keyframes msg-in {
++  from { opacity: 0; transform: translateY(6px); }
++  to { opacity: 1; transform: none; }
++}
++@keyframes drop-in {
++  from { opacity: 0; transform: translateY(4px); }
++  to { opacity: 1; transform: none; }
++}
++@keyframes banner-in {
++  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
++  to { opacity: 1; transform: translateX(-50%); }
++}
++@keyframes sheet-in {
++  from { opacity: 0; transform: translateY(16px); }
++  to { opacity: 1; transform: none; }
++}
++@keyframes shimmer {
++  from { background-position: 100% 50%; }
++  to { background-position: 0 50%; }
++}
++@keyframes spin { to { transform: rotate(360deg); } }
++@keyframes pulse { 50% { opacity: 0.35; } }
++
++@media (prefers-reduced-motion: reduce) {
++  *, *::before, *::after {
++    animation-duration: 0.01ms !important;
++    animation-iteration-count: 1 !important;
++    transition-duration: 0.01ms !important;
++    scroll-behavior: auto !important;
++  }
++}
+diff --git a/src/test/fixtures/zulipHtml.ts b/src/test/fixtures/zulipHtml.ts
+index 70ae214..80a7bf6 100644
+--- a/src/test/fixtures/zulipHtml.ts
++++ b/src/test/fixtures/zulipHtml.ts
+@@ -18,3 +18,45 @@ export const hostileScript = '<p>hi</p><script>window.hacked = true</script>'
+ export const hostileImgHandler = '<img src="x" onerror="window.hacked = true">'
+ 
+ export const hostileJsHref = '<a href="javascript:window.hacked=1">click</a>'
++
++// Realistic KaTeX display math output: .katex-mathml carries the MathML
++// fallback (with a raw-TeX <annotation>) that must be dropped; .katex-html
++// carries the visible layout, whose positioning lives in inline styles.
++export const katexDisplayMath =
++  '<span class="katex-display"><span class="katex">' +
++  '<span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML">' +
++  '<semantics><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>' +
++  '<annotation encoding="application/x-tex">x^2</annotation></semantics></math></span>' +
++  '<span class="katex-html" aria-hidden="true"><span class="base">' +
++  '<span class="strut" style="height:0.8141em;"></span>' +
++  '<span class="mord"><span class="mord mathnormal">x</span>' +
++  '<span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;">' +
++  '<span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span>' +
++  '<span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span>' +
++  '</span></span></span></span></span></span></span></span></span></span>'
++
++// KaTeX sqrt stretchy-delimiter SVG (hide-tail span wrapping an svg/path).
++export const katexSvgSqrt =
++  '<span class="hide-tail" style="min-width:0.853em;height:1.08em;">' +
++  '<svg xmlns="http://www.w3.org/2000/svg" width="400em" height="1.08em" ' +
++  'viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice">' +
++  '<path d="M95,702c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14"/>' +
++  '</svg></span>'
++
++export const tableMarkup =
++  '<table><thead><tr><th>name</th><th>score</th></tr></thead>' +
++  '<tbody><tr><td>a</td><td>1</td></tr><tr><td>b</td><td>2</td></tr></tbody></table>'
++
++export const emojiThumbsUp =
++  '<p><span class="emoji emoji-1f44d" title="thumbs up">:thumbs_up:</span></p>'
++
++export const emojiFlagCn = '<p><span class="emoji emoji-1f1e8-1f1f3">:cn:</span></p>'
++
++export const emojiImg =
++  '<p><img class="emoji" alt="🎉" src="/static/generated/emoji/tada.png"></p>'
++
++export const userMention =
++  '<p>ping <span class="user-mention" data-user-id="42" title="@Alice Doe">@Alice Doe</span></p>'
++
++export const userGroupMention =
++  '<p><span class="user-group-mention" data-user-group-id="1">@everyone</span></p>'
+diff --git a/src/views/ConversationView.test.tsx b/src/views/ConversationView.test.tsx
+index 82d8037..3b48888 100644
+--- a/src/views/ConversationView.test.tsx
++++ b/src/views/ConversationView.test.tsx
+@@ -1,14 +1,15 @@
+-import { render, screen, waitFor } from '@testing-library/react'
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+ import userEvent from '@testing-library/user-event'
+ import { ConversationView } from './ConversationView'
+-import { useAppStore, resetAppStore } from '../store/appStore'
+-import type { ZulipClient } from '../api/client'
++import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
++import { ZulipApiError, type ZulipClient } from '../api/client'
+ import type { ZulipMessage } from '../api/types'
+ 
+-function makeMsg(id: number): ZulipMessage {
++function makeMsg(id: number, overrides: Partial<ZulipMessage> = {}): ZulipMessage {
+   return {
+     id, sender_full_name: 'Agent', sender_email: 'bot@b.c',
+     timestamp: 1755100000 + id, content: `<p>msg-${id}</p>`, stream_id: 1, subject: '',
++    ...overrides,
+   }
+ }
+ 
+@@ -18,6 +19,7 @@ function fakeClient(overrides: Partial<Record<keyof ZulipClient, unknown>> = {})
+     sendMessage: vi.fn(async () => 99),
+     markStreamRead: vi.fn(async () => {}),
+     authHeaderValue: vi.fn(() => 'Basic ' + btoa('me@b.c:k')),
++    getOwnUser: vi.fn(async () => ({ user_id: 7 })),
+     ...overrides,
+   } as unknown as ZulipClient
+ }
+@@ -30,6 +32,97 @@ beforeEach(() => {
+   })
+ })
+ 
++describe('WeChat-style chat bubbles', () => {
++  test('marks own messages msg-self and other messages msg-other', async () => {
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { sender_email: 'bot@b.c', sender_full_name: 'Agent' }),
++        makeMsg(2, { sender_email: 'me@b.c', sender_full_name: 'Human' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    const rows = container.querySelectorAll('.msg-row')
++    expect(rows).toHaveLength(2)
++    expect(rows[0].className).toContain('msg-other')
++    expect(rows[1].className).toContain('msg-self')
++  })
++
++  test('shows a sender label only above other people\'s bubbles', async () => {
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { sender_email: 'bot@b.c', sender_full_name: 'Agent' }),
++        makeMsg(2, { sender_email: 'me@b.c', sender_full_name: 'Human' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    const labels = container.querySelectorAll('.sender-label')
++    expect(labels).toHaveLength(1)
++    expect(labels[0].textContent).toBe('Agent')
++  })
++
++  test('avatar shows the sender\'s first character uppercased', async () => {
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { sender_full_name: 'ada lovelace' }),
++        makeMsg(2, { sender_email: 'me@b.c', sender_full_name: 'Human' }),
++        makeMsg(3, { sender_full_name: 'Another' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    const avatars = container.querySelectorAll('.avatar')
++    expect(avatars).toHaveLength(3)
++    expect(avatars[0].textContent).toBe('A')
++    expect(avatars[1].textContent).toBe('H')
++    // deterministic per-sender color: msg-1 and msg-3 share sender 'bot@b.c'
++    expect((avatars[2] as HTMLElement).style.backgroundColor).toBe(
++      (avatars[0] as HTMLElement).style.backgroundColor,
++    )
++    expect((avatars[1] as HTMLElement).style.backgroundColor).toMatch(/^rgb\(/)
++  })
++
++  test('renders a time pill before the first message and before gaps of 300s+', async () => {
++    const base = 1755100000
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { timestamp: base }),
++        makeMsg(2, { timestamp: base + 60 }), // 1 minute later: no new pill
++        makeMsg(3, { timestamp: base + 60 + 600 }), // 10 minutes later: new pill
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-3')
++    const pills = container.querySelectorAll('.time-pill')
++    expect(pills).toHaveLength(2)
++    for (const pill of pills) {
++      // "19:32", "Today 19:32", "Yesterday 19:32", "Fri 19:32", "13 Aug 19:32", "13 Aug 2025 19:32"
++      expect(pill.textContent!.trim()).toMatch(
++        /^(Today |Yesterday |[A-Z][a-z]{2} |\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d{2}:\d{2}$/,
++      )
++    }
++  })
++
++  test('only the leading time pill when messages are close together', async () => {
++    const base = 1755100000
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { timestamp: base }),
++        makeMsg(2, { timestamp: base + 30 }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-2')
++    expect(container.querySelectorAll('.time-pill')).toHaveLength(1)
++  })
++})
++
+ test('loads newest messages on mount and renders them sanitized', async () => {
+   const client = fakeClient()
+   useAppStore.setState({ client })
+@@ -40,6 +133,50 @@ test('loads newest messages on mount and renders them sanitized', async () => {
+   expect(useAppStore.getState().unreadByStream[1] ?? []).toEqual([])
+ })
+ 
++test('fetches own user id on mount and highlights own mentions', async () => {
++  const client = fakeClient({
++    getMessages: vi.fn(async () => [
++      makeMsg(1, {
++        content: '<p>ping <span class="user-mention" data-user-id="7">@me</span></p>',
++      }),
++    ]),
++    getOwnUser: vi.fn(async () => ({ user_id: 7 })),
++  })
++  useAppStore.setState({ client })
++  const { container } = render(<ConversationView streamId={1} />)
++  await screen.findByText('@me')
++  await waitFor(() => expect(useAppStore.getState().ownUserId).toBe(7))
++  const mention = container.querySelector('.user-mention')!
++  expect(mention.className).toContain('mention-me')
++})
++
++test('does not refetch own user once known', async () => {
++  const client = fakeClient({ getOwnUser: vi.fn(async () => ({ user_id: 7 })) })
++  useAppStore.setState({ client, ownUserId: 7 })
++  render(<ConversationView streamId={1} />)
++  await screen.findByText('msg-1')
++  expect(client.getOwnUser).not.toHaveBeenCalled()
++})
++
++test('auth error while fetching own user logs out', async () => {
++  const client = fakeClient({
++    getOwnUser: vi.fn().mockRejectedValue(new ZulipApiError('Invalid API key', 401)),
++  })
++  useAppStore.setState({ client })
++  render(<ConversationView streamId={1} />)
++  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
++  expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
++})
++
++test('non-auth error while fetching own user is ignored silently', async () => {
++  const client = fakeClient({ getOwnUser: vi.fn().mockRejectedValue(new Error('boom')) })
++  useAppStore.setState({ client })
++  render(<ConversationView streamId={1} />)
++  await screen.findByText('msg-1')
++  expect(useAppStore.getState().creds).not.toBeNull()
++  expect(useAppStore.getState().ownUserId).toBeNull()
++})
++
+ test('re-fetches history when the stream is not in loadedStreams even if messages exist', async () => {
+   const client = fakeClient({ getMessages: vi.fn(async () => [makeMsg(1), makeMsg(2)]) })
+   useAppStore.setState({
+@@ -124,3 +261,120 @@ test('markStreamRead retries once after 3s on non-auth failure', async () => {
+     vi.useRealTimers()
+   }
+ })
++
++describe('staying with the newest message', () => {
++  /** jsdom has no layout, so the scroll geometry has to be declared. */
++  function stubGeometry(el: Element, { scrollHeight = 2000, clientHeight = 800, scrollTop = 0 }) {
++    Object.defineProperty(el, 'scrollHeight', { value: scrollHeight, configurable: true })
++    Object.defineProperty(el, 'clientHeight', { value: clientHeight, configurable: true })
++    Object.defineProperty(el, 'scrollTop', {
++      value: scrollTop, writable: true, configurable: true,
++    })
++  }
++
++  test('opening a conversation lands on the newest message', async () => {
++    useAppStore.setState({ client: fakeClient() })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-2')
++    const scroller = container.querySelector('.message-scroll')!
++    // Bottom-parked: no jump affordance is offered.
++    expect(container.querySelector('.jump-latest')).toBeNull()
++    expect(scroller.scrollTop).toBe(scroller.scrollHeight)
++  })
++
++  test('scrolling away offers a jump chip; using it returns to the bottom', async () => {
++    useAppStore.setState({ client: fakeClient() })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-2')
++    const scroller = container.querySelector('.message-scroll')!
++    stubGeometry(scroller, { scrollTop: 100 })
++
++    fireEvent.scroll(scroller)
++    const jump = await screen.findByRole('button', { name: /latest/i })
++
++    stubGeometry(scroller, { scrollTop: 1200 })
++    await userEvent.click(jump)
++    expect(screen.queryByRole('button', { name: /latest/i })).toBeNull()
++    expect(scroller.scrollTop).toBe(2000)
++  })
++
++  test('a message arriving while scrolled up is announced, not jumped to', async () => {
++    useAppStore.setState({ client: fakeClient() })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-2')
++    const scroller = container.querySelector('.message-scroll')!
++    stubGeometry(scroller, { scrollTop: 100 })
++    fireEvent.scroll(scroller)
++    await screen.findByRole('button', { name: /latest/i })
++
++    act(() => {
++      useAppStore.getState().applyEvents([
++        { id: 1, type: 'message', message: makeMsg(3) } as never,
++      ])
++    })
++
++    expect(await screen.findByRole('button', { name: /new messages/i })).toBeInTheDocument()
++    // The viewport was left exactly where the reader put it.
++    expect(scroller.scrollTop).toBe(100)
++  })
++})
++
++describe('message grouping and layout', () => {
++  test('a run from one sender drops the repeated avatar and name', async () => {
++    const base = 1755100000
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { timestamp: base, sender_full_name: 'Agent' }),
++        makeMsg(2, { timestamp: base + 30, sender_full_name: 'Agent' }),
++        makeMsg(3, { timestamp: base + 60, sender_email: 'me@b.c', sender_full_name: 'Human' }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-3')
++    const rows = container.querySelectorAll('.msg-row')
++    expect(rows[0].className).not.toContain('msg-grouped')
++    expect(rows[1].className).toContain('msg-grouped')
++    // Different sender: a new turn, so the avatar and label come back.
++    expect(rows[2].className).not.toContain('msg-grouped')
++    expect(container.querySelectorAll('.sender-label')).toHaveLength(1)
++    expect(container.querySelectorAll('.avatar-hidden')).toHaveLength(1)
++    // Every row still carries an avatar element, hidden or not.
++    expect(container.querySelectorAll('.avatar')).toHaveLength(3)
++  })
++
++  test('a time gap starts a new turn even for the same sender', async () => {
++    const base = 1755100000
++    const client = fakeClient({
++      getMessages: vi.fn(async () => [
++        makeMsg(1, { timestamp: base }),
++        makeMsg(2, { timestamp: base + 600 }),
++      ]),
++    })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-2')
++    expect(container.querySelectorAll('.msg-grouped')).toHaveLength(0)
++  })
++
++  test.each([
++    ['code block', '<pre><code>x = 1</code></pre>'],
++    ['table', '<table><tr><td>a</td></tr></table>'],
++    ['display math', '<span class="katex-display">x</span>'],
++    ['inline image', '<div class="message_inline_image"><img src="/a.png"></div>'],
++    ['heading', '<h2>Report</h2>'],
++  ])('a message containing a %s gets the full-width treatment', async (_name, content) => {
++    const client = fakeClient({ getMessages: vi.fn(async () => [makeMsg(1, { content })]) })
++    useAppStore.setState({ client })
++    const { container } = render(<ConversationView streamId={1} />)
++    await waitFor(() => expect(container.querySelector('.msg-row')).not.toBeNull())
++    expect(container.querySelector('.msg-row')!.className).toContain('msg-rich')
++  })
++
++  test('a plain paragraph stays a chat bubble', async () => {
++    useAppStore.setState({ client: fakeClient() })
++    const { container } = render(<ConversationView streamId={1} />)
++    await screen.findByText('msg-1')
++    expect(container.querySelector('.msg-row')!.className).not.toContain('msg-rich')
++  })
++})
+diff --git a/src/views/ConversationView.tsx b/src/views/ConversationView.tsx
+index 0c62b83..e7cb9f9 100644
+--- a/src/views/ConversationView.tsx
++++ b/src/views/ConversationView.tsx
+@@ -1,8 +1,37 @@
+-import { useEffect, useState } from 'react'
++import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+ import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+ import { isAuthError } from '../api/client'
+ import { MessageBody } from '../components/MessageBody'
+ import { Composer } from '../components/Composer'
++import { AlertCircle, ArrowDown, ChevronLeft, Message } from '../components/Icon'
++import { initial, separatorLabel, tileColor } from '../lib/format'
++
++/** Messages this far apart start a new time-stamped block. */
++const GAP_SECONDS = 300
++/** How far from the bottom still counts as "reading the newest messages". */
++const PIN_SLACK_PX = 80
++
++/** True when the message carries block content that a chat bubble would clip. */
++function isRichMessage(html: string): boolean {
++  return /<(pre|table|h[1-6]|blockquote|img)\b|katex-display|message_inline_image/i.test(html)
++}
++
++/** Mirrors the real message rows so nothing shifts when the thread arrives. */
++function SkeletonThread() {
++  return (
++    <div className="skeleton-thread" aria-hidden="true">
++      {(['w-1', 'w-3'] as const).map((w, i) => (
++        <div className="skeleton-msg" key={i}>
++          <div className="skeleton skeleton-avatar" />
++          <div className={`skeleton skeleton-bubble ${w}`} />
++        </div>
++      ))}
++      <div className="skeleton-msg skeleton-msg-self">
++        <div className="skeleton skeleton-bubble w-2" />
++      </div>
++    </div>
++  )
++}
+ 
+ export function ConversationView({ streamId }: { streamId: number }) {
+   const stream = useAppStore((s) => s.streams.find((x) => x.stream_id === streamId))
+@@ -10,10 +39,19 @@ export function ConversationView({ streamId }: { streamId: number }) {
+   const loadedStreams = useAppStore((s) => s.loadedStreams)
+   const creds = useAppStore((s) => s.creds)
+   const client = useAppStore((s) => s.client)
++  const ownUserId = useAppStore((s) => s.ownUserId)
++  const setOwnUserId = useAppStore((s) => s.setOwnUserId)
+   const navigate = useAppStore((s) => s.navigate)
+   const logout = useAppStore((s) => s.logout)
+   const [loadError, setLoadError] = useState<string | null>(null)
++  const [retryToken, setRetryToken] = useState(0)
+   const [loadingOlder, setLoadingOlder] = useState(false)
++  const [showJump, setShowJump] = useState(false)
++  const [hasNew, setHasNew] = useState(false)
++  const scrollRef = useRef<HTMLDivElement>(null)
++  // Whether the reader is parked at the newest message. Kept in a ref because
++  // the scroll handler and the message effect both read it without re-render.
++  const pinnedRef = useRef(true)
+   const name = stream?.name ?? ''
+   const loaded = messages !== undefined
+   // History is loaded when the stream is in loadedStreams, not merely when a
+@@ -22,8 +60,68 @@ export function ConversationView({ streamId }: { streamId: number }) {
+   const historyLoaded = loadedStreams.includes(streamId)
+   const messageCount = messages?.length ?? 0
+ 
++  const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
++    const el = scrollRef.current
++    if (!el) return
++    // `scrollTo(options)` is not universal; the assignment is the fallback that
++    // always works, just without the animation.
++    if (typeof el.scrollTo === 'function') {
++      el.scrollTo({ top: el.scrollHeight, behavior })
++    } else {
++      el.scrollTop = el.scrollHeight
++    }
++    pinnedRef.current = true
++    setShowJump(false)
++    setHasNew(false)
++  }, [])
++
++  function onScroll() {
++    const el = scrollRef.current
++    if (!el) return
++    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
++    const pinned = distance <= PIN_SLACK_PX
++    pinnedRef.current = pinned
++    setShowJump(!pinned)
++    if (pinned) setHasNew(false)
++  }
++
++  // Opening a conversation lands on the newest message, with no visible glide.
++  useEffect(() => {
++    pinnedRef.current = true
++    setShowJump(false)
++    setHasNew(false)
++    scrollToLatest('auto')
++  }, [streamId, scrollToLatest])
++
++  // New messages follow the reader: scroll if they are at the bottom, and
++  // otherwise offer the jump chip rather than yanking the viewport.
++  useEffect(() => {
++    if (messageCount === 0) return
++    if (pinnedRef.current) {
++      scrollToLatest('auto')
++    } else {
++      setHasNew(true)
++    }
++  }, [messageCount, scrollToLatest])
++
++  // Two things move the bottom of the list after it renders: images and math
++  // finishing their load (the content grows), and the composer growing with a
++  // multi-line draft (the viewport shrinks). Both used to leave the reader
++  // stranded above the newest message, so watch for both.
++  useEffect(() => {
++    const el = scrollRef.current
++    if (!el || typeof ResizeObserver === 'undefined') return
++    const observer = new ResizeObserver(() => {
++      if (pinnedRef.current) scrollToLatest('auto')
++    })
++    observer.observe(el)
++    for (const child of Array.from(el.children)) observer.observe(child)
++    return () => observer.disconnect()
++  }, [messageCount, scrollToLatest])
++
+   useEffect(() => {
+     if (!client || !stream || historyLoaded) return
++    setLoadError(null)
+     client
+       .getMessages(name, 'newest')
+       .then((msgs) => useAppStore.getState().setMessages(streamId, msgs))
+@@ -34,7 +132,20 @@ export function ConversationView({ streamId }: { streamId: number }) {
+           setLoadError(e instanceof Error ? e.message : String(e))
+         }
+       })
+-  }, [client, stream, historyLoaded, name, streamId, logout])
++  }, [client, stream, historyLoaded, name, streamId, logout, retryToken])
++
++  // Fetch the signed-in user's id once per session so their own @mentions can
++  // be highlighted. Auth failures take the existing logout path; transient
++  // errors are ignored silently (mentions just render unhighlighted).
++  useEffect(() => {
++    if (!client || ownUserId !== null) return
++    client
++      .getOwnUser()
++      .then((me) => setOwnUserId(me.user_id))
++      .catch((e) => {
++        if (isAuthError(e)) logout(AUTH_LOGOUT_REASON)
++      })
++  }, [client, ownUserId, setOwnUserId, logout])
+ 
+   useEffect(() => {
+     if (!client || !loaded) return
+@@ -64,15 +175,21 @@ export function ConversationView({ streamId }: { streamId: number }) {
+   async function loadOlder() {
+     if (!client || !messages || messages.length === 0 || loadingOlder) return
+     setLoadingOlder(true)
++    const el = scrollRef.current
++    const anchor = el ? el.scrollHeight - el.scrollTop : 0
+     try {
+       const older = await client.getMessages(name, messages[0].id, 51)
+       const known = new Set(messages.map((m) => m.id))
+       useAppStore.getState().prependOlder(streamId, older.filter((m) => !known.has(m.id)))
++      // Hold the reader's place: the list just grew above them.
++      requestAnimationFrame(() => {
++        if (el) el.scrollTop = el.scrollHeight - anchor
++      })
+     } catch (e) {
+       if (isAuthError(e)) {
+         logout(AUTH_LOGOUT_REASON)
+       } else {
+-        setLoadError('Could not load earlier messages.')
++        setLoadError('Couldn’t load earlier messages.')
+       }
+     } finally {
+       setLoadingOlder(false)
+@@ -84,27 +201,104 @@ export function ConversationView({ streamId }: { streamId: number }) {
+   return (
+     <div className="conversation">
+       <header className="topbar">
+-        <button aria-label="Back" onClick={() => navigate({ name: 'projects' })}>‹</button>
++        <button
++          className="icon-btn bar-start"
++          aria-label="Back"
++          onClick={() => navigate({ name: 'projects' })}
++        >
++          <ChevronLeft />
++        </button>
+         <h1>{stream.name}</h1>
+       </header>
+-      <div className="message-scroll">
++
++      <div className="thread">
++      <div className="message-scroll" ref={scrollRef} onScroll={onScroll}>
+         {loaded && messages.length > 0 && (
+           <button className="load-earlier" onClick={loadOlder} disabled={loadingOlder}>
+             {loadingOlder ? 'Loading…' : 'Load earlier'}
+           </button>
+         )}
+-        {loadError && <p className="error" role="alert">{loadError}</p>}
+-        {!loaded && !loadError && <p className="empty">Loading…</p>}
+-        {messages?.map((m) => (
+-          <div className="message" key={m.id}>
+-            <div className="message-meta">
+-              <span className="sender">{m.sender_full_name}</span>{' '}
+-              {new Date(m.timestamp * 1000).toLocaleString()}
++
++        {loadError && (
++          <div className="alert" role="alert">
++            <AlertCircle size={18} />
++            <div className="alert-body">
++              <strong>Couldn’t load this conversation.</strong>
++              <p className="alert-detail">{loadError}</p>
++              <button className="alert-action" onClick={() => setRetryToken((n) => n + 1)}>
++                Try again
++              </button>
+             </div>
+-            <MessageBody html={m.content} prefix={creds.prefix} authHeader={client?.authHeaderValue()} />
+           </div>
+-        ))}
++        )}
++
++        {!loaded && !loadError && <SkeletonThread />}
++
++        {loaded && messages.length === 0 && !loadError && (
++          <div className="empty-state">
++            <Message size={40} />
++            <h2>No messages yet</h2>
++            <p>Send the first instruction and this project’s agent picks it up.</p>
++          </div>
++        )}
++
++        {messages?.map((m, i) => {
++          const prev = messages[i - 1]
++          const gap = !prev || m.timestamp - prev.timestamp >= GAP_SECONDS
++          const isSelf = m.sender_email === creds.email
++          // Runs of messages from one sender read as one turn: the repeated
++          // avatar and name are noise, so only the first of a run carries them.
++          const grouped = !gap && !!prev && prev.sender_email === m.sender_email
++          const rich = isRichMessage(m.content)
++          return (
++            <Fragment key={m.id}>
++              {gap && (
++                <div className="time-pill">
++                  {separatorLabel(m.timestamp, undefined, prev?.timestamp)}
++                </div>
++              )}
++              <div
++                className={
++                  `msg-row ${isSelf ? 'msg-self' : 'msg-other'}` +
++                  (grouped ? ' msg-grouped' : '') +
++                  (rich ? ' msg-rich' : '')
++                }
++              >
++                <div
++                  className={`avatar${grouped ? ' avatar-hidden' : ''}`}
++                  style={{ background: tileColor(m.sender_email) }}
++                  aria-hidden="true"
++                >
++                  {initial(m.sender_full_name, m.sender_email)}
++                </div>
++                <div className="msg-col">
++                  {!isSelf && !grouped && <div className="sender-label">{m.sender_full_name}</div>}
++                  <div className="bubble">
++                    <MessageBody
++                      html={m.content}
++                      prefix={creds.prefix}
++                      authHeader={client?.authHeaderValue()}
++                      selfUserId={ownUserId ?? undefined}
++                    />
++                  </div>
++                </div>
++              </div>
++            </Fragment>
++          )
++        })}
++      </div>
++
++      {showJump && (
++        <button
++          className={`jump-latest${hasNew ? ' has-new' : ''}`}
++          onClick={() => scrollToLatest()}
++        >
++          <ArrowDown size={16} />
++          {hasNew ? 'New messages' : 'Latest'}
++        </button>
++      )}
+       </div>
++
+       <Composer streamName={name} />
+     </div>
+   )
+diff --git a/src/views/LoginView.test.tsx b/src/views/LoginView.test.tsx
+index 0c4eb08..726f37f 100644
+--- a/src/views/LoginView.test.tsx
++++ b/src/views/LoginView.test.tsx
+@@ -28,7 +28,7 @@ test('password login fetches api key and stores credentials', async () => {
+ test('paste-API-key path skips fetchApiKey', async () => {
+   const spy = vi.spyOn(ZulipClient, 'fetchApiKey')
+   render(<LoginView />)
+-  await userEvent.click(await screen.findByRole('button', { name: /paste api key/i }))
++  await userEvent.click(await screen.findByRole('button', { name: /paste an api key/i }))
+   await userEvent.type(screen.getByLabelText(/email/i), 'a@b.c')
+   await userEvent.type(screen.getByLabelText(/api key/i), 'direct-key')
+   await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
+diff --git a/src/views/LoginView.tsx b/src/views/LoginView.tsx
+index 866a9fc..9fc6417 100644
+--- a/src/views/LoginView.tsx
++++ b/src/views/LoginView.tsx
+@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
+ import { loadServers } from '../api/servers'
+ import { ZulipClient } from '../api/client'
+ import { useAppStore } from '../store/appStore'
++import { AlertCircle, Logo } from '../components/Icon'
+ import type { Credentials, ServerConfig } from '../api/types'
+ 
+ export function LoginView() {
+@@ -42,46 +43,92 @@ export function LoginView() {
+     }
+   }
+ 
+-  if (!servers) return <p className="empty">{error ?? 'Loading…'}</p>
++  if (!servers) {
++    return (
++      <div className="login-screen">
++        <div className="login-head">
++          <Logo className="login-mark" />
++          <h1>Agent Console</h1>
++          <p className="login-tagline">{error ?? 'Loading…'}</p>
++        </div>
++      </div>
++    )
++  }
++
++  const notice = loginReason ?? error
+ 
+   return (
+-    <>
+-      {loginReason && (
+-        <p role="alert" className="error login-reason">{loginReason}</p>
++    <div className="login-screen">
++      <div className="login-head">
++        <Logo className="login-mark" />
++        <h1>Agent Console</h1>
++        <p className="login-tagline">Every project is one conversation with its agent.</p>
++      </div>
++
++      {notice && (
++        <p className="alert login-notice" role="alert">
++          <AlertCircle size={18} />
++          <span className="alert-body">{notice}</span>
++        </p>
+       )}
++
+       <form className="login" onSubmit={submit}>
+-      <h1>Agent Console</h1>
+-      {servers.length > 1 && (
+-        <label>
+-          Server
+-          <select value={serverIdx} onChange={(e) => setServerIdx(Number(e.target.value))}>
+-            {servers.map((s, i) => (
+-              <option key={s.prefix} value={i}>{s.name}</option>
+-            ))}
+-          </select>
++        {servers.length > 1 && (
++          <label className="field">
++            <span>Server</span>
++            <select value={serverIdx} onChange={(e) => setServerIdx(Number(e.target.value))}>
++              {servers.map((s, i) => (
++                <option key={s.prefix} value={i}>{s.name}</option>
++              ))}
++            </select>
++          </label>
++        )}
++        <label className="field">
++          <span>Email</span>
++          <input
++            type="email"
++            required
++            autoComplete="username"
++            autoCapitalize="none"
++            autoCorrect="off"
++            spellCheck={false}
++            value={email}
++            onChange={(e) => setEmail(e.target.value)}
++          />
+         </label>
+-      )}
+-      <label>
+-        Email
+-        <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+-      </label>
+-      {useKey ? (
+-        <label>
+-          API key
+-          <input type="password" required value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+-        </label>
+-      ) : (
+-        <label>
+-          Password
+-          <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+-        </label>
+-      )}
+-      {error && <p role="alert" className="error">{error}</p>}
+-      <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+-      <button type="button" className="link" onClick={() => setUseKey(!useKey)}>
+-        {useKey ? 'Use password instead' : 'Paste API key instead'}
+-      </button>
++        {useKey ? (
++          <label className="field">
++            <span>API key</span>
++            <input
++              type="password"
++              required
++              autoComplete="off"
++              autoCapitalize="none"
++              autoCorrect="off"
++              spellCheck={false}
++              value={apiKey}
++              onChange={(e) => setApiKey(e.target.value)}
++            />
++          </label>
++        ) : (
++          <label className="field">
++            <span>Password</span>
++            <input
++              type="password"
++              required
++              autoComplete="current-password"
++              value={password}
++              onChange={(e) => setPassword(e.target.value)}
++            />
++          </label>
++        )}
++        <button className="btn-primary" type="submit" disabled={busy}>
++          {busy ? 'Signing in…' : 'Sign in'}
++        </button>
++        <button type="button" className="btn-quiet" onClick={() => setUseKey(!useKey)}>
++          {useKey ? 'Use a password instead' : 'Paste an API key instead'}
++        </button>
+       </form>
+-    </>
++    </div>
+   )
+ }
+diff --git a/src/views/ProjectsView.test.tsx b/src/views/ProjectsView.test.tsx
+index 25cc763..f28c28c 100644
+--- a/src/views/ProjectsView.test.tsx
++++ b/src/views/ProjectsView.test.tsx
+@@ -11,6 +11,7 @@ beforeEach(() => {
+       { stream_id: 2, name: 'beta', description: 'Project B' },
+     ],
+     unreadByStream: { 1: [10, 11] },
++    connection: 'live',
+   })
+ })
+ 
+@@ -44,3 +45,27 @@ test('empty state message when nothing visible', () => {
+   render(<ProjectsView />)
+   expect(screen.getByText(/no projects/i)).toBeInTheDocument()
+ })
++
++test('skeleton rows stand in for the list until the first register lands', () => {
++  useAppStore.setState({ streams: [], connection: 'connecting' })
++  const { container } = render(<ProjectsView />)
++  expect(container.querySelectorAll('.skeleton-row').length).toBeGreaterThan(0)
++  expect(screen.queryByText(/no projects/i)).toBeNull()
++})
++
++test('a cached last message replaces the description as the row preview', () => {
++  useAppStore.setState({
++    messagesByStream: {
++      1: [
++        {
++          id: 5, sender_full_name: 'Agent', sender_email: 'bot@b.c',
++          timestamp: 1755100000, content: '<p>Sweep <strong>finished</strong>.</p>',
++          stream_id: 1, subject: '',
++        },
++      ],
++    },
++  })
++  render(<ProjectsView />)
++  expect(screen.getByText('Sweep finished.')).toBeInTheDocument()
++  expect(screen.queryByText('Project A')).toBeNull()
++})
+diff --git a/src/views/ProjectsView.tsx b/src/views/ProjectsView.tsx
+index 50d81cd..3e3f2f8 100644
+--- a/src/views/ProjectsView.tsx
++++ b/src/views/ProjectsView.tsx
+@@ -1,39 +1,92 @@
+ import { useAppStore } from '../store/appStore'
++import { Gear, Inbox } from '../components/Icon'
++import { initial, listTimeLabel, previewText, tileColor } from '../lib/format'
++
++function SkeletonList() {
++  return (
++    <div className="stream-list" aria-hidden="true">
++      {[0, 1, 2, 3].map((i) => (
++        <div className="skeleton-row" key={i}>
++          <div className="skeleton skeleton-tile" />
++          <div className="skeleton-lines">
++            <div className="skeleton" />
++            <div className="skeleton" />
++          </div>
++        </div>
++      ))}
++    </div>
++  )
++}
+ 
+ export function ProjectsView() {
+   const streams = useAppStore((s) => s.streams)
+   const hidden = useAppStore((s) => s.hiddenStreams)
+   const unread = useAppStore((s) => s.unreadByStream)
++  const messages = useAppStore((s) => s.messagesByStream)
++  const connection = useAppStore((s) => s.connection)
+   const navigate = useAppStore((s) => s.navigate)
+   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
+   const visible = streams.filter((s) => !hidden.includes(s.stream_id))
++  // Nothing to show yet *and* still connecting means the first register is in
++  // flight — show the shape of the list rather than an empty state that would
++  // be contradicted a moment later. Once offline, the empty state plus the
++  // reconnecting banner is the honest report.
++  const loading = streams.length === 0 && connection === 'connecting'
+ 
+   return (
+     <div className="projects">
+       <header className="topbar">
+         <h1>Projects</h1>
+-        <button aria-label="Settings" onClick={() => setSettingsOpen(true)}>⚙</button>
++        <button
++          className="icon-btn bar-end"
++          aria-label="Settings"
++          onClick={() => setSettingsOpen(true)}
++        >
++          <Gear />
++        </button>
+       </header>
+-      {visible.length === 0 && (
+-        <p className="empty">No projects. Subscribe to streams on Zulip's web UI.</p>
+-      )}
+-      <ul className="stream-list">
+-        {visible.map((s) => {
+-          const count = unread[s.stream_id]?.length ?? 0
+-          return (
+-            <li key={s.stream_id}>
+-              <button
+-                className="stream-card"
+-                onClick={() => navigate({ name: 'conversation', streamId: s.stream_id })}
+-              >
+-                <span className="stream-name">{s.name}</span>
+-                {count > 0 && <span className="unread-badge">{count}</span>}
+-                <span className="stream-desc">{s.description}</span>
+-              </button>
+-            </li>
+-          )
+-        })}
+-      </ul>
++
++      <div className="projects-scroll">
++        {loading && <SkeletonList />}
++
++        {!loading && visible.length === 0 && (
++          <div className="empty-state">
++            <Inbox size={40} />
++            <h2>No projects yet</h2>
++            <p>Subscribe to a stream in Zulip and it shows up here as a project.</p>
++          </div>
++        )}
++
++        {visible.length > 0 && (
++          <ul className="stream-list">
++            {visible.map((s) => {
++              const count = unread[s.stream_id]?.length ?? 0
++              const last = messages[s.stream_id]?.at(-1)
++              const preview = last ? previewText(last.content) : s.description
++              return (
++                <li key={s.stream_id}>
++                  <button
++                    className="stream-card"
++                    onClick={() => navigate({ name: 'conversation', streamId: s.stream_id })}
++                  >
++                    <span className="stream-tile" style={{ background: tileColor(s.name) }}>
++                      {initial(s.name)}
++                    </span>
++                    <span className="stream-name">{s.name}</span>
++                    {last && <span className="stream-meta">{listTimeLabel(last.timestamp)}</span>}
++                    {count > 0 && (
++                      <span className="unread-badge" aria-label={`${count} unread`}>
++                        {count}
++                      </span>
++                    )}
++                    <span className="stream-desc">{preview}</span>
++                  </button>
++                </li>
++              )
++            })}
++          </ul>
++        )}
++      </div>
+     </div>
+   )
+ }
+diff --git a/src/views/SettingsSheet.tsx b/src/views/SettingsSheet.tsx
+index e0a0162..83b87d4 100644
+--- a/src/views/SettingsSheet.tsx
++++ b/src/views/SettingsSheet.tsx
+@@ -1,4 +1,5 @@
+ import { useAppStore } from '../store/appStore'
++import { Close } from '../components/Icon'
+ 
+ export function SettingsSheet() {
+   const creds = useAppStore((s) => s.creds)
+@@ -11,28 +12,61 @@ export function SettingsSheet() {
+   if (!creds) return null
+ 
+   return (
+-    <div className="sheet" role="dialog" aria-label="Settings">
++    <div className="sheet" role="dialog" aria-label="Settings" aria-modal="true">
+       <header className="topbar">
+         <h2>Settings</h2>
+-        <button onClick={() => setSettingsOpen(false)}>Close</button>
++        <button
++          className="icon-btn bar-end"
++          aria-label="Close"
++          onClick={() => setSettingsOpen(false)}
++        >
++          <Close />
++        </button>
+       </header>
+-      <p className="identity">Signed in as {creds.email}</p>
+-      <h3>Visible projects</h3>
+-      <ul>
+-        {streams.map((s) => (
+-          <li key={s.stream_id}>
+-            <label>
+-              <input
+-                type="checkbox"
+-                checked={!hidden.includes(s.stream_id)}
+-                onChange={() => toggleHidden(s.stream_id)}
+-              />{' '}
+-              {s.name}
+-            </label>
+-          </li>
+-        ))}
+-      </ul>
+-      <button className="danger" onClick={() => logout()}>Log out</button>
++
++      <div className="sheet-scroll">
++        <p className="group-label">Account</p>
++        <div className="group">
++          <div className="row">
++            Signed in as
++            <span className="row-value">{creds.email}</span>
++          </div>
++          <div className="row">
++            Server
++            <span className="row-value">{creds.prefix}</span>
++          </div>
++        </div>
++
++        <p className="group-label">Projects</p>
++        {streams.length === 0 ? (
++          <div className="group">
++            <p className="row row-muted">No projects to show yet.</p>
++          </div>
++        ) : (
++          <ul className="group">
++            {streams.map((s) => (
++              <li key={s.stream_id}>
++                <label className="row">
++                  {s.name}
++                  <input
++                    type="checkbox"
++                    className="switch"
++                    checked={!hidden.includes(s.stream_id)}
++                    onChange={() => toggleHidden(s.stream_id)}
++                  />
++                </label>
++              </li>
++            ))}
++          </ul>
++        )}
++        <p className="group-hint">Hidden projects stay subscribed on Zulip; they just leave this list.</p>
++
++        <div className="group group-spaced">
++          <button className="row row-danger" onClick={() => logout()}>Log out</button>
++        </div>
++
++        <p className="app-version">Agent Console v{__APP_VERSION__}</p>
++      </div>
+     </div>
+   )
+ }
+diff --git a/src/vite-env.d.ts b/src/vite-env.d.ts
+index 11f02fe..25fed81 100644
+--- a/src/vite-env.d.ts
++++ b/src/vite-env.d.ts
+@@ -1 +1,4 @@
+ /// <reference types="vite/client" />
++
++/** Injected at build time from package.json — see `define` in vite.config.ts. */
++declare const __APP_VERSION__: string
+diff --git a/vite.config.ts b/vite.config.ts
+index c15205c..c7826ce 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -1,9 +1,17 @@
+ /// <reference types="vitest/config" />
++import { readFileSync } from 'node:fs'
++import { fileURLToPath } from 'node:url'
+ import { defineConfig } from 'vite'
+ import react from '@vitejs/plugin-react'
+ 
++const pkg = JSON.parse(
++  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
++) as { version: string }
++
+ export default defineConfig({
+   plugins: [react()],
++  // Single source of truth for the version shown in Settings.
++  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+   server: {
+     proxy: {
+       '/zulip/qec': {
