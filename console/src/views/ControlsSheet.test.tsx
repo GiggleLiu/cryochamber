@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ControlsSheet, digestLine, statePillLabel } from './ControlsSheet'
 import { HubClient, type ChamberStatus } from '../api/hubClient'
@@ -35,6 +35,23 @@ function renderSheet(archived = false) {
       onClose={() => {}}
     />,
   )
+}
+
+/** A promise the test decides when to settle, so the window between a POST
+ * answering and the refetch answering can be inspected. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+/** Let every already-resolved promise and its re-render finish. */
+async function settle() {
+  await act(async () => {
+    await Promise.resolve()
+  })
 }
 
 beforeEach(() => {
@@ -102,13 +119,35 @@ describe('lifecycle row', () => {
 
   test('Launch posts start, re-reads status, and shows what the hub said', async () => {
     const hub = useAppStore.getState().client as HubClient
+    const refetch = deferred<ChamberStatus>()
+    renderSheet()
+    await screen.findByText('Stopped')
+    vi.mocked(hub.chamberStatus).mockReturnValue(refetch.promise)
+    await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
+    expect(hub.lifecycle).toHaveBeenCalledWith('cham-a', 'start')
+    // No optimistic UI: the POST has already answered, but until the refetch
+    // does the pill still reports what the hub last said.
+    await waitFor(() => expect(hub.chamberStatus).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Stopped')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).toBeNull()
+    refetch.resolve(status({ running: true, agent_running: true }))
+    expect(await screen.findByText('Working')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Started')
+  })
+
+  test('the lifecycle buttons are disabled while an action is in flight', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    const posted = deferred<{ ok: boolean; message: string }>()
+    vi.mocked(hub.lifecycle).mockReturnValue(posted.promise)
     renderSheet()
     await screen.findByText('Stopped')
     await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
-    expect(hub.lifecycle).toHaveBeenCalledWith('cham-a', 'start')
+    for (const name of ['Launch', 'Archive', 'Reset…']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    posted.resolve({ ok: true, message: 'Started' })
     expect(await screen.findByRole('status')).toHaveTextContent('Started')
-    // No optimistic UI: the pill only moves once the refetch answers.
-    await waitFor(() => expect(hub.chamberStatus).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', { name: 'Launch' })).toBeEnabled()
   })
 
   test('a message-less response falls back to the action word', async () => {
@@ -132,6 +171,25 @@ describe('lifecycle row', () => {
       'Unarchive the chamber before launching it',
     )
     expect(screen.getByRole('button', { name: 'Launch' })).toBeEnabled()
+  })
+
+  test('a refusal outlives the status events that keep arriving', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    vi.mocked(hub.lifecycle).mockResolvedValue({
+      ok: false, message: 'Unarchive the chamber before launching it',
+    })
+    renderSheet()
+    await screen.findByText('Stopped')
+    await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
+    await screen.findByRole('alert')
+    // The hub emits `status` every few seconds while a session runs; a
+    // successful refetch must not quietly erase what the refusal said.
+    emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
+    await settle()
+    expect(hub.chamberStatus).toHaveBeenCalledTimes(3)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Unarchive the chamber before launching it',
+    )
   })
 
   test('Reset asks first and only then posts', async () => {
@@ -177,6 +235,7 @@ test('a status event for this chamber re-reads the detail', async () => {
   vi.mocked(hub.chamberStatus).mockResolvedValue(status({ running: true, agent_running: true }))
   emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
   expect(await screen.findByText('Working')).toBeInTheDocument()
+  expect(hub.chamberStatus).toHaveBeenCalledTimes(2)
 })
 
 test('a status event for another chamber is ignored', async () => {
@@ -184,7 +243,22 @@ test('a status event for another chamber is ignored', async () => {
   renderSheet()
   await screen.findByText('Stopped')
   emitChamberEvent({ type: 'status', chamberId: 'cham-b' })
-  await waitFor(() => expect(hub.chamberStatus).toHaveBeenCalledTimes(1))
+  await settle()
+  expect(hub.chamberStatus).toHaveBeenCalledTimes(1)
+  // …while the subscription is genuinely live: our own chamber still lands.
+  emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
+  await settle()
+  expect(hub.chamberStatus).toHaveBeenCalledTimes(2)
+})
+
+test('closing the sheet unsubscribes from its chamber', async () => {
+  const hub = useAppStore.getState().client as HubClient
+  const { unmount } = renderSheet()
+  await screen.findByText('Stopped')
+  unmount()
+  emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
+  await settle()
+  expect(hub.chamberStatus).toHaveBeenCalledTimes(1)
 })
 
 test('daily digests render under the header', async () => {

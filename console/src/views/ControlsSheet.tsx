@@ -61,7 +61,12 @@ export function ControlsSheet({
   const client = useAppStore((s) => s.client)
   const [status, setStatus] = useState<ChamberStatus | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Two error slots, not one. The hub emits `status` every few seconds while a
+  // session runs, and each one refetches; a shared slot let a successful
+  // refetch wipe the refusal an action had just reported, seconds after the
+  // operator pressed the button and without them touching anything.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const hub = client instanceof HubClient ? client : null
@@ -70,10 +75,10 @@ export function ControlsSheet({
     if (!hub) return
     try {
       setStatus(await hub.chamberStatus(chamberId))
-      setError(null)
+      setLoadError(null)
     } catch (e) {
       if (logoutIfAuthError(e)) return
-      setError(`Could not load ${chamberName}. Check your connection and try again.`)
+      setLoadError(`Could not load ${chamberName}. Check your connection and try again.`)
     }
   }, [hub, chamberId, chamberName])
 
@@ -95,33 +100,34 @@ export function ControlsSheet({
     if (!hub || pending) return
     setPending(true)
     setNotice(null)
-    setError(null)
+    setActionError(null)
     setConfirmReset(false)
     try {
       const result = await hub.lifecycle(chamberId, action)
-      // Refetch first, then say what the hub said: `load` clears the error slot
-      // on success, so a refusal reported before it would be wiped off screen
-      // by the very refetch that proves the chamber did not move.
+      // The refetch comes first and the verdict after it: no optimistic UI, so
+      // the pill only moves once `GET /status` says it moved.
       await load()
       const message = result.message || FALLBACK_MESSAGE[action]
       if (result.ok) setNotice(message)
-      else setError(message)
+      else setActionError(message)
     } catch (e) {
       if (logoutIfAuthError(e)) return
-      setError(`Could not ${action} ${chamberName}. Check your connection and try again.`)
+      setActionError(`Could not ${action} ${chamberName}. Check your connection and try again.`)
     } finally {
       setPending(false)
     }
   }
 
   const pill = status ? statePillLabel(status, archived) : null
+  // One alert line: what the operator just did outranks a stale load failure.
+  const alert = actionError ?? loadError
 
   return (
     <Sheet title="Controls" label="Chamber controls" onClose={onClose}>
-      {error && (
+      {alert && (
         <p className="alert" role="alert">
           <AlertCircle size={18} />
-          <span className="alert-body">{error}</span>
+          <span className="alert-body">{alert}</span>
         </p>
       )}
       {notice && (
@@ -131,7 +137,8 @@ export function ControlsSheet({
       )}
 
       {status === null ? (
-        <p className="tab-empty">{error ? '' : 'Loading…'}</p>
+        // Nothing to say twice: a failed load has already said it in the alert.
+        loadError ? null : <p className="tab-empty">Loading…</p>
       ) : (
         <>
           <div className="controls-head">

@@ -654,16 +654,13 @@ describe('owner header actions', () => {
   })
 
   test('an owner gets a Controls button that opens the controls sheet', async () => {
-    const client = fakeClient({
-      chamberIdFor: vi.fn(() => 'cham-a'),
-      chamberStatus: vi.fn(async () => ({
-        running: false, agent_running: false, session: 2, agent: 'opencode',
-        log_tail: '', daily_digests: [], next_wake: null, notes_html: '', plan_html: '',
-        has_config: false, settings_rows: [], task: null, session_summary: null,
-        completed: false, completion_summary: null,
-      })),
+    // What the sheet reads is covered in ControlsSheet.test.tsx; this fake is
+    // not a HubClient, so the sheet fetches nothing through it and only the
+    // button mounting the sheet is under test here.
+    useAppStore.setState({
+      client: fakeClient({ chamberIdFor: vi.fn(() => 'cham-a') }),
+      hubRole: 'owner',
     })
-    useAppStore.setState({ client, hubRole: 'owner' })
     render(<ConversationView streamId={1} />)
     await screen.findByText('msg-1')
     await userEvent.click(screen.getByRole('button', { name: 'Chamber controls' }))
