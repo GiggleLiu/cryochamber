@@ -134,6 +134,109 @@ async fn traversal_names_404_without_fs_access() {
     }
 }
 
+/// The stored name the upload response advertises.
+fn stored_name(body: &[u8]) -> String {
+    let v: serde_json::Value = serde_json::from_slice(body).unwrap();
+    v["name"].as_str().expect("name").to_string()
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn a_symlinked_attachment_cannot_read_outside_the_chamber() {
+    // Sanitizing the *name* stops textual `../` traversal but says nothing
+    // about what an existing entry points at. `cryo.toml` may hold a provider
+    // API key, and a scoped invite must not be able to fetch it through a
+    // symlink someone dropped into the attachments directory.
+    let (tmp, router, id) = setup();
+    let (status, _) = upload(&router, &id, multipart_body(BOUNDARY, "seed.txt", b"seed")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let chamber = tmp.path().join("alpha");
+    let secret = chamber.join("cryo.toml");
+    assert!(secret.exists(), "the test needs a real file to point at");
+    let attachments = chamber.join("messages").join("attachments");
+    std::os::unix::fs::symlink(&secret, attachments.join("leak.toml")).unwrap();
+
+    // The name itself is a legal single segment, so the refusal below is the
+    // containment check and not the sanitizer.
+    assert_eq!(
+        crate::hub::routes::files::safe_name("leak.toml"),
+        "leak.toml"
+    );
+    let resp = get(&router, &format!("/api/chambers/{id}/files/leak.toml")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "a symlink out of the attachments directory must not be served"
+    );
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn a_symlinked_attachments_directory_is_refused_both_ways() {
+    // The whole directory can be swapped for a symlink, which would make every
+    // read and every write land wherever it points.
+    let (tmp, router, id) = setup();
+    let (status, body) = upload(&router, &id, multipart_body(BOUNDARY, "seed.txt", b"seed")).await;
+    assert_eq!(status, StatusCode::OK);
+    let seeded = stored_name(&body);
+
+    // Positive control: the download works while the directory is real.
+    let resp = get(&router, &format!("/api/chambers/{id}/files/{seeded}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Now move the store outside the chamber and symlink the directory to it.
+    let chamber = tmp.path().join("alpha");
+    let attachments = chamber.join("messages").join("attachments");
+    let elsewhere = tmp.path().join("elsewhere");
+    std::fs::rename(&attachments, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &attachments).unwrap();
+    assert!(
+        elsewhere.join(&seeded).exists(),
+        "the file is still reachable through the link, so a naive read would succeed"
+    );
+
+    let resp = get(&router, &format!("/api/chambers/{id}/files/{seeded}")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "download through a symlinked attachments directory must be refused"
+    );
+    let (status, _) = upload(&router, &id, multipart_body(BOUNDARY, "new.txt", b"new")).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "upload into a symlinked attachments directory must be refused"
+    );
+}
+
+#[tokio::test]
+async fn upload_past_the_chamber_quota_is_507() {
+    // A leaked invite otherwise has an unbounded disk-exhaustion primitive:
+    // the per-file cap says nothing about how many files may be stored.
+    let (tmp, router, id) = setup();
+    let (status, _) = upload(&router, &id, multipart_body(BOUNDARY, "seed.txt", b"seed")).await;
+    assert_eq!(status, StatusCode::OK, "positive control before the quota");
+
+    // A sparse file: quota-sized on paper, ~nothing on disk.
+    let attachments = tmp
+        .path()
+        .join("alpha")
+        .join("messages")
+        .join("attachments");
+    let hog = std::fs::File::create(attachments.join("hog.bin")).unwrap();
+    hog.set_len(crate::hub::routes::files::MAX_ATTACHMENTS_DIR_BYTES)
+        .unwrap();
+    drop(hog);
+
+    let (status, _) = upload(&router, &id, multipart_body(BOUNDARY, "next.txt", b"next")).await;
+    assert_eq!(
+        status,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "a chamber at its quota must refuse further uploads"
+    );
+}
+
 #[tokio::test]
 async fn oversized_upload_is_413() {
     let (_tmp, router, id) = setup();

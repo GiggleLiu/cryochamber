@@ -17,6 +17,24 @@ use crate::hub::state::AppState;
 
 pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 
+/// How much a single chamber's attachments directory may hold before further
+/// uploads are refused with 507. The per-file cap bounds one request; this
+/// bounds the total a leaked invite can accumulate.
+pub const MAX_ATTACHMENTS_DIR_BYTES: u64 = 200 * 1024 * 1024;
+
+/// How many uploads may be handled at once, process-wide.
+///
+/// Every upload buffers up to 25 MB and then touches the disk. Without a bound,
+/// a handful of parallel requests from one authenticated client can pin memory
+/// and stall the runtime — the per-request body limit does not constrain
+/// aggregate use.
+const MAX_CONCURRENT_UPLOADS: usize = 2;
+
+fn upload_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_UPLOADS))
+}
+
 /// Reduce a client-supplied filename to a single safe path segment: keep
 /// `[A-Za-z0-9._-]`, replace everything else with `_`, strip leading dots
 /// (no dotfiles, no `..`). Never returns an empty string.
@@ -43,6 +61,81 @@ fn attachments_dir(chamber: &Path) -> PathBuf {
     chamber.join("messages").join("attachments")
 }
 
+/// The canonicalized attachments directory, or `None` if it is missing, is
+/// itself a symlink, or resolves outside the chamber.
+///
+/// Same shape as [`crate::channel::zulip::resolve_local_attachment`]: resolve
+/// first, then require containment. `symlink_metadata` is what catches a
+/// swapped-out directory — `canonicalize` alone would cheerfully follow it and
+/// then report a perfectly "contained" path outside the chamber.
+fn contained_attachments_dir(chamber: &Path) -> Option<PathBuf> {
+    let dir = attachments_dir(chamber);
+    if std::fs::symlink_metadata(&dir)
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
+    let root = chamber.canonicalize().ok()?;
+    let resolved = dir.canonicalize().ok()?;
+    resolved.starts_with(&root).then_some(resolved)
+}
+
+/// The canonical path of `name` inside the (already canonicalized) attachments
+/// directory, if it really is a regular file inside it. A symlink pointing at
+/// `../../cryo.toml` resolves outside `root` and is rejected here.
+fn contained_file(root: &Path, name: &str) -> Option<PathBuf> {
+    let resolved = root.join(name).canonicalize().ok()?;
+    if !resolved.starts_with(root) {
+        return None;
+    }
+    resolved.is_file().then_some(resolved)
+}
+
+/// Apparent size of the attachments directory. Attachments are stored flat, so
+/// this is a single non-recursive pass; `DirEntry::metadata` does not follow
+/// symlinks, so a planted link cannot inflate or hide the total.
+fn attachments_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// Write `bytes` to `<chamber>/messages/attachments/<stored>`.
+///
+/// `create_new` never follows a symlink and never truncates an existing entry,
+/// so a predictable name planted in advance cannot be written through. A
+/// collision is not an error: the name carries the content hash, so what is
+/// already there is what is being uploaded — but it still has to be a regular
+/// file inside the directory before its link is handed back.
+fn store_attachment(chamber: &Path, stored: &str, bytes: &[u8]) -> Result<(), StatusCode> {
+    use std::io::Write;
+
+    let dir = attachments_dir(chamber);
+    std::fs::create_dir_all(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let root = contained_attachments_dir(chamber).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(root.join(stored))
+    {
+        Ok(mut file) => file
+            .write_all(bytes)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => contained_file(&root, stored)
+            .map(|_| ())
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 fn sha12(bytes: &[u8]) -> String {
     // No sha2 dependency: FNV-1a folded twice is enough for a collision-
     // avoiding storage prefix (not a security boundary — names are served
@@ -65,12 +158,32 @@ fn sha12(bytes: &[u8]) -> String {
 /// The stored name is `<hash12>_<sanitized>` so two different files never
 /// collide and no client-chosen name reaches the filesystem verbatim.
 /// Returns the markdown snippet the composer pastes into a message.
+///
+/// Three bounds apply, in the order they can be checked most cheaply:
+/// a process-wide concurrency permit, the chamber's storage quota (507), and
+/// the per-file size cap (413). Every filesystem touch runs on a blocking
+/// worker so a slow disk cannot stall the async runtime.
 pub async fn post_upload(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let (chamber, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let _slot = upload_slots()
+        .acquire()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Quota before the body: no point buffering 25 MB that will be refused.
+    let quota_chamber = chamber.clone();
+    let used =
+        tokio::task::spawn_blocking(move || attachments_bytes(&attachments_dir(&quota_chamber)))
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if used >= MAX_ATTACHMENTS_DIR_BYTES {
+        return Err(StatusCode::INSUFFICIENT_STORAGE);
+    }
+
     while let Some(field) = multipart
         .next_field()
         .await
@@ -88,9 +201,13 @@ pub async fn post_upload(
             return Err(StatusCode::PAYLOAD_TOO_LARGE);
         }
         let stored = format!("{}_{}", sha12(&bytes), safe_name(&original));
-        let dir = attachments_dir(&chamber);
-        std::fs::create_dir_all(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        std::fs::write(dir.join(&stored), &bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let write_chamber = chamber.clone();
+        let write_stored = stored.clone();
+        tokio::task::spawn_blocking(move || {
+            store_attachment(&write_chamber, &write_stored, &bytes)
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
         let url = format!("/api/chambers/{}/files/{}", entry.id, stored);
         return Ok(Json(json!({
             "ok": true,
@@ -127,6 +244,10 @@ fn mime_for(name: &str) -> &'static str {
 /// could escape the attachments directory (separators, a leading dot, or any
 /// character `safe_name` would have rewritten) is rejected *before* the path
 /// is joined, so no traversal ever reaches the filesystem.
+///
+/// A legal name can still *point* out of the directory, so the resolved path
+/// is checked for containment too — a symlinked entry, or a symlinked
+/// attachments directory, 404s rather than serving whatever it aims at.
 pub async fn get_file(
     State(app): State<Arc<AppState>>,
     AxumPath((id, name)): AxumPath<(String, String)>,
@@ -140,8 +261,14 @@ pub async fn get_file(
     {
         return Err(StatusCode::NOT_FOUND);
     }
-    let path = attachments_dir(&chamber).join(&name);
-    let bytes = std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let read_name = name.clone();
+    let bytes = tokio::task::spawn_blocking(move || {
+        let root = contained_attachments_dir(&chamber)?;
+        std::fs::read(contained_file(&root, &read_name)?).ok()
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
     Ok((
         [
             (header::CONTENT_TYPE, mime_for(&name).to_string()),
