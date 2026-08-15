@@ -5,6 +5,7 @@ pub mod paths;
 pub mod routes;
 pub mod security;
 pub mod state;
+pub mod tokens;
 pub mod watchers;
 
 pub use state::{AppState, SseEvent};
