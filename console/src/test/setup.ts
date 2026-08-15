@@ -1,5 +1,9 @@
 import '@testing-library/jest-dom/vitest'
 
+// MessageBody imports the markdown renderer lazily. Loading it here keeps its
+// first (heavy) transform out of an individual test's timeout budget.
+await import('../lib/markdown')
+
 // Node ≥ 22.4 defines an experimental global `localStorage` getter that returns
 // undefined unless --localstorage-file is passed, which also makes vitest's
 // jsdom environment skip populating `localStorage` from the jsdom window.

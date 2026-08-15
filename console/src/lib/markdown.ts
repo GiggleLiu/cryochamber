@@ -2,10 +2,10 @@ import MarkdownIt from 'markdown-it'
 import katex from 'katex'
 
 /**
- * Markdown renderer for hub messages (which arrive as raw markdown, unlike
- * Zulip's server-rendered HTML). Output is NOT sanitized — every caller must
- * feed it through sanitizeZulipHtml, which stays the single choke point for
- * HTML entering the DOM. Raw HTML in the source is disabled outright.
+ * Markdown renderer for message bodies, which arrive as raw markdown. Output is
+ * NOT sanitized — every caller must feed it through sanitizeHtml, which stays
+ * the single choke point for HTML entering the DOM. Raw HTML in the source is
+ * disabled outright.
  */
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 

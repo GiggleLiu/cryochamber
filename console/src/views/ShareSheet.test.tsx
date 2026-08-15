@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { ShareSheet } from './ShareSheet'
 import { HubClient, type Invite } from '../api/hubClient'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ZulipApiError } from '../api/client'
+import { ApiError } from '../api/errors'
 
 const ALICE: Invite = {
   name: 'Alice',
@@ -110,7 +110,7 @@ describe('copying the invite link is only claimed once it happened', () => {
 })
 
 describe('a revoked owner token signs out instead of showing an inline error', () => {
-  const unauthorized = () => new ZulipApiError('HTTP 401', 401)
+  const unauthorized = () => new ApiError('HTTP 401', 401)
 
   test('listing invites', async () => {
     vi.mocked(hub.listInvites).mockRejectedValue(unauthorized())

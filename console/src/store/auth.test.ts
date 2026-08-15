@@ -2,8 +2,9 @@ import { saveCredentials, loadCredentials, clearCredentials } from './auth'
 import type { Credentials } from '../api/types'
 
 const creds: Credentials = {
-  prefix: '/zulip/qec',
-  email: 'a@b.c',
+  kind: 'hub',
+  prefix: '',
+  email: 'Alice',
   apiKey: 'secret',
   sendTopic: '',
 }
@@ -18,7 +19,17 @@ test('returns null when nothing stored', () => {
 })
 
 test('returns null on corrupt stored JSON', () => {
-  localStorage.setItem('zulip-app.credentials', '{not json')
+  localStorage.setItem('agent-console.credentials', '{not json')
+  expect(loadCredentials()).toBeNull()
+})
+
+test('credentials for another backend are discarded, forcing a re-login', () => {
+  // What an older build stored. No client here can talk to it, so booting into
+  // it would strand the user in a session that fails every request.
+  localStorage.setItem(
+    'agent-console.credentials',
+    JSON.stringify({ prefix: '/elsewhere', email: 'a@b.c', apiKey: 'k', sendTopic: '' }),
+  )
   expect(loadCredentials()).toBeNull()
 })
 

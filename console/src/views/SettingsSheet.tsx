@@ -113,7 +113,7 @@ export function SettingsSheet() {
             ))}
           </ul>
         )}
-        <p className="group-hint">Hidden projects stay subscribed on Zulip; they just leave this list.</p>
+        <p className="group-hint">Hidden projects keep receiving messages; they just leave this list.</p>
 
         <div className="group group-spaced">
           <button className="row row-danger" onClick={() => logout()}>Log out</button>

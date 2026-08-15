@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ZulipApiError, isAuthError, type ZulipClient } from '../api/client'
+import { isAuthError } from '../api/errors'
 import { HubClient } from '../api/hubClient'
 import { readSse } from '../api/sse'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
@@ -35,56 +35,12 @@ export function useEventLoop(): void {
     if (!client) return
     let stopped = false
     const abort = new AbortController()
-    let queue: { queueId: string; lastEventId: number } | null = null
     let backoff = 1000
     const store = useAppStore
 
-    async function run(client: ZulipClient) {
-      while (!stopped) {
-        if (document.visibilityState === 'hidden') {
-          await waitForVisible()
-          if (stopped) return
-          continue
-        }
-        try {
-          if (!queue) {
-            store.getState().setConnection('connecting')
-            const init = await client.register()
-            if (stopped) return
-            store.getState().applyInitialState(init)
-            queue = { queueId: init.queueId, lastEventId: init.lastEventId }
-            store.getState().setConnection('live')
-            backoff = 1000
-            continue
-          }
-          const events = await client.pollEvents(queue.queueId, queue.lastEventId, abort.signal)
-          if (stopped) return
-          for (const ev of events) {
-            queue.lastEventId = Math.max(queue.lastEventId, ev.id)
-          }
-          store.getState().applyEvents(events)
-          store.getState().setConnection('live')
-          backoff = 1000
-        } catch (e) {
-          if (stopped) return
-          if (e instanceof ZulipApiError && e.code === 'BAD_EVENT_QUEUE_ID') {
-            queue = null
-            continue
-          }
-          if (isAuthError(e)) {
-            store.getState().logout(AUTH_LOGOUT_REASON)
-            return
-          }
-          store.getState().setConnection('offline')
-          await sleep(backoff)
-          backoff = Math.min(backoff * 2, 30000)
-        }
-      }
-    }
-
-    // The hub has no event queue: register lists the chambers in scope and a
-    // single SSE stream carries everything after that.
-    async function runHub(client: HubClient) {
+    // register() lists the chambers in scope; a single SSE stream carries
+    // everything after that.
+    async function run(client: HubClient) {
       while (!stopped) {
         if (document.visibilityState === 'hidden') {
           await waitForVisible()
@@ -165,8 +121,7 @@ export function useEventLoop(): void {
       }
     }
 
-    if (client instanceof HubClient) void runHub(client)
-    else void run(client)
+    void run(client)
     return () => {
       stopped = true
       abort.abort()

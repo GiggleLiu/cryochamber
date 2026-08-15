@@ -62,9 +62,9 @@ export function listTimeLabel(timestamp: number, now: Date = new Date()): string
 }
 
 /**
- * Plain-text one-liner for a project row, from Zulip's rendered message HTML.
- * Parsed, never executed: `text/html` parsing runs no scripts and loads no
- * resources, and only `textContent` is read back out.
+ * Plain-text one-liner for a project row, from a message body. Parsed as HTML,
+ * never executed: `text/html` parsing runs no scripts and loads no resources,
+ * and only `textContent` is read back out.
  */
 export function previewText(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html')

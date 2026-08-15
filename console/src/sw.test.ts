@@ -15,7 +15,7 @@ interface FetchEvent {
   respondWith: ReturnType<typeof vi.fn>
 }
 
-function loadWorker(existingCaches: string[] = ['zulip-app-v1', 'zulip-app-v2', 'other']) {
+function loadWorker(existingCaches: string[] = ['agent-console-v2', 'agent-console-v3', 'other']) {
   const listeners: Record<string, (e: unknown) => void> = {}
   const entry = { put: vi.fn(async () => {}) }
   const caches = {
@@ -46,9 +46,9 @@ function fetchEvent(url: string, method = 'GET'): FetchEvent {
   return { request: { url, method }, respondWith: vi.fn() }
 }
 
-test('the cache name is bumped past the version that cached /api responses', () => {
-  expect(SOURCE).toContain('zulip-app-v2')
-  expect(SOURCE).not.toContain('zulip-app-v1')
+test('the cache name is bumped past every earlier version', () => {
+  expect(SOURCE).toContain('agent-console-v3')
+  expect(SOURCE).not.toContain('agent-console-v2')
 })
 
 test('activate deletes every cache but the current one', async () => {
@@ -56,9 +56,9 @@ test('activate deletes every cache but the current one', async () => {
   let waited: Promise<unknown> = Promise.resolve()
   listeners.activate({ waitUntil: (p: Promise<unknown>) => (waited = p) })
   await waited
-  expect(caches.delete).toHaveBeenCalledWith('zulip-app-v1')
+  expect(caches.delete).toHaveBeenCalledWith('agent-console-v2')
   expect(caches.delete).toHaveBeenCalledWith('other')
-  expect(caches.delete).not.toHaveBeenCalledWith('zulip-app-v2')
+  expect(caches.delete).not.toHaveBeenCalledWith('agent-console-v3')
 })
 
 describe('authenticated requests are passed through uncached', () => {
@@ -68,7 +68,6 @@ describe('authenticated requests are passed through uncached', () => {
     ['hub messages', 'https://app.example/api/chambers/cham-a/messages'],
     ['hub attachment', 'https://app.example/api/chambers/cham-a/files/report.pdf'],
     ['hub SSE stream', 'https://app.example/api/events'],
-    ['zulip proxy', 'https://app.example/zulip/qec/api/v1/messages'],
     ['server list', 'https://app.example/servers.json'],
   ])('%s', async (_name, url) => {
     const { listeners, caches, entry } = loadWorker()
@@ -91,7 +90,7 @@ test('app shell assets are still cached', async () => {
   expect(e.respondWith).toHaveBeenCalledTimes(1)
   await e.respondWith.mock.calls[0][0]
   await Promise.resolve()
-  expect(caches.open).toHaveBeenCalledWith('zulip-app-v2')
+  expect(caches.open).toHaveBeenCalledWith('agent-console-v3')
   await vi.waitFor(() => expect(entry.put).toHaveBeenCalled())
 })
 

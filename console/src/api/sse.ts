@@ -1,4 +1,4 @@
-import { ZulipApiError } from './client'
+import { ApiError } from './errors'
 
 /** Minimal SSE reader over fetch streaming — EventSource cannot send an
  * Authorization header, and the token must never ride in a query string. */
@@ -9,7 +9,7 @@ export async function readSse(
   signal: AbortSignal,
 ): Promise<void> {
   const res = await fetch(url, { headers, signal })
-  if (!res.ok || !res.body) throw new ZulipApiError(`HTTP ${res.status}`, res.status)
+  if (!res.ok || !res.body) throw new ApiError(`HTTP ${res.status}`, res.status)
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''

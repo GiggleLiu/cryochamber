@@ -6,7 +6,7 @@ import { useAppStore, resetAppStore } from '../store/appStore'
 beforeEach(() => {
   resetAppStore()
   useAppStore.setState({
-    creds: { prefix: '/zulip/qec', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
+    creds: { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
     settingsOpen: true,
     streams: [
       { stream_id: 1, name: 'alpha', description: 'A' },
@@ -41,7 +41,7 @@ test('log out clears credentials', async () => {
   expect(useAppStore.getState().creds).toBeNull()
 })
 
-describe('hub owner', () => {
+describe('owner-only rows', () => {
   test('the Share access row opens the share sheet and closes settings', async () => {
     useAppStore.setState({ hubRole: 'owner' })
     render(<SettingsSheet />)
@@ -56,7 +56,7 @@ describe('hub owner', () => {
     expect(screen.queryByRole('button', { name: /share access/i })).toBeNull()
   })
 
-  test('Zulip accounts never see the Share access row', () => {
+  test('a session whose role is not known yet sees no Share access row', () => {
     render(<SettingsSheet />)
     expect(screen.queryByRole('button', { name: /share access/i })).toBeNull()
   })
@@ -64,7 +64,7 @@ describe('hub owner', () => {
 
 describe('appearance', () => {
   afterEach(() => {
-    localStorage.removeItem('zulip-app.theme')
+    localStorage.removeItem('agent-console.theme')
     delete document.documentElement.dataset.theme
   })
 
@@ -72,7 +72,7 @@ describe('appearance', () => {
     render(<SettingsSheet />)
     await userEvent.click(screen.getByRole('radio', { name: /dark/i }))
     expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(localStorage.getItem('zulip-app.theme')).toBe('dark')
+    expect(localStorage.getItem('agent-console.theme')).toBe('dark')
   })
 
   test('choosing System clears both so the OS decides', async () => {
@@ -80,11 +80,11 @@ describe('appearance', () => {
     await userEvent.click(screen.getByRole('radio', { name: /dark/i }))
     await userEvent.click(screen.getByRole('radio', { name: /system/i }))
     expect(document.documentElement.dataset.theme).toBeUndefined()
-    expect(localStorage.getItem('zulip-app.theme')).toBeNull()
+    expect(localStorage.getItem('agent-console.theme')).toBeNull()
   })
 
   test('the stored choice is the one shown as selected', () => {
-    localStorage.setItem('zulip-app.theme', 'light')
+    localStorage.setItem('agent-console.theme', 'light')
     render(<SettingsSheet />)
     expect(screen.getByRole('radio', { name: /light/i })).toBeChecked()
   })

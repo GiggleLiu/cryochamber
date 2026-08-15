@@ -1,14 +1,16 @@
+// HTML the sanitizer is expected to survive: rendered markdown, math, and
+// hostile payloads.
 export const codeBlock =
   '<div class="codehilite" data-code-language="Python"><pre><span></span><code><span class="k">def</span> <span class="nf">f</span><span class="p">():</span>\n    <span class="k">pass</span>\n</code></pre></div>'
 
 export const katexMath =
   '<p><span class="katex"><span class="katex-html" aria-hidden="true"><span class="base"><span class="mord mathnormal">x</span></span></span></span></p>'
 
-export const uploadLink =
-  '<p><a href="/user_uploads/2/ab/report.pdf">report.pdf</a></p>'
+export const attachmentLink =
+  '<p><a href="/api/chambers/cham-a/files/ab_report.pdf">report.pdf</a></p>'
 
-export const inlineImage =
-  '<div class="message_inline_image"><a href="/user_uploads/2/ab/plot.png"><img src="/user_uploads/2/ab/plot.png"></a></div>'
+export const attachmentImage =
+  '<p><img src="/api/chambers/cham-a/files/ab_plot.png" alt="plot.png"></p>'
 
 export const externalLink =
   '<p><a href="https://arxiv.org/abs/2401.00001">paper</a></p>'
@@ -52,8 +54,7 @@ export const emojiThumbsUp =
 
 export const emojiFlagCn = '<p><span class="emoji emoji-1f1e8-1f1f3">:cn:</span></p>'
 
-export const emojiImg =
-  '<p><img class="emoji" alt="🎉" src="/static/generated/emoji/tada.png"></p>'
+export const emojiImg = '<p><img class="emoji" alt="🎉" src="/static/emoji/tada.png"></p>'
 
 export const userMention =
   '<p>ping <span class="user-mention" data-user-id="42" title="@Alice Doe">@Alice Doe</span></p>'

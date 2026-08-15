@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { sanitizeZulipHtml } from './sanitize'
+import { sanitizeHtml } from './sanitize'
 import { fetchBlob, filenameFromHref, triggerBlobDownload, HUB_FILES_RE } from '../lib/download'
 import { logoutIfAuthError } from '../lib/authGuard'
 
-export { sanitizeZulipHtml } from './sanitize'
+export { sanitizeHtml } from './sanitize'
 export { filenameFromHref } from '../lib/download'
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
 
-/** The markdown renderer pulls in markdown-it and KaTeX — a third of the bundle
- * for a feature only hub messages use. It is imported on first need and cached
- * at module scope, so the whole app shares one download and one instance. */
+/** The markdown renderer pulls in markdown-it and KaTeX — a third of the
+ * bundle. It is imported on first need and cached at module scope, so the whole
+ * app shares one download and one instance. */
 type MarkdownModule = typeof import('../lib/markdown')
 let markdownModule: MarkdownModule | null = null
 let markdownPending: Promise<MarkdownModule> | null = null
@@ -34,25 +34,17 @@ export function plainTextFallback(source: string): string {
   return `<p>${escaped}</p>`
 }
 
-/** True for the paths that only load with the auth header: Zulip uploads under
- * the server prefix, and hub chamber files. */
-function isAttachmentPath(path: string, uploadPrefix: string): boolean {
-  return path.startsWith(uploadPrefix) || HUB_FILES_RE.test(path)
-}
-
 export function MessageBody({
-  html,
+  source,
   prefix,
   authHeader,
   selfUserId,
-  format = 'html',
 }: {
-  /** Server-rendered HTML (Zulip) or raw markdown, per `format`. */
-  html: string
+  /** Raw markdown, rendered and then sanitized below. */
+  source: string
   prefix: string
   authHeader?: string
   selfUserId?: number
-  format?: 'html' | 'markdown'
 }) {
   const ref = useRef<HTMLDivElement>(null)
   // Upload path -> live object URL. Cached so innerHTML replacements and the
@@ -66,7 +58,7 @@ export function MessageBody({
   const [, setMarkdownLoaded] = useState(markdownModule !== null)
 
   useEffect(() => {
-    if (format !== 'markdown' || markdownModule) return
+    if (markdownModule) return
     let alive = true
     void loadMarkdown().then(() => {
       if (alive) setMarkdownLoaded(true)
@@ -74,18 +66,14 @@ export function MessageBody({
     return () => {
       alive = false
     }
-  }, [format])
+  }, [])
 
-  // Hub messages arrive as raw markdown; render first, then sanitize — the
+  // Messages arrive as raw markdown; render first, then sanitize — the
   // sanitizer stays the single choke point for HTML entering the DOM.
-  const rendered =
-    format === 'markdown'
-      ? markdownModule
-        ? markdownModule.renderMarkdown(html)
-        : plainTextFallback(html)
-      : html
-  const sanitized = sanitizeZulipHtml(rendered, prefix, selfUserId)
-  const uploadPrefix = `${prefix}/user_uploads/`
+  const rendered = markdownModule
+    ? markdownModule.renderMarkdown(source)
+    : plainTextFallback(source)
+  const sanitized = sanitizeHtml(rendered, prefix, selfUserId)
 
   // Authenticated image loading. React re-sets this div's innerHTML whenever
   // the rendered HTML changes (and dev StrictMode/remounts can do it too);
@@ -121,7 +109,7 @@ export function MessageBody({
       if (!authHeader) return
       for (const img of Array.from(root.querySelectorAll('img'))) {
         const src = img.getAttribute('src') ?? ''
-        if (!isAttachmentPath(src, uploadPrefix)) continue
+        if (!HUB_FILES_RE.test(src)) continue
         const cached = blobCache.current.get(src)
         if (cached) {
           img.dataset.uploadSrc = src
@@ -151,7 +139,7 @@ export function MessageBody({
       disposed = true
       observer.disconnect()
     }
-  }, [authHeader, prefix, sanitized, uploadPrefix])
+  }, [authHeader, prefix, sanitized])
 
   // Revoke cached object URLs only when the component goes away for good.
   useEffect(() => {
@@ -257,7 +245,7 @@ export function MessageBody({
     const anchor = target.closest('a')
     if (anchor && root?.contains(anchor)) {
       const href = anchor.getAttribute('href') ?? ''
-      if (!isAttachmentPath(href, uploadPrefix)) return // external link: default new tab
+      if (!HUB_FILES_RE.test(href)) return // external link: default new tab
       e.preventDefault()
       const name = filenameFromHref(href)
       const innerImg = anchor.querySelector('img')

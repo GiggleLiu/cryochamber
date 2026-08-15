@@ -1,5 +1,5 @@
 {
-  "name": "zulip-agent-pwa",
+  "name": "agent-console",
   "private": true,
   "version": "0.1.0",
   "type": "module",

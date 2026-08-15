@@ -5,10 +5,11 @@ import { saveCredentials } from './store/auth'
 
 vi.mock('./api/servers', () => ({
   loadServers: vi.fn(async () => [
-    { name: 'QEC Harness', prefix: '/zulip/qec', sendTopic: '' },
     { name: 'Chamber Hub', prefix: '', kind: 'hub', sendTopic: '' },
   ]),
 }))
+
+const creds = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
 
 beforeEach(() => {
   resetAppStore()
@@ -25,43 +26,11 @@ afterEach(() => {
 test('shows login when no credentials are stored', async () => {
   render(<App />)
   expect(await screen.findByRole('heading', { name: 'Agent Console' })).toBeInTheDocument()
-  expect(screen.getByLabelText(/email/i)).toBeInTheDocument()
+  expect(screen.getByLabelText(/access token/i)).toBeInTheDocument()
 })
 
-test('clicking any upload anchor downloads in place instead of navigating', async () => {
-  saveCredentials({ prefix: '/zulip/qec', email: 'a@b.c', apiKey: 'k', sendTopic: '' })
-  const blob = new Blob(['pdf'], { type: 'application/pdf' })
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(blob, { status: 200 })))
-  const originalCreate = URL.createObjectURL
-  const originalRevoke = URL.revokeObjectURL
-  URL.createObjectURL = (() => 'blob:mock-intercept') as typeof URL.createObjectURL
-  URL.revokeObjectURL = vi.fn() as typeof URL.revokeObjectURL
-  // Outside the React tree on purpose: the interceptor must catch upload
-  // anchors from ANY render path, not just MessageBody's delegated handler.
-  const anchor = document.createElement('a')
-  anchor.href = window.location.origin + '/user_uploads/1/x/notes.pdf'
-  document.body.appendChild(anchor)
-  try {
-    render(<App />)
-    await screen.findByRole('heading', { name: 'Projects' })
-    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
-    anchor.dispatchEvent(event)
-    expect(event.defaultPrevented).toBe(true)
-    await waitFor(() =>
-      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-        '/zulip/qec/user_uploads/1/x/notes.pdf',
-        { headers: { Authorization: 'Basic ' + btoa('a@b.c:k') } },
-      ),
-    )
-  } finally {
-    anchor.remove()
-    URL.createObjectURL = originalCreate
-    URL.revokeObjectURL = originalRevoke
-  }
-})
-
-describe('hub chamber-file anchors', () => {
-  /** Object URLs and a blob response, shared by both directions of the test. */
+describe('chamber-file anchors', () => {
+  /** Object URLs and a blob response for the download under test. */
   function stubDownload(name: string) {
     const blob = new Blob(['pdf'], { type: 'application/pdf' })
     vi.stubGlobal(
@@ -86,8 +55,10 @@ describe('hub chamber-file anchors', () => {
     }
   }
 
-  test('in hub mode the click downloads in place with the bearer token', async () => {
-    saveCredentials({ kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' })
+  // Outside the React tree on purpose: the interceptor must catch chamber file
+  // anchors from ANY render path, not just MessageBody's delegated handler.
+  test('a click downloads in place with the bearer token', async () => {
+    saveCredentials(creds)
     const cleanup = stubDownload('mock-hub')
     try {
       render(<App />)
@@ -96,7 +67,7 @@ describe('hub chamber-file anchors', () => {
       document.querySelector('a[href^="/api/chambers"]')!.dispatchEvent(event)
       expect(event.defaultPrevented).toBe(true)
       await waitFor(() =>
-        // Hub file paths are already absolute app paths: never re-prefixed.
+        // Chamber file paths are already absolute app paths: never re-prefixed.
         expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/chambers/c1/files/x_y.pdf', {
           headers: { Authorization: 'Bearer tok' },
         }),
@@ -106,56 +77,23 @@ describe('hub chamber-file anchors', () => {
     }
   })
 
-  test('in zulip mode the anchor is not intercepted at all', async () => {
-    saveCredentials({ prefix: '/zulip/qec', email: 'a@b.c', apiKey: 'k', sendTopic: '' })
-    const cleanup = stubDownload('mock-zulip')
+  test('an ordinary link is left to the browser', async () => {
+    saveCredentials(creds)
+    const cleanup = stubDownload('mock-plain')
+    const anchor = document.createElement('a')
+    anchor.href = 'https://arxiv.org/abs/1'
+    document.body.appendChild(anchor)
     try {
       render(<App />)
       await screen.findByRole('heading', { name: 'Projects' })
       const event = new MouseEvent('click', { bubbles: true, cancelable: true })
-      document.querySelector('a[href^="/api/chambers"]')!.dispatchEvent(event)
-      // Left to the browser: a hub route means nothing to a Zulip session, and
-      // handling it would put this account's Basic API key on the wire to it.
+      anchor.dispatchEvent(event)
       expect(event.defaultPrevented).toBe(false)
-      await new Promise((resolve) => setTimeout(resolve, 10))
-      for (const [url] of vi.mocked(fetch).mock.calls) {
-        expect(String(url)).not.toContain('/files/')
-      }
     } finally {
+      anchor.remove()
       cleanup()
     }
   })
-})
-
-test('opening a /user_uploads deep link downloads the file once signed in', async () => {
-  window.history.replaceState(null, '', '/user_uploads/90996/abc/review.pdf')
-  saveCredentials({ prefix: '/zulip/qec', email: 'a@b.c', apiKey: 'k', sendTopic: '' })
-  const blob = new Blob(['pdf'], { type: 'application/pdf' })
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => new Response(blob, { status: 200 })),
-  )
-  const originalCreate = URL.createObjectURL
-  const originalRevoke = URL.revokeObjectURL
-  URL.createObjectURL = (() => 'blob:mock-deeplink') as typeof URL.createObjectURL
-  URL.revokeObjectURL = vi.fn() as typeof URL.revokeObjectURL
-  const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click')
-  try {
-    render(<App />)
-    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1))
-    const clicked = clickSpy.mock.instances[0] as unknown as HTMLAnchorElement
-    expect(clicked.download).toBe('review.pdf')
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      '/zulip/qec/user_uploads/90996/abc/review.pdf',
-      { headers: { Authorization: 'Basic ' + btoa('a@b.c:k') } },
-    )
-    expect(window.location.pathname).toBe('/')
-  } finally {
-    clickSpy.mockRestore()
-    URL.createObjectURL = originalCreate
-    URL.revokeObjectURL = originalRevoke
-    window.history.replaceState(null, '', '/')
-  }
 })
 
 describe('invite-link onboarding', () => {
@@ -174,7 +112,7 @@ describe('invite-link onboarding', () => {
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
     expect(window.location.hash).toBe('')
-    const saved = JSON.parse(localStorage.getItem('zulip-app.credentials')!)
+    const saved = JSON.parse(localStorage.getItem('agent-console.credentials')!)
     expect(saved).toMatchObject({ kind: 'hub', email: 'Alice', apiKey: TOKEN })
     expect(useAppStore.getState().hubRole).toBe('invite')
     // The token rides in the Authorization header, never in a query string.
@@ -203,18 +141,18 @@ describe('invite-link onboarding', () => {
   })
 
   test('a stored token the hub now rejects lands on login with a reason', async () => {
-    saveCredentials({ kind: 'hub', prefix: '', email: 'Alice', apiKey: 'revoked', sendTopic: '' })
+    saveCredentials({ ...creds, apiKey: 'revoked' })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
     render(<App />)
     // Previously absorbed silently, leaving cached projects on screen behind a
     // token the hub had already revoked.
     await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
     expect(await screen.findByText(/no longer valid/i)).toBeInTheDocument()
-    expect(localStorage.getItem('zulip-app.credentials')).toBeNull()
+    expect(localStorage.getItem('agent-console.credentials')).toBeNull()
   })
 
   test('a 401 on an intercepted attachment click signs the user out', async () => {
-    saveCredentials({ kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' })
+    saveCredentials(creds)
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) =>
@@ -241,7 +179,7 @@ describe('invite-link onboarding', () => {
   })
 
   test('stored hub credentials repopulate the role at boot', async () => {
-    saveCredentials({ kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' })
+    saveCredentials({ ...creds, email: 'Owner' })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) =>

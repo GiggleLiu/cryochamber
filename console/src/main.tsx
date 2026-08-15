@@ -1,7 +1,5 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-// KaTeX's stylesheet stays eager: Zulip messages arrive with server-rendered
-// KaTeX markup, which needs it even when the markdown renderer never loads.
 import 'katex/dist/katex.min.css'
 import './styles.css'
 import App from './App'

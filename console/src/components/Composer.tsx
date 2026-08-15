@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
 import { draftKey, sendViaOutbox } from '../lib/outbox'
 import { accountKey } from '../lib/account'
-import { isAuthError } from '../api/client'
+import { isAuthError } from '../api/errors'
 import { AlertCircle, ArrowUp, Paperclip } from './Icon'
-import type { ZulipUser } from '../api/types'
+import type { User } from '../api/types'
 
 /**
  * True when the device most likely has a hardware keyboard, where Enter is
@@ -38,7 +38,7 @@ export function mentionQueryAt(text: string, caret: number): string | null {
 
 /** Users whose full_name case-insensitively includes the query; prefix matches
  *  rank first, capped at the panel's 8-row limit. */
-export function filterUsers(users: ZulipUser[], query: string): ZulipUser[] {
+export function filterUsers(users: User[], query: string): User[] {
   const q = query.trim().toLowerCase()
   if (!q) return users.slice(0, 8)
   const prefix = users.filter((u) => u.full_name.toLowerCase().startsWith(q))
@@ -74,7 +74,7 @@ export function Composer({ streamName, streamId }: { streamName: string; streamI
     const stream = s.streams.find((x) => x.name === streamName)
     return stream ? s.messagesByStream[stream.stream_id] : undefined
   })
-  const candidates = useMemo<ZulipUser[]>(
+  const candidates = useMemo<User[]>(
     () =>
       users && users.length > 0
         ? users
@@ -179,7 +179,7 @@ export function Composer({ streamName, streamId }: { streamName: string; streamI
     }
   }
 
-  function confirmUser(user: ZulipUser) {
+  function confirmUser(user: User) {
     const ta = textareaRef.current
     if (!ta) return
     const caret = ta.selectionStart

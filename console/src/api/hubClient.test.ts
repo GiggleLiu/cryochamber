@@ -28,7 +28,7 @@ test('register maps chambers to subscriptions with stable numeric ids', async ()
   expect(vi.mocked(fetchFn).mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer tok123' })
 })
 
-test('getMessages maps ChamberMessage to ZulipMessage with markdown content', async () => {
+test('getMessages maps a chamber message to a store message with markdown content', async () => {
   const fetchFn = mockFetch((url) =>
     url.includes('/messages')
       ? [{ id: 'm1', direction: 'outbox', from: 'agent', subject: 's', body: '**hi**',
@@ -37,7 +37,7 @@ test('getMessages maps ChamberMessage to ZulipMessage with markdown content', as
   )
   const c = new HubClient(creds, fetchFn)
   await c.register()
-  const msgs = await c.getMessages('alpha', 'newest')
+  const msgs = await c.getMessages('alpha')
   expect(msgs).toHaveLength(1)
   expect(msgs[0].sender_email).toBe('agent')
   expect(msgs[0].content).toBe('**hi**')
@@ -77,9 +77,9 @@ describe('numericMessageId', () => {
     const other = 'hub||Bob'
     numericMessageId('msg-1', 1_700_000_000_000, other)
     expect(
-      JSON.parse(localStorage.getItem('zulip-app.hub-msgids.hub||Bob')!).byId,
+      JSON.parse(localStorage.getItem('agent-console.hub-msgids.hub||Bob')!).byId,
     ).toEqual({ 'msg-1': 1_700_000_000_000 })
-    expect(Object.keys(JSON.parse(localStorage.getItem(`zulip-app.hub-msgids.${ACCOUNT}`)!).byId))
+    expect(Object.keys(JSON.parse(localStorage.getItem(`agent-console.hub-msgids.${ACCOUNT}`)!).byId))
       .toEqual(['msg-7'])
   })
 })
@@ -96,12 +96,12 @@ test('a second client instance agrees on the number for the same mailbox id', as
   )
   const a = new HubClient(creds, fetchFn)
   await a.register()
-  const first = (await a.getMessages('alpha', 'newest')).map((m) => m.id)
+  const first = (await a.getMessages('alpha')).map((m) => m.id)
   // Same second, distinct mailbox ids: both must survive the store's dedupe.
   expect(new Set(first).size).toBe(2)
   const b = new HubClient(creds, fetchFn)
   await b.register()
-  expect((await b.getMessages('alpha', 'newest')).map((m) => m.id)).toEqual(first)
+  expect((await b.getMessages('alpha')).map((m) => m.id)).toEqual(first)
 })
 
 test('chamber stream ids are namespaced per account', () => {
@@ -135,7 +135,7 @@ test('an unresolvable project name is marked as a client-side 404, not a server 
   // map is empty. The marker is what stops callers treating this like a chamber
   // the hub says is gone.
   const c = new HubClient(creds, mockFetch(() => new Response('', { status: 500 })))
-  await expect(c.getMessages('alpha', 'newest')).rejects.toMatchObject({
+  await expect(c.getMessages('alpha')).rejects.toMatchObject({
     httpStatus: 404,
     code: CLIENT_UNRESOLVED,
   })
@@ -150,7 +150,7 @@ test('an unresolvable project name is marked as a client-side 404, not a server 
   )
   await registered.register()
   // A real server 404 carries no marker.
-  await expect(registered.getMessages('alpha', 'newest')).rejects.toMatchObject({
+  await expect(registered.getMessages('alpha')).rejects.toMatchObject({
     httpStatus: 404,
     code: undefined,
   })
@@ -197,7 +197,7 @@ describe('SSE message mapping', () => {
     )
     const c = new HubClient(creds, fetchFn)
     await c.register()
-    const [fetched] = await c.getMessages('alpha', 'newest')
+    const [fetched] = await c.getMessages('alpha')
     const live = c.toChamberEventMessage({
       id: 'msg-7',
       chamber_id: 'cham-a',

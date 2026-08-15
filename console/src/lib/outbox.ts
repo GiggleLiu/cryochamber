@@ -1,10 +1,10 @@
-import { isAuthError } from '../api/client'
+import { isAuthError } from '../api/errors'
 import { useAppStore, AUTH_LOGOUT_REASON, type OutboxItem } from '../store/appStore'
 
-/** Draft storage key for a project's composer, namespaced per account — a hub
- * chamber and a Zulip stream can both be number 1. */
+/** Draft storage key for a project's composer, namespaced per account — two
+ * tokens each number their own chambers from 1. */
 export function draftKey(account: string, streamId: number): string {
-  return `zulip-app.draft.${account}.${streamId}`
+  return `agent-console.draft.${account}.${streamId}`
 }
 
 /** How long a `sent` bubble waits for its echo before retiring itself. Long

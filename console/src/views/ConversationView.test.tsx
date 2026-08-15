@@ -2,34 +2,36 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ConversationView, isRichMessage } from './ConversationView'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ZulipApiError, type ZulipClient } from '../api/client'
+import { ApiError } from '../api/errors'
 import { HubClient } from '../api/hubClient'
 import { ECHO_TIMEOUT_MS, sendViaOutbox } from '../lib/outbox'
-import type { ZulipMessage } from '../api/types'
+import type { Credentials, Message } from '../api/types'
 
-function makeMsg(id: number, overrides: Partial<ZulipMessage> = {}): ZulipMessage {
+const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
+
+function makeMsg(id: number, overrides: Partial<Message> = {}): Message {
   return {
     id, sender_full_name: 'Agent', sender_email: 'bot@b.c',
-    timestamp: 1755100000 + id, content: `<p>msg-${id}</p>`, stream_id: 1, subject: '',
+    timestamp: 1755100000 + id, content: `msg-${id}`, stream_id: 1, subject: '',
     ...overrides,
   }
 }
 
-function fakeClient(overrides: Partial<Record<keyof ZulipClient, unknown>> = {}) {
+function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
   return {
     getMessages: vi.fn(async () => [makeMsg(1), makeMsg(2)]),
     sendMessage: vi.fn(async () => 99),
     markStreamRead: vi.fn(async () => {}),
-    authHeaderValue: vi.fn(() => 'Basic ' + btoa('me@b.c:k')),
+    authHeaderValue: vi.fn(() => 'Bearer k'),
     getOwnUser: vi.fn(async () => ({ user_id: 7 })),
     ...overrides,
-  } as unknown as ZulipClient
+  } as unknown as HubClient
 }
 
 beforeEach(() => {
   resetAppStore()
   useAppStore.setState({
-    creds: { prefix: '/zulip/qec', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
+    creds,
     streams: [{ stream_id: 1, name: 'alpha', description: 'A' }],
   })
 })
@@ -130,26 +132,16 @@ test('loads newest messages on mount and renders them sanitized', async () => {
   useAppStore.setState({ client })
   render(<ConversationView streamId={1} />)
   expect(await screen.findByText('msg-1')).toBeInTheDocument()
-  expect(client.getMessages).toHaveBeenCalledWith('alpha', 'newest')
+  expect(client.getMessages).toHaveBeenCalledWith('alpha')
   await waitFor(() => expect(client.markStreamRead).toHaveBeenCalledWith(1))
   expect(useAppStore.getState().unreadByStream[1] ?? []).toEqual([])
 })
 
-test('fetches own user id on mount and highlights own mentions', async () => {
-  const client = fakeClient({
-    getMessages: vi.fn(async () => [
-      makeMsg(1, {
-        content: '<p>ping <span class="user-mention" data-user-id="7">@me</span></p>',
-      }),
-    ]),
-    getOwnUser: vi.fn(async () => ({ user_id: 7 })),
-  })
+test('fetches own user id on mount', async () => {
+  const client = fakeClient({ getOwnUser: vi.fn(async () => ({ user_id: 7 })) })
   useAppStore.setState({ client })
-  const { container } = render(<ConversationView streamId={1} />)
-  await screen.findByText('@me')
+  render(<ConversationView streamId={1} />)
   await waitFor(() => expect(useAppStore.getState().ownUserId).toBe(7))
-  const mention = container.querySelector('.user-mention')!
-  expect(mention.className).toContain('mention-me')
 })
 
 test('does not refetch own user once known', async () => {
@@ -162,7 +154,7 @@ test('does not refetch own user once known', async () => {
 
 test('auth error while fetching own user logs out', async () => {
   const client = fakeClient({
-    getOwnUser: vi.fn().mockRejectedValue(new ZulipApiError('Invalid API key', 401)),
+    getOwnUser: vi.fn().mockRejectedValue(new ApiError('HTTP 401', 401)),
   })
   useAppStore.setState({ client })
   render(<ConversationView streamId={1} />)
@@ -187,26 +179,11 @@ test('re-fetches history when the stream is not in loadedStreams even if message
     loadedStreams: [],
   })
   render(<ConversationView streamId={1} />)
-  await waitFor(() => expect(client.getMessages).toHaveBeenCalledWith('alpha', 'newest'))
+  await waitFor(() => expect(client.getMessages).toHaveBeenCalledWith('alpha'))
   await waitFor(() =>
     expect(useAppStore.getState().messagesByStream[1].map((m) => m.id)).toEqual([1, 2]),
   )
   expect(useAppStore.getState().loadedStreams).toEqual([1])
-})
-
-test('load earlier prepends older messages without duplicates', async () => {
-  const client = fakeClient({
-    getMessages: vi
-      .fn()
-      .mockResolvedValueOnce([makeMsg(10), makeMsg(11)])
-      .mockResolvedValueOnce([makeMsg(9), makeMsg(10)]),
-  })
-  useAppStore.setState({ client })
-  render(<ConversationView streamId={1} />)
-  await screen.findByText('msg-10')
-  await userEvent.click(screen.getByRole('button', { name: /load earlier/i }))
-  await screen.findByText('msg-9')
-  expect(useAppStore.getState().messagesByStream[1].map((m) => m.id)).toEqual([9, 10, 11])
 })
 
 test('send clears composer on success', async () => {
@@ -362,9 +339,9 @@ describe('message grouping and layout', () => {
   })
 
   test.each([
-    ['code block', '<pre><code>x = 1</code></pre>'],
-    ['table', '<table><tr><td>a</td></tr></table>'],
-    ['display math', '<span class="katex-display">x</span>'],
+    ['code fence', '```\nx = 1\n```'],
+    ['table', '| a | b |\n| - | - |'],
+    ['display math', '$$x^2$$'],
   ])('a message containing a %s gets the full-width treatment', async (_name, content) => {
     const client = fakeClient({ getMessages: vi.fn(async () => [makeMsg(1, { content })]) })
     useAppStore.setState({ client })
@@ -374,9 +351,9 @@ describe('message grouping and layout', () => {
   })
 
   test.each([
-    ['inline image', '<div class="message_inline_image"><img src="/a.png"></div>'],
-    ['heading', '<h2>Report</h2>'],
-    ['blockquote', '<blockquote>quoted</blockquote>'],
+    ['inline image', '![plot](/api/chambers/cham-a/files/a.png)'],
+    ['heading', '## Report'],
+    ['blockquote', '> quoted'],
   ])('a message containing a %s stays an ordinary bubble with avatar', async (_name, content) => {
     const client = fakeClient({ getMessages: vi.fn(async () => [makeMsg(1, { content })]) })
     useAppStore.setState({ client })
@@ -394,15 +371,12 @@ describe('message grouping and layout', () => {
   })
 })
 
-describe('hub mode', () => {
+describe('message loading', () => {
   test('renders message bodies as markdown', async () => {
     const client = fakeClient({
       getMessages: vi.fn(async () => [makeMsg(1, { content: '**bold** $x^2$' })]),
     })
-    useAppStore.setState({
-      client,
-      creds: { kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' },
-    })
+    useAppStore.setState({ client })
     const { container } = render(<ConversationView streamId={1} />)
     await waitFor(() =>
       expect(container.querySelector('.message-body strong')?.textContent).toBe('bold'),
@@ -422,7 +396,7 @@ describe('hub mode', () => {
     const client = new HubClient(hubCreds, fetchFn)
     await client.register()
     useAppStore.setState({
-      client: client as unknown as ZulipClient,
+      client,
       creds: hubCreds,
       view: { name: 'conversation', streamId: 1 },
     })
@@ -442,7 +416,7 @@ describe('hub mode', () => {
     }) as unknown as typeof fetch
     const hubCreds = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
     useAppStore.setState({
-      client: new HubClient(hubCreds, fetchFn) as unknown as ZulipClient,
+      client: new HubClient(hubCreds, fetchFn),
       creds: hubCreds,
       view: { name: 'conversation', streamId: 1 },
     })
@@ -469,9 +443,9 @@ describe('hub mode', () => {
     expect(container.querySelector('.conversation')).toBeNull()
   })
 
-  test('a 404 in zulip mode still shows the error panel', async () => {
+  test('a non-404 failure shows the retryable error panel', async () => {
     const client = fakeClient({
-      getMessages: vi.fn().mockRejectedValue(new ZulipApiError('No such stream', 404)),
+      getMessages: vi.fn().mockRejectedValue(new ApiError('HTTP 500', 500)),
     })
     useAppStore.setState({ client, view: { name: 'conversation', streamId: 1 } })
     render(<ConversationView streamId={1} />)
@@ -482,61 +456,40 @@ describe('hub mode', () => {
 
 describe('isRichMessage', () => {
   test.each([
-    ['zulip code block', '<pre><code>x</code></pre>', 'html' as const],
-    ['zulip table', '<table><tr><td>a</td></tr></table>', 'html' as const],
-    ['zulip display math', '<span class="katex-display">x</span>', 'html' as const],
-    ['markdown fenced code', 'run this:\n```py\nx = 1\n```', 'markdown' as const],
-    ['markdown table row', '| a | b |\n| - | - |', 'markdown' as const],
-    ['markdown display math', 'so\n$$x^2$$', 'markdown' as const],
-  ])('%s is wide content', (_name, content, format) => {
-    expect(isRichMessage(content, format)).toBe(true)
+    ['fenced code', 'run this:\n```py\nx = 1\n```'],
+    ['table row', '| a | b |\n| - | - |'],
+    ['display math', 'so\n$$x^2$$'],
+  ])('%s is wide content', (_name, content) => {
+    expect(isRichMessage(content)).toBe(true)
   })
 
   test.each([
-    ['zulip paragraph', '<p>plain</p>', 'html' as const],
-    ['zulip blockquote', '<blockquote>q</blockquote>', 'html' as const],
-    ['markdown prose', '**bold** and a $x$ inline', 'markdown' as const],
-    ['markdown inline code', 'use `npm run build` here', 'markdown' as const],
-    ['markdown pipe mid-line', 'pipe a | b in prose', 'markdown' as const],
-    ['markdown single dollars', 'costs $5 and $10', 'markdown' as const],
-    // HTML detectors must not fire on markdown source, and vice versa.
-    ['markdown mentioning pre', 'the <pre> tag is html', 'markdown' as const],
-    ['zulip source with backticks', '<p>```</p>', 'html' as const],
-  ])('%s stays an ordinary bubble', (_name, content, format) => {
-    expect(isRichMessage(content, format)).toBe(false)
+    ['prose', '**bold** and a $x$ inline'],
+    ['inline code', 'use `npm run build` here'],
+    ['a pipe mid-line', 'pipe a | b in prose'],
+    ['single dollars', 'costs $5 and $10'],
+    // The detectors read markdown source, not HTML.
+    ['a mention of pre', 'the <pre> tag is html'],
+  ])('%s stays an ordinary bubble', (_name, content) => {
+    expect(isRichMessage(content)).toBe(false)
   })
 
-  test('hub markdown code fences get the full-width treatment end to end', async () => {
+  test('code fences get the full-width treatment end to end', async () => {
     const client = fakeClient({
       getMessages: vi.fn(async () => [makeMsg(1, { content: '```\nx = 1\n```' })]),
     })
-    useAppStore.setState({
-      client,
-      creds: { kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' },
-    })
+    useAppStore.setState({ client })
     const { container } = render(<ConversationView streamId={1} />)
     await waitFor(() => expect(container.querySelector('.msg-row')).not.toBeNull())
     expect(container.querySelector('.msg-row')!.className).toContain('msg-rich')
   })
 })
 
-describe('load earlier', () => {
-  test('zulip conversations offer it', async () => {
-    useAppStore.setState({ client: fakeClient() })
-    render(<ConversationView streamId={1} />)
-    expect(await screen.findByRole('button', { name: /load earlier/i })).toBeInTheDocument()
-  })
-
-  test('hub conversations do not: one fetch already returned the whole history', async () => {
-    useAppStore.setState({
-      // Hub bodies are markdown source, so use a plain line rather than HTML.
-      client: fakeClient({ getMessages: vi.fn(async () => [makeMsg(1, { content: 'msg-1' })]) }),
-      creds: { kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' },
-    })
-    render(<ConversationView streamId={1} />)
-    await screen.findByText('msg-1')
-    expect(screen.queryByRole('button', { name: /load earlier/i })).toBeNull()
-  })
+test('a mailbox returns its whole history, so nothing offers to load earlier', async () => {
+  useAppStore.setState({ client: fakeClient() })
+  render(<ConversationView streamId={1} />)
+  await screen.findByText('msg-1')
+  expect(screen.queryByRole('button', { name: /load earlier/i })).toBeNull()
 })
 
 describe('outbox bubbles', () => {

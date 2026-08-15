@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { isAuthError, ZulipApiError } from '../api/client'
+import { ApiError, isAuthError } from '../api/errors'
 import { CLIENT_UNRESOLVED } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
@@ -18,15 +18,16 @@ const PIN_SLACK_PX = 80
  * headings stay ordinary bubbles — they fit, and users expect the avatar and
  * alignment to stay put.
  *
- * Hub messages are markdown source, not rendered HTML, so the same question has
- * to be asked of the source: a fence, a table row, or a display-math block. Both
- * detectors are anchored to line starts, which is what keeps inline code, a pipe
- * in prose, and "$5 and $10" out of it. */
-export function isRichMessage(content: string, format: 'html' | 'markdown' = 'html'): boolean {
-  if (format === 'markdown') {
-    return /^\s{0,3}(```|~~~)/m.test(content) || /^\s{0,3}\|/m.test(content) || /^\s{0,3}\$\$/m.test(content)
-  }
-  return /<(pre|table)\b|katex-display/i.test(content)
+ * Messages are markdown source, so the question is asked of the source: a
+ * fence, a table row, or a display-math block. Every detector is anchored to a
+ * line start, which is what keeps inline code, a pipe in prose, and "$5 and
+ * $10" out of it. */
+export function isRichMessage(content: string): boolean {
+  return (
+    /^\s{0,3}(```|~~~)/m.test(content) ||
+    /^\s{0,3}\|/m.test(content) ||
+    /^\s{0,3}\$\$/m.test(content)
+  )
 }
 
 /** Mirrors the real message rows so nothing shifts when the thread arrives. */
@@ -59,7 +60,6 @@ export function ConversationView({ streamId }: { streamId: number }) {
   const logout = useAppStore((s) => s.logout)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
-  const [loadingOlder, setLoadingOlder] = useState(false)
   const [showJump, setShowJump] = useState(false)
   const [hasNew, setHasNew] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -137,17 +137,12 @@ export function ConversationView({ streamId }: { streamId: number }) {
     if (!client || !stream || historyLoaded) return
     setLoadError(null)
     client
-      .getMessages(name, 'newest')
+      .getMessages(name)
       .then((msgs) => useAppStore.getState().setMessages(streamId, msgs))
       .catch((e) => {
         if (isAuthError(e)) {
           logout(AUTH_LOGOUT_REASON)
-        } else if (
-          creds?.kind === 'hub' &&
-          e instanceof ZulipApiError &&
-          e.httpStatus === 404 &&
-          e.code !== CLIENT_UNRESOLVED
-        ) {
+        } else if (e instanceof ApiError && e.httpStatus === 404 && e.code !== CLIENT_UNRESOLVED) {
           // Scope was revoked while we were looking at it: leave quietly — and
           // take the project with us, or it stays in the list and fails again
           // on every tap. Only the hub's own 404 says that; a name the client
@@ -159,7 +154,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
           setLoadError(e instanceof Error ? e.message : String(e))
         }
       })
-  }, [client, stream, historyLoaded, name, streamId, logout, navigate, creds?.kind, retryToken])
+  }, [client, stream, historyLoaded, name, streamId, logout, navigate, retryToken])
 
   // Fetch the signed-in user's id once per session so their own @mentions can
   // be highlighted. Auth failures take the existing logout path; transient
@@ -199,30 +194,6 @@ export function ConversationView({ streamId }: { streamId: number }) {
     }
   }, [client, streamId, loaded, messageCount, logout])
 
-  async function loadOlder() {
-    if (!client || !messages || messages.length === 0 || loadingOlder) return
-    setLoadingOlder(true)
-    const el = scrollRef.current
-    const anchor = el ? el.scrollHeight - el.scrollTop : 0
-    try {
-      const older = await client.getMessages(name, messages[0].id, 51)
-      const known = new Set(messages.map((m) => m.id))
-      useAppStore.getState().prependOlder(streamId, older.filter((m) => !known.has(m.id)))
-      // Hold the reader's place: the list just grew above them.
-      requestAnimationFrame(() => {
-        if (el) el.scrollTop = el.scrollHeight - anchor
-      })
-    } catch (e) {
-      if (isAuthError(e)) {
-        logout(AUTH_LOGOUT_REASON)
-      } else {
-        setLoadError('Couldn’t load earlier messages.')
-      }
-    } finally {
-      setLoadingOlder(false)
-    }
-  }
-
   // The project can also vanish underneath us from a re-register that no longer
   // lists it. Rendering nothing would leave a blank screen with no way out, so
   // go where the user can act.
@@ -231,9 +202,6 @@ export function ConversationView({ streamId }: { streamId: number }) {
   }, [stream, navigate])
 
   if (!stream || !creds) return null
-
-  // Hub messages are raw markdown; Zulip's are server-rendered HTML.
-  const format = creds.kind === 'hub' ? 'markdown' : 'html'
 
   return (
     <div className="conversation">
@@ -250,14 +218,8 @@ export function ConversationView({ streamId }: { streamId: number }) {
 
       <div className="thread">
       <div className="message-scroll" ref={scrollRef} onScroll={onScroll}>
-        {/* Hub mailboxes return the whole history in one fetch, so there is
-            never anything earlier to load. */}
-        {loaded && messages.length > 0 && creds.kind !== 'hub' && (
-          <button className="load-earlier" onClick={loadOlder} disabled={loadingOlder}>
-            {loadingOlder ? 'Loading…' : 'Load earlier'}
-          </button>
-        )}
-
+        {/* A mailbox returns its whole history in one fetch, so there is never
+            anything earlier to load. */}
         {loadError && (
           <div className="alert" role="alert">
             <AlertCircle size={18} />
@@ -288,7 +250,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
           // Runs of messages from one sender read as one turn: the repeated
           // avatar and name are noise, so only the first of a run carries them.
           const grouped = !gap && !!prev && prev.sender_email === m.sender_email
-          const rich = isRichMessage(m.content, format)
+          const rich = isRichMessage(m.content)
           return (
             <Fragment key={m.id}>
               {gap && (
@@ -314,11 +276,10 @@ export function ConversationView({ streamId }: { streamId: number }) {
                   {!isSelf && !grouped && <div className="sender-label">{m.sender_full_name}</div>}
                   <div className="bubble">
                     <MessageBody
-                      html={m.content}
+                      source={m.content}
                       prefix={creds.prefix}
                       authHeader={client?.authHeaderValue()}
                       selfUserId={ownUserId ?? undefined}
-                      format={format}
                     />
                   </div>
                 </div>
@@ -333,9 +294,9 @@ export function ConversationView({ streamId }: { streamId: number }) {
           <div className="msg-row msg-self msg-pending" key={o.localId}>
             <div className="msg-col">
               <div className="bubble">
-                {/* Rendering the raw text as markdown approximates what the
-                    server will echo back; it disappears the moment it does. */}
-                <MessageBody html={o.content} prefix={creds.prefix} format="markdown" />
+                {/* Rendering the raw text approximates what the server will
+                    echo back; it disappears the moment it does. */}
+                <MessageBody source={o.content} prefix={creds.prefix} />
               </div>
               {o.state === 'sending' ? (
                 <div className="send-state">Sending…</div>

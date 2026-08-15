@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { mockZulip, signIn } from './fixtures'
+import { mockHub, signIn } from './fixtures'
 
 /**
  * Visual harness: captures every screen of the app at a phone viewport so the
@@ -26,7 +26,7 @@ async function openConversation(page: Page): Promise<void> {
 }
 
 test('login', async ({ page }) => {
-  await mockZulip(page)
+  await mockHub(page)
   await page.goto('/')
   await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
   await shot(page, '01-login')
@@ -38,41 +38,28 @@ test('login', async ({ page }) => {
 })
 
 test('login error', async ({ page }) => {
-  await mockZulip(page)
-  await page.route('**/zulip/qec/api/v1/fetch_api_key', (r) =>
-    r.fulfill({ status: 403, json: { result: 'error', msg: 'Your username or password is incorrect.' } }),
-  )
+  await mockHub(page)
+  await page.route('**/api/whoami', (r) => r.fulfill({ status: 401, body: '' }))
   await signIn(page)
   await expect(page.getByRole('alert')).toBeVisible()
   await shot(page, '03-login-error')
 })
 
 test('projects', async ({ page }) => {
-  await mockZulip(page)
+  await mockHub(page)
   await signIn(page)
   await expect(page.getByRole('button', { name: /qec-decoders/ })).toBeVisible()
   await shot(page, '04-projects')
 })
 
 test('projects empty', async ({ page }) => {
-  await mockZulip(page)
-  await page.route('**/zulip/qec/api/v1/register', (r) =>
-    r.fulfill({
-      json: {
-        result: 'success',
-        queue_id: 'q1',
-        last_event_id: -1,
-        subscriptions: [],
-        unread_msgs: { streams: [] },
-      },
-    }),
-  )
+  await mockHub(page, { chambers: [] })
   await signIn(page)
   await shot(page, '05-projects-empty')
 })
 
 test('conversation', async ({ page }) => {
-  await mockZulip(page)
+  await mockHub(page)
   await signIn(page)
   await openConversation(page)
   await shot(page, '06-conversation-latest')
@@ -80,10 +67,10 @@ test('conversation', async ({ page }) => {
 })
 
 test('conversation scrolled back through the thread', async ({ page }) => {
-  await mockZulip(page)
+  await mockHub(page)
   await signIn(page)
   await openConversation(page)
-  // The top of the thread carries the day separator and the load-earlier row.
+  // The top of the thread carries the first day separator.
   await page.locator('.message-scroll').evaluate((el) => { el.scrollTop = 0 })
   await shot(page, '16-conversation-top')
   await page.getByText('Decoder sweep complete').scrollIntoViewIfNeeded()
@@ -93,14 +80,14 @@ test('conversation scrolled back through the thread', async ({ page }) => {
 })
 
 test('conversation loading', async ({ page }) => {
-  await mockZulip(page, { hangHistory: true })
+  await mockHub(page, { hangHistory: true })
   await signIn(page)
   await page.getByRole('button', { name: /qec-decoders/ }).click()
   await shot(page, '10-conversation-loading')
 })
 
 test('conversation error', async ({ page }) => {
-  await mockZulip(page, { failHistory: true })
+  await mockHub(page, { failHistory: true })
   await signIn(page)
   await page.getByRole('button', { name: /qec-decoders/ }).click()
   await expect(page.getByRole('alert')).toBeVisible()
@@ -108,7 +95,7 @@ test('conversation error', async ({ page }) => {
 })
 
 test('composer with text and mention panel', async ({ page }) => {
-  await mockZulip(page)
+  await mockHub(page)
   await signIn(page)
   await openConversation(page)
   const box = page.getByRole('textbox', { name: /message/i })
@@ -120,13 +107,13 @@ test('composer with text and mention panel', async ({ page }) => {
 })
 
 test('reconnecting banner', async ({ page }) => {
-  await mockZulip(page, { hangRegister: true })
+  await mockHub(page, { hangRegister: true })
   await signIn(page)
   await shot(page, '14-reconnecting')
 })
 
 test('settings', async ({ page }) => {
-  await mockZulip(page)
+  await mockHub(page)
   await signIn(page)
   await page.getByRole('button', { name: /settings/i }).click()
   await expect(page.getByRole('dialog')).toBeVisible()

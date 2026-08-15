@@ -17,19 +17,19 @@ const ALLOWED_ATTR = [
   'x1', 'y1', 'x2', 'y2', 'stroke-width', 'fill',
 ]
 
-// Zulip spritesheet emoji: class tokens like `emoji-1f44d` / `emoji-1f1e8-1f1f3`
-// encode one or more hex codepoints (Zulip.com ships the spritesheet CSS; we
-// don't, so without this the user would see the raw `:thumbs_up:` marker).
+// Spritesheet emoji: class tokens like `emoji-1f44d` / `emoji-1f1e8-1f1f3`
+// encode one or more hex codepoints. We ship no spritesheet CSS, so without
+// this the user would see the raw `:thumbs_up:` marker.
 const EMOJI_CLASS_RE = /^emoji-([0-9a-f]+(?:-[0-9a-f]+)*)$/
 const MAX_EMOJI_CODEPOINTS = 8
 const MAX_CODEPOINT = 0x10ffff
 
 /**
  * Decodes an `emoji-<hex>[-<hex>…]` class token to its Unicode string, or null
- * when the token is not a well-formed codepoint sequence. Zulip is the source
- * of these tokens, but a malicious message can carry any hex the class regex
- * accepts — `emoji-110000` or `emoji-d800` would make String.fromCodePoint
- * throw a RangeError and take the whole conversation view down with it.
+ * when the token is not a well-formed codepoint sequence. A malicious message
+ * can carry any hex the class regex accepts — `emoji-110000` or `emoji-d800`
+ * would make String.fromCodePoint throw a RangeError and take the whole
+ * conversation view down with it.
  */
 export function decodeEmojiToken(token: string): string | null {
   const groups = token.split('-')
@@ -167,7 +167,7 @@ export function filterStyleAttribute(style: string): string | null {
 /** SVG presentation attributes that accept a `url(#…)` paint reference. */
 const PAINT_ATTRS = ['fill', 'stroke', 'filter', 'mask', 'clip-path']
 
-export function sanitizeZulipHtml(html: string, prefix: string, selfUserId?: number): string {
+export function sanitizeHtml(html: string, prefix: string, selfUserId?: number): string {
   const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })
   const doc = new DOMParser().parseFromString(clean, 'text/html')
   // The visible math is .katex-html; .katex-mathml is the MathML fallback whose
@@ -204,12 +204,12 @@ export function sanitizeZulipHtml(html: string, prefix: string, selfUserId?: num
     if (decoded === null) continue
     el.replaceWith(document.createTextNode(decoded))
   }
-  // Some realms emit <img class="emoji" alt="..."> instead of spans.
+  // Emoji can also arrive as <img class="emoji" alt="…"> instead of a span.
   for (const img of Array.from(doc.querySelectorAll('img.emoji'))) {
     img.replaceWith(document.createTextNode(img.getAttribute('alt') ?? ''))
   }
-  // Highlight the signed-in user's own mentions (Zulip renders these as
-  // spans with data-user-id; group mentions carry no user id).
+  // Highlight the signed-in user's own mentions (spans carrying a
+  // data-user-id; group mentions carry no user id).
   if (selfUserId !== undefined) {
     for (const el of Array.from(
       doc.querySelectorAll('span.user-mention, span.user-group-mention'),
@@ -219,9 +219,9 @@ export function sanitizeZulipHtml(html: string, prefix: string, selfUserId?: num
       }
     }
   }
-  // Same-origin absolute URLs (e.g. a pasted `https://app.host/user_uploads/…`
-  // link) are folded back to app-relative paths so they get the proxy prefix
-  // like any other relative link — otherwise a click navigates the SPA itself.
+  // Same-origin absolute URLs (e.g. a pasted attachment link) are folded back
+  // to app-relative paths so they get the server prefix like any other relative
+  // link — otherwise a click navigates the SPA itself.
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const relativize = (url: string): string =>
     origin && url.startsWith(origin + '/') ? url.slice(origin.length) : url

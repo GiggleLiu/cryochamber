@@ -1,13 +1,12 @@
 import { useAppStore, resetAppStore } from './appStore'
 import { loadCredentials } from './auth'
 import { loadCachedState, saveCachedState } from './cache'
-import type { Credentials, InitialState, ZulipMessage } from '../api/types'
+import type { Credentials, InitialState, Message } from '../api/types'
 
-const creds: Credentials = { prefix: '/zulip/qec', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
+const otherCreds: Credentials = { ...creds, prefix: '/other', email: 'Bob' }
 
 const initial: InitialState = {
-  queueId: 'q1',
-  lastEventId: 0,
   subscriptions: [
     { stream_id: 2, name: 'beta', description: 'B' },
     { stream_id: 1, name: 'alpha', description: 'A' },
@@ -18,10 +17,10 @@ const initial: InitialState = {
   ],
 }
 
-function makeMsg(id: number, sender = 'bot@b.c'): ZulipMessage {
+function makeMsg(id: number, sender = 'bot@b.c'): Message {
   return {
     id, sender_full_name: 'Bot', sender_email: sender,
-    timestamp: 1755100000 + id, content: `<p>m${id}</p>`, stream_id: 1, subject: '',
+    timestamp: 1755100000 + id, content: `m${id}`, stream_id: 1, subject: '',
   }
 }
 
@@ -89,17 +88,11 @@ test('applyInitialState dedupes unread ids across topics', () => {
 })
 
 describe('hidden projects are per account', () => {
-  const hubCreds: Credentials = {
-    kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '',
-  }
-
   test('toggleHidden persists under this account key', () => {
     useAppStore.getState().setCreds(creds)
     useAppStore.getState().toggleHidden(1)
     expect(useAppStore.getState().hiddenStreams).toEqual([1])
-    expect(
-      JSON.parse(localStorage.getItem('zulip-app.hidden.zulip|/zulip/qec|me@b.c')!),
-    ).toEqual([1])
+    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub||me@b.c')!)).toEqual([1])
     useAppStore.getState().toggleHidden(1)
     expect(useAppStore.getState().hiddenStreams).toEqual([])
   })
@@ -107,13 +100,13 @@ describe('hidden projects are per account', () => {
   test('signing into another account re-reads its own list', () => {
     useAppStore.getState().setCreds(creds)
     useAppStore.getState().toggleHidden(1)
-    // Hub chamber 1 is a different project from Zulip stream 1, and must not
-    // arrive pre-hidden.
-    useAppStore.getState().setCreds(hubCreds)
+    // Another token numbers its own chambers from 1, so its project 1 is a
+    // different project and must not arrive pre-hidden.
+    useAppStore.getState().setCreds(otherCreds)
     expect(useAppStore.getState().hiddenStreams).toEqual([])
     useAppStore.getState().toggleHidden(1)
-    expect(JSON.parse(localStorage.getItem('zulip-app.hidden.hub||Alice')!)).toEqual([1])
-    // …and going back finds the Zulip list intact.
+    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub|/other|Bob')!)).toEqual([1])
+    // …and going back finds the first account's list intact.
     useAppStore.getState().setCreds(creds)
     expect(useAppStore.getState().hiddenStreams).toEqual([1])
   })
@@ -126,12 +119,6 @@ describe('hidden projects are per account', () => {
     useAppStore.getState().setCreds(creds)
     expect(useAppStore.getState().hiddenStreams).toEqual([2])
   })
-})
-
-test('prependOlder puts messages before existing ones', () => {
-  useAppStore.getState().setMessages(1, [makeMsg(5)])
-  useAppStore.getState().prependOlder(1, [makeMsg(3), makeMsg(4)])
-  expect(useAppStore.getState().messagesByStream[1].map((m) => m.id)).toEqual([3, 4, 5])
 })
 
 test('message event for an un-fetched stream creates the list', () => {
@@ -332,8 +319,8 @@ describe('outbox', () => {
 
   test('an echo retires our bubble even when the sender name differs', () => {
     // The hub stamps its own sender on what we send (`alice (invite)` for
-    // `Alice`), so matching on the address left every hub bubble stuck.
-    useAppStore.getState().setCreds({ ...creds, kind: 'hub', email: 'Alice' })
+    // `Alice`), so matching on the address left every bubble stuck.
+    useAppStore.getState().setCreds({ ...creds, email: 'Alice' })
     const id = useAppStore.getState().enqueueOutbox(1, 'ping')
     useAppStore.getState().markOutboxSent(1, id)
     useAppStore.getState().applyEvents([
@@ -343,7 +330,7 @@ describe('outbox', () => {
   })
 
   test('an unrelated new message leaves the bubble pending', () => {
-    useAppStore.getState().setCreds({ ...creds, kind: 'hub', email: 'Alice' })
+    useAppStore.getState().setCreds({ ...creds, email: 'Alice' })
     const id = useAppStore.getState().enqueueOutbox(1, 'ping')
     useAppStore.getState().markOutboxSent(1, id)
     useAppStore.getState().applyEvents([

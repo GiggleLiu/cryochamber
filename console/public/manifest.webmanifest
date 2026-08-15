@@ -1,7 +1,7 @@
 {
   "name": "Agent Console",
   "short_name": "Agents",
-  "description": "Read and steer your project agents — one Zulip stream, one conversation.",
+  "description": "Read and steer your project agents — one project, one conversation.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -53,7 +53,7 @@ export function ProjectsView() {
           <div className="empty-state">
             <Inbox size={40} />
             <h2>No projects yet</h2>
-            <p>Subscribe to a stream in Zulip and it shows up here as a project.</p>
+            <p>Every chamber this token can reach shows up here as a project.</p>
           </div>
         )}
 

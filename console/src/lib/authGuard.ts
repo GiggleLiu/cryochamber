@@ -1,4 +1,4 @@
-import { isAuthError } from '../api/client'
+import { isAuthError } from '../api/errors'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
 
 /**

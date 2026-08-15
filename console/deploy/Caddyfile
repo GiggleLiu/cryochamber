@@ -41,28 +41,3 @@ agents.example.com {
 # 		file_server
 # 	}
 # }
-
-# ---------------------------------------------------------------------------
-# Zulip mode: the same build in front of a Zulip server rather than a hub. No
-# cryohub involved, so the static root and the SPA fallback are Caddy's job.
-# Normally a separate host from the hub above: the hub speaks for one machine's
-# chambers, and its /api must not be reachable through the Zulip name.
-#
-# app.example.com {
-# 	encode zstd gzip
-# 	root * /srv/zulip-app/dist
-#
-# 	# Allowlisted Zulip upstreams — one handle_path block per entry in
-# 	# public/servers.json. NEVER add a catch-all proxy here: this must not
-# 	# become an open relay.
-# 	handle_path /zulip/qec/* {
-# 		reverse_proxy https://qec-harness.zulipchat.com {
-# 			header_up Host qec-harness.zulipchat.com
-# 		}
-# 	}
-#
-# 	handle {
-# 		try_files {path} /index.html
-# 		file_server
-# 	}
-# }

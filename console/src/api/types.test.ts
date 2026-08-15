@@ -1,7 +1,7 @@
 import { isMessageEvent, isReadFlagsEvent } from './types'
-import type { ZulipEvent } from './types'
+import type { AppEvent } from './types'
 
-const messageEvent: ZulipEvent = {
+const messageEvent: AppEvent = {
   id: 1,
   type: 'message',
   message: {
@@ -15,7 +15,7 @@ const messageEvent: ZulipEvent = {
   },
 }
 
-const readFlagsEvent: ZulipEvent = {
+const readFlagsEvent: AppEvent = {
   id: 2,
   type: 'update_message_flags',
   flag: 'read',
@@ -31,7 +31,7 @@ test('{ id, type: "message" } without payload fails isMessageEvent', () => {
 })
 
 test('message event with message: undefined fails isMessageEvent', () => {
-  const ev: ZulipEvent = { id: 1, type: 'message', message: undefined }
+  const ev: AppEvent = { id: 1, type: 'message', message: undefined }
   expect(isMessageEvent(ev)).toBe(false)
 })
 
@@ -44,12 +44,12 @@ test('read-flags without messages fails isReadFlagsEvent', () => {
 })
 
 test('read-flags event with messages: undefined fails isReadFlagsEvent', () => {
-  const ev: ZulipEvent = { id: 2, type: 'update_message_flags', flag: 'read', messages: undefined }
+  const ev: AppEvent = { id: 2, type: 'update_message_flags', flag: 'read', messages: undefined }
   expect(isReadFlagsEvent(ev)).toBe(false)
 })
 
 test('heartbeat fails both guards', () => {
-  const heartbeat: ZulipEvent = { id: 3, type: 'heartbeat' }
+  const heartbeat: AppEvent = { id: 3, type: 'heartbeat' }
   expect(isMessageEvent(heartbeat)).toBe(false)
   expect(isReadFlagsEvent(heartbeat)).toBe(false)
 })

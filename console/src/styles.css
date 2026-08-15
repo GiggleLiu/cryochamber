@@ -365,17 +365,6 @@ input, select, textarea { font: inherit; color: inherit; }
   text-transform: uppercase;
 }
 
-.load-earlier {
-  display: block;
-  margin: var(--sp-1) auto var(--sp-2);
-  padding: var(--sp-1) var(--sp-3);
-  font-size: var(--fs-xs);
-  color: var(--ink-3);
-  border-radius: var(--r-full);
-}
-.load-earlier:active { background: var(--press-veil); }
-.load-earlier:disabled { opacity: 0.6; }
-
 .msg-row {
   display: flex;
   align-items: flex-start;
@@ -485,7 +474,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .jump-latest.has-new { color: var(--brand-press); }
 
 /* ==========================================================================
-   Message body — Zulip's rendered markdown
+   Message body — rendered markdown
    ========================================================================== */
 .message-body { overflow-wrap: break-word; }
 .message-body > *:first-child { margin-top: 0; }
@@ -520,9 +509,15 @@ input, select, textarea { font: inherit; color: inherit; }
   border-left: 3px solid var(--line-strong);
 }
 
-.message-body img { max-width: 100%; height: auto; border-radius: var(--r-sm); }
-.message-body .message_inline_image { margin: 0.4em 0; }
-.message-body .message_inline_image a { display: block; }
+.message-body img {
+  max-width: min(100%, 320px);
+  max-height: 260px;
+  height: auto;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  cursor: zoom-in;
+  background: var(--surface-2);
+}
 
 /* Code — inline chips stay in the text colour so they do not compete with
    links; blocks scroll horizontally rather than wrapping mid-token. */
@@ -638,7 +633,7 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .message-body .mention-me { color: #7a4d00; background: #ffe6a0; }
 
-/* Pygments "default" theme for Zulip's .codehilite spans — colors *and* the
+/* Pygments "default" theme for .codehilite spans — colors *and* the
    bold/italic emphasis of the canonical stylesheet. */
 .codehilite .k, .codehilite .kc, .codehilite .kd, .codehilite .kn,
 .codehilite .kr { color: #008000; font-weight: bold; }
@@ -1221,24 +1216,6 @@ input, select, textarea { font: inherit; color: inherit; }
   border-radius: 4px;
 }
 
-/* Zulip inline image/video previews (div.message_inline_image blocks) */
-.message-body .message_inline_image {
-  margin: 0.35em 0 0.1em;
-}
-.message-body .message_inline_image a {
-  display: inline-block;
-  line-height: 0;
-}
-.message-body .message_inline_image img {
-  max-width: min(100%, 320px);
-  max-height: 260px;
-  width: auto;
-  height: auto;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  cursor: zoom-in;
-  background: var(--surface-2);
-}
 .body-alert {
   margin: 0.25em 0 0;
   font-size: 0.82rem;

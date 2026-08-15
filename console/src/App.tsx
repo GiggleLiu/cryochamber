@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from './store/appStore'
 import { loadCredentials } from './store/auth'
 import { loadServers } from './api/servers'
-import { HubClient } from './api/hubClient'
 import { useEventLoop } from './hooks/useEventLoop'
 import { INVALID_INVITE_REASON, MALFORMED_INVITE_REASON, signInWithHubToken } from './lib/hubSignIn'
 import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
@@ -12,16 +11,6 @@ import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
 import { ShareSheet } from './views/ShareSheet'
-
-/** Upload deep link captured at boot. Opening `/user_uploads/…` directly (a
- * pasted or forwarded attachment URL) must download the file once signed in —
- * not dead-end in the SPA. Consumed by the effect below. */
-export function takePendingUploadPath(): string | null {
-  const path = window.location.pathname
-  if (!path.startsWith('/user_uploads/')) return null
-  window.history.replaceState(null, '', '/')
-  return path
-}
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
  * usable token — the caller says so on the login screen rather than dropping
@@ -48,9 +37,8 @@ export default function App() {
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const shareOpen = useAppStore((s) => s.shareOpen)
-  const [pendingUpload, setPendingUpload] = useState<string | null>(takePendingUploadPath)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
-  const [deepLinkNote, setDeepLinkNote] = useState<string | null>(null)
+  const [downloadNote, setDownloadNote] = useState<string | null>(null)
 
   useEffect(() => {
     if (!useAppStore.getState().creds) {
@@ -69,7 +57,7 @@ export default function App() {
       return
     }
     void (async () => {
-      const hub = (await loadServers().catch(() => [])).find((s) => s.kind === 'hub')
+      const hub = (await loadServers().catch(() => []))[0]
       if (!hub) {
         useAppStore.getState().logout(INVALID_INVITE_REASON)
         return
@@ -88,7 +76,7 @@ export default function App() {
   // here rather than waiting for the event loop; other failures stay silent and
   // owner-only UI simply stays hidden.
   useEffect(() => {
-    if (creds?.kind !== 'hub' || !(client instanceof HubClient)) return
+    if (!client) return
     if (useAppStore.getState().hubRole) return
     client
       .whoami()
@@ -98,7 +86,7 @@ export default function App() {
 
   // Last line of defense against SPA-rebooting attachment clicks: whatever
   // rendered the anchor (message body, a stale bundle, future views), a click
-  // on any upload link downloads in place instead of navigating. Bubble-phase
+  // on any chamber file link downloads in place instead of navigating. Bubble-phase
   // on document, so component handlers (download/lightbox in MessageBody,
   // which call preventDefault) always win first.
   useEffect(() => {
@@ -110,41 +98,18 @@ export default function App() {
       if (!anchor) return
       const raw = anchor.getAttribute('href') ?? ''
       const href = raw.startsWith(origin + '/') ? raw.slice(origin.length) : raw
-      let path: string | null = null
-      if (href.startsWith('/user_uploads/')) path = href
-      else if (href.startsWith(`${creds.prefix}/user_uploads/`)) path = href.slice(creds.prefix.length)
-      // Hub file paths only mean anything to a hub. In Zulip mode this branch
-      // must stay inert: intercepting it would send the Zulip Basic API key to
-      // a hub route the user never signed into.
-      else if (creds.kind === 'hub' && HUB_FILES_RE.test(href)) path = href
-      if (!path) return
+      if (!HUB_FILES_RE.test(href)) return
       e.preventDefault()
-      const name = filenameFromHref(path)
-      // Hub file paths are absolute app paths — never re-prefix them.
-      const url = HUB_FILES_RE.test(path) ? path : `${creds.prefix}${path}`
-      downloadUpload(url, client.authHeaderValue()).catch((err) => {
+      const name = filenameFromHref(href)
+      // Chamber file paths are already absolute app paths — never re-prefix.
+      downloadUpload(href, client.authHeaderValue()).catch((err) => {
         if (logoutIfAuthError(err)) return
-        setDeepLinkNote(`Could not download ${name}. Check your connection and try again.`)
+        setDownloadNote(`Could not download ${name}. Check your connection and try again.`)
       })
     }
     document.addEventListener('click', onClick)
     return () => document.removeEventListener('click', onClick)
   }, [creds, client])
-
-  // Complete a pending upload deep link once we have an authenticated client.
-  useEffect(() => {
-    if (!pendingUpload || !creds || !client) return
-    const path = pendingUpload
-    setPendingUpload(null)
-    const name = filenameFromHref(path)
-    setDeepLinkNote(`Downloading ${name}…`)
-    downloadUpload(`${creds.prefix}${path}`, client.authHeaderValue())
-      .then(() => setDeepLinkNote(null))
-      .catch((err) => {
-        if (logoutIfAuthError(err)) return
-        setDeepLinkNote(`Could not download ${name}. Open its conversation and tap the attachment.`)
-      })
-  }, [pendingUpload, creds, client])
 
   useEventLoop()
 
@@ -155,8 +120,8 @@ export default function App() {
       {connection !== 'live' && (
         <div className="banner" role="status">Reconnecting</div>
       )}
-      {deepLinkNote && (
-        <div className="banner banner-info" role="status">{deepLinkNote}</div>
+      {downloadNote && (
+        <div className="banner banner-info" role="status">{downloadNote}</div>
       )}
       {view.name === 'conversation' ? (
         <ConversationView streamId={view.streamId} />

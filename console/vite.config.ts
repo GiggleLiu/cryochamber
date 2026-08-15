@@ -14,14 +14,9 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: {
     proxy: {
-      '/zulip/qec': {
-        target: 'https://qec-harness.zulipchat.com',
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/zulip\/qec/, ''),
-      },
-      // Chamber Hub mode: a local `cryohub start` listens here. Same-origin in
-      // dev, exactly as Caddy makes it in production — and no path rewrite,
-      // because the hub owns /api itself.
+      // A local `cryohub start` listens here. Same-origin in dev, exactly as
+      // Caddy makes it in production — and no path rewrite, because the hub
+      // owns /api itself.
       '/api': { target: 'http://127.0.0.1:8765', changeOrigin: false },
     },
   },

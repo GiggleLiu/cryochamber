@@ -1,11 +1,15 @@
-import { ZulipApiError } from './client'
+import { ApiError } from './errors'
 import { accountKey } from '../lib/account'
-import type { Credentials, InitialState, StreamSub, ZulipMessage, ZulipUser } from './types'
+import type { Credentials, InitialState, Message, StreamSub, User } from './types'
 
 /** Both maps are namespaced per account: hub chamber numbering starts at 1 and
- * would otherwise be shared with — and read by — a different token or backend. */
-const IDS_PREFIX = 'zulip-app.hub-ids.'
-const MSG_IDS_PREFIX = 'zulip-app.hub-msgids.'
+ * would otherwise be shared with — and read by — a different token. */
+const IDS_PREFIX = 'agent-console.hub-ids.'
+const MSG_IDS_PREFIX = 'agent-console.hub-msgids.'
+
+/** History window size. The store's cache-merge logic keys off this: a fetch
+ * that fills the whole window may not reach back to older cached messages. */
+export const HISTORY_FETCH_COUNT = 50
 
 /** `code` on a 404 this client raised itself because it could not resolve a
  * project name locally — as opposed to a 404 the hub actually answered with.
@@ -108,9 +112,8 @@ export interface Invite {
 }
 
 /**
- * Chamber-hub counterpart of ZulipClient: same surface (register/getMessages/
- * sendMessage/…) over the hub's REST API, so the views and the store stay
- * backend-agnostic. Bearer token auth; every mutating call also carries the
+ * The app's only client: register/getMessages/sendMessage/… over the chamber
+ * hub's REST API. Bearer token auth; every mutating call also carries the
  * `X-Cryo-CSRF` header the hub requires.
  */
 export class HubClient {
@@ -118,8 +121,9 @@ export class HubClient {
     private creds: Credentials,
     fetchFn: typeof fetch = fetch,
   ) {
-    // Same reason as ZulipClient: native window.fetch throws "Illegal
-    // invocation" when called as a member.
+    // Native window.fetch throws "Illegal invocation" when called as a member
+    // (this.fetchFn(...) binds `this` to the client). Bind to undefined so
+    // every call is the browser-legal bare invocation.
     this.fetchFn = fetchFn.bind(undefined)
   }
   private fetchFn: typeof fetch
@@ -145,8 +149,7 @@ export class HubClient {
     // The hub rejects state-changing requests without this header.
     if (init.method && init.method !== 'GET') headers['X-Cryo-CSRF'] = '1'
     const res = await this.fetchFn(`${this.creds.prefix}${path}`, { ...init, headers })
-    // Throwing ZulipApiError keeps isAuthError (and the 401 → logout path) working.
-    if (!res.ok) throw new ZulipApiError(`HTTP ${res.status}`, res.status)
+    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
     return res.json()
   }
 
@@ -164,9 +167,8 @@ export class HubClient {
       this.byStreamId.set(sid, c.id)
       return { stream_id: sid, name: c.name, description: '' }
     })
-    // No event queue and no server-side unread state on hub: the SSE stream
-    // replaces the queue, and unread is tracked client-side.
-    return { queueId: 'hub', lastEventId: 0, subscriptions, unread: [] }
+    // No server-side unread state on the hub: it is tracked client-side.
+    return { subscriptions, unread: [] }
   }
 
   chamberIdFor(streamId: number): string | undefined {
@@ -179,11 +181,11 @@ export class HubClient {
     // "gone" resource rather than as a crash — but marked, because the map is
     // also empty before the first register() (offline cold boot), and that says
     // nothing about whether the chamber still exists.
-    if (!id) throw new ZulipApiError(`unknown project ${streamName}`, 404, CLIENT_UNRESOLVED)
+    if (!id) throw new ApiError(`unknown project ${streamName}`, 404, CLIENT_UNRESOLVED)
     return id
   }
 
-  toZulipMessage(m: ChamberMessage, chamberId: string): ZulipMessage {
+  toMessage(m: ChamberMessage, chamberId: string): Message {
     const tsMs = Date.parse(m.timestamp) || 0
     return {
       id: numericMessageId(m.id, tsMs, this.account),
@@ -209,9 +211,9 @@ export class HubClient {
     body: string
     timestamp: string
     is_question: boolean
-  }): ZulipMessage | null {
+  }): Message | null {
     if (!Array.from(this.byStreamId.values()).includes(m.chamber_id)) return null
-    return this.toZulipMessage(
+    return this.toMessage(
       {
         id: m.id ?? `${m.chamber_id}:${m.timestamp}:${m.from}:${fnv1a(m.body)}`,
         direction: 'event',
@@ -225,18 +227,14 @@ export class HubClient {
     )
   }
 
-  async getMessages(
-    streamName: string,
-    _anchor: number | 'newest',
-    _numBefore = 50,
-  ): Promise<ZulipMessage[]> {
+  async getMessages(streamName: string): Promise<Message[]> {
     const chamberId = this.chamberByName(streamName)
     const msgs = (await this.request(
       `/api/chambers/${encodeURIComponent(chamberId)}/messages`,
     )) as ChamberMessage[]
-    // The mailbox returns full history; anchor/window semantics are not needed
-    // (and "Load earlier" finds nothing further).
-    return msgs.map((m) => this.toZulipMessage(m, chamberId))
+    // The mailbox returns the full history in one fetch, so there is never an
+    // earlier window to ask for.
+    return msgs.map((m) => this.toMessage(m, chamberId))
   }
 
   async sendMessage(streamName: string, content: string): Promise<number> {
@@ -259,12 +257,12 @@ export class HubClient {
     return { user_id: 0 }
   }
 
-  async getUsers(): Promise<ZulipUser[]> {
+  async getUsers(): Promise<User[]> {
     return [] // mention autocomplete falls back to senders seen in messages
   }
 
   async uploadFile(file: File, streamName?: string): Promise<string> {
-    if (!streamName) throw new ZulipApiError('upload needs a project', 400)
+    if (!streamName) throw new ApiError('upload needs a project', 400)
     const chamberId = this.chamberByName(streamName)
     const form = new FormData()
     form.append('file', file)

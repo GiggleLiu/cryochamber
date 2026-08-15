@@ -1,30 +1,29 @@
 import { create } from 'zustand'
-import { ZulipClient, HISTORY_FETCH_COUNT } from '../api/client'
-import { HubClient } from '../api/hubClient'
+import { HubClient, HISTORY_FETCH_COUNT } from '../api/hubClient'
 import {
   isMessageEvent,
   isReadFlagsEvent,
+  type AppEvent,
   type Credentials,
   type InitialState,
+  type Message,
   type StreamSub,
-  type ZulipEvent,
-  type ZulipMessage,
-  type ZulipUser,
+  type User,
 } from '../api/types'
 import { saveCredentials, clearCredentials } from './auth'
 import { loadCachedState, saveCachedState, clearCachedState, CACHE_PREFIX } from './cache'
 import { accountKey } from '../lib/account'
 
-/** Per account: hub chamber ids start at 1 and collide with ordinary Zulip
- * stream ids, so one global list would hide the wrong project. */
-const HIDDEN_PREFIX = 'zulip-app.hidden.'
+/** Per account: every token numbers its own chambers from 1, so one global
+ * list would hide the wrong project. */
+const HIDDEN_PREFIX = 'agent-console.hidden.'
 
 export const AUTH_LOGOUT_REASON =
   'Your session is no longer valid — please sign in again.'
 
-function dedupeById(msgs: ZulipMessage[]): ZulipMessage[] {
+function dedupeById(msgs: Message[]): Message[] {
   const seen = new Set<number>()
-  const out: ZulipMessage[] = []
+  const out: Message[] = []
   for (const m of msgs) {
     if (!seen.has(m.id)) {
       seen.add(m.id)
@@ -34,10 +33,6 @@ function dedupeById(msgs: ZulipMessage[]): ZulipMessage[] {
   out.sort((a, b) => a.id - b.id)
   return out
 }
-
-/** Both clients expose the same surface the views consume; only the event loop
- * cares which backend it is talking to. */
-export type AppClient = ZulipClient | HubClient
 
 export type View = { name: 'projects' } | { name: 'conversation'; streamId: number }
 export type Connection = 'live' | 'connecting' | 'offline'
@@ -75,7 +70,7 @@ export interface OutboxItem {
  * is far cheaper than one that never resolves. */
 function reconcileOutbox(
   outboxByStream: Record<number, OutboxItem[]>,
-  arrived: Record<number, ZulipMessage[]>,
+  arrived: Record<number, Message[]>,
 ): Record<number, OutboxItem[]> {
   let next = outboxByStream
   for (const [key, msgs] of Object.entries(arrived)) {
@@ -94,17 +89,17 @@ let nextLocalId = -1
 
 export interface AppState {
   creds: Credentials | null
-  client: AppClient | null
+  client: HubClient | null
   view: View
   settingsOpen: boolean
   shareOpen: boolean
   streams: StreamSub[]
   unreadByStream: Record<number, number[]>
-  messagesByStream: Record<number, ZulipMessage[]>
+  messagesByStream: Record<number, Message[]>
   /** Id of the signed-in user; null until fetched once per session. */
   ownUserId: number | null
   /** Realm members for @-mention autocomplete; null until lazily fetched. */
-  users: ZulipUser[] | null
+  users: User[] | null
   /** Streams whose full history has been fetched; cleared on every register so a
    *  re-register (e.g. expired event queue) re-fetches gaps over cached messages. */
   loadedStreams: number[]
@@ -112,8 +107,8 @@ export interface AppState {
   connection: Connection
   /** Shown on the login screen after an auth-forced logout; cleared on next setCreds. */
   loginReason: string | null
-  /** Hub role behind the current token; null on Zulip (and until whoami answers).
-   *  Owner-only UI — the Share screen — keys off this. */
+  /** Hub role behind the current token; null until whoami answers. Owner-only
+   *  UI — the Share screen — keys off this. */
   hubRole: HubRole | null
   /** Unconfirmed sends per stream. Session-local: never cached, cleared on logout. */
   outboxByStream: Record<number, OutboxItem[]>
@@ -123,9 +118,8 @@ export interface AppState {
   setSettingsOpen(open: boolean): void
   setShareOpen(open: boolean): void
   applyInitialState(s: InitialState): void
-  setMessages(streamId: number, msgs: ZulipMessage[]): void
-  prependOlder(streamId: number, msgs: ZulipMessage[]): void
-  applyEvents(events: ZulipEvent[]): void
+  setMessages(streamId: number, msgs: Message[]): void
+  applyEvents(events: AppEvent[]): void
   clearUnread(streamId: number): void
   /** Forget a project we no longer have access to: it leaves the list, its
    *  messages and unreads go, and an open conversation on it returns to the
@@ -134,7 +128,7 @@ export interface AppState {
   toggleHidden(streamId: number): void
   setConnection(c: Connection): void
   setOwnUserId(id: number): void
-  setUsers(users: ZulipUser[]): void
+  setUsers(users: User[]): void
   setHubRole(role: HubRole | null): void
   /** Queue a send and return its local id; the caller drives the request. */
   enqueueOutbox(streamId: number, content: string): number
@@ -172,15 +166,15 @@ function loadHidden(creds: Credentials): number[] {
 
 const initialData = {
   creds: null as Credentials | null,
-  client: null as AppClient | null,
+  client: null as HubClient | null,
   view: { name: 'projects' } as View,
   settingsOpen: false,
   shareOpen: false,
   streams: [] as StreamSub[],
   unreadByStream: {} as Record<number, number[]>,
-  messagesByStream: {} as Record<number, ZulipMessage[]>,
+  messagesByStream: {} as Record<number, Message[]>,
   ownUserId: null as number | null,
-  users: null as ZulipUser[] | null,
+  users: null as User[] | null,
   loadedStreams: [] as number[],
   hiddenStreams: [] as number[],
   connection: 'connecting' as Connection,
@@ -209,15 +203,13 @@ export const useAppStore = create<AppState>()((set, get) => {
     const cached = loadCachedState(c)
     set({
       creds: c,
-      client: c.kind === 'hub' ? new HubClient(c) : new ZulipClient(c),
+      client: new HubClient(c),
       view: { name: 'projects' },
       loginReason: null,
       // Hidden projects are this account's preference, so they are re-read here
-      // rather than carried over from whoever was signed in before.
+      // rather than carried over from whoever was signed in before. The role is
+      // left alone: whoami sets it just before this call.
       hiddenStreams: loadHidden(c),
-      // The role is a hub concept and is set by whoami just before this call;
-      // signing into Zulip must not leave a stale one behind.
-      ...(c.kind === 'hub' ? {} : { hubRole: null }),
       ...(cached ? { streams: cached.streams, messagesByStream: cached.messagesByStream } : {}),
     })
   },
@@ -280,16 +272,6 @@ export const useAppStore = create<AppState>()((set, get) => {
     persist()
   },
 
-  prependOlder: (streamId, msgs) => {
-    set((state) => ({
-      messagesByStream: {
-        ...state.messagesByStream,
-        [streamId]: [...msgs, ...(state.messagesByStream[streamId] ?? [])],
-      },
-    }))
-    persist()
-  },
-
   applyEvents: (events) => {
     set((state) => {
       const messagesByStream = { ...state.messagesByStream }
@@ -297,7 +279,7 @@ export const useAppStore = create<AppState>()((set, get) => {
       const self = state.creds?.email
       // Only what this batch delivered, so an outbox item is retired by its own
       // echo rather than by an identical message from last week.
-      const arrived: Record<number, ZulipMessage[]> = {}
+      const arrived: Record<number, Message[]> = {}
       for (const ev of events) {
         if (isMessageEvent(ev)) {
           const m = ev.message
@@ -313,7 +295,7 @@ export const useAppStore = create<AppState>()((set, get) => {
             const prev = unreadByStream[m.stream_id] ?? []
             if (!prev.includes(m.id)) unreadByStream[m.stream_id] = [...prev, m.id]
           }
-        } else if (isReadFlagsEvent(ev) && (ev.op ?? ev.operation) === 'add') {
+        } else if (isReadFlagsEvent(ev) && ev.op === 'add') {
           const read = new Set(ev.messages)
           for (const key of Object.keys(unreadByStream)) {
             const sid = Number(key)

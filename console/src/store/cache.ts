@@ -1,4 +1,4 @@
-import type { StreamSub, ZulipMessage } from '../api/types'
+import type { Message, StreamSub } from '../api/types'
 
 /**
  * Per-account local cache of streams and recent messages, so a reload paints
@@ -10,15 +10,15 @@ import type { StreamSub, ZulipMessage } from '../api/types'
  * new exposure. Cleared on logout alongside the credentials.
  */
 
-export const CACHE_PREFIX = 'zulip-app.cache.'
+export const CACHE_PREFIX = 'agent-console.cache.'
 
-/** Kept per stream; message HTML (KaTeX especially) is bulky and localStorage
- * quota is ~5MB, so cache only what one screenful of catch-up needs. */
+/** Kept per stream; message bodies are bulky and localStorage quota is ~5MB,
+ * so cache only what one screenful of catch-up needs. */
 export const MAX_CACHED_MESSAGES = 30
 
 export interface CachedState {
   streams: StreamSub[]
-  messagesByStream: Record<number, ZulipMessage[]>
+  messagesByStream: Record<number, Message[]>
 }
 
 export function cacheKey(creds: { prefix: string; email: string }): string {
@@ -42,9 +42,9 @@ export function loadCachedState(creds: { prefix: string; email: string }): Cache
 export function saveCachedState(
   creds: { prefix: string; email: string },
   streams: StreamSub[],
-  messagesByStream: Record<number, ZulipMessage[]>,
+  messagesByStream: Record<number, Message[]>,
 ): void {
-  const trimmed: Record<number, ZulipMessage[]> = {}
+  const trimmed: Record<number, Message[]> = {}
   for (const [id, msgs] of Object.entries(messagesByStream)) {
     if (msgs.length > 0) trimmed[Number(id)] = msgs.slice(-MAX_CACHED_MESSAGES)
   }

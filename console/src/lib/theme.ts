@@ -1,4 +1,4 @@
-export const THEME_KEY = 'zulip-app.theme'
+export const THEME_KEY = 'agent-console.theme'
 
 /** `''` means "follow the system", which is the default and is expressed by the
  * absence of a `data-theme` attribute — the stylesheet's media query then wins. */

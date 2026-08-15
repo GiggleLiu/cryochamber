@@ -5,16 +5,16 @@ import {
   cacheKey,
   MAX_CACHED_MESSAGES,
 } from './cache'
-import type { ZulipMessage } from '../api/types'
+import type { Message } from '../api/types'
 
-const account = { prefix: '/zulip/qec', email: 'me@b.c' }
-const other = { prefix: '/zulip/qec', email: 'friend@b.c' }
+const account = { prefix: '', email: 'Alice' }
+const other = { prefix: '', email: 'Bob' }
 const streams = [{ stream_id: 1, name: 'alpha', description: 'A' }]
 
-function makeMsg(id: number): ZulipMessage {
+function makeMsg(id: number): Message {
   return {
     id, sender_full_name: 'Bot', sender_email: 'bot@b.c',
-    timestamp: 1755100000 + id, content: `<p>m${id}</p>`, stream_id: 1, subject: '',
+    timestamp: 1755100000 + id, content: `m${id}`, stream_id: 1, subject: '',
   }
 }
 

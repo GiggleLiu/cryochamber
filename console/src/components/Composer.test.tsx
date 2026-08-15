@@ -2,18 +2,19 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer, filterUsers, mentionQueryAt } from './Composer'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ZulipApiError, type ZulipClient } from '../api/client'
-import type { ZulipUser } from '../api/types'
+import { ApiError } from '../api/errors'
+import type { HubClient } from '../api/hubClient'
+import type { User } from '../api/types'
 
-function fakeClient(overrides: Partial<Record<keyof ZulipClient, unknown>> = {}) {
+function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
   return {
     sendMessage: vi.fn(async () => 42),
     getUsers: vi.fn(async () => []),
     ...overrides,
-  } as unknown as ZulipClient
+  } as unknown as HubClient
 }
 
-const users: ZulipUser[] = [
+const users: User[] = [
   { user_id: 1, full_name: 'Alice Doe', email: 'alice@b.c', is_bot: false },
   { user_id: 2, full_name: 'Alex Mercer', email: 'alex@b.c', is_bot: false },
   { user_id: 3, full_name: 'Bob', email: 'bob@b.c', is_bot: false },
@@ -25,13 +26,13 @@ beforeEach(() => {
   // from an empty composer.
   localStorage.clear()
   useAppStore.setState({
-    creds: { prefix: '/zulip/qec', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
+    creds: { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
   })
 })
 
 test('401 send triggers logout with the auth reason', async () => {
   const client = fakeClient({
-    sendMessage: vi.fn().mockRejectedValue(new ZulipApiError('Invalid API key', 401)),
+    sendMessage: vi.fn().mockRejectedValue(new ApiError('HTTP 401', 401)),
   })
   useAppStore.setState({ client })
   render(<Composer streamName="alpha" streamId={1} />)
@@ -81,20 +82,20 @@ test('a successful send moves its outbox item to sent, not away', async () => {
 describe('per-project drafts', () => {
   // Spelled out rather than built with draftKey(), so the stored key shape is
   // actually pinned by a test.
-  const ZULIP_1 = 'zulip-app.draft.zulip|/zulip/qec|me@b.c.1'
-  const ZULIP_2 = 'zulip-app.draft.zulip|/zulip/qec|me@b.c.2'
-  const HUB_CREDS = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
+  const KEY_1 = 'agent-console.draft.hub||me@b.c.1'
+  const KEY_2 = 'agent-console.draft.hub||me@b.c.2'
+  const OTHER_CREDS = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
 
   test('typing persists a draft under the project key', async () => {
     useAppStore.setState({ client: fakeClient() })
     render(<Composer streamName="alpha" streamId={1} />)
     await userEvent.type(screen.getByRole('textbox'), 'half a thought')
-    await waitFor(() => expect(localStorage.getItem(ZULIP_1)).toBe('half a thought'))
+    await waitFor(() => expect(localStorage.getItem(KEY_1)).toBe('half a thought'))
   })
 
   test('remounting restores this project draft and not another project one', () => {
-    localStorage.setItem(ZULIP_1, 'alpha draft')
-    localStorage.setItem(ZULIP_2, 'beta draft')
+    localStorage.setItem(KEY_1, 'alpha draft')
+    localStorage.setItem(KEY_2, 'beta draft')
     useAppStore.setState({ client: fakeClient() })
     const { unmount } = render(<Composer streamName="alpha" streamId={1} />)
     expect(screen.getByRole('textbox')).toHaveValue('alpha draft')
@@ -108,28 +109,29 @@ describe('per-project drafts', () => {
     render(<Composer streamName="alpha" streamId={1} />)
     await userEvent.type(screen.getByRole('textbox'), 'go')
     await userEvent.click(screen.getByRole('button', { name: /send/i }))
-    await waitFor(() => expect(localStorage.getItem(ZULIP_1)).toBeNull())
+    await waitFor(() => expect(localStorage.getItem(KEY_1)).toBeNull())
   })
 
   test('emptying the box drops the draft', async () => {
-    localStorage.setItem(ZULIP_1, 'stale')
+    localStorage.setItem(KEY_1, 'stale')
     useAppStore.setState({ client: fakeClient() })
     render(<Composer streamName="alpha" streamId={1} />)
     await userEvent.clear(screen.getByRole('textbox'))
-    await waitFor(() => expect(localStorage.getItem(ZULIP_1)).toBeNull())
+    await waitFor(() => expect(localStorage.getItem(KEY_1)).toBeNull())
   })
 
-  test('a hub chamber never picks up the Zulip draft of the same stream number', async () => {
-    localStorage.setItem(ZULIP_1, 'zulip work in progress')
-    useAppStore.setState({ client: fakeClient(), creds: HUB_CREDS })
+  test('another account never picks up the draft of the same project number', async () => {
+    localStorage.setItem(KEY_1, 'work in progress')
+    useAppStore.setState({ client: fakeClient(), creds: OTHER_CREDS })
     render(<Composer streamName="alpha" streamId={1} />)
-    // Hub chamber 1 and Zulip stream 1 are different projects entirely.
+    // Every token numbers its own chambers from 1: project 1 here is a
+    // different project entirely.
     expect(screen.getByRole('textbox')).toHaveValue('')
-    await userEvent.type(screen.getByRole('textbox'), 'hub work')
+    await userEvent.type(screen.getByRole('textbox'), 'other work')
     await waitFor(() =>
-      expect(localStorage.getItem('zulip-app.draft.hub||Alice.1')).toBe('hub work'),
+      expect(localStorage.getItem('agent-console.draft.hub||Alice.1')).toBe('other work'),
     )
-    expect(localStorage.getItem(ZULIP_1)).toBe('zulip work in progress')
+    expect(localStorage.getItem(KEY_1)).toBe('work in progress')
   })
 })
 
@@ -145,14 +147,14 @@ describe('mention query helpers', () => {
   })
 
   test('filterUsers lists prefix matches first, then includes, capped at 8', () => {
-    const list: ZulipUser[] = [
+    const list: User[] = [
       { user_id: 1, full_name: 'Alex', email: 'a@b.c', is_bot: false },
       { user_id: 2, full_name: 'Vitaly', email: 'v@b.c', is_bot: false },
       { user_id: 3, full_name: 'Alice', email: 'al@b.c', is_bot: false },
       { user_id: 4, full_name: 'Zed', email: 'z@b.c', is_bot: false },
     ]
     expect(filterUsers(list, 'al').map((u) => u.full_name)).toEqual(['Alex', 'Alice', 'Vitaly'])
-    const many: ZulipUser[] = Array.from({ length: 12 }, (_, i) => ({
+    const many: User[] = Array.from({ length: 12 }, (_, i) => ({
       user_id: i, full_name: `User ${i}`, email: '', is_bot: false,
     }))
     expect(filterUsers(many, '')).toHaveLength(8)
@@ -160,7 +162,7 @@ describe('mention query helpers', () => {
 })
 
 describe('@-mention autocomplete', () => {
-  test('typing @al opens a filtered panel; Enter inserts the Zulip mention', async () => {
+  test('typing @al opens a filtered panel; Enter inserts the mention', async () => {
     const client = fakeClient({ getUsers: vi.fn(async () => users) })
     useAppStore.setState({ client })
     render(<Composer streamName="alpha" streamId={1} />)
@@ -279,7 +281,7 @@ describe('file upload', () => {
 
   test('failed upload shows the server message and leaves text unchanged', async () => {
     const client = fakeClient({
-      uploadFile: vi.fn().mockRejectedValue(new ZulipApiError('File too large', 400)),
+      uploadFile: vi.fn().mockRejectedValue(new ApiError('File too large', 400)),
     })
     useAppStore.setState({ client })
     render(<Composer streamName="alpha" streamId={1} />)
@@ -399,7 +401,7 @@ test('text typed while an upload is pending survives link insertion', async () =
     uploadFile: vi.fn(() => new Promise<string>((r) => { resolveUpload = r })),
     sendMessage: vi.fn(),
     getUsers: vi.fn(async () => []),
-  } as unknown as ZulipClient
+  } as unknown as HubClient
   useAppStore.setState({ client })
   render(<Composer streamName="alpha" streamId={1} />)
   const box = screen.getByRole('textbox', { name: /message/i })
@@ -408,8 +410,12 @@ test('text typed while an upload is pending survives link insertion', async () =
   await userEvent.upload(screen.getByLabelText(/attach file/i, { selector: 'input' }), file)
   // keep typing while the upload is in flight
   await userEvent.type(box, 'second ')
-  resolveUpload('/user_uploads/1/aa/notes.txt')
-  await waitFor(() => expect(box).toHaveValue('first second [notes.txt](/user_uploads/1/aa/notes.txt)'))
+  resolveUpload('/api/chambers/cham-a/files/aa_notes.txt')
+  await waitFor(() =>
+    expect(box).toHaveValue(
+      'first second [notes.txt](/api/chambers/cham-a/files/aa_notes.txt)',
+    ),
+  )
 })
 
 describe('mention candidates without a user directory (hub)', () => {
