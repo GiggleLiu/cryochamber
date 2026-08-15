@@ -72,8 +72,10 @@ describe('chamber liveness', () => {
     const c = new HubClient(creds, mockFetch(() => chambers))
     const subs = (await c.register()).subscriptions
     expect(await c.chamberStatuses()).toEqual([
-      { stream_id: subs.find((s) => s.name === 'alpha')!.stream_id, running: true, agentRunning: true, nextWake: null },
-      { stream_id: subs.find((s) => s.name === 'beta')!.stream_id, running: true, agentRunning: false, nextWake: 'in 2 h' },
+      { stream_id: subs.find((s) => s.name === 'alpha')!.stream_id, running: true, agentRunning: true, nextWake: null,
+        completed: false, archived: false, hasOpenQuestion: false },
+      { stream_id: subs.find((s) => s.name === 'beta')!.stream_id, running: true, agentRunning: false, nextWake: 'in 2 h',
+        completed: false, archived: false, hasOpenQuestion: false },
     ])
   })
 
@@ -279,5 +281,118 @@ describe('SSE message mapping', () => {
         timestamp: '2026-08-15T10:00:00', is_question: false,
       }),
     ).toBeNull()
+  })
+})
+
+describe('owner chamber routes', () => {
+  const STATUS = {
+    running: true, agent_running: false, session: 4, agent: 'opencode',
+    log_tail: 'line one\nline two', daily_digests: [], next_wake: '2026-08-15T18:00',
+    notes_content: '', notes_html: '<p>notes</p>', plan_content: '', plan_html: '<p>plan</p>',
+    has_config: true, settings_rows: [{ key: 'agent', value: '"opencode"', kind: 'scalar' }],
+    task: null, session_summary: 'swept the decoders', completed: false, completion_summary: null,
+  }
+
+  test('chamberStatus GETs the status route with the bearer header and no CSRF', async () => {
+    const fetchFn = mockFetch(() => STATUS)
+    const c = new HubClient(creds, fetchFn)
+    const status = await c.chamberStatus('cham-a')
+    expect(status.session).toBe(4)
+    expect(status.plan_html).toBe('<p>plan</p>')
+    const [url, init] = vi.mocked(fetchFn).mock.calls[0]
+    expect(String(url)).toBe('/api/chambers/cham-a/status')
+    expect(init?.method).toBeUndefined()
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer tok123' })
+    expect(init?.headers).not.toHaveProperty('X-Cryo-CSRF')
+  })
+
+  test('chamberTodos and chamberSync GET their routes', async () => {
+    const fetchFn = mockFetch((url) =>
+      String(url).endsWith('/todos')
+        ? [{ id: 1, text: 'check the runner', done: false, claimed: false, at: '2026-08-15T18:00', created: '2026-08-14T09:00' }]
+        : [{ backend: 'zulip', configured: true, installed: true, running: false, target: '#research', last_pushed_session: 3, log_tail_path: '/tmp/z.log' }],
+    )
+    const c = new HubClient(creds, fetchFn)
+    expect((await c.chamberTodos('cham-a'))[0].text).toBe('check the runner')
+    expect((await c.chamberSync('cham-a'))[0].backend).toBe('zulip')
+    expect(vi.mocked(fetchFn).mock.calls.map(([u]) => String(u))).toEqual([
+      '/api/chambers/cham-a/todos',
+      '/api/chambers/cham-a/sync',
+    ])
+  })
+
+  test('lifecycle POSTs the action and returns the hub ok/message verbatim', async () => {
+    const fetchFn = mockFetch(() => ({ ok: false, message: 'Unarchive the chamber before launching it' }))
+    const c = new HubClient(creds, fetchFn)
+    expect(await c.lifecycle('cham-a', 'start')).toEqual({
+      ok: false, message: 'Unarchive the chamber before launching it',
+    })
+    const [url, init] = vi.mocked(fetchFn).mock.calls[0]
+    expect(String(url)).toBe('/api/chambers/cham-a/start')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer tok123', 'X-Cryo-CSRF': '1' })
+  })
+
+  test('syncAction POSTs backend and verb into the path', async () => {
+    const fetchFn = mockFetch(() => ({ ok: true, message: 'zulip start' }))
+    const c = new HubClient(creds, fetchFn)
+    expect(await c.syncAction('cham-a', 'zulip', 'stop')).toEqual({ ok: true, message: 'zulip start' })
+    const [url, init] = vi.mocked(fetchFn).mock.calls[0]
+    expect(String(url)).toBe('/api/chambers/cham-a/sync/zulip/stop')
+    expect(init?.headers).toMatchObject({ 'X-Cryo-CSRF': '1' })
+  })
+
+  test('chamber ids are percent-encoded into every path', async () => {
+    const fetchFn = mockFetch(() => STATUS)
+    await new HubClient(creds, fetchFn).chamberStatus('work/alpha')
+    expect(String(vi.mocked(fetchFn).mock.calls[0][0])).toBe('/api/chambers/work%2Falpha/status')
+  })
+
+  test('createChamber returns the new id and surfaces the hub error text on 400', async () => {
+    const ok = mockFetch(() => new Response(JSON.stringify({ id: 'cham-new' }), { status: 201 }))
+    const c = new HubClient(creds, ok)
+    expect(await c.createChamber({ name: 'alpha' })).toEqual({ id: 'cham-new' })
+    const [url, init] = vi.mocked(ok).mock.calls[0]
+    expect(String(url)).toBe('/api/chambers/new')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toMatchObject({ 'Content-Type': 'application/json', 'X-Cryo-CSRF': '1' })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'alpha' })
+
+    const bad = new HubClient(
+      creds,
+      mockFetch(() => new Response(JSON.stringify({ error: 'chamber already exists' }), { status: 400 })),
+    )
+    await expect(bad.createChamber({ name: 'alpha' })).rejects.toThrow('chamber already exists')
+  })
+
+  test('refreshIndex POSTs the refresh route', async () => {
+    const fetchFn = mockFetch(() => [])
+    await new HubClient(creds, fetchFn).refreshIndex()
+    const [url, init] = vi.mocked(fetchFn).mock.calls[0]
+    expect(String(url)).toBe('/api/chambers/refresh')
+    expect(init?.method).toBe('POST')
+  })
+
+  test('register carries completion, archive and open-question flags, and maps ids both ways', async () => {
+    const fetchFn = mockFetch(() => [
+      { id: 'cham-a', name: 'alpha', running: true, agent_running: false, completed: true, archived: false, has_open_question: true },
+    ])
+    const c = new HubClient(creds, fetchFn)
+    const sub = (await c.register()).subscriptions[0]
+    expect(sub).toMatchObject({ completed: true, archived: false, hasOpenQuestion: true })
+    expect(c.streamIdFor('cham-a')).toBe(sub.stream_id)
+    expect(c.chamberIdFor(sub.stream_id)).toBe('cham-a')
+    expect(c.streamIdFor('cham-zzz')).toBeUndefined()
+  })
+
+  test('chamberStatuses re-reads the same three flags for a status event', async () => {
+    const c = new HubClient(
+      creds,
+      mockFetch(() => [{ id: 'cham-a', name: 'alpha', completed: false, archived: true, has_open_question: false }]),
+    )
+    await c.register()
+    expect((await c.chamberStatuses())[0]).toMatchObject({
+      completed: false, archived: true, hasOpenQuestion: false,
+    })
   })
 })

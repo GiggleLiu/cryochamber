@@ -105,6 +105,9 @@ interface Chamber {
   /** A session is executing right now; implies `running`. */
   agent_running?: boolean
   next_wake_display?: string | null
+  completed?: boolean
+  archived?: boolean
+  has_open_question?: boolean
 }
 
 export interface Invite {
@@ -112,6 +115,75 @@ export interface Invite {
   chambers: string[]
   created_at: string
   revoked_at: string | null
+}
+
+export interface DailyDigest {
+  date: string
+  total_sessions: number
+  failed_sessions: number
+  latest_session: number
+}
+
+export interface SettingsRow {
+  key: string
+  value: string
+  kind: string
+}
+
+export interface TodoItem {
+  id: number
+  text: string
+  done: boolean
+  claimed: boolean
+  at: string
+  created: string
+}
+
+export interface SyncSummary {
+  backend: string
+  configured: boolean
+  installed: boolean
+  running: boolean
+  target: string
+  last_pushed_session: number | null
+  log_tail_path: string
+}
+
+/** `GET /api/chambers/{id}/status`. The raw `cryo.toml` is deliberately absent
+ * from the hub's payload (it can hold an API key); `has_config` plus the masked
+ * `settings_rows` are what the UI gets. */
+export interface ChamberStatus {
+  running: boolean
+  agent_running: boolean
+  session: number
+  agent: string
+  log_tail: string
+  daily_digests: DailyDigest[]
+  next_wake: string | null
+  notes_html: string
+  plan_html: string
+  has_config: boolean
+  settings_rows: SettingsRow[]
+  task: string | null
+  session_summary: string | null
+  completed: boolean
+  completion_summary: string | null
+}
+
+/** Every lifecycle route the hub actually serves. There is no `wake` route. */
+export type LifecycleAction = 'start' | 'stop' | 'restart' | 'reset' | 'archive' | 'unarchive'
+
+/** The `{ok, message}` shape every lifecycle and sync action answers with. */
+export interface ActionResult {
+  ok: boolean
+  message: string
+}
+
+export interface NewChamberPayload {
+  name: string
+  api_key_provider?: string
+  api_key?: string
+  model?: string
 }
 
 /**
@@ -143,15 +215,21 @@ export class HubClient {
     return `Bearer ${this.creds.apiKey}`
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async request(path: string, init: RequestInit = {}): Promise<any> {
+  /** Every hub request goes through here: bearer header always, CSRF header on
+   * anything that is not a GET. Nothing may build its own fetch call. */
+  private async send(path: string, init: RequestInit = {}): Promise<Response> {
     const headers: Record<string, string> = {
       Authorization: this.authHeaderValue(),
       ...((init.headers as Record<string, string>) ?? {}),
     }
     // The hub rejects state-changing requests without this header.
     if (init.method && init.method !== 'GET') headers['X-Cryo-CSRF'] = '1'
-    const res = await this.fetchFn(`${this.creds.prefix}${path}`, { ...init, headers })
+    return this.fetchFn(`${this.creds.prefix}${path}`, { ...init, headers })
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async request(path: string, init: RequestInit = {}): Promise<any> {
+    const res = await this.send(path, init)
     if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
     return res.json()
   }
@@ -179,6 +257,9 @@ export class HubClient {
         // Only a started chamber has a real schedule; a stopped one reports
         // whatever was pending when it died, which reads as nonsense.
         nextWake: c.running === false ? null : (c.next_wake_display ?? null),
+        completed: c.completed === true,
+        archived: c.archived === true,
+        hasOpenQuestion: c.has_open_question === true,
       }
     })
     // No server-side unread state on the hub: it is tracked client-side.
@@ -193,7 +274,15 @@ export class HubClient {
    * wakes or falls asleep: the same index, re-read, without disturbing the
    * projects the store already has. */
   async chamberStatuses(): Promise<
-    Array<{ stream_id: number; running?: boolean; agentRunning?: boolean; nextWake: string | null }>
+    Array<{
+      stream_id: number
+      running?: boolean
+      agentRunning?: boolean
+      nextWake: string | null
+      completed: boolean
+      archived: boolean
+      hasOpenQuestion: boolean
+    }>
   > {
     const chambers = await this.chambers()
     // Same rule as register(): absent flags stay undefined — a hub that says
@@ -203,11 +292,23 @@ export class HubClient {
       running: typeof c.running === 'boolean' ? c.running : undefined,
       agentRunning: typeof c.agent_running === 'boolean' ? c.agent_running : undefined,
       nextWake: c.running === false ? null : (c.next_wake_display ?? null),
+      completed: c.completed === true,
+      archived: c.archived === true,
+      hasOpenQuestion: c.has_open_question === true,
     }))
   }
 
   chamberIdFor(streamId: number): string | undefined {
     return this.byStreamId.get(streamId)
+  }
+
+  /** Stream id for a chamber id — the inverse of `chamberIdFor`, for the paths
+   * that start from a hub id (a freshly created chamber) rather than a row. */
+  streamIdFor(chamberId: string): number | undefined {
+    for (const [streamId, id] of this.byStreamId) {
+      if (id === chamberId) return streamId
+    }
+    return undefined
   }
 
   private chamberByName(streamName: string): string {
@@ -308,6 +409,67 @@ export class HubClient {
     })
     const match = /\(([^)]+)\)$/.exec(body.markdown as string)
     return match ? match[1] : `/api/chambers/${chamberId}/files/${body.name}`
+  }
+
+  /** Owner-only chamber detail. Every id is encoded: a chamber id can carry a
+   * path separator, and an unencoded one would address a different route. */
+  async chamberStatus(chamberId: string): Promise<ChamberStatus> {
+    return (await this.request(
+      `/api/chambers/${encodeURIComponent(chamberId)}/status`,
+    )) as ChamberStatus
+  }
+
+  async chamberTodos(chamberId: string): Promise<TodoItem[]> {
+    return (await this.request(
+      `/api/chambers/${encodeURIComponent(chamberId)}/todos`,
+    )) as TodoItem[]
+  }
+
+  async chamberSync(chamberId: string): Promise<SyncSummary[]> {
+    return (await this.request(
+      `/api/chambers/${encodeURIComponent(chamberId)}/sync`,
+    )) as SyncSummary[]
+  }
+
+  async syncAction(
+    chamberId: string,
+    backend: string,
+    verb: 'start' | 'stop',
+  ): Promise<ActionResult> {
+    return (await this.request(
+      `/api/chambers/${encodeURIComponent(chamberId)}/sync/${encodeURIComponent(backend)}/${verb}`,
+      { method: 'POST' },
+    )) as ActionResult
+  }
+
+  /** The hub answers 200 with `{ok:false, message}` for a refused action, so
+   * the caller shows `message` rather than treating it as a transport error. */
+  async lifecycle(chamberId: string, action: LifecycleAction): Promise<ActionResult> {
+    return (await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/${action}`, {
+      method: 'POST',
+    })) as ActionResult
+  }
+
+  /** 201 → the new chamber id. A rejected name answers 400 with `{error}`,
+   * which is the sentence the operator needs — so this reads the body instead
+   * of letting `request` collapse it to "HTTP 400". */
+  async createChamber(payload: NewChamberPayload): Promise<{ id: string }> {
+    const res = await this.send('/api/chambers/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const body = (await res.json().catch(() => ({}))) as { id?: string; error?: string }
+    if (!res.ok) {
+      throw new ApiError(body.error ?? `HTTP ${res.status}`, res.status)
+    }
+    return { id: String(body.id ?? '') }
+  }
+
+  /** Re-scan the workspace. The hub also emits an `index` SSE event, which is
+   * what makes the app re-register; the returned list is not needed here. */
+  async refreshIndex(): Promise<void> {
+    await this.request('/api/chambers/refresh', { method: 'POST' })
   }
 
   async listInvites(): Promise<Invite[]> {

@@ -13,6 +13,7 @@ import {
 import { saveCredentials, clearCredentials } from './auth'
 import { loadCachedState, saveCachedState, clearCachedState, CACHE_PREFIX } from './cache'
 import { accountKey } from '../lib/account'
+import { resetChamberEvents } from './chamberEvents'
 
 /** Per account: every token numbers its own chambers from 1, so one global
  * list would hide the wrong project. */
@@ -119,7 +120,17 @@ export interface AppState {
   setShareOpen(open: boolean): void
   applyInitialState(s: InitialState): void
   /** Merge fresh liveness into the projects already on screen. */
-  updateStreamStatus(list: Array<{ stream_id: number; running?: boolean; agentRunning?: boolean; nextWake: string | null }>): void
+  updateStreamStatus(
+    list: Array<{
+      stream_id: number
+      running?: boolean
+      agentRunning?: boolean
+      nextWake: string | null
+      completed: boolean
+      archived: boolean
+      hasOpenQuestion: boolean
+    }>,
+  ): void
   setMessages(streamId: number, msgs: Message[]): void
   applyEvents(events: AppEvent[]): void
   clearUnread(streamId: number): void
@@ -262,6 +273,9 @@ export const useAppStore = create<AppState>()((set, get) => {
               running: status.running ?? s.running,
               agentRunning: status.agentRunning ?? s.agentRunning,
               nextWake: status.nextWake,
+              completed: status.completed,
+              archived: status.archived,
+              hasOpenQuestion: status.hasOpenQuestion,
             }
           : s
       }),
@@ -405,6 +419,7 @@ export const useAppStore = create<AppState>()((set, get) => {
 })
 
 export function resetAppStore(): void {
+  resetChamberEvents()
   try {
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith(CACHE_PREFIX)) localStorage.removeItem(key)

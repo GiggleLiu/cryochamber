@@ -3,6 +3,7 @@ import { isAuthError } from '../api/errors'
 import { HubClient } from '../api/hubClient'
 import { readSse } from '../api/sse'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { emitChamberEvent } from '../store/chamberEvents'
 
 /** Thrown out of the SSE callback when the hub says the chamber index changed:
  * the loop unwinds to its top and re-registers. */
@@ -74,6 +75,16 @@ export function useEventLoop(): void {
                 markHealthy()
                 if (event === 'index') throw new ReregisterSignal()
                 if (event === 'status') {
+                  // Two audiences: the projects list, refreshed from the index,
+                  // and whatever sheet is open on this chamber, which re-reads
+                  // its own detail. Parse first — a payload we cannot read
+                  // still deserves the index refresh.
+                  try {
+                    const { chamber_id } = JSON.parse(payload) as { chamber_id: string }
+                    if (chamber_id) emitChamberEvent({ type: 'status', chamberId: chamber_id })
+                  } catch {
+                    /* malformed payload: the index refresh below still runs */
+                  }
                   // Fire and forget for transient failures — a stale banner
                   // heals on the next status event. A 401 is different: this
                   // refresh may be the first authenticated call after a
@@ -85,6 +96,20 @@ export function useEventLoop(): void {
                     .catch((e) => {
                       if (isAuthError(e)) store.getState().logout(AUTH_LOGOUT_REASON)
                     })
+                  return
+                }
+                if (event === 'log') {
+                  try {
+                    const { chamber_id, line } = JSON.parse(payload) as {
+                      chamber_id: string
+                      line: string
+                    }
+                    if (chamber_id) {
+                      emitChamberEvent({ type: 'log', chamberId: chamber_id, line: line ?? '' })
+                    }
+                  } catch {
+                    /* malformed payload: skip the line, keep the stream */
+                  }
                   return
                 }
                 if (event !== 'message') return

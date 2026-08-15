@@ -45,6 +45,12 @@ export interface StreamSub {
   /** Display form of the next scheduled wake. Only a started chamber has
    *  one — a stopped chamber's schedule is a stale leftover and never shown. */
   nextWake?: string | null
+  /** The latest session reported a completed plan. */
+  completed?: boolean
+  /** Put away by the operator; it cannot run until unarchived. */
+  archived?: boolean
+  /** The agent asked something and is waiting on a reply. */
+  hasOpenQuestion?: boolean
 }
 
 export interface UnreadStreamEntry {

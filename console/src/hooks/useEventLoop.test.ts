@@ -267,3 +267,46 @@ test('a stream that delivers an event resets the wait to its floor', async () =>
     vi.useRealTimers()
   }
 })
+
+test('status and log events reach a per-chamber subscriber', async () => {
+  const { subscribeChamberEvents, resetChamberEvents } = await import('../store/chamberEvents')
+  resetChamberEvents()
+  const heard: unknown[] = []
+  subscribeChamberEvents('cham-a', (ev) => heard.push(ev))
+  const fetchMock = vi.fn(async (url: string) =>
+    String(url).includes('/api/events')
+      ? liveStream([
+          'event: status\ndata: {"chamber_id":"cham-a"}\n\n',
+          'event: log\ndata: {"chamber_id":"cham-a","line":"session 5 started"}\n\n',
+        ])
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient(creds) })
+  const { unmount } = renderHook(() => useEventLoop())
+  await waitFor(() => expect(heard).toHaveLength(2))
+  expect(heard[0]).toEqual({ type: 'status', chamberId: 'cham-a' })
+  expect(heard[1]).toEqual({ type: 'log', chamberId: 'cham-a', line: 'session 5 started' })
+  unmount()
+})
+
+test('a malformed log payload is skipped without killing the stream', async () => {
+  const { subscribeChamberEvents, resetChamberEvents } = await import('../store/chamberEvents')
+  resetChamberEvents()
+  const heard: unknown[] = []
+  subscribeChamberEvents('cham-a', (ev) => heard.push(ev))
+  const fetchMock = vi.fn(async (url: string) =>
+    String(url).includes('/api/events')
+      ? liveStream([
+          'event: log\ndata: not json\n\n',
+          'event: log\ndata: {"chamber_id":"cham-a","line":"ok"}\n\n',
+        ])
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient(creds) })
+  const { unmount } = renderHook(() => useEventLoop())
+  await waitFor(() => expect(heard).toHaveLength(1))
+  expect(heard[0]).toEqual({ type: 'log', chamberId: 'cham-a', line: 'ok' })
+  unmount()
+})
