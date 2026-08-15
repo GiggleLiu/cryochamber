@@ -52,9 +52,10 @@ function mintErrorMessage(e: unknown): string {
  * Sharing, the way a meeting host shares: one button that mints a link for
  * *this* chamber, and a list of who currently holds one.
  *
- * The minted link is shown once. The hub stores only a hash, so after this
- * sheet closes the string does not exist anywhere — which is why it is copied
- * to the clipboard in the same gesture that creates it.
+ * The minted link is shown once, and is copied to the clipboard in the same
+ * gesture that creates it: the console never persists it, so once this sheet
+ * closes the only remaining copy is the hub's own token file (0600) — not
+ * somewhere an owner should have to go digging to re-send a link.
  */
 export function InviteSheet({
   chamberId,
