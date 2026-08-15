@@ -28,11 +28,12 @@ use axum::{
 /// Loopback hosts that are always allowed, independent of configuration.
 const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
 
-/// Wrap `router` with the host + CSRF guard. `configured_host` is the bind
-/// host from `HubConfig` (loopback by default); it is added to the allowlist
-/// so non-default binds keep working.
-pub fn apply(router: Router, configured_host: Option<String>) -> Router {
-    let allowed = Arc::new(build_allowlist(configured_host));
+/// Wrap `router` with the host + CSRF guard. `configured_hosts` are the host
+/// names from `HubConfig` — the bind host (so non-default binds keep working)
+/// plus `public_hosts` (so a reverse proxy may forward the public hostname
+/// rather than rewriting it to loopback).
+pub fn apply(router: Router, configured_hosts: Vec<String>) -> Router {
+    let allowed = Arc::new(build_allowlist(configured_hosts));
     router.layer(axum::middleware::from_fn(
         move |req: Request, next: Next| {
             let allowed = allowed.clone();
@@ -41,10 +42,10 @@ pub fn apply(router: Router, configured_host: Option<String>) -> Router {
     ))
 }
 
-/// Build the set of allowed host-parts: loopback plus the configured host.
-fn build_allowlist(configured_host: Option<String>) -> Vec<String> {
+/// Build the set of allowed host-parts: loopback plus the configured hosts.
+fn build_allowlist(configured_hosts: Vec<String>) -> Vec<String> {
     let mut allowed: Vec<String> = LOOPBACK_HOSTS.iter().map(|h| h.to_string()).collect();
-    if let Some(host) = configured_host {
+    for host in configured_hosts {
         let norm = normalize_host(&host);
         if !norm.is_empty() && !allowed.contains(&norm) {
             allowed.push(norm);

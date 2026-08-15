@@ -35,10 +35,13 @@ pub fn build_router_local_only(workspace_dir: PathBuf) -> Router {
 
 /// Separate entry point so integration tests can inject their own `AppState`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
-    // Read the configured bind host once (loopback by default) so the security
-    // layer can allow it in addition to loopback. Falling back to loopback-only
-    // if the hub config is unreadable is safe — the default bind is loopback.
-    let configured_host = crate::hub::config::load_config().ok().map(|cfg| cfg.host);
+    // Read the hub config once. The security layer needs the bind host and any
+    // reverse-proxy hostnames; `post_send` needs the owner sender name. Falling
+    // back to defaults if the config is unreadable is safe — the default bind
+    // is loopback and the default owner name is `human`.
+    let config = crate::hub::config::load_config().unwrap_or_default();
+    let mut configured_hosts = vec![config.host.clone()];
+    configured_hosts.extend(config.public_hosts.iter().cloned());
     let router = Router::new()
         .route("/", get(crate::hub::routes::pages::get_index))
         .route("/c/{id}", get(crate::hub::routes::pages::get_index))
@@ -133,8 +136,11 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
         // framing overhead; the exact cap is enforced in `post_upload`.
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::hub::routes::files::MAX_ATTACHMENT_BYTES + 1024 * 1024,
-        ));
-    crate::hub::security::apply(router, configured_host)
+        ))
+        .layer(axum::Extension(crate::hub::config::OwnerName(
+            config.owner_name,
+        )));
+    crate::hub::security::apply(router, configured_hosts)
 }
 
 /// Public-mode router: same routes, wrapped in the bearer-token guard.
@@ -148,6 +154,25 @@ pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::Aut
     crate::hub::auth::apply_auth(router, app, ctx)
 }
 
+/// Refuse public mode unless an owner token exists.
+///
+/// A public hub without one could never be administered — no invites, no
+/// revocation — so starting is worse than not starting. Both entry points
+/// check it: `serve` before binding a socket, and `cryohub start` before
+/// *installing a service*, since a KeepAlive unit that fails on boot would
+/// otherwise restart forever.
+pub fn require_owner_token() -> anyhow::Result<()> {
+    let path = crate::hub::tokens::default_tokens_path();
+    if crate::hub::tokens::load_tokens(&path)?.owner.is_none() {
+        anyhow::bail!(
+            "public mode requires an owner token — run `cryohub token owner` first \
+             (store: {})",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Serve the hub. In `public` mode every `/api` route is behind the bearer
 /// guard; otherwise the hub is the loopback-only dashboard it has always been.
 ///
@@ -157,22 +182,10 @@ pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::Aut
 /// starting at all.
 pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
     let ctx = if public {
-        let path = crate::hub::tokens::default_tokens_path();
-        let ctx = crate::hub::auth::AuthCtx::load(&path)?;
-        if ctx
-            .store
-            .read()
-            .expect("token store poisoned")
-            .owner
-            .is_none()
-        {
-            anyhow::bail!(
-                "public mode requires an owner token — run `cryohub token owner` first \
-                 (store: {})",
-                path.display()
-            );
-        }
-        Some(ctx)
+        require_owner_token()?;
+        Some(crate::hub::auth::AuthCtx::load(
+            &crate::hub::tokens::default_tokens_path(),
+        )?)
     } else {
         None
     };

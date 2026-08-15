@@ -103,6 +103,9 @@ fn hub_config_save_round_trips_config_file() {
         host: "0.0.0.0".to_string(),
         port: 9876,
         chamber_root: custom_root.path().to_path_buf(),
+        owner_name: "ops-desk".to_string(),
+        public_hosts: vec!["agents.example.com".to_string()],
+        public: true,
     };
 
     cryochamber::hub::config::save_config(&cfg).unwrap();
@@ -129,10 +132,40 @@ fn hub_effective_config_persists_host_and_port_overrides() {
     let config_home = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
 
-    let cfg = cryochamber::hub::config::effective_config(Some("0.0.0.0".to_string()), Some(9900))
-        .unwrap();
+    let cfg =
+        cryochamber::hub::config::effective_config(Some("0.0.0.0".to_string()), Some(9900), None)
+            .unwrap();
 
     assert_eq!(cfg.host, "0.0.0.0");
     assert_eq!(cfg.port, 9900);
     assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+#[test]
+fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
+    // Public mode is a security posture, not a command-line detail: once set it
+    // must survive a plain restart (and a reboot), and only an explicit
+    // `--no-public` may clear it. Otherwise a `cryohub start` typed from muscle
+    // memory silently un-authenticates a hub a reverse proxy is publishing.
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    use cryochamber::hub::config::effective_config;
+
+    assert!(
+        !effective_config(None, None, None).unwrap().public,
+        "a fresh config defaults to open mode"
+    );
+
+    assert!(effective_config(None, None, Some(true)).unwrap().public);
+    assert!(
+        effective_config(None, None, None).unwrap().public,
+        "a plain start must not drop public mode"
+    );
+    assert!(
+        cryochamber::hub::config::load_config().unwrap().public,
+        "public mode must be on disk, not just in this process"
+    );
+
+    assert!(!effective_config(None, None, Some(false)).unwrap().public);
+    assert!(!cryochamber::hub::config::load_config().unwrap().public);
 }

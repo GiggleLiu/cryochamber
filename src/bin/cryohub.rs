@@ -32,8 +32,13 @@ enum Commands {
         foreground: bool,
         /// Enforce bearer-token auth on every /api route (required before
         /// exposing the hub beyond loopback). Needs `cryohub token owner`.
+        /// Saved to cryohub.toml, so later starts stay public.
         #[arg(long)]
         public: bool,
+        /// Turn public mode back off. Disabling auth is never implicit: a
+        /// plain `cryohub start` keeps whatever mode is saved.
+        #[arg(long, conflicts_with = "public")]
+        no_public: bool,
     },
     /// Stop and remove the global hub service
     Stop,
@@ -84,12 +89,24 @@ fn main() -> Result<()> {
             port,
             foreground,
             public,
-        } => cmd_start(host, port, foreground, public),
+            no_public,
+        } => cmd_start(host, port, foreground, public_override(public, no_public)),
         Commands::Stop => cmd_stop(),
         Commands::Restart => cmd_restart(),
         Commands::Status => cmd_status(),
         Commands::Token { action } => cmd_token(action),
-        Commands::Daemon { host, port, public } => cmd_daemon(host, port, public),
+        Commands::Daemon { host, port, public } => cmd_daemon(host, port, public.then_some(true)),
+    }
+}
+
+/// Turn the two mode flags into an override for the saved config. Absent both,
+/// `None` leaves the saved mode alone — public mode must survive a plain
+/// restart, and turning it off must be deliberate.
+fn public_override(public: bool, no_public: bool) -> Option<bool> {
+    match (public, no_public) {
+        (true, _) => Some(true),
+        (false, true) => Some(false),
+        (false, false) => None,
     }
 }
 
@@ -97,23 +114,33 @@ fn cmd_start(
     host: Option<String>,
     port: Option<u16>,
     foreground: bool,
-    public: bool,
+    public: Option<bool>,
 ) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port)?;
+    let config = cryochamber::hub::config::effective_config(host, port, public)?;
     std::fs::create_dir_all(&config.chamber_root)?;
+
+    // Before binding a socket AND before installing a service: a public hub
+    // with no owner token can never be administered, and an installed unit
+    // would just crash-loop under KeepAlive.
+    if config.public {
+        cryochamber::hub::require_owner_token()?;
+    }
 
     if foreground {
         let rt = tokio::runtime::Runtime::new()?;
-        return rt.block_on(cryochamber::hub::serve(&config.host, config.port, public));
+        return rt.block_on(cryochamber::hub::serve(
+            &config.host,
+            config.port,
+            config.public,
+        ));
     }
 
     let exe = std::env::current_exe().context("Failed to resolve cryohub executable path")?;
     let service_dir = cryochamber::hub::paths::hub_service_dir();
     std::fs::create_dir_all(&service_dir)?;
-    // The installed unit re-invokes this binary, so --public has to travel with
-    // it; otherwise `cryohub start --public` would come back up unauthenticated
-    // after the first reboot.
-    let args: &[&str] = if public {
+    // The installed unit re-invokes this binary. The mode is persisted in
+    // cryohub.toml, but pass it explicitly too so the unit is self-describing.
+    let args: &[&str] = if config.public {
         &["daemon", "--public"]
     } else {
         &["daemon"]
@@ -128,7 +155,7 @@ fn cmd_start(
         "Cryohub service installed: http://{}:{}",
         config.host, config.port
     );
-    if public {
+    if config.public {
         println!("Mode: PUBLIC (bearer auth enforced on every /api route)");
     }
     println!("Chamber root: {}", config.chamber_root.display());
@@ -180,6 +207,14 @@ fn cmd_status() -> Result<()> {
         println!("Cryohub service: not installed");
     }
     println!("URL: http://{}:{}", config.host, config.port);
+    println!(
+        "Mode: {}",
+        if config.public {
+            "public (bearer auth)"
+        } else {
+            "open (loopback)"
+        }
+    );
     println!("Chamber root: {}", config.chamber_root.display());
     println!(
         "Config: {}",
@@ -211,10 +246,14 @@ fn print_legacy_installed() {
     println!("(These are from older Cryohub versions; remove them from their listed directories.)");
 }
 
-fn cmd_daemon(host: Option<String>, port: Option<u16>, public: bool) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port)?;
+fn cmd_daemon(host: Option<String>, port: Option<u16>, public: Option<bool>) -> Result<()> {
+    let config = cryochamber::hub::config::effective_config(host, port, public)?;
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(cryochamber::hub::serve(&config.host, config.port, public))
+    rt.block_on(cryochamber::hub::serve(
+        &config.host,
+        config.port,
+        config.public,
+    ))
 }
 
 /// Unwrap a token transaction. Both failure modes abort the command; only the

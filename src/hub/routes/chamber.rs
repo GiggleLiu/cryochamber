@@ -89,22 +89,29 @@ pub struct SendRequest {
 
 /// Send a message into a chamber's inbox.
 ///
-/// The sender identity is stamped from the resolved `Role`: an invite is
-/// always attributed to its own name, so a client-supplied `from` cannot be
-/// used to impersonate the owner or another guest. Owner / open mode keep the
-/// client's `from` (defaulting to `"human"`).
+/// In public mode the sender identity is the server's to decide, never the
+/// browser's: an invite is attributed to its own name, and the owner to the
+/// configured `owner_name` (default `human`). A client-supplied `from` is
+/// ignored in both cases, so nobody can sign a message as somebody else.
+///
+/// Open (loopback) mode has no role layer at all — the local user already has
+/// shell access to the chamber — so there `from` is still honored.
 ///
 /// Argument order matters: axum requires the `Json` body extractor last.
 pub async fn post_send(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
     role: Option<axum::Extension<crate::hub::tokens::Role>>,
+    owner_name: Option<axum::Extension<crate::hub::config::OwnerName>>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
     let from = match role {
         Some(axum::Extension(crate::hub::tokens::Role::Invite { name, .. })) => name,
-        _ => req.from.unwrap_or_else(|| "human".into()),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)) => owner_name
+            .map(|axum::Extension(crate::hub::config::OwnerName(name))| name)
+            .unwrap_or_else(|| "human".into()),
+        None => req.from.unwrap_or_else(|| "human".into()),
     };
     let store = MessageStore::new(path.clone());
     let msg = crate::message::Message {

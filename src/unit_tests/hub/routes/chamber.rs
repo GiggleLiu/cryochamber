@@ -496,6 +496,7 @@ async fn send_stamps_invite_name_ignoring_client_from() {
         State(app),
         AxumPath(id),
         Some(axum::Extension(role)),
+        None,
         Json(payload),
     )
     .await
@@ -514,7 +515,7 @@ async fn send_without_role_keeps_default_human() {
     let (_workspace, app, id, dir) = chamber_app("alpha");
     let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
 
-    let Json(v) = post_send(State(app), AxumPath(id), None, Json(payload))
+    let Json(v) = post_send(State(app), AxumPath(id), None, None, Json(payload))
         .await
         .unwrap();
     assert_eq!(v["ok"], true);
@@ -533,7 +534,7 @@ async fn send_broadcasts_the_mailbox_id_of_the_written_message() {
     let mut rx = app.tx.subscribe();
     let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
 
-    let Json(v) = post_send(State(app.clone()), AxumPath(id), None, Json(payload))
+    let Json(v) = post_send(State(app.clone()), AxumPath(id), None, None, Json(payload))
         .await
         .unwrap();
     assert_eq!(v["ok"], true);
@@ -547,7 +548,60 @@ async fn send_broadcasts_the_mailbox_id_of_the_written_message() {
 }
 
 #[tokio::test]
-async fn send_as_owner_honors_client_supplied_from() {
+async fn send_as_owner_stamps_the_configured_owner_name() {
+    // In public mode the owner's identity is the server's to decide. Honoring
+    // the client's `from` would let anyone holding the owner token sign a
+    // message as an invite, or as a person who does not exist.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "Mallory"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        Some(axum::Extension(crate::hub::config::OwnerName(
+            "ops-desk".into(),
+        ))),
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(
+        inbox[0].1.from, "ops-desk",
+        "the owner must send as the configured owner_name, not as the body's `from`"
+    );
+}
+
+#[tokio::test]
+async fn send_as_owner_falls_back_to_human_without_a_configured_name() {
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "Mallory"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        None,
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox[0].1.from, "human");
+}
+
+#[tokio::test]
+async fn send_in_open_mode_still_honors_client_supplied_from() {
+    // Loopback mode layers no `Role` at all: the local user already has shell
+    // access to the chamber, and `cryo send --from` has always been theirs to
+    // set. Only the authenticated surface stamps identity.
     let (_workspace, app, id, dir) = chamber_app("alpha");
     let payload: SendRequest =
         serde_json::from_value(json!({"body": "hi", "from": "operator"})).unwrap();
@@ -555,7 +609,10 @@ async fn send_as_owner_honors_client_supplied_from() {
     let Json(v) = post_send(
         State(app),
         AxumPath(id),
-        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        None,
+        Some(axum::Extension(crate::hub::config::OwnerName(
+            "ops-desk".into(),
+        ))),
         Json(payload),
     )
     .await
