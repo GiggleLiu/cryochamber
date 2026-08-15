@@ -22,6 +22,7 @@ function status(overrides: Partial<ChamberStatus> = {}): ChamberStatus {
 function makeHub(s: ChamberStatus = status()): HubClient {
   const client = new HubClient(creds, vi.fn())
   vi.spyOn(client, 'chamberStatus').mockResolvedValue(s)
+  vi.spyOn(client, 'chamberTodos').mockResolvedValue([])
   vi.spyOn(client, 'lifecycle').mockResolvedValue({ ok: true, message: 'Started' })
   return client
 }
@@ -292,4 +293,38 @@ test('a failed status load stays inline in the sheet', async () => {
     'Could not load alpha. Check your connection and try again.',
   )
   expect(screen.getByRole('dialog', { name: 'Chamber controls' })).toBeInTheDocument()
+})
+
+describe('tabs', () => {
+  test('Todos is the tab that opens, and it fetches on first open only', async () => {
+    const hub = makeHub()
+    vi.spyOn(hub, 'chamberTodos').mockResolvedValue([])
+    useAppStore.setState({ client: hub })
+    renderSheet()
+    await screen.findByText('Stopped')
+    expect(screen.getByRole('tab', { name: 'Todos' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(hub.chamberTodos).toHaveBeenCalledTimes(1))
+  })
+
+  test('Plan and Notes render their status HTML with their own empty copy', async () => {
+    useAppStore.setState({
+      client: makeHub(status({ plan_html: '<p>the plan</p>', notes_html: '' })),
+    })
+    renderSheet()
+    await screen.findByText('Stopped')
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Plan' }))
+    expect(await screen.findByText('the plan')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Notes' }))
+    expect(await screen.findByText('No NOTES.md in this chamber.')).toBeInTheDocument()
+  })
+
+  test('an empty plan says which file is missing', async () => {
+    useAppStore.setState({ client: makeHub(status({ plan_html: '' })) })
+    renderSheet()
+    await screen.findByText('Stopped')
+    await userEvent.click(screen.getByRole('tab', { name: 'Plan' }))
+    expect(await screen.findByText('No plan.md in this chamber.')).toBeInTheDocument()
+  })
 })

@@ -1526,3 +1526,44 @@ input, select, textarea { font: inherit; color: inherit; }
   line-height: 1.8;
   color: var(--ink-3);
 }
+
+.todo-list { padding: 0 var(--sp-4); }
+.todo-row {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-2) 0;
+  font-size: var(--fs-sm);
+  border-bottom: 1px solid var(--line);
+}
+.todo-row.is-done { color: var(--ink-3); text-decoration: line-through; }
+.todo-text { flex: 1 1 auto; min-width: 0; }
+.todo-when {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--ink-3);
+}
+.todo-history { padding: var(--sp-3) var(--sp-4); }
+.todo-history summary {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.todo-history .todo-list { padding: 0; }
+
+.tab-html {
+  padding: 0 var(--sp-4) var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  overflow-wrap: anywhere;
+}
+.tab-html pre, .tab-html table { overflow-x: auto; }
+.tab-html h1, .tab-html h2, .tab-html h3 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.tab-html ul, .tab-html ol { padding-left: var(--sp-5); list-style: revert; }
+.tab-html p, .tab-html li { margin: var(--sp-2) 0; }

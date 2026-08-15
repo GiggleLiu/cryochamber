@@ -10,6 +10,11 @@ import { subscribeChamberEvents } from '../store/chamberEvents'
 import { logoutIfAuthError } from '../lib/authGuard'
 import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
+import { TodosTab } from './controls/TodosTab'
+import { HtmlTab } from './controls/HtmlTab'
+
+const TABS = ['Todos', 'Plan', 'Notes'] as const
+export type ControlsTab = (typeof TABS)[number]
 
 /** What the hub said, when it said nothing: the panel's status words. */
 const FALLBACK_MESSAGE: Record<LifecycleAction, string> = {
@@ -69,6 +74,7 @@ export function ControlsSheet({
   const [actionError, setActionError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [tab, setTab] = useState<ControlsTab>('Todos')
   const hub = client instanceof HubClient ? client : null
 
   const load = useCallback(async () => {
@@ -239,6 +245,30 @@ export function ControlsSheet({
                 </li>
               ))}
             </ul>
+          )}
+
+          <div className="tabs" role="tablist" aria-label="Chamber detail">
+            {TABS.map((name) => (
+              <button
+                key={name}
+                role="tab"
+                aria-selected={tab === name}
+                className={`tab${tab === name ? ' is-on' : ''}`}
+                onClick={() => setTab(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+
+          {/* Only the selected tab is mounted, so each one's fetch happens when
+              it is first opened rather than on every sheet open. */}
+          {tab === 'Todos' && <TodosTab chamberId={chamberId} />}
+          {tab === 'Plan' && (
+            <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
+          )}
+          {tab === 'Notes' && (
+            <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
           )}
         </>
       )}
