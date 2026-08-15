@@ -1623,3 +1623,8 @@ input, select, textarea { font: inherit; color: inherit; }
   background: var(--code-bg);
   border-radius: var(--r-md);
 }
+
+/* A <details> used as a settings group: the summary is a row, and the marker
+   sits where the row's chevron would. */
+.group > summary.row { cursor: pointer; font-weight: 500; }
+.group > summary.row::marker { color: var(--ink-3); }

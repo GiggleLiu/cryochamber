@@ -93,3 +93,23 @@ test('a cached last message replaces the description as the row preview', () => 
   expect(screen.getByText('Sweep finished.')).toBeInTheDocument()
   expect(screen.queryByText('Project A')).toBeNull()
 })
+
+describe('new chamber', () => {
+  test('an owner gets a + button that opens the sheet', async () => {
+    useAppStore.setState({ hubRole: 'owner' })
+    render(<ProjectsView />)
+    await userEvent.click(screen.getByRole('button', { name: 'New chamber' }))
+    expect(await screen.findByRole('dialog', { name: 'New chamber' })).toBeInTheDocument()
+  })
+
+  test('a guest never sees the + button', () => {
+    useAppStore.setState({ hubRole: 'invite' })
+    render(<ProjectsView />)
+    expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
+  })
+
+  test('a session whose role is unknown sees no + button', () => {
+    render(<ProjectsView />)
+    expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
+  })
+})

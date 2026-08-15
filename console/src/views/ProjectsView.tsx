@@ -1,6 +1,8 @@
-import { useAppStore } from '../store/appStore'
-import { Gear, Inbox } from '../components/Icon'
+import { useState } from 'react'
+import { useAppStore, useIsOwner } from '../store/appStore'
+import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, previewText, tileColor } from '../lib/format'
+import { NewChamberSheet } from './NewChamberSheet'
 
 function SkeletonList() {
   return (
@@ -26,6 +28,8 @@ export function ProjectsView() {
   const connection = useAppStore((s) => s.connection)
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
+  const isOwner = useIsOwner()
+  const [newChamberOpen, setNewChamberOpen] = useState(false)
   const visible = streams.filter((s) => !hidden.includes(s.stream_id))
   // Nothing to show yet *and* still connecting means the first register is in
   // flight — show the shape of the list rather than an empty state that would
@@ -37,13 +41,20 @@ export function ProjectsView() {
     <div className="projects">
       <header className="topbar">
         <h1>Projects</h1>
-        <button
-          className="icon-btn bar-end"
-          aria-label="Settings"
-          onClick={() => setSettingsOpen(true)}
-        >
-          <Gear />
-        </button>
+        <div className="topbar-actions">
+          {isOwner && (
+            <button
+              className="icon-btn"
+              aria-label="New chamber"
+              onClick={() => setNewChamberOpen(true)}
+            >
+              <Plus />
+            </button>
+          )}
+          <button className="icon-btn" aria-label="Settings" onClick={() => setSettingsOpen(true)}>
+            <Gear />
+          </button>
+        </div>
       </header>
 
       <div className="projects-scroll">
@@ -102,6 +113,8 @@ export function ProjectsView() {
           </ul>
         )}
       </div>
+
+      {newChamberOpen && <NewChamberSheet onClose={() => setNewChamberOpen(false)} />}
     </div>
   )
 }

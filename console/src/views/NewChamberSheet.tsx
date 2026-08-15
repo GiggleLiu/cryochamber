@@ -1,0 +1,161 @@
+import { useState } from 'react'
+import { HubClient, type NewChamberPayload } from '../api/hubClient'
+import { useAppStore } from '../store/appStore'
+import { logoutIfAuthError } from '../lib/authGuard'
+import { Sheet } from '../components/Sheet'
+import { AlertCircle } from '../components/Icon'
+
+/**
+ * Validate the form and shape the request body, or return the message to show.
+ *
+ * The provider block is all-or-nothing on purpose: a chamber configured with a
+ * provider but no key scaffolds fine and then fails on its first wake, which is
+ * a much worse place to find out. Wording matches the hub's own 400 messages so
+ * client-side and server-side refusals read the same.
+ */
+export function buildNewChamberPayload(fields: {
+  name: string
+  provider: string
+  apiKey: string
+  model: string
+  providerOpen: boolean
+}): NewChamberPayload | string {
+  const name = fields.name.trim()
+  const provider = fields.provider.trim()
+  const apiKey = fields.apiKey.trim()
+  const model = fields.model.trim()
+  if (!name) return 'name is empty'
+  const configuring = fields.providerOpen || provider !== '' || apiKey !== '' || model !== ''
+  if (!configuring) return { name }
+  if (!provider) return 'api key provider is empty'
+  if (!apiKey) return 'api key is empty'
+  return {
+    name,
+    api_key_provider: provider,
+    api_key: apiKey,
+    ...(model ? { model } : {}),
+  }
+}
+
+/** Create a chamber from the phone. The models.dev catalogue the control panel
+ * offered is deliberately out of scope — these are plain text fields. */
+export function NewChamberSheet({ onClose }: { onClose: () => void }) {
+  const client = useAppStore((s) => s.client)
+  const navigate = useAppStore((s) => s.navigate)
+  const [name, setName] = useState('')
+  const [provider, setProvider] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [model, setModel] = useState('')
+  const [providerOpen, setProviderOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hub = client instanceof HubClient ? client : null
+
+  async function create() {
+    if (!hub || busy) return
+    const payload = buildNewChamberPayload({ name, provider, apiKey, model, providerOpen })
+    if (typeof payload === 'string') {
+      setError(payload)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const { id } = await hub.createChamber(payload)
+      // The index changed, so re-register rather than waiting for the `index`
+      // event the hub also emits — the new chamber has to exist in the store
+      // before we can navigate into it.
+      const init = await hub.register()
+      useAppStore.getState().applyInitialState(init)
+      const streamId = hub.streamIdFor(id)
+      onClose()
+      if (streamId !== undefined) navigate({ name: 'conversation', streamId })
+    } catch (e) {
+      if (logoutIfAuthError(e)) return
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Sheet title="New chamber" label="New chamber" onClose={onClose}>
+      {error && (
+        <p className="alert" role="alert">
+          <AlertCircle size={18} />
+          <span className="alert-body">{error}</span>
+        </p>
+      )}
+
+      <div className="group">
+        <label className="row">
+          Name
+          <input
+            className="row-input"
+            value={name}
+            placeholder="my-chamber"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <details
+        className="group group-spaced"
+        open={providerOpen}
+        onToggle={(e) => setProviderOpen(e.currentTarget.open)}
+      >
+        <summary className="row">API key provider</summary>
+        <label className="row">
+          Provider
+          <input
+            className="row-input"
+            value={provider}
+            placeholder="provider-id"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(e) => setProvider(e.target.value)}
+          />
+        </label>
+        <label className="row">
+          Model
+          <input
+            className="row-input"
+            value={model}
+            placeholder="model-id"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(e) => setModel(e.target.value)}
+          />
+        </label>
+        <label className="row">
+          API key
+          <input
+            className="row-input"
+            type="password"
+            value={apiKey}
+            placeholder="sk-..."
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+        </label>
+      </details>
+      <p className="group-hint">
+        The key is written into the chamber&apos;s own <code>cryo.toml</code> on the hub; the
+        console never stores it.
+      </p>
+
+      <div className="sheet-action">
+        <button className="btn-primary" onClick={create} disabled={busy}>
+          {busy ? 'Creating…' : 'Create'}
+        </button>
+      </div>
+    </Sheet>
+  )
+}
