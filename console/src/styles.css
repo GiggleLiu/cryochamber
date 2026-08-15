@@ -1091,6 +1091,59 @@ input, select, textarea { font: inherit; color: inherit; }
 .sheet-action { padding: var(--sp-4); }
 .sheet-action .btn-primary { width: 100%; }
 
+/* Two or three header buttons where the grid expects one. */
+.topbar-actions {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* A sheet's own status line: what the hub said about the action just taken.
+   Inside the sheet, never a modal — an action's answer belongs next to the
+   button that caused it. */
+.sheet-toast {
+  margin: 0 var(--sp-4) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.sheet-toast.is-error { color: var(--danger); border-color: var(--danger); }
+
+.tabs {
+  display: flex;
+  gap: var(--sp-1);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--sp-4) var(--sp-3);
+}
+.tab {
+  flex: none;
+  min-height: 34px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--ink-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+}
+.tab.is-on {
+  color: var(--on-brand);
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.tab-empty {
+  padding: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+
 .app-version {
   margin-top: var(--sp-6);
   font-family: var(--font-mono);

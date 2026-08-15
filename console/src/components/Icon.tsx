@@ -75,6 +75,27 @@ export const Message = (p: IconProps) => (
   </Svg>
 )
 
+/** Overflow / "more actions" — the conversation header's Controls button. */
+export const Dots = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
+export const UserPlus = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="9.5" cy="8" r="3.5" />
+    <path d="M3 20a6.5 6.5 0 0 1 13 0" />
+    <path d="M19 8.5v5M16.5 11h5" />
+  </Svg>
+)
+
+export const Plus = (p: IconProps) => (
+  <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
+)
+
 /**
  * The product mark: a chat bubble containing a shell prompt. The app is a
  * conversation you type commands into, so the glyph says exactly that — and

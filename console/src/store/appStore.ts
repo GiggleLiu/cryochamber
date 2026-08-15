@@ -418,6 +418,18 @@ export const useAppStore = create<AppState>()((set, get) => {
   }
 })
 
+/**
+ * The single owner check. Owner-only UI is never rendered for anyone else —
+ * not disabled, absent — and a session whose role has not come back from
+ * `/api/whoami` yet is not an owner either.
+ *
+ * This is chrome only. Security is the hub's default-deny classifier; the app
+ * never trusts its own flag for anything but what it draws.
+ */
+export function useIsOwner(): boolean {
+  return useAppStore((s) => s.hubRole === 'owner')
+}
+
 export function resetAppStore(): void {
   resetChamberEvents()
   try {

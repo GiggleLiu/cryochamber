@@ -1,4 +1,5 @@
-import { useAppStore, resetAppStore } from './appStore'
+import { act, renderHook } from '@testing-library/react'
+import { useAppStore, resetAppStore, useIsOwner } from './appStore'
 import { loadCredentials } from './auth'
 import { loadCachedState, saveCachedState } from './cache'
 import type { Credentials, InitialState, Message } from '../api/types'
@@ -388,5 +389,18 @@ describe('outbox', () => {
     expect(JSON.stringify(loadCachedState(creds))).not.toContain('pending')
     useAppStore.getState().logout()
     expect(useAppStore.getState().outboxByStream).toEqual({})
+  })
+})
+
+describe('useIsOwner', () => {
+  test('is true only for the owner role', () => {
+    const { result, rerender } = renderHook(() => useIsOwner())
+    expect(result.current).toBe(false) // role not known yet
+    act(() => useAppStore.setState({ hubRole: 'invite' }))
+    rerender()
+    expect(result.current).toBe(false)
+    act(() => useAppStore.setState({ hubRole: 'owner' }))
+    rerender()
+    expect(result.current).toBe(true)
   })
 })
