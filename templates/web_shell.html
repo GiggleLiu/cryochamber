@@ -90,6 +90,22 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="token-gate" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="token-gate-title">
+    <h3 id="token-gate-title">Access token required</h3>
+    <p class="token-gate-hint">This hub runs in public mode. Paste a token from
+      <code>cryohub token owner</code> (or an invite) to continue.</p>
+    <div class="modal-field">
+      <label for="token-gate-input">Token</label>
+      <input id="token-gate-input" type="password" placeholder="hex token" autocomplete="off" autocapitalize="none" spellcheck="false">
+    </div>
+    <div class="modal-error" id="token-gate-error" hidden></div>
+    <div class="modal-actions">
+      <button id="token-gate-submit" class="modal-btn modal-btn-primary">Connect</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function() {
   const state = {
@@ -323,6 +339,47 @@
     return m ? m[1] : null;
   }
 
+  // In --public mode every /api route wants a bearer token. The dashboard has
+  // no login screen, so the token lives in localStorage and a blocking modal
+  // (the token gate) collects it the first time the hub answers 401. The token
+  // rides in the Authorization header only — never in a URL.
+  const TOKEN_KEY = 'cryohub.dashboard.token';
+  function storedToken() {
+    try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+  }
+  function authHeaders(extra) {
+    const t = storedToken();
+    return t ? { Authorization: 'Bearer ' + t, ...(extra || {}) } : (extra || {});
+  }
+  function showTokenGate() {
+    document.getElementById('token-gate').hidden = false;
+    document.getElementById('token-gate-input').focus();
+  }
+  (function initTokenGate() {
+    const input = document.getElementById('token-gate-input');
+    const errBox = document.getElementById('token-gate-error');
+    async function submit() {
+      const token = input.value.trim();
+      errBox.hidden = true;
+      if (!token) return;
+      // whoami is the cheapest authenticated route: 200 proves the token,
+      // 401 means it is wrong (or revoked) and nothing was changed.
+      const res = await fetch('/api/whoami', { headers: { Authorization: 'Bearer ' + token } })
+        .catch(() => null);
+      if (!res || !res.ok) {
+        errBox.textContent = 'That token was not accepted. Check it and try again.';
+        errBox.hidden = false;
+        return;
+      }
+      try { localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* private mode fallback */ }
+      // Reload rather than re-run boot piecemeal: every fetch and the event
+      // stream pick up the token uniformly on a fresh start.
+      window.location.reload();
+    }
+    document.getElementById('token-gate-submit').addEventListener('click', submit);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  })();
+
   async function fetchJSON(url, opts) {
     opts = opts || {};
     const method = (opts.method || 'GET').toUpperCase();
@@ -332,7 +389,15 @@
     if (method !== 'GET' && method !== 'HEAD') {
       opts.headers = { 'X-Cryo-CSRF': '1', ...(opts.headers || {}) };
     }
+    opts.headers = authHeaders(opts.headers);
     const res = await fetch(url, opts);
+    if (res.status === 401) {
+      // Wrong, revoked, or absent token: drop it so the gate re-prompts
+      // instead of replaying a dead credential forever.
+      try { localStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+      showTokenGate();
+      throw new Error(`${url}: 401`);
+    }
     let data = null;
     try {
       data = await res.json();
@@ -1593,27 +1658,74 @@
 
   initDrawerTabs();
 
-  const evt = new EventSource('/api/events');
-  evt.addEventListener('message', async e => {
-    const d = JSON.parse(e.data);
-    if (state.currentId === d.chamber_id) {
-      await updateDetail(state.currentId, { messages: true });
+  // Not EventSource: it cannot send an Authorization header, and in --public
+  // mode /api/events is 401 without one. A fetch-streamed reader carries the
+  // bearer token and reconnects with backoff; in open mode it behaves the
+  // same with no token attached.
+  const sseHandlers = {
+    message: async d => {
+      if (state.currentId === d.chamber_id) {
+        await updateDetail(state.currentId, { messages: true });
+      }
+      await loadChambers();
+    },
+    status: async d => {
+      await loadChambers();
+      if (state.currentId === d.chamber_id) {
+        await updateDetail(state.currentId, { status: true, todos: true, sync: true });
+      }
+    },
+    log: async d => {
+      if (state.currentId === d.chamber_id) appendLogLine(d.line);
+      scheduleRailRefresh(d.chamber_id);
+    },
+    index: async () => { await loadChambers(); },
+  };
+  (async function connectEvents() {
+    let backoff = 1000;
+    for (;;) {
+      try {
+        const res = await fetch('/api/events', {
+          headers: authHeaders({ Accept: 'text/event-stream' }),
+        });
+        if (res.status === 401) {
+          // The gate is already up (fetchJSON hit 401 first at boot, or the
+          // token was just revoked). No point reconnecting with the same
+          // dead credential; the post-token reload starts a fresh stream.
+          showTokenGate();
+          return;
+        }
+        if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
+        backoff = 1000;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let sep;
+          while ((sep = buf.indexOf('\n\n')) !== -1) {
+            const frame = buf.slice(0, sep);
+            buf = buf.slice(sep + 2);
+            let event = 'message';
+            let data = '';
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event:')) event = line.slice(6).trim();
+              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+            }
+            const handler = sseHandlers[event];
+            if (!handler || !data) continue; // keep-alive comments and unknown events
+            try {
+              await handler(event === 'index' ? null : JSON.parse(data));
+            } catch (e) { /* one bad frame must not kill the stream */ }
+          }
+        }
+      } catch (e) { /* network drop or server restart: retry below */ }
+      await new Promise(r => setTimeout(r, backoff));
+      backoff = Math.min(backoff * 2, 30_000);
     }
-    await loadChambers();
-  });
-  evt.addEventListener('status', async e => {
-    const d = JSON.parse(e.data);
-    await loadChambers();
-    if (state.currentId === d.chamber_id) {
-      await updateDetail(state.currentId, { status: true, todos: true, sync: true });
-    }
-  });
-  evt.addEventListener('log', e => {
-    const d = JSON.parse(e.data);
-    if (state.currentId === d.chamber_id) appendLogLine(d.line);
-    scheduleRailRefresh(d.chamber_id);
-  });
-  evt.addEventListener('index', async () => { await loadChambers(); });
+  })();
 
   // Server returns absolute datetimes; tick once a wall-clock minute (with a
   // little extra so we don't drift past the boundary) to repaint relative
