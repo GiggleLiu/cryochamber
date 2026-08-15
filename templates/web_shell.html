@@ -8,6 +8,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<!-- Vendored rendering libs (served by cryohub at /assets/vendor/* — no CDN
+     dependency; see templates/vendor/README.md). `defer` so the UI renders
+     immediately and bodies fall back to plain text if the libs are missing. -->
+<link rel="stylesheet" href="/assets/vendor/katex.min.css">
+<script defer src="/assets/vendor/katex.min.js"></script>
+<script defer src="/assets/vendor/marked.min.js"></script>
+<script defer src="/assets/vendor/purify.min.js"></script>
 <link rel="stylesheet" href="/assets/web.css">
 </head>
 <body>
@@ -449,6 +456,89 @@
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
+
+  // --- Rich message bodies: safe markdown + KaTeX math ---
+  // Agent replies may contain markdown and LaTeX. Pipeline:
+  //   1. protect fenced blocks / inline code / escaped `\$` behind tokens, so
+  //      code contents are never treated as math;
+  //   2. render math with KaTeX *before* the markdown pass (so `$x_i$` can't
+  //      be mangled into emphasis), behind placeholder tokens;
+  //   3. drop image syntax (the hub has no attachment endpoint yet) — the alt
+  //      text survives as plain text;
+  //   4. restore code, run marked (raw HTML tokens escaped via renderer
+  //      override), DOMPurify-sanitize, then restore the KaTeX HTML.
+  // Raw HTML in the source can never reach the DOM unescaped, so agent output
+  // cannot inject markup. Returns null when the rendering libs aren't loaded
+  // yet; the caller then falls back to plain text.
+  const MATH_L = '\uE000', MATH_R = '\uE001';
+  const CODE_L = '\uE002', CODE_R = '\uE003';
+  const ESC_D = '\uE004';
+  const MATH_PAT =
+    /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^\s$](?:[^$\n]*[^\s$])?)\$/g;
+  let markedInitialized = false;
+
+  function richTextAvailable() {
+    return !!(window.marked && window.katex && window.DOMPurify);
+  }
+
+  function renderMessageBody(md) {
+    if (!richTextAvailable()) return null;
+    if (!markedInitialized) {
+      markedInitialized = true;
+      // Escape raw HTML tokens (e.g. `<script>`) instead of letting marked
+      // pass them through; avoids a pre-escape that would double-escape code.
+      window.marked.use({ renderer: { html: text => escapeHtml(text) } });
+    }
+    const src = String(md);
+    // 1. Protect code spans / fenced blocks and escaped dollars.
+    const code = [];
+    let text = src
+      .replace(/(`{3,}|~{3,})[\s\S]*?\1|(`+)[^`\n]*?\2/g, m => {
+        code.push(m);
+        return CODE_L + (code.length - 1) + CODE_R;
+      })
+      .replace(/\\\$/g, ESC_D);
+    // 2. Render math before the markdown pass.
+    const math = [];
+    text = text.replace(MATH_PAT, (m, dd, di, ii, si) => {
+      const raw = dd != null ? dd : (di != null ? di : (ii != null ? ii : si));
+      const display = dd != null || di != null;
+      let html;
+      try {
+        html = window.katex.renderToString(raw, { displayMode: display, throwOnError: false });
+      } catch (_e) {
+        html = escapeHtml(raw); // malformed math degrades to literal text
+      }
+      math.push(html);
+      return MATH_L + (math.length - 1) + MATH_R;
+    });
+    // 3. Drop image syntax — the alt text stays as plain text.
+    text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
+    // 4. Restore code and escaped dollars, then render markdown.
+    text = text
+      .replace(new RegExp(CODE_L + '(\\d+)' + CODE_R, 'g'), (_, i) => code[Number(i)] || '')
+      .replace(new RegExp(ESC_D, 'g'), '\\$');
+    const html = window.marked.parse(text, { gfm: true, breaks: true });
+    const clean = window.DOMPurify.sanitize(html);
+    return clean.replace(new RegExp(MATH_L + '(\\d+)' + MATH_R, 'g'), (_, i) => math[Number(i)] || '');
+  }
+
+  // The rendering libs load with `defer`, so they may land after the first
+  // paint on a slow or offline connection. When they arrive, upgrade the open
+  // thread from plain text to rich rendering without losing the bottom anchor.
+  window.addEventListener('load', () => {
+    if (richTextAvailable() || !view) return;
+    const upgrade = () => {
+      if (!richTextAvailable() || !view || !view.msgBox) return;
+      const box = view.msgBox;
+      const wasAtBottom = isAtBottom(box);
+      renderThreadContents();
+      if (wasAtBottom) box.scrollTop = box.scrollHeight;
+    };
+    setTimeout(upgrade, 500);
+    setTimeout(upgrade, 2000);
+    setTimeout(upgrade, 6000);
+  });
 
   function hash32(s) {
     let h = 0x811c9dc5 >>> 0;
@@ -939,7 +1029,13 @@
     meta.appendChild(ts);
     const body = document.createElement('div');
     body.className = 'msg-body';
-    body.textContent = m.body || '';
+    const rich = renderMessageBody(m.body);
+    if (rich !== null) {
+      body.classList.add('rich');
+      body.innerHTML = rich;
+    } else {
+      body.textContent = m.body || ''; // CDN libs unavailable — plain text
+    }
     row.appendChild(meta);
     row.appendChild(body);
     return row;

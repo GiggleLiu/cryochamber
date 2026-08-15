@@ -616,6 +616,66 @@ body {
 }
 .msg-body em { font-family: var(--serif); font-style: italic; color: var(--ink); }
 
+/* Rich (markdown + KaTeX) message bodies. Plain-text fallback keeps
+   `white-space: pre-wrap`; rich rendering hands breaks to `<p>`/`<br>`.
+   Element styling mirrors `.plan-md` so bubbles read like the plan file. */
+.msg-body.rich { white-space: normal; }
+.msg-body.rich > :first-child { margin-top: 0; }
+.msg-body.rich > :last-child { margin-bottom: 0; }
+.msg-body.rich p { margin: 0.5em 0; }
+.msg-body.rich h1, .msg-body.rich h2, .msg-body.rich h3, .msg-body.rich h4 {
+  font-family: var(--serif);
+  font-weight: 500;
+  color: var(--ink);
+  margin: 1.1em 0 0.35em;
+  letter-spacing: -0.01em;
+}
+.msg-body.rich h1 { font-size: 20px; }
+.msg-body.rich h2 { font-size: 16px; }
+.msg-body.rich h3 { font-size: 14px; }
+.msg-body.rich h4 { font-size: 12.5px; }
+.msg-body.rich ul, .msg-body.rich ol { margin: 0.5em 0; padding-left: 1.6em; }
+.msg-body.rich li { margin: 0.2em 0; }
+.msg-body.rich code {
+  font-family: var(--mono);
+  font-size: 90%;
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.msg-body.rich pre {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0.6em 0;
+}
+.msg-body.rich pre code { background: none; padding: 0; font-size: 100%; }
+.msg-body.rich a { color: var(--cool); text-decoration: underline; }
+.msg-body.rich blockquote {
+  margin: 0.6em 0;
+  padding: 0 12px;
+  border-left: 3px solid var(--line);
+  color: var(--ink-dim);
+}
+.msg-body.rich hr { border: 0; border-top: 1px solid var(--line-soft); margin: 0.9em 0; }
+.msg-body.rich table { border-collapse: collapse; margin: 0.6em 0; font-size: 12.5px; }
+.msg-body.rich th, .msg-body.rich td {
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  text-align: left;
+}
+.msg-body.rich th { background: var(--panel-2); }
+.msg-body.rich .katex { font-size: 1.06em; }
+.msg-body.rich .katex-display {
+  margin: 0.5em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 /* System notice — centered gray text, no bubble. */
 .sys-notice {
   align-self: center;
