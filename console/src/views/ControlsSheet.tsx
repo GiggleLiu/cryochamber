@@ -16,13 +16,8 @@ import { SyncTab } from './controls/SyncTab'
 import { SettingsTab } from './controls/SettingsTab'
 import { LogTab } from './controls/LogTab'
 
-const TABS = ['Todos', 'Plan', 'Notes', 'Sync', 'Settings', 'Log'] as const
-export type ControlsTab = (typeof TABS)[number]
-
-/** The tab button and the panel it controls point at each other by id, so a
- * screen reader reads the panel as belonging to the tab that opened it. */
-const tabId = (name: ControlsTab) => `controls-tab-${name.toLowerCase()}`
-const panelId = (name: ControlsTab) => `controls-panel-${name.toLowerCase()}`
+const SECTIONS = ['Todos', 'Plan', 'Notes', 'Sync', 'Settings', 'Log'] as const
+export type ControlsSection = (typeof SECTIONS)[number]
 
 /** What the hub said, when it said nothing: the panel's status words. */
 const FALLBACK_MESSAGE: Record<LifecycleAction, string> = {
@@ -82,7 +77,11 @@ export function ControlsSheet({
   const [actionError, setActionError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
-  const [tab, setTab] = useState<ControlsTab>('Todos')
+  // One section open at a time, like the tabs this replaced: each one fetches
+  // when it is first opened rather than on every sheet open. `null` is all
+  // closed, which is where the sheet starts — the state and the actions above
+  // are what it is opened for.
+  const [section, setSection] = useState<ControlsSection | null>(null)
   const hub = client instanceof HubClient ? client : null
 
   const load = useCallback(async () => {
@@ -137,7 +136,7 @@ export function ControlsSheet({
   const alert = actionError ?? loadError
 
   return (
-    <Sheet title="Controls" label="Chamber controls" onClose={onClose}>
+    <Sheet title={chamberName} label="Chamber controls" onClose={onClose}>
       {alert && (
         <p className="alert" role="alert">
           <AlertCircle size={18} />
@@ -155,59 +154,61 @@ export function ControlsSheet({
         loadError ? null : <p className="tab-empty">Loading…</p>
       ) : (
         <>
-          <div className="controls-head">
-            <h3>{chamberName}</h3>
-            <span className={`state-pill state-${pill!.toLowerCase()}`}>{pill}</span>
-            <span className="controls-meta">Session #{status.session}</span>
+          <p className="group-label">Status</p>
+          <div className="group">
+            <div className="row">
+              State
+              <span className={`row-value state-${pill!.toLowerCase()}`}>{pill}</span>
+            </div>
+            <div className="row">
+              Session
+              <span className="row-value">#{status.session}</span>
+            </div>
             {/* Only a started chamber has a real schedule; a stopped one reports
                 whatever was pending when it died, which reads as nonsense. */}
             {status.running && status.next_wake && (
-              <span className="controls-meta">Next wake {status.next_wake}</span>
+              <div className="row">
+                Next wake
+                <span className="row-value">{status.next_wake}</span>
+              </div>
             )}
-            {status.completed && <span className="controls-meta">✓ Plan complete</span>}
+            {status.completed && (
+              <div className="row">
+                Plan
+                <span className="row-value">✓ complete</span>
+              </div>
+            )}
             {status.session_summary && (
-              <span className="controls-meta">{status.session_summary}</span>
+              <div className="row">
+                Last session
+                <span className="row-value">{status.session_summary}</span>
+              </div>
             )}
           </div>
 
-          <div className="lifecycle">
+          <p className="group-label">Actions</p>
+          <div className="group">
             {archived ? (
-              <button
-                className="lifecycle-btn is-primary"
-                disabled={pending}
-                onClick={() => act('unarchive')}
-              >
+              <button className="row" disabled={pending} onClick={() => act('unarchive')}>
                 Unarchive
               </button>
             ) : (
               <>
                 {status.running ? (
                   <>
-                    <button className="lifecycle-btn" disabled={pending} onClick={() => act('stop')}>
+                    <button className="row" disabled={pending} onClick={() => act('stop')}>
                       Stop
                     </button>
-                    <button
-                      className="lifecycle-btn"
-                      disabled={pending}
-                      onClick={() => act('restart')}
-                    >
+                    <button className="row" disabled={pending} onClick={() => act('restart')}>
                       Restart
                     </button>
                   </>
                 ) : (
                   <>
-                    <button
-                      className="lifecycle-btn is-primary"
-                      disabled={pending}
-                      onClick={() => act('start')}
-                    >
+                    <button className="row" disabled={pending} onClick={() => act('start')}>
                       Launch
                     </button>
-                    <button
-                      className="lifecycle-btn"
-                      disabled={pending}
-                      onClick={() => act('archive')}
-                    >
+                    <button className="row" disabled={pending} onClick={() => act('archive')}>
                       Archive
                     </button>
                   </>
@@ -216,7 +217,7 @@ export function ControlsSheet({
                     window.confirm, which a phone renders as a browser chrome
                     dialog over the app. */}
                 <button
-                  className="lifecycle-btn is-danger"
+                  className="row row-danger"
                   disabled={pending}
                   onClick={() => setConfirmReset(true)}
                 >
@@ -227,66 +228,71 @@ export function ControlsSheet({
           </div>
 
           {confirmReset && (
-            <div className="row confirm-row">
-              <span className="confirm-question">
-                Reset {chamberName}? The session state and log are archived and the chamber
-                starts fresh.
-              </span>
-              <button className="row-action" onClick={() => setConfirmReset(false)}>
-                Cancel
-              </button>
-              <button
-                className="row-action row-action-danger"
-                disabled={pending}
-                onClick={() => act('reset')}
-              >
-                Reset {chamberName}
-              </button>
+            <div className="group">
+              <div className="row confirm-row">
+                <span className="confirm-question">
+                  Reset {chamberName}? The session state and log are archived and the chamber
+                  starts fresh.
+                </span>
+                <button className="row-action" onClick={() => setConfirmReset(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="row-action row-action-danger"
+                  disabled={pending}
+                  onClick={() => act('reset')}
+                >
+                  Reset {chamberName}
+                </button>
+              </div>
             </div>
           )}
 
           {status.daily_digests.length > 0 && (
-            <ul className="digest-list">
-              {status.daily_digests.map((d) => (
-                <li className="digest-row" key={d.date}>
-                  {digestLine(d)}
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="group-label">Recent days</p>
+              <ul className="group">
+                {status.daily_digests.map((d) => (
+                  <li key={d.date}>
+                    <p className="row row-muted">{digestLine(d)}</p>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
 
-          <div className="tabs" role="tablist" aria-label="Chamber detail">
-            {TABS.map((name) => (
-              <button
-                key={name}
-                role="tab"
-                id={tabId(name)}
-                // Only the selected panel is in the DOM, so only its tab may
-                // claim to control one — a dangling id is invalid ARIA.
-                aria-controls={tab === name ? panelId(name) : undefined}
-                aria-selected={tab === name}
-                className={`tab${tab === name ? ' is-on' : ''}`}
-                onClick={() => setTab(name)}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-
-          {/* Only the selected tab is mounted, so each one's fetch happens when
-              it is first opened rather than on every sheet open. */}
-          <div role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)} tabIndex={0}>
-            {tab === 'Todos' && <TodosTab chamberId={chamberId} />}
-            {tab === 'Plan' && (
-              <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
-            )}
-            {tab === 'Notes' && (
-              <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
-            )}
-            {tab === 'Sync' && <SyncTab chamberId={chamberId} />}
-            {tab === 'Settings' && <SettingsTab status={status} />}
-            {tab === 'Log' && <LogTab chamberId={chamberId} logTail={status.log_tail} />}
-          </div>
+          <p className="group-label">Detail</p>
+          {SECTIONS.map((name) => (
+            <details
+              key={name}
+              className="group"
+              open={section === name}
+              // Only the section this event is about may change the state: when
+              // one opens, React closes the last, and that close fires a
+              // `toggle` of its own — a plain `open ? name : null` would take
+              // the second event and leave everything shut.
+              onToggle={(e) => {
+                const isOpen = e.currentTarget.open
+                setSection((prev) => (isOpen ? name : prev === name ? null : prev))
+              }}
+            >
+              <summary className="row">{name}</summary>
+              {section === name && (
+                <div className="section-body">
+                  {name === 'Todos' && <TodosTab chamberId={chamberId} />}
+                  {name === 'Plan' && (
+                    <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
+                  )}
+                  {name === 'Notes' && (
+                    <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
+                  )}
+                  {name === 'Sync' && <SyncTab chamberId={chamberId} />}
+                  {name === 'Settings' && <SettingsTab status={status} />}
+                  {name === 'Log' && <LogTab chamberId={chamberId} logTail={status.log_tail} />}
+                </div>
+              )}
+            </details>
+          ))}
         </>
       )}
     </Sheet>

@@ -60,15 +60,17 @@ beforeEach(() => {
   useAppStore.setState({ creds, hubRole: 'owner', client: makeHub() })
 })
 
-test('the header names the chamber, its state, and its session', async () => {
+test('the status group names the chamber, its state, and its session', async () => {
   useAppStore.setState({
     client: makeHub(status({ running: true, agent_running: true, next_wake: 'in 2 h', session_summary: 'swept the decoders' })),
   })
   renderSheet()
   expect(await screen.findByText('Working')).toBeInTheDocument()
+  // The sheet is titled by the chamber, the way the gear's sheet is titled by
+  // what it is about.
   expect(screen.getByRole('heading', { name: 'alpha' })).toBeInTheDocument()
-  expect(screen.getByText('Session #7')).toBeInTheDocument()
-  expect(screen.getByText('Next wake in 2 h')).toBeInTheDocument()
+  expect(screen.getByText('#7')).toBeInTheDocument()
+  expect(screen.getByText('in 2 h')).toBeInTheDocument()
   expect(screen.getByText('swept the decoders')).toBeInTheDocument()
 })
 
@@ -77,7 +79,7 @@ test('a stopped chamber hides the wake line and a completed plan is called out',
   renderSheet()
   expect(await screen.findByText('Stopped')).toBeInTheDocument()
   expect(screen.queryByText(/Next wake/)).toBeNull()
-  expect(screen.getByText('✓ Plan complete')).toBeInTheDocument()
+  expect(screen.getByText('✓ complete')).toBeInTheDocument()
 })
 
 test('state pill wording covers every state', () => {
@@ -295,14 +297,21 @@ test('a failed status load stays inline in the sheet', async () => {
   expect(screen.getByRole('dialog', { name: 'Chamber controls' })).toBeInTheDocument()
 })
 
-describe('tabs', () => {
-  test('Todos is the tab that opens, and it fetches on first open only', async () => {
+describe('detail sections', () => {
+  /** The sections are disclosure rows now, so opening one is a click on its
+   * summary — the same gesture as the Completed fold in the projects list. */
+  const open = (name: string) => userEvent.click(screen.getByText(name))
+
+  test('every section starts closed, and opening one fetches once', async () => {
+    // Closed by default: the state and the actions are what the sheet is
+    // opened for, and a closed section costs no request at all.
     const hub = makeHub()
     vi.spyOn(hub, 'chamberTodos').mockResolvedValue([])
     useAppStore.setState({ client: hub })
     renderSheet()
     await screen.findByText('Stopped')
-    expect(screen.getByRole('tab', { name: 'Todos' })).toHaveAttribute('aria-selected', 'true')
+    expect(hub.chamberTodos).not.toHaveBeenCalled()
+    await open('Todos')
     await waitFor(() => expect(hub.chamberTodos).toHaveBeenCalledTimes(1))
   })
 
@@ -313,35 +322,27 @@ describe('tabs', () => {
     renderSheet()
     await screen.findByText('Stopped')
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Plan' }))
+    await open('Plan')
     expect(await screen.findByText('the plan')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Notes' }))
+    await open('Notes')
     expect(await screen.findByText('No NOTES.md in this chamber.')).toBeInTheDocument()
   })
 
-  test('the selected tab and its panel point at each other', async () => {
-    useAppStore.setState({ client: makeHub(status({ plan_html: '<p>the plan</p>' })) })
+  test('opening one closes the last, so only its content is mounted', async () => {
+    useAppStore.setState({
+      client: makeHub(status({ plan_html: '<p>the plan</p>', notes_html: '<p>the notes</p>' })),
+    })
     renderSheet()
     await screen.findByText('Stopped')
-    await userEvent.click(screen.getByRole('tab', { name: 'Plan' }))
-
-    const tab = screen.getByRole('tab', { name: 'Plan' })
-    const panel = screen.getByRole('tabpanel')
-    expect(tab.id).toBeTruthy()
-    expect(panel.id).toBeTruthy()
-    expect(tab).toHaveAttribute('aria-controls', panel.id)
-    expect(panel).toHaveAttribute('aria-labelledby', tab.id)
-    expect(panel).toHaveTextContent('the plan')
-    // Unselected tabs must not point at panels that are not in the DOM.
-    for (const other of screen.getAllByRole('tab')) {
-      if (other !== tab) expect(other).not.toHaveAttribute('aria-controls')
-    }
-    // The panel is focusable so a keyboard user can reach scrollable content.
-    expect(panel).toHaveAttribute('tabindex', '0')
+    await open('Plan')
+    expect(await screen.findByText('the plan')).toBeInTheDocument()
+    await open('Notes')
+    expect(await screen.findByText('the notes')).toBeInTheDocument()
+    expect(screen.queryByText('the plan')).toBeNull()
   })
 
-  test('the Sync, Settings and Log tabs are wired to this chamber', async () => {
+  test('the Sync, Settings and Log sections are wired to this chamber', async () => {
     const hub = makeHub(
       status({
         log_tail: 'boot line one',
@@ -355,11 +356,11 @@ describe('tabs', () => {
     useAppStore.setState({ client: hub })
     renderSheet()
     await screen.findByText('Stopped')
-    await userEvent.click(screen.getByRole('tab', { name: 'Log' }))
+    await open('Log')
     expect(await screen.findByText(/boot line one/)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
+    await open('Settings')
     expect(await screen.findByText('claude')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: 'Sync' }))
+    await open('Sync')
     expect(await screen.findByRole('button', { name: 'Start zulip sync' })).toBeInTheDocument()
     expect(hub.chamberSync).toHaveBeenCalledWith('cham-a')
   })
@@ -368,7 +369,7 @@ describe('tabs', () => {
     useAppStore.setState({ client: makeHub(status({ plan_html: '' })) })
     renderSheet()
     await screen.findByText('Stopped')
-    await userEvent.click(screen.getByRole('tab', { name: 'Plan' }))
+    await open('Plan')
     expect(await screen.findByText('No plan.md in this chamber.')).toBeInTheDocument()
   })
 })
