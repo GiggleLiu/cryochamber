@@ -142,9 +142,21 @@ describe('groups, badge and meta line', () => {
 
   test('a guest never sees the groups even with the flag set', () => {
     useAppStore.setState({ streams: MIXED, hubRole: 'invite', showCompletedArchived: true })
-    render(<ProjectsView />)
+    const { container } = render(<ProjectsView />)
     expect(screen.queryByText(/^Completed/)).toBeNull()
     expect(screen.queryByText(/^Archived/)).toBeNull()
+    expect(container.querySelector('details.stream-group')).toBeNull()
+  })
+
+  test('a guest still sees their completed and archived chambers as ordinary rows', () => {
+    useAppStore.setState({ streams: MIXED, hubRole: 'invite', showCompletedArchived: false })
+    const { container } = render(<ProjectsView />)
+    // The owner-only fold is not a filter for anyone else: a guest scoped to a
+    // finished chamber would otherwise be left staring at an empty list.
+    expect(screen.getByText('alpha')).toBeInTheDocument()
+    expect(screen.getByText('beta')).toBeInTheDocument()
+    expect(screen.getByText('gamma')).toBeInTheDocument()
+    expect(container.querySelectorAll('ul.stream-list')).toHaveLength(1)
   })
 
   test('an open question is badged with an explanation', () => {

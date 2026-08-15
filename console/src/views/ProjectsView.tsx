@@ -33,11 +33,18 @@ export function ProjectsView() {
   const [newChamberOpen, setNewChamberOpen] = useState(false)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
   const visible = streams.filter((s) => !hidden.includes(s.stream_id))
-  // Archived wins over completed: the operator put it away on purpose, and one
-  // chamber must never appear in two groups.
-  const archivedList = visible.filter((s) => s.archived === true)
-  const completedList = visible.filter((s) => s.archived !== true && s.completed === true)
-  const active = visible.filter((s) => s.archived !== true && s.completed !== true)
+  // The folds are an owner's filing system, never a filter on anyone else's
+  // list: a guest scoped to a finished chamber still sees it as a plain row,
+  // so their whole list can never disappear behind a preference they cannot
+  // reach. Archived wins over completed: the operator put it away on purpose,
+  // and one chamber must never appear in two groups.
+  const archivedList = isOwner ? visible.filter((s) => s.archived === true) : []
+  const completedList = isOwner
+    ? visible.filter((s) => s.archived !== true && s.completed === true)
+    : []
+  const active = isOwner
+    ? visible.filter((s) => s.archived !== true && s.completed !== true)
+    : visible
   const showGroups = isOwner && showCompletedArchived
   // Nothing to show yet *and* still connecting means the first register is in
   // flight — show the shape of the list rather than an empty state that would
@@ -73,12 +80,14 @@ export function ProjectsView() {
               }
             />
           )}
-          <span className="stream-name">{s.name}</span>
-          {s.hasOpenQuestion && (
-            <span className="question-badge" title="Open question — agent is waiting on you">
-              ?
-            </span>
-          )}
+          <span className="stream-head">
+            <span className="stream-name">{s.name}</span>
+            {s.hasOpenQuestion && (
+              <span className="question-badge" title="Open question — agent is waiting on you">
+                ?
+              </span>
+            )}
+          </span>
           {last && <span className="stream-meta">{listTimeLabel(last.timestamp)}</span>}
           {count > 0 && (
             <span className="unread-badge" aria-label={`${count} unread`}>

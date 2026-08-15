@@ -296,8 +296,18 @@ input, select, textarea { font: inherit; color: inherit; }
 /* Started chamber whose agent is between wakes; gray stays "not running". */
 .status-dot.is-running { background: var(--warn); }
 
-.stream-name {
+/* Name and open-question badge share the row's first text line: a flex line,
+   so the badge follows the name instead of overdrawing it and the name alone
+   takes the ellipsis. */
+.stream-head {
   grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.stream-name {
   min-width: 0;
   font-size: var(--fs-md);
   font-weight: 600;
@@ -1638,11 +1648,7 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
 }
 .question-badge {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: start;
-  align-self: center;
-  margin-left: auto;
+  flex: none;
   min-width: 18px;
   padding: 0 5px;
   font-size: var(--fs-2xs);
