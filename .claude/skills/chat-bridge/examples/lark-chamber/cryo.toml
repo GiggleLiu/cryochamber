@@ -1,0 +1,3 @@
+agent = "claude"
+watch_dirs = ["messages/inbox"]
+max_session_duration = 3600

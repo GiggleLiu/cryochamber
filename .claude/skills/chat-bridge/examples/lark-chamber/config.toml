@@ -1,0 +1,22 @@
+# config.toml — Project configuration for this chamber agent
+#
+# When awakened, the agent must read this file first to learn which repositories
+# it manages. The user may add repositories through Lark instructions or direct
+# edits. Append one [[repos]] entry below for each repository.
+
+# Default working directory for instructions that do not specify one.
+# This is usually the name of a registered repository.
+default_repo = "my-project"
+
+# Repositories managed by this agent.
+# path: absolute repository path
+# note: optional one-line description of the repository and areas to monitor
+[[repos]]
+name = "my-project"
+path = "/absolute/path/to/my-project"
+note = "Replace this with the repository's purpose and areas to monitor"
+
+# [[repos]]
+# name = "some-project"
+# path = "/absolute/path/to/some-project"
+# note = "Describe the areas to monitor here"

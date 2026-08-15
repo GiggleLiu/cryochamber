@@ -249,6 +249,7 @@ Main documentation lives in the mdbook at `docs/src/` (published to [giggleliu.g
 ## Skills
 
 - `.claude/skills/make-plan/SKILL.md` — Claude Code skill that guides users through creating a new cryochamber application (plan.md + cryo.toml) via conversational Q&A. Install with `claude skill install --path .claude/skills/make-plan`, invoke with `/make-plan`. Additional repo-local skills (`fix-pr`, `review-implementation`) live alongside it.
+- `.claude/skills/chat-bridge/SKILL.md` — Claude Code skill for bridging a chamber to a chat platform (Zulip / Feishu-Lark) with one unified backbone: `scripts/chat-bridge` CLI + `chat_bridge/` package (`backbone.py` shared engine, `channel.py` protocol, `zulip.py`/`lark.py` adapters). Mention-gated by default, multi-channel, attachments, realtime Zulip events queue, systemd + linger. Invoke with `/chat-bridge`.
 
 ## Commit Convention
 
