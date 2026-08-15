@@ -21,9 +21,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cryochamber::config;
 use cryochamber::hub::auth::AuthCtx;
+use cryochamber::hub::config::HubConfig;
 use cryochamber::hub::state::{AppState, SseEvent};
 use cryochamber::hub::tokens::{save_tokens, TokenFile};
-use cryochamber::hub::{build_router_public, discovery};
+use cryochamber::hub::{build_router_public_with_config, discovery};
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
@@ -78,7 +79,7 @@ fn setup_with_scope(scope_of: impl Fn(&str) -> String) -> Matrix {
     save_tokens(&tokens_path, &tf).unwrap();
     let ctx = AuthCtx::load(&tokens_path).unwrap();
 
-    let router = build_router_public(app.clone(), ctx);
+    let router = build_router_public_with_config(app.clone(), ctx, HubConfig::default());
     Matrix {
         workspace: tmp.path().to_path_buf(),
         _tmp: tmp,

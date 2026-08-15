@@ -21,7 +21,11 @@ fn public_router(tmp: &tempfile::TempDir) -> (axum::Router, String, String, Path
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
     (
-        crate::hub::build_router_public(app, ctx),
+        crate::hub::build_router_public_with_config(
+            app,
+            ctx,
+            crate::hub::config::HubConfig::default(),
+        ),
         owner,
         alice.token,
         path,
