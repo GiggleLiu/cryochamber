@@ -9,7 +9,7 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
 };
 use serde_json::json;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 use tokio_stream::StreamExt;
 
 use crate::hub::auth::{AuthCtx, BearerToken};
@@ -38,7 +38,31 @@ enum StreamScope {
     },
 }
 
+/// How often an open stream re-checks that its credential still resolves, so a
+/// revoked guest is cut off even when the chamber is idle and no event would
+/// otherwise trigger the check.
+const REAUTH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl StreamScope {
+    /// Does the credential this stream was opened with still resolve? A stream
+    /// whose token was revoked (or replaced) must *end*, not fall silent: a
+    /// silent stream keeps the client believing it is signed in, on cached
+    /// data, until it happens to make another request.
+    fn still_authorized(&self) -> bool {
+        match self {
+            Self::Unfiltered | Self::Frozen(_) => true,
+            Self::Live { token, ctx } => ctx.resolve(token).is_some(),
+        }
+    }
+
+    /// Whether this stream carries anything for a guest — i.e. it is an invite
+    /// scope, frozen or live. Guests never receive log lines: the console does
+    /// not show them a log, and log output can carry tool output, paths, or
+    /// credentials that were never meant to leave the owner's screen.
+    fn is_guest(&self) -> bool {
+        !matches!(self, Self::Unfiltered)
+    }
+
     /// May this stream carry an event about `chamber_id` (`None` for
     /// index-level events, which carry no chamber content)?
     fn allows(&self, chamber_id: Option<&str>) -> bool {
@@ -58,6 +82,13 @@ impl StreamScope {
             },
         }
     }
+}
+
+/// One item of the merged stream: a broadcast event, or a periodic tick that
+/// exists only to re-run the authorization check on an otherwise idle stream.
+enum Tick {
+    Event(SseEvent),
+    Reauth,
 }
 
 /// One SSE stream per client. An invite only sees events for the chambers its
@@ -83,52 +114,73 @@ pub async fn get_events(
         _ => StreamScope::Unfiltered,
     };
     let rx = app.tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(move |result: Result<SseEvent, _>| {
-        let event = result.ok()?;
-        let chamber_id = match &event {
-            SseEvent::NewMessage { chamber_id, .. }
-            | SseEvent::StatusChange { chamber_id }
-            | SseEvent::LogLine { chamber_id, .. } => Some(chamber_id.as_str()),
-            SseEvent::IndexChanged => None,
-        };
-        if !scope.allows(chamber_id) {
-            return None;
-        }
-        let ev = match event {
-            SseEvent::NewMessage {
-                id,
-                chamber_id,
-                direction,
-                from,
-                subject,
-                body,
-                timestamp,
-                is_question,
-            } => Event::default()
-                .event("message")
-                .json_data(json!({
-                    "id": id,
-                    "chamber_id": chamber_id,
-                    "direction": direction,
-                    "from": from,
-                    "subject": subject,
-                    "body": body,
-                    "timestamp": timestamp,
-                    "is_question": is_question,
-                }))
-                .unwrap(),
-            SseEvent::StatusChange { chamber_id } => Event::default()
-                .event("status")
-                .json_data(json!({"chamber_id": chamber_id}))
-                .unwrap(),
-            SseEvent::LogLine { chamber_id, line } => Event::default()
-                .event("log")
-                .json_data(json!({"chamber_id": chamber_id, "line": line}))
-                .unwrap(),
-            SseEvent::IndexChanged => Event::default().event("index").data("changed"),
-        };
-        Some(Ok(ev))
-    });
+    let events = BroadcastStream::new(rx)
+        .filter_map(|result: Result<SseEvent, _>| result.ok().map(Tick::Event));
+    let mut interval = tokio::time::interval(REAUTH_INTERVAL);
+    // The first tick of `interval` fires immediately; skipping it here keeps
+    // the initial connect free of an extra check that the guard just did.
+    interval.reset();
+    let reauth = IntervalStream::new(interval).map(|_| Tick::Reauth);
+    let scope_for_end = std::sync::Arc::new(scope);
+    let scope = scope_for_end.clone();
+    // `take_while` ends the response the first time the credential no longer
+    // resolves — on the next event, or on the next re-auth tick if idle. The
+    // client sees EOF, reconnects, and is told 401.
+    let stream = events
+        .merge(reauth)
+        .take_while(move |_| scope_for_end.still_authorized())
+        .filter_map(move |tick| {
+            let event = match tick {
+                Tick::Event(event) => event,
+                Tick::Reauth => return None,
+            };
+            let chamber_id = match &event {
+                SseEvent::NewMessage { chamber_id, .. }
+                | SseEvent::StatusChange { chamber_id }
+                | SseEvent::LogLine { chamber_id, .. } => Some(chamber_id.as_str()),
+                SseEvent::IndexChanged => None,
+            };
+            if !scope.allows(chamber_id) {
+                return None;
+            }
+            if scope.is_guest() && matches!(event, SseEvent::LogLine { .. }) {
+                return None;
+            }
+            let ev = match event {
+                SseEvent::NewMessage {
+                    id,
+                    chamber_id,
+                    direction,
+                    from,
+                    subject,
+                    body,
+                    timestamp,
+                    is_question,
+                } => Event::default()
+                    .event("message")
+                    .json_data(json!({
+                        "id": id,
+                        "chamber_id": chamber_id,
+                        "direction": direction,
+                        "from": from,
+                        "subject": subject,
+                        "body": body,
+                        "timestamp": timestamp,
+                        "is_question": is_question,
+                    }))
+                    .unwrap(),
+                SseEvent::StatusChange { chamber_id } => Event::default()
+                    .event("status")
+                    .json_data(json!({"chamber_id": chamber_id}))
+                    .unwrap(),
+                SseEvent::LogLine { chamber_id, line } => Event::default()
+                    .event("log")
+                    .json_data(json!({"chamber_id": chamber_id, "line": line}))
+                    .unwrap(),
+                SseEvent::IndexChanged => Event::default().event("index").data("changed"),
+            };
+            Some(Ok(ev))
+        });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 

@@ -38,12 +38,20 @@ export function SettingsSheet() {
     if (!hub || refreshing) return
     setRefreshing(true)
     setRefreshError(null)
+    // A completion that lands after a logout — or after another token has
+    // signed in — belongs to a session that no longer exists: applying it
+    // would install the previous owner's chamber list under the new account,
+    // and a late 401 would sign the new session out.
+    const stale = () => useAppStore.getState().client !== hub
     try {
       await hub.refreshIndex()
       // The hub also emits `index`, but re-registering here means the list is
       // already correct when the sheet closes rather than a beat later.
-      useAppStore.getState().applyInitialState(await hub.register())
+      const init = await hub.register()
+      if (stale()) return
+      useAppStore.getState().applyInitialState(init)
     } catch (e) {
+      if (stale()) return
       if (logoutIfAuthError(e)) return
       setRefreshError('Could not refresh. Check your connection and try again.')
     } finally {

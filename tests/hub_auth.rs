@@ -284,7 +284,9 @@ async fn drain(stream: &mut axum::body::BodyDataStream, frames: usize, ms: u64) 
 async fn matrix_chamber_routes() {
     let m = setup();
 
-    for verb in ["messages", "status", "todos"] {
+    // Only `messages` is chamber-scoped: `status`/`todos` are working state
+    // and belong to the owner-only matrix below.
+    for verb in ["messages"] {
         let alpha = format!("/api/chambers/{}/{verb}", m.alpha);
         let beta = format!("/api/chambers/{}/{verb}", m.beta);
 
@@ -469,6 +471,37 @@ async fn matrix_list_and_events() {
         "out-of-scope chamber leaked into the invite's stream: {invite_text}"
     );
 
+    // Log lines never reach a guest, even for a chamber in scope: the owner
+    // stream proves they are broadcast, the invite stream proves they are
+    // filtered by *kind*, not only by chamber.
+    let mut owner_log_stream = m.events(As::Owner).await;
+    let mut invite_log_stream = m.events(As::Invite).await;
+    m.app
+        .tx
+        .send(SseEvent::LogLine {
+            chamber_id: m.alpha.clone(),
+            line: "LOG-SENTINEL sk-secret".into(),
+        })
+        .unwrap();
+    m.app
+        .tx
+        .send(new_message(&m.alpha, "ALPHA-AFTER-LOG"))
+        .unwrap();
+    let owner_log_text = drain(&mut owner_log_stream, 2, 2000).await;
+    assert!(
+        owner_log_text.contains("LOG-SENTINEL"),
+        "owner must receive log lines: {owner_log_text}"
+    );
+    let invite_log_text = drain(&mut invite_log_stream, 1, 2000).await;
+    assert!(
+        invite_log_text.contains("ALPHA-AFTER-LOG"),
+        "the invite stream is live (message delivered): {invite_log_text}"
+    );
+    assert!(
+        !invite_log_text.contains("LOG-SENTINEL"),
+        "an in-scope log line leaked to a guest: {invite_log_text}"
+    );
+
     assert_eq!(
         m.status(As::Anonymous, "GET", "/api/events").await,
         StatusCode::UNAUTHORIZED,
@@ -586,6 +619,10 @@ const OWNER_ONLY: &[(&str, &str)] = &[
     ("POST", "/api/chambers/{id}/archive"),
     ("POST", "/api/chambers/{id}/unarchive"),
     ("GET", "/api/chambers/{id}/sync"),
+    // Working state — log tail, plan/notes, settings, todos — is the owner's,
+    // even for a chamber the invite can chat in.
+    ("GET", "/api/chambers/{id}/status"),
+    ("GET", "/api/chambers/{id}/todos"),
     ("POST", "/api/chambers/refresh"),
     ("POST", "/api/chambers/new"),
     ("GET", "/api/tokens"),
@@ -760,6 +797,15 @@ async fn a_revoked_stream_is_not_resurrected_by_a_same_named_replacement_invite(
     assert!(
         !tail.contains("AFTER-REVOKE"),
         "a revoked stream was resurrected by a same-named replacement invite: {tail}"
+    );
+    // ...and the stream has ENDED, not merely fallen silent: a silent stream
+    // would keep the guest's console looking signed in on cached data until
+    // its next request. EOF makes the client reconnect and learn about the
+    // 401 right away.
+    let ended = tokio::time::timeout(std::time::Duration::from_millis(500), stream.next()).await;
+    assert!(
+        matches!(ended, Ok(None)),
+        "a revoked stream must end (EOF), got {ended:?}"
     );
 
     // ...and the revoked token is dead on ordinary routes too.

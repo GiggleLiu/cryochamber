@@ -4,6 +4,7 @@ import { SettingsSheet } from './SettingsSheet'
 import { HubClient } from '../api/hubClient'
 import { ApiError } from '../api/errors'
 import { useAppStore, resetAppStore } from '../store/appStore'
+import type { Credentials, InitialState } from '../api/types'
 
 beforeEach(() => {
   resetAppStore()
@@ -124,4 +125,23 @@ describe('owner-only rows', () => {
     expect(screen.queryByRole('checkbox', { name: 'Show completed & archived' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Refresh chambers' })).toBeNull()
   })
+})
+
+test('a refresh that finishes after logout does not touch the next session', async () => {
+  const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
+  const hub = new HubClient(creds, vi.fn())
+  vi.spyOn(hub, 'refreshIndex').mockResolvedValue(undefined)
+  let resolveRegister!: (v: InitialState) => void
+  vi.spyOn(hub, 'register').mockReturnValue(new Promise((r) => { resolveRegister = r }))
+  useAppStore.setState({ hubRole: 'owner', client: hub, creds })
+  render(<SettingsSheet />)
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh chambers' }))
+  // Sign out and back in as another token while the register is in flight.
+  useAppStore.getState().logout()
+  const other = new HubClient({ ...creds, apiKey: 'other-token' }, vi.fn())
+  useAppStore.setState({ client: other, creds: { ...creds, apiKey: 'other-token' }, hubRole: 'owner' })
+  resolveRegister({ subscriptions: [{ stream_id: 1, name: 'stale-list', description: '' }], unread: [] })
+  await new Promise((r) => setTimeout(r, 10))
+  expect(useAppStore.getState().streams).toEqual([])
+  expect(useAppStore.getState().creds?.apiKey).toBe('other-token')
 })

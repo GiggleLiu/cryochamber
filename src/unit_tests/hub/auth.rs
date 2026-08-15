@@ -16,8 +16,6 @@ fn classification_matches_spec_matrix() {
             "/api/chambers/x1/messages",
             Chamber("x1".into()),
         ),
-        (Method::GET, "/api/chambers/x1/status", Chamber("x1".into())),
-        (Method::GET, "/api/chambers/x1/todos", Chamber("x1".into())),
         (Method::POST, "/api/chambers/x1/send", Chamber("x1".into())),
         (
             Method::POST,
@@ -36,6 +34,9 @@ fn classification_matches_spec_matrix() {
         (Method::POST, "/api/chambers/x1/stop", OwnerOnly),
         (Method::POST, "/api/chambers/x1/reset", OwnerOnly),
         (Method::GET, "/api/chambers/x1/sync", OwnerOnly),
+        // Working state, not conversation: owner-only even in scope.
+        (Method::GET, "/api/chambers/x1/status", OwnerOnly),
+        (Method::GET, "/api/chambers/x1/todos", OwnerOnly),
         (Method::POST, "/api/tokens", OwnerOnly),
         (Method::GET, "/api/anything-new", OwnerOnly),
     ];

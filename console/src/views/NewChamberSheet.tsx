@@ -67,17 +67,22 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
     }
     setBusy(true)
     setError(null)
+    // A completion after a logout or account switch belongs to a session that
+    // no longer exists: neither its result nor its 401 may touch the new one.
+    const stale = () => useAppStore.getState().client !== hub
     try {
       const { id } = await hub.createChamber(payload)
       // The index changed, so re-register rather than waiting for the `index`
       // event the hub also emits — the new chamber has to exist in the store
       // before we can navigate into it.
       const init = await hub.register()
+      if (stale()) return
       useAppStore.getState().applyInitialState(init)
       const streamId = hub.streamIdFor(id)
       onClose()
       if (streamId !== undefined) navigate({ name: 'conversation', streamId })
     } catch (e) {
+      if (stale()) return
       if (logoutIfAuthError(e)) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
