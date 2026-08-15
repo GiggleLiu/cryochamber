@@ -4,7 +4,7 @@ import { loadCachedState, saveCachedState } from './cache'
 import type { Credentials, InitialState, Message } from '../api/types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
-const otherCreds: Credentials = { ...creds, prefix: '/other', email: 'Bob' }
+const otherCreds: Credentials = { ...creds, prefix: '/other', email: 'Bob', apiKey: 'k2' }
 
 const initial: InitialState = {
   subscriptions: [
@@ -92,7 +92,7 @@ describe('hidden projects are per account', () => {
     useAppStore.getState().setCreds(creds)
     useAppStore.getState().toggleHidden(1)
     expect(useAppStore.getState().hiddenStreams).toEqual([1])
-    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub||me@b.c')!)).toEqual([1])
+    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub||ee0c38ea156277d1')!)).toEqual([1])
     useAppStore.getState().toggleHidden(1)
     expect(useAppStore.getState().hiddenStreams).toEqual([])
   })
@@ -105,7 +105,7 @@ describe('hidden projects are per account', () => {
     useAppStore.getState().setCreds(otherCreds)
     expect(useAppStore.getState().hiddenStreams).toEqual([])
     useAppStore.getState().toggleHidden(1)
-    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub|/other|Bob')!)).toEqual([1])
+    expect(JSON.parse(localStorage.getItem('agent-console.hidden.hub|/other|953d7c088d02ba59')!)).toEqual([1])
     // …and going back finds the first account's list intact.
     useAppStore.getState().setCreds(creds)
     expect(useAppStore.getState().hiddenStreams).toEqual([1])
@@ -236,6 +236,17 @@ describe('updateStreamStatus', () => {
     })
     // Not in the update: left exactly as it was, not reset to "unknown".
     expect(beta).toEqual({ stream_id: 2, name: 'beta', description: 'B' })
+  })
+
+  test('an update that omits the flags preserves what was known', () => {
+    useAppStore.getState().applyInitialState(initial)
+    useAppStore.getState().updateStreamStatus([
+      { stream_id: 1, running: true, agentRunning: false, nextWake: 'in 2 h' },
+    ])
+    useAppStore.getState().updateStreamStatus([{ stream_id: 1, nextWake: null }])
+    expect(useAppStore.getState().streams[0]).toMatchObject({
+      running: true, agentRunning: false, nextWake: null,
+    })
   })
 
   test('a status for a project we do not have is ignored', () => {

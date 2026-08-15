@@ -77,11 +77,15 @@ describe('chamber liveness', () => {
     ])
   })
 
-  test('chamberStatuses reports a missing flag as not running', async () => {
+  test('chamberStatuses keeps missing flags unknown instead of claiming stopped', async () => {
+    // Against a hub that predates the liveness fields, a status event must
+    // not repaint every project as a stopped chamber.
     const c = new HubClient(creds, mockFetch(() => [{ id: 'cham-a', name: 'alpha' }]))
-    expect(await c.chamberStatuses()).toEqual([
-      { stream_id: numericStreamId('cham-a', ACCOUNT), running: false, agentRunning: false, nextWake: null },
-    ])
+    const [status] = await c.chamberStatuses()
+    expect(status.stream_id).toBe(numericStreamId('cham-a', ACCOUNT))
+    expect(status.running).toBeUndefined()
+    expect(status.agentRunning).toBeUndefined()
+    expect(status.nextWake).toBeNull()
   })
 })
 

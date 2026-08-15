@@ -99,6 +99,25 @@ test('a failed status refresh is swallowed and leaves the loop running', async (
   unmount()
 })
 
+test('a 401 on the status refresh signs the user out', async () => {
+  // The refresh can be the first authenticated call after a revocation —
+  // swallowing it like a transient failure would leave a signed-in UI
+  // behind a dead token.
+  const fetchMock = vi.fn(async (url: string) => {
+    if (String(url).includes('/api/events')) {
+      return liveStream(['event: status\ndata: {"chamber_id":"cham-a"}\n\n'])
+    }
+    return fetchMock.mock.calls.filter(([u]) => !String(u).includes('/api/events')).length > 1
+      ? new Response('', { status: 401 })
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha', running: true, agent_running: true }]), { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient(creds) })
+  const { unmount } = renderHook(() => useEventLoop())
+  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
+  unmount()
+})
+
 test('a 401 on register logs the user out', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
   useAppStore.setState({ client: new HubClient(creds) })

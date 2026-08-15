@@ -119,7 +119,7 @@ export interface AppState {
   setShareOpen(open: boolean): void
   applyInitialState(s: InitialState): void
   /** Merge fresh liveness into the projects already on screen. */
-  updateStreamStatus(list: Array<{ stream_id: number; running: boolean; agentRunning: boolean; nextWake: string | null }>): void
+  updateStreamStatus(list: Array<{ stream_id: number; running?: boolean; agentRunning?: boolean; nextWake: string | null }>): void
   setMessages(streamId: number, msgs: Message[]): void
   applyEvents(events: AppEvent[]): void
   clearUnread(streamId: number): void
@@ -256,7 +256,13 @@ export const useAppStore = create<AppState>()((set, get) => {
       streams: state.streams.map((s) => {
         const status = byId.get(s.stream_id)
         return status
-          ? { ...s, running: status.running, agentRunning: status.agentRunning, nextWake: status.nextWake }
+          ? {
+              ...s,
+              // An update that omits a flag leaves what we knew in place.
+              running: status.running ?? s.running,
+              agentRunning: status.agentRunning ?? s.agentRunning,
+              nextWake: status.nextWake,
+            }
           : s
       }),
     }))

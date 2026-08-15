@@ -81,9 +81,10 @@ test('a successful send moves its outbox item to sent, not away', async () => {
 
 describe('per-project drafts', () => {
   // Spelled out rather than built with draftKey(), so the stored key shape is
-  // actually pinned by a test.
-  const KEY_1 = 'agent-console.draft.hub||me@b.c.1'
-  const KEY_2 = 'agent-console.draft.hub||me@b.c.2'
+  // actually pinned by a test. The account segment is the fingerprint of the
+  // token (apiKey 'k'), never the display name — names are reusable.
+  const KEY_1 = 'agent-console.draft.hub||ee0c38ea156277d1.1'
+  const KEY_2 = 'agent-console.draft.hub||ee0c38ea156277d1.2'
   const OTHER_CREDS = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
 
   test('typing persists a draft under the project key', async () => {
@@ -129,7 +130,7 @@ describe('per-project drafts', () => {
     expect(screen.getByRole('textbox')).toHaveValue('')
     await userEvent.type(screen.getByRole('textbox'), 'other work')
     await waitFor(() =>
-      expect(localStorage.getItem('agent-console.draft.hub||Alice.1')).toBe('other work'),
+      expect(localStorage.getItem('agent-console.draft.hub||a210d45de0363526.1')).toBe('other work'),
     )
     expect(localStorage.getItem(KEY_1)).toBe('work in progress')
   })

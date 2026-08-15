@@ -1,5 +1,5 @@
 import { ApiError } from './errors'
-import { accountKey } from '../lib/account'
+import { accountKey, fnv1a } from '../lib/account'
 import type { Credentials, InitialState, Message, StreamSub, User } from './types'
 
 /** Both maps are namespaced per account: hub chamber numbering starts at 1 and
@@ -61,14 +61,7 @@ export function numericStreamId(chamberId: string, account: string): number {
   return id
 }
 
-function fnv1a(s: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return h >>> 0
-}
+
 
 /**
  * Numeric surrogate for a mailbox message id, for a store that sorts and
@@ -185,7 +178,7 @@ export class HubClient {
         agentRunning: typeof c.agent_running === 'boolean' ? c.agent_running : undefined,
         // Only a started chamber has a real schedule; a stopped one reports
         // whatever was pending when it died, which reads as nonsense.
-        nextWake: c.running === true ? (c.next_wake_display ?? null) : null,
+        nextWake: c.running === false ? null : (c.next_wake_display ?? null),
       }
     })
     // No server-side unread state on the hub: it is tracked client-side.
@@ -200,14 +193,16 @@ export class HubClient {
    * wakes or falls asleep: the same index, re-read, without disturbing the
    * projects the store already has. */
   async chamberStatuses(): Promise<
-    Array<{ stream_id: number; running: boolean; agentRunning: boolean; nextWake: string | null }>
+    Array<{ stream_id: number; running?: boolean; agentRunning?: boolean; nextWake: string | null }>
   > {
     const chambers = await this.chambers()
+    // Same rule as register(): absent flags stay undefined — a hub that says
+    // nothing about liveness must not flip every project to "stopped".
     return chambers.map((c) => ({
       stream_id: numericStreamId(c.id, this.account),
-      running: c.running === true,
-      agentRunning: c.agent_running === true,
-      nextWake: c.running === true ? (c.next_wake_display ?? null) : null,
+      running: typeof c.running === 'boolean' ? c.running : undefined,
+      agentRunning: typeof c.agent_running === 'boolean' ? c.agent_running : undefined,
+      nextWake: c.running === false ? null : (c.next_wake_display ?? null),
     }))
   }
 

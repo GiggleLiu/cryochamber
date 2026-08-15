@@ -74,12 +74,17 @@ export function useEventLoop(): void {
                 markHealthy()
                 if (event === 'index') throw new ReregisterSignal()
                 if (event === 'status') {
-                  // Fire and forget: a refresh that fails only leaves the
-                  // liveness banner stale until the next status event.
+                  // Fire and forget for transient failures — a stale banner
+                  // heals on the next status event. A 401 is different: this
+                  // refresh may be the first authenticated call after a
+                  // revocation, and swallowing it would leave a signed-in UI
+                  // behind a dead token.
                   client
                     .chamberStatuses()
                     .then((l) => store.getState().updateStreamStatus(l))
-                    .catch(() => {})
+                    .catch((e) => {
+                      if (isAuthError(e)) store.getState().logout(AUTH_LOGOUT_REASON)
+                    })
                   return
                 }
                 if (event !== 'message') return
