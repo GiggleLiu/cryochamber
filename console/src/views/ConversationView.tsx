@@ -4,10 +4,11 @@ import { ApiError, isAuthError } from '../api/errors'
 import { CLIENT_UNRESOLVED } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
-import { AlertCircle, ArrowDown, ChevronLeft, Message, UserPlus } from '../components/Icon'
+import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
 import { initial, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
 import { InviteSheet } from './InviteSheet'
+import { ControlsSheet } from './ControlsSheet'
 
 /** Messages this far apart start a new time-stamped block. */
 const GAP_SECONDS = 300
@@ -60,7 +61,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
   const navigate = useAppStore((s) => s.navigate)
   const logout = useAppStore((s) => s.logout)
   const isOwner = useIsOwner()
-  const [sheet, setSheet] = useState<'invite' | null>(null)
+  const [sheet, setSheet] = useState<'invite' | 'controls' | null>(null)
   const chamberId = client?.chamberIdFor(streamId)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
@@ -227,6 +228,13 @@ export function ConversationView({ streamId }: { streamId: number }) {
             <button className="icon-btn" aria-label="Invite" onClick={() => setSheet('invite')}>
               <UserPlus />
             </button>
+            <button
+              className="icon-btn"
+              aria-label="Chamber controls"
+              onClick={() => setSheet('controls')}
+            >
+              <Dots />
+            </button>
           </div>
         )}
       </header>
@@ -363,6 +371,15 @@ export function ConversationView({ streamId }: { streamId: number }) {
         <InviteSheet
           chamberId={chamberId}
           chamberName={stream.name}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {sheet === 'controls' && chamberId && (
+        <ControlsSheet
+          chamberId={chamberId}
+          chamberName={stream.name}
+          archived={stream.archived === true}
           onClose={() => setSheet(null)}
         />
       )}

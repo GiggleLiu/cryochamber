@@ -652,4 +652,28 @@ describe('owner header actions', () => {
     await screen.findByText('msg-1')
     expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull()
   })
+
+  test('an owner gets a Controls button that opens the controls sheet', async () => {
+    const client = fakeClient({
+      chamberIdFor: vi.fn(() => 'cham-a'),
+      chamberStatus: vi.fn(async () => ({
+        running: false, agent_running: false, session: 2, agent: 'opencode',
+        log_tail: '', daily_digests: [], next_wake: null, notes_html: '', plan_html: '',
+        has_config: false, settings_rows: [], task: null, session_summary: null,
+        completed: false, completion_summary: null,
+      })),
+    })
+    useAppStore.setState({ client, hubRole: 'owner' })
+    render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    await userEvent.click(screen.getByRole('button', { name: 'Chamber controls' }))
+    expect(await screen.findByRole('dialog', { name: 'Chamber controls' })).toBeInTheDocument()
+  })
+
+  test('a guest is never shown the Controls button', async () => {
+    useAppStore.setState({ client: fakeClient(), hubRole: 'invite' })
+    render(<ConversationView streamId={1} />)
+    await screen.findByText('msg-1')
+    expect(screen.queryByRole('button', { name: 'Chamber controls' })).toBeNull()
+  })
 })
