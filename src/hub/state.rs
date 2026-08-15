@@ -12,6 +12,10 @@ use crate::hub::discovery::{ChamberEntry, ChamberIndex, DiscoveryOptions};
 #[derive(Clone, Debug)]
 pub enum SseEvent {
     NewMessage {
+        /// Mailbox id of the message, identical to the `id` the messages list
+        /// (`crate::chamber_status::messages`) reports for the same file — see
+        /// [`crate::chamber_status::message_id`]. Clients dedupe on it.
+        id: String,
         chamber_id: String,
         direction: String,
         from: String,

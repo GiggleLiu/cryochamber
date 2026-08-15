@@ -2,8 +2,13 @@ use super::*;
 
 use axum::response::IntoResponse;
 
+/// The mailbox id every helper-built event carries — same shape as the ids
+/// `GET /api/chambers/{id}/messages` returns (`<source>/<filename>`).
+const MESSAGE_ID: &str = "inbox/2026-08-15T10-00-00_hi_0001.md";
+
 fn new_message(chamber_id: &str, body: &str) -> SseEvent {
     SseEvent::NewMessage {
+        id: MESSAGE_ID.into(),
         chamber_id: chamber_id.into(),
         direction: "inbox".into(),
         from: "x".into(),
@@ -78,6 +83,25 @@ async fn owner_and_open_mode_streams_are_unfiltered() {
         assert!(text.contains("visible"), "got {text}");
         assert!(text.contains("also-visible"), "got {text}");
     }
+}
+
+#[tokio::test]
+async fn message_frames_carry_the_mailbox_message_id() {
+    // The client dedupes a pushed message against the fetched messages list by
+    // id, so the wire frame must carry the real mailbox id, not a synthetic one.
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+
+    let response = get_events(State(app.clone()), None, None)
+        .await
+        .into_response();
+    app.tx.send(new_message("mine", "visible")).unwrap();
+
+    let text = drain(response, 1).await;
+    assert!(
+        text.contains(&format!("\"id\":\"{MESSAGE_ID}\"")),
+        "message frame must carry the mailbox id: {text}"
+    );
 }
 
 #[tokio::test]

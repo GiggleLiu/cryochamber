@@ -116,8 +116,9 @@ pub async fn post_send(
         is_question: false,
     };
     match store.send_in(&msg) {
-        Ok(_) => {
+        Ok(written) => {
             let _ = app.tx.send(SseEvent::NewMessage {
+                id: crate::chamber_status::message_id_for_path("inbox", &written),
                 chamber_id: entry.id,
                 direction: "inbox".into(),
                 from: msg.from.clone(),

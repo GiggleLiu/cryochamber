@@ -285,6 +285,25 @@ pub fn messages(dir: &Path) -> Vec<ChamberMessage> {
     all
 }
 
+/// Stable id of a mailbox message: its mailbox source (`inbox`,
+/// `inbox/archive`, `outbox`, `outbox/archive`) joined to the message file
+/// name. Both the messages list and the SSE `message` event must use this, so
+/// a pushed message can be matched against the fetched list instead of being
+/// rendered twice.
+pub fn message_id(source: &str, filename: &str) -> String {
+    format!("{source}/{filename}")
+}
+
+/// [`message_id`] for a message *file path* — the path `MessageStore::send_in`
+/// returns, or the one a file watcher reports.
+pub fn message_id_for_path(source: &str, path: &Path) -> String {
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    message_id(source, &filename)
+}
+
 pub fn todos(dir: &Path) -> Vec<crate::todo::TodoItem> {
     crate::todo::TodoFile::new(dir.join("todo.json"))
         .items()
@@ -468,7 +487,7 @@ fn message_model(
     sessions: &[crate::log::SessionSummary],
 ) -> ChamberMessage {
     ChamberMessage {
-        id: format!("{source}/{filename}"),
+        id: message_id(source, filename),
         direction: direction.to_string(),
         from: msg.from.clone(),
         subject: msg.subject.clone(),

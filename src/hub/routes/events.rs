@@ -92,6 +92,7 @@ pub async fn get_events(
         }
         let ev = match event {
             SseEvent::NewMessage {
+                id,
                 chamber_id,
                 direction,
                 from,
@@ -102,6 +103,7 @@ pub async fn get_events(
             } => Event::default()
                 .event("message")
                 .json_data(json!({
+                    "id": id,
                     "chamber_id": chamber_id,
                     "direction": direction,
                     "from": from,

@@ -522,6 +522,28 @@ async fn send_without_role_keeps_default_human() {
 }
 
 #[tokio::test]
+async fn send_broadcasts_the_mailbox_id_of_the_written_message() {
+    // The pushed event and `GET /api/chambers/{id}/messages` must agree on the
+    // id, otherwise the client renders the message twice until the next full
+    // refetch.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let mut rx = app.tx.subscribe();
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let Json(v) = post_send(State(app.clone()), AxumPath(id), None, Json(payload))
+        .await
+        .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let expected = messages_json(&dir)[0]["id"].as_str().unwrap().to_string();
+    assert!(expected.starts_with("inbox/"), "got {expected}");
+    match rx.recv().await.unwrap() {
+        SseEvent::NewMessage { id, .. } => assert_eq!(id, expected),
+        other => panic!("expected NewMessage, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn send_as_owner_honors_client_supplied_from() {
     let (_workspace, app, id, dir) = chamber_app("alpha");
     let payload: SendRequest =

@@ -183,6 +183,7 @@ impl Matrix {
 
 fn new_message(chamber_id: &str, body: &str) -> SseEvent {
     SseEvent::NewMessage {
+        id: "inbox/2026-08-15T10-00-00_hi_0001.md".into(),
         chamber_id: chamber_id.into(),
         direction: "inbox".into(),
         from: "tester".into(),

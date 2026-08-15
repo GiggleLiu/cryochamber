@@ -167,9 +167,17 @@ fn spawn_watcher(
             {
                 if let Ok(content) = std::fs::read_to_string(&message_path.path) {
                     if let Ok(msg) = crate::message::parse_message(&content) {
+                        // The watched dirs are `messages/inbox` and
+                        // `messages/outbox`, non-recursively, so the direction
+                        // is also the mailbox source the messages list uses.
+                        let source = message_path.direction.as_str();
                         let _ = tx_msg.send(SseEvent::NewMessage {
+                            id: crate::chamber_status::message_id_for_path(
+                                source,
+                                &message_path.path,
+                            ),
                             chamber_id: id_for_cb.clone(),
-                            direction: message_path.direction.as_str().to_string(),
+                            direction: source.to_string(),
                             from: msg.from,
                             subject: msg.subject,
                             body: msg.body,
