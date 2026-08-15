@@ -180,3 +180,18 @@ describe('groups, badge and meta line', () => {
     expect(screen.getAllByText(/next wake/)).toHaveLength(1)
   })
 })
+
+test('an owner whose chambers are all put away is told where they went', () => {
+  useAppStore.setState({
+    hubRole: 'owner',
+    showCompletedArchived: false,
+    streams: [
+      { stream_id: 1, name: 'done', description: '', completed: true },
+      { stream_id: 2, name: 'old', description: '', archived: true },
+    ],
+  })
+  render(<ProjectsView />)
+  expect(screen.getByRole('heading', { name: 'No active projects' })).toBeInTheDocument()
+  expect(screen.getByText(/2 completed or archived/)).toBeInTheDocument()
+  expect(screen.queryByText('No projects yet')).toBeNull()
+})

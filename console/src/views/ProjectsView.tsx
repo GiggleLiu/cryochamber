@@ -131,8 +131,22 @@ export function ProjectsView() {
           (!showGroups || completedList.length + archivedList.length === 0) && (
             <div className="empty-state">
               <Inbox size={40} />
-              <h2>No projects yet</h2>
-              <p>Every chamber this token can reach shows up here as a project.</p>
+              {/* An owner whose chambers are all completed/archived with the
+                  toggle off has projects — the empty state must say where. */}
+              {!showGroups && completedList.length + archivedList.length > 0 ? (
+                <>
+                  <h2>No active projects</h2>
+                  <p>
+                    {completedList.length + archivedList.length} completed or archived — turn on
+                    “Show completed &amp; archived” in Settings to see them.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h2>No projects yet</h2>
+                  <p>Every chamber this token can reach shows up here as a project.</p>
+                </>
+              )}
             </div>
           )}
 
