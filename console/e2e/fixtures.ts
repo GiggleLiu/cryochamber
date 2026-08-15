@@ -136,6 +136,10 @@ export async function mockHub(page: Page, opts: MockOptions = {}): Promise<void>
     if (opts.hangRegister) return
     await r.fulfill({ json: opts.chambers ?? chambers })
   })
+  // Playwright matches routes last-registered-first, so the catch-all has to be
+  // registered BEFORE the chamber it is a fallback for — otherwise it shadows
+  // cham-a's thread and every conversation renders empty.
+  await page.route('**/api/chambers/*/messages', (r) => r.fulfill({ json: [] }))
   await page.route('**/api/chambers/cham-a/messages', async (r) => {
     if (opts.hangHistory) return
     if (opts.failHistory) {
@@ -144,7 +148,6 @@ export async function mockHub(page: Page, opts: MockOptions = {}): Promise<void>
     }
     await r.fulfill({ json: thread })
   })
-  await page.route('**/api/chambers/*/messages', (r) => r.fulfill({ json: [] }))
   await page.route('**/api/chambers/*/send', (r) => r.fulfill({ json: { ok: true } }))
   await page.route('**/api/chambers/*/files/**', (r) =>
     r.fulfill({ contentType: 'image/svg+xml', body: PLOT_SVG }),

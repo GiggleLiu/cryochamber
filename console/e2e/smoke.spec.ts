@@ -97,7 +97,7 @@ test.describe('desktop layout contract', () => {
     await mockHub(page)
     await signIn(page)
     await page.getByRole('button', { name: /qec-decoders/ }).click()
-    await expect(page.getByRole('textbox')).toBeVisible()
+    await expect(page.getByText('Decoder sweep complete')).toBeVisible()
 
     const overflow = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,

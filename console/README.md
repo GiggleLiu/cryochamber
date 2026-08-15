@@ -151,8 +151,12 @@ The app shows the chambers the hub hands your token. Check the hub's scope for
 that token, or *Settings → Projects* in case it is hidden.
 
 **Can I use it on a desktop browser?**
-Yes — the layout is phone-first but it works at any width, and Enter sends when
-a hardware keyboard is present.
+Yes. Bars, the message canvas and the composer dock stay full-bleed, but what
+you read is clamped to an 800px column and centred, so a reply is never a
+single line stretched across a monitor. There is no breakpoint: on a phone the
+column is wider than the screen and every surface is edge-to-edge exactly as
+before, and a window wider than the column simply grows gutters. Enter sends
+when a hardware keyboard is present.
 
 **What is stored on my phone?**
 The access token, the name the hub knows you by, and a small cache of recent

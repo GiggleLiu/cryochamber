@@ -97,6 +97,20 @@
   --focus-ring: 0 0 0 3px rgba(7, 193, 96, 0.38);
   --press-veil: rgba(0, 0, 0, 0.06);   /* :active wash over any surface */
   --bar-h: 3rem;
+
+  /* Measure — the widest a column of content ever gets. On a phone every
+     surface is narrower than this and the clamps below collapse to their
+     phone padding, so there is no breakpoint and no second layout: a window
+     wider than the column simply grows gutters. Chrome (bars, the composer
+     dock, scrollers) stays full-bleed; only what you read is clamped. */
+  --col-max: 800px;
+  --col-max-form: 25rem;   /* a form is not a reading column — login, sign-in */
+
+  /* The gutter a full-bleed container grows to centre `--col-max` inside
+     itself. `100%` resolves against the containing block, so the same
+     expression works on a scroller, a bar, or the composer dock; `max()` with
+     the surface's own padding is what makes it a no-op on a phone. */
+  --gutter: calc((100% - var(--col-max)) / 2);
 }
 
 /* ==========================================================================
@@ -246,6 +260,9 @@ input, select, textarea { font: inherit; color: inherit; }
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Edge-to-edge on a phone; a centred rail once the window outgrows the
+     column, so a project row is never a name at one end of a 1400px line. */
+  padding-inline: max(0px, var(--gutter));
 }
 
 .stream-list { flex: none; background: var(--surface); }
@@ -387,6 +404,9 @@ input, select, textarea { font: inherit; color: inherit; }
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   padding: var(--sp-2) var(--sp-3) var(--sp-4);
+  /* The scroller keeps the window's full width — its bar belongs at the edge —
+     and the messages inside it become a centred column on a wide screen. */
+  padding-inline: max(var(--sp-3), var(--gutter));
   background: var(--canvas);
 }
 
@@ -491,7 +511,8 @@ input, select, textarea { font: inherit; color: inherit; }
 /* Jump-to-latest: appears only when the reader has scrolled away. */
 .jump-latest {
   position: absolute;
-  right: var(--sp-3);
+  /* Hugs the column it points at, not the window's edge. */
+  right: max(var(--sp-3), var(--gutter));
   bottom: var(--sp-3);
   z-index: 10;
   display: flex;
@@ -739,10 +760,14 @@ input, select, textarea { font: inherit; color: inherit; }
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* The dock spans the window — its border is the edge between thread and
+   composer — while the field itself lines up with the messages it answers. */
 .composer {
   display: flex;
   align-items: flex-end;
   gap: var(--sp-1);
+  max-width: var(--col-max);
+  margin-inline: auto;
   padding: var(--sp-2) var(--sp-2);
 }
 
@@ -794,6 +819,8 @@ input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  max-width: var(--col-max);
+  margin-inline: auto;
   padding: var(--sp-2) var(--sp-4) 0;
   font-size: var(--fs-xs);
   color: var(--ink-3);
@@ -813,15 +840,21 @@ input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  max-width: var(--col-max);
+  margin-inline: auto;
   padding: var(--sp-2) var(--sp-4) 0;
   font-size: var(--fs-xs);
   color: var(--danger);
 }
 
+/* Tracks the field it completes: left/right pin it to the dock on a phone, and
+   the max-width plus auto margins park it over the column on a wide screen. */
 .mention-panel {
   position: absolute;
   left: var(--sp-2);
   right: var(--sp-2);
+  max-width: calc(var(--col-max) - var(--sp-4));
+  margin-inline: auto;
   bottom: calc(100% + var(--sp-1));
   z-index: 25;
   max-height: 15rem;
@@ -854,6 +887,9 @@ input, select, textarea { font: inherit; color: inherit; }
   min-height: 100%;
   padding: var(--sp-8) var(--sp-6)
     calc(var(--sp-8) + env(safe-area-inset-bottom));
+  /* A sign-in form is not a reading column: it stays form-width and centred
+     rather than stretching a token field across a monitor. */
+  padding-inline: max(var(--sp-6), calc((100% - var(--col-max-form)) / 2));
   background: var(--surface);
 }
 .login-head { margin-bottom: var(--sp-8); }
@@ -938,6 +974,8 @@ input, select, textarea { font: inherit; color: inherit; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: var(--sp-5) 0 calc(var(--sp-8) + env(safe-area-inset-bottom));
+  /* The sheet still owns the screen; its groups read as one column. */
+  padding-inline: max(0px, var(--gutter));
 }
 
 .group-label {
