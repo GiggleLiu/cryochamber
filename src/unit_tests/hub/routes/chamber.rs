@@ -462,6 +462,85 @@ fn messages_json_includes_unique_stable_ids_for_duplicate_messages() {
     );
 }
 
+/// Workspace with one discoverable chamber. Returns `(tempdir, app, id, dir)`.
+fn chamber_app(name: &str) -> (tempfile::TempDir, Arc<AppState>, String, std::path::PathBuf) {
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join(name);
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig::default();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = app.chambers.read().unwrap().keys().next().unwrap().clone();
+    let dir = chamber.canonicalize().unwrap();
+    (workspace, app, id, dir)
+}
+
+#[tokio::test]
+async fn send_stamps_invite_name_ignoring_client_from() {
+    // An invite may not impersonate anyone: whatever `from` the client sends
+    // is discarded and the invite's own name is stamped on the message.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let role = crate::hub::tokens::Role::Invite {
+        name: "Alice".into(),
+        chambers: vec![id.clone()],
+    };
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "owner-imposter"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(role)),
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].1.from, "Alice");
+    assert_eq!(inbox[0].1.body, "hi");
+}
+
+#[tokio::test]
+async fn send_without_role_keeps_default_human() {
+    // Local (open) mode and the owner keep today's behavior.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let Json(v) = post_send(State(app), AxumPath(id), None, Json(payload))
+        .await
+        .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0].1.from, "human");
+}
+
+#[tokio::test]
+async fn send_as_owner_honors_client_supplied_from() {
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest =
+        serde_json::from_value(json!({"body": "hi", "from": "operator"})).unwrap();
+
+    let Json(v) = post_send(
+        State(app),
+        AxumPath(id),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        Json(payload),
+    )
+    .await
+    .unwrap();
+    assert_eq!(v["ok"], true);
+
+    let inbox = crate::message::read_inbox(&dir).unwrap();
+    assert_eq!(inbox[0].1.from, "operator");
+}
+
 #[test]
 fn lifecycle_status_json_reports_success_message() {
     let value = lifecycle_status_json(Ok(()), "Started");

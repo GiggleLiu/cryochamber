@@ -10,7 +10,7 @@ async fn get_chambers_lists_workspace_scans() {
     let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
 
-    let Json(v) = get_chambers(State(app)).await;
+    let Json(v) = get_chambers(State(app), None).await;
     let arr = v.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["name"], "alpha");
@@ -20,7 +20,7 @@ async fn get_chambers_lists_workspace_scans() {
 async fn refresh_picks_up_new_chamber() {
     let dir = tempfile::tempdir().unwrap();
     let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
-    let Json(initial) = get_chambers(State(app.clone())).await;
+    let Json(initial) = get_chambers(State(app.clone()), None).await;
     assert_eq!(initial.as_array().unwrap().len(), 0);
 
     let new_dir = dir.path().join("beta");
@@ -72,7 +72,7 @@ async fn get_chambers_refreshes_runtime_fields_from_disk() {
     }
     *app.chambers.write().unwrap() = stale;
 
-    let Json(v) = get_chambers(State(app)).await;
+    let Json(v) = get_chambers(State(app), None).await;
     let arr = v.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["running"], false);
@@ -103,11 +103,58 @@ async fn get_chambers_includes_agent_running_from_disk() {
     let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
     app.refresh();
 
-    let Json(v) = get_chambers(State(app)).await;
+    let Json(v) = get_chambers(State(app), None).await;
     let arr = v.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["running"], true);
     assert_eq!(arr[0]["agent_running"], true);
+}
+
+#[tokio::test]
+async fn chamber_list_is_filtered_for_invites() {
+    // An invite must not learn that chambers outside its scope exist.
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["alpha", "beta"] {
+        let d = dir.path().join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        let cfg = crate::config::CryoConfig::default();
+        crate::config::save_config(&d.join("cryo.toml"), &cfg).unwrap();
+    }
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+    app.refresh();
+    let beta_id = app
+        .chambers
+        .read()
+        .unwrap()
+        .iter()
+        .find(|(_, c)| c.name == "beta")
+        .map(|(id, _)| id.clone())
+        .expect("beta in index");
+
+    let ids_of = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let role = crate::hub::tokens::Role::Invite {
+        name: "Alice".into(),
+        chambers: vec![beta_id.clone()],
+    };
+    let Json(scoped) = get_chambers(State(app.clone()), Some(axum::Extension(role))).await;
+    assert_eq!(ids_of(&scoped), vec![beta_id]);
+
+    // Owner and open mode still see both chambers.
+    let Json(as_owner) = get_chambers(
+        State(app.clone()),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+    )
+    .await;
+    assert_eq!(ids_of(&as_owner).len(), 2);
+    let Json(open) = get_chambers(State(app), None).await;
+    assert_eq!(ids_of(&open).len(), 2);
 }
 
 mod validate_name {

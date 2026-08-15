@@ -87,15 +87,28 @@ pub struct SendRequest {
     subject: Option<String>,
 }
 
+/// Send a message into a chamber's inbox.
+///
+/// The sender identity is stamped from the resolved `Role`: an invite is
+/// always attributed to its own name, so a client-supplied `from` cannot be
+/// used to impersonate the owner or another guest. Owner / open mode keep the
+/// client's `from` (defaulting to `"human"`).
+///
+/// Argument order matters: axum requires the `Json` body extractor last.
 pub async fn post_send(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    role: Option<axum::Extension<crate::hub::tokens::Role>>,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let from = match role {
+        Some(axum::Extension(crate::hub::tokens::Role::Invite { name, .. })) => name,
+        _ => req.from.unwrap_or_else(|| "human".into()),
+    };
     let store = MessageStore::new(path.clone());
     let msg = crate::message::Message {
-        from: req.from.unwrap_or_else(|| "human".into()),
+        from,
         subject: req.subject.unwrap_or_default(),
         body: req.body,
         timestamp: chrono::Local::now().naive_local(),
