@@ -1,7 +1,8 @@
 /// <reference types="vitest/config" />
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const pkg = JSON.parse(
@@ -26,8 +27,38 @@ function katexWoff2Only() {
   }
 }
 
+/**
+ * Emits `precache.json` next to the build: the list of every file the service
+ * worker should cache at install, plus a hash that names the cache. Hashed
+ * assets already carry their content in their name, so hashing the sorted
+ * filenames is enough to change the cache name whenever any asset changes.
+ * `sw.js` and the manifest itself are excluded: the worker must always be
+ * fetched fresh, and the manifest is what the worker fetches to learn the list.
+ */
+function precacheManifest(): Plugin {
+  return {
+    name: 'precache-manifest',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const files = Object.keys(bundle)
+        .filter((f) => f !== 'sw.js' && f !== 'precache.json')
+        .map((f) => '/' + f)
+      for (const always of ['/index.html', '/manifest.webmanifest']) {
+        if (!files.includes(always)) files.push(always)
+      }
+      files.sort()
+      const hash = createHash('sha256').update(files.join('\n')).digest('hex').slice(0, 8)
+      this.emitFile({
+        type: 'asset',
+        fileName: 'precache.json',
+        source: JSON.stringify({ hash, files }),
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), katexWoff2Only()],
+  plugins: [react(), katexWoff2Only(), precacheManifest()],
   // Single source of truth for the version shown in Settings.
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: {
