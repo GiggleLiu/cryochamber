@@ -690,51 +690,6 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .message-body .mention-me { color: #7a4d00; background: #ffe6a0; }
 
-/* Pygments "default" theme for .codehilite spans — colors *and* the
-   bold/italic emphasis of the canonical stylesheet. */
-.codehilite .k, .codehilite .kc, .codehilite .kd, .codehilite .kn,
-.codehilite .kr { color: #008000; font-weight: bold; }
-.codehilite .kp, .codehilite .nb { color: #008000; }
-.codehilite .nt { color: #008000; font-weight: bold; }
-.codehilite .kt { color: #b00040; }
-.codehilite .na { color: #7d9029; }
-.codehilite .nc, .codehilite .nn { color: #0000ff; font-weight: bold; }
-.codehilite .nf { color: #0000ff; }
-.codehilite .nd { color: #aa22ff; }
-.codehilite .ow { color: #aa22ff; font-weight: bold; }
-.codehilite .ne { color: #d2413a; font-weight: bold; }
-.codehilite .nl { color: #a0a000; }
-.codehilite .ni { color: #999999; font-weight: bold; }
-.codehilite .no { color: #880000; }
-.codehilite .nv { color: #19177c; }
-.codehilite .o { color: #666666; }
-.codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .cpf,
-.codehilite .c1, .codehilite .cs { color: #408080; font-style: italic; }
-.codehilite .cp { color: #bc7a00; }
-.codehilite .s, .codehilite .sa, .codehilite .sb, .codehilite .sc,
-.codehilite .dl, .codehilite .s2, .codehilite .sh,
-.codehilite .s1 { color: #ba2121; }
-.codehilite .sd { color: #ba2121; font-style: italic; }
-.codehilite .se { color: #bb6622; font-weight: bold; }
-.codehilite .si { color: #bb6688; font-weight: bold; }
-.codehilite .sr { color: #bb6688; }
-.codehilite .sx { color: #008000; }
-.codehilite .ss { color: #19177c; }
-.codehilite .m, .codehilite .mb, .codehilite .mf, .codehilite .mh,
-.codehilite .mi, .codehilite .mo, .codehilite .il { color: #666666; }
-.codehilite .w { color: #bbbbbb; }
-.codehilite .err { border: 1px solid #ff0000; }
-.codehilite .gd { color: #a00000; }
-.codehilite .ge { font-style: italic; }
-.codehilite .gr { color: #ff0000; }
-.codehilite .gh { color: #000080; font-weight: bold; }
-.codehilite .gi { color: #00a000; }
-.codehilite .go { color: #888888; }
-.codehilite .gp { color: #000080; font-weight: bold; }
-.codehilite .gs { font-weight: bold; }
-.codehilite .gu { color: #800080; font-weight: bold; }
-.codehilite .gt { color: #0044dd; }
-
 /* A standing note above the composer, not a toast: it stays for as long as the
    agent sleeps, so it reads as part of the chrome rather than as an alert. */
 .asleep-note {
@@ -811,7 +766,6 @@ input, select, textarea { font: inherit; color: inherit; }
   box-shadow: inset 0 0 0 1px var(--line);
   cursor: default;
 }
-.send-btn.is-retry { background: var(--danger); color: var(--on-brand); }
 
 /* Upload progress: an indeterminate rail pinned to the dock's top edge, so it
    reports without pushing the composer around. */
@@ -945,16 +899,6 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .btn-primary:active:not(:disabled) { background: var(--brand-press); }
 .btn-primary:disabled { opacity: 0.55; cursor: default; }
-
-.btn-quiet {
-  align-self: center;
-  min-height: var(--tap);
-  padding: 0 var(--sp-3);
-  font-size: var(--fs-md);
-  font-weight: 500;
-  color: var(--brand-press);
-  border-radius: var(--r-sm);
-}
 
 /* ==========================================================================
    Settings sheet — grouped rows on a sunken ground (the platform idiom for
@@ -1136,14 +1080,6 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
-.badge-revoked {
-  padding: 1px var(--sp-2);
-  font-size: var(--fs-2xs);
-  font-weight: 500;
-  color: var(--danger);
-  background: var(--danger-tint);
-  border-radius: var(--r-full);
-}
 
 .invite-copy { margin-bottom: var(--sp-4); }
 .invite-scope {
@@ -1191,7 +1127,6 @@ input, select, textarea { font: inherit; color: inherit; }
   border: 1px solid var(--line);
   border-radius: var(--r-md);
 }
-.sheet-toast.is-error { color: var(--danger); border-color: var(--danger); }
 
 .tab-empty {
   padding: var(--sp-4);
@@ -1424,18 +1359,6 @@ input, select, textarea { font: inherit; color: inherit; }
   --press-veil: rgba(255, 255, 255, 0.08);
   }
 
-  /* keywords, types, word operators, removed lines */
-  :root:not([data-theme='light']) .codehilite :is(.k, .kc, .kd, .kn, .kr, .nt, .kt, .ne, .ow, .gd, .gr, .gt) { color: #ff7b72; }
-  /* names, numbers, generic headings */
-  :root:not([data-theme='light']) .codehilite :is(.nb, .nc, .nn, .nf, .no, .nv, .kp, .ss, .m, .mb, .mf, .mh, .mi, .mo, .il, .gh, .gp, .gu) { color: #79c0ff; }
-  /* decorators, attributes, labels */
-  :root:not([data-theme='light']) .codehilite :is(.nd, .na, .nl) { color: #d2a8ff; }
-  /* strings in all their flavours */
-  :root:not([data-theme='light']) .codehilite :is(.s, .sa, .sb, .sc, .dl, .s2, .sh, .s1, .sd, .sx, .se, .si, .sr) { color: #a5d6ff; }
-  /* comments, whitespace, program output, symbol operators */
-  :root:not([data-theme='light']) .codehilite :is(.c, .ch, .cm, .cpf, .c1, .cs, .cp, .ni, .w, .go, .o) { color: #8b949e; }
-  /* inserted lines */
-  :root:not([data-theme='light']) .codehilite :is(.gi) { color: #7ee787; }
   :root:not([data-theme='light']) .message-body .mention-me { color: #ffd980; background: #4a3a13; }
 }
 
@@ -1481,18 +1404,6 @@ input, select, textarea { font: inherit; color: inherit; }
   --press-veil: rgba(255, 255, 255, 0.08);
 }
 
-/* keywords, types, word operators, removed lines */
-:root[data-theme='dark'] .codehilite :is(.k, .kc, .kd, .kn, .kr, .nt, .kt, .ne, .ow, .gd, .gr, .gt) { color: #ff7b72; }
-/* names, numbers, generic headings */
-:root[data-theme='dark'] .codehilite :is(.nb, .nc, .nn, .nf, .no, .nv, .kp, .ss, .m, .mb, .mf, .mh, .mi, .mo, .il, .gh, .gp, .gu) { color: #79c0ff; }
-/* decorators, attributes, labels */
-:root[data-theme='dark'] .codehilite :is(.nd, .na, .nl) { color: #d2a8ff; }
-/* strings in all their flavours */
-:root[data-theme='dark'] .codehilite :is(.s, .sa, .sb, .sc, .dl, .s2, .sh, .s1, .sd, .sx, .se, .si, .sr) { color: #a5d6ff; }
-/* comments, whitespace, program output, symbol operators */
-:root[data-theme='dark'] .codehilite :is(.c, .ch, .cm, .cpf, .c1, .cs, .cp, .ni, .w, .go, .o) { color: #8b949e; }
-/* inserted lines */
-:root[data-theme='dark'] .codehilite :is(.gi) { color: #7ee787; }
 :root[data-theme='dark'] .message-body .mention-me { color: #ffd980; background: #4a3a13; }
 
 /* The state's own word, coloured in place: it is a row value like any other,
