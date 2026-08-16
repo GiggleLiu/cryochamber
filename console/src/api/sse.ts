@@ -93,7 +93,9 @@ export async function readSse(url: string, opts: ReadSseOptions): Promise<void> 
     }
     dispatch()
   } catch (e) {
-    if (stalled) throw new Error(STALLED)
+    // A stall the caller's own abort raced is not a stall: the loop asked to
+    // stop, and reporting a stall would send it reconnecting instead.
+    if (stalled && !signal.aborted) throw new Error(STALLED)
     throw e
   } finally {
     if (watchdog !== undefined) clearTimeout(watchdog)

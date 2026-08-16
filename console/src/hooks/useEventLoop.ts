@@ -19,6 +19,9 @@ const SSE_HEALTHY_MS = 10_000
  * when `signal` aborts (the loop is being torn down).
  */
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  // An already-aborted signal never fires 'abort', so a listener alone would
+  // sit out the whole wait after teardown.
+  if (signal?.aborted) return Promise.resolve()
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout>
     const finish = () => {

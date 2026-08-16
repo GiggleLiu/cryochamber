@@ -160,3 +160,30 @@ test('a hung connect (no response at all) also trips the watchdog', async () => 
   await vi.advanceTimersByTimeAsync(1001)
   await expect(outcome).resolves.toBe('sse stalled')
 })
+
+test('a caller abort racing the stall watchdog surfaces as the abort, not a stall', async () => {
+  vi.useFakeTimers()
+  const ac = new AbortController()
+  // A truly half-open socket: the watchdog's own abort tears nothing down, so
+  // the read is still pending when the caller stops the loop a moment later.
+  // The caller asked to stop; reporting a stall would send the loop
+  // reconnecting instead of shutting down.
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    const body = new ReadableStream({
+      start(c) {
+        ac.signal.addEventListener('abort', () =>
+          c.error(new DOMException('The operation was aborted.', 'AbortError')),
+        )
+      },
+    })
+    return new Response(body, { status: 200 })
+  }))
+  const outcome = readSse('/api/events', {
+    signal: ac.signal, headers: {}, stallMs: 1000, onEvent: () => {},
+  }).then(() => null, (e: unknown) => e)
+  await vi.advanceTimersByTimeAsync(1001)
+  ac.abort()
+  const err = await outcome
+  expect(isSseStall(err)).toBe(false)
+  expect(err).toBeInstanceOf(DOMException)
+})

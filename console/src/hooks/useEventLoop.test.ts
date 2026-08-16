@@ -409,6 +409,18 @@ describe('sleep', () => {
     }
   })
 
+  test('resolves at once when the signal is already aborted', async () => {
+    // A signal that aborted before the call never fires an 'abort' event, so
+    // a listener-only sleep would sit out the whole backoff after teardown.
+    vi.useFakeTimers()
+    const ac = new AbortController()
+    ac.abort()
+    let done = false
+    void sleep(30_000, ac.signal).then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(true)
+  })
+
   test('resolves when the signal aborts', async () => {
     vi.useFakeTimers()
     const ac = new AbortController()
