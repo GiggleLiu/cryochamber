@@ -47,3 +47,20 @@ test('sends the auth header and the abort signal to fetch', async () => {
     signal,
   })
 })
+
+test('uses an injected fetch when given one, leaving the global untouched', async () => {
+  const globalFetch = vi.fn(async () => streamResponse([]))
+  vi.stubGlobal('fetch', globalFetch)
+  const injected = vi.fn(async () => streamResponse(['event: log\ndata: hi\n\n']))
+  const events: Array<[string, string]> = []
+  await readSse(
+    '/api/events',
+    { Authorization: 'Bearer t' },
+    (e, d) => events.push([e, d]),
+    new AbortController().signal,
+    injected as unknown as typeof fetch,
+  )
+  expect(events).toEqual([['log', 'hi']])
+  expect(injected).toHaveBeenCalledTimes(1)
+  expect(globalFetch).not.toHaveBeenCalled()
+})

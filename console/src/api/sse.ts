@@ -1,14 +1,21 @@
 import { ApiError } from './types'
 
 /** Minimal SSE reader over fetch streaming — EventSource cannot send an
- * Authorization header, and the token must never ride in a query string. */
+ * Authorization header, and the token must never ride in a query string.
+ *
+ * `fetchFn` is the caller's fetch: a `HubClient` built with an injected one
+ * must reach the hub through it here too, or the stream is the single call
+ * that escapes to the global — which in a test realm is a different fetch
+ * with a different `AbortSignal` class. Bound to undefined for the same
+ * reason the client binds its own: a native fetch called as a member throws. */
 export async function readSse(
   url: string,
   headers: Record<string, string>,
   onEvent: (event: string, data: string) => void,
   signal: AbortSignal,
+  fetchFn: typeof fetch = fetch,
 ): Promise<void> {
-  const res = await fetch(url, { headers, signal })
+  const res = await fetchFn.bind(undefined)(url, { headers, signal })
   if (!res.ok || !res.body) throw new ApiError(res.status, `HTTP ${res.status}`)
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

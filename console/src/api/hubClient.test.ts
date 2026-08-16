@@ -497,3 +497,20 @@ describe('the 401 hook and authenticated blobs', () => {
     expect(JSON.parse(String(sendCall[1]?.body))).toEqual({ body: 'hi' })
   })
 })
+
+describe('events()', () => {
+  test('honours the injected fetch and runs onAuthFailure on a 401 connect', async () => {
+    const onAuthFailure = vi.fn()
+    const fetchFn = vi.fn(async () => new Response('', { status: 401 })) as unknown as typeof fetch
+    const c = new HubClient({ token: 't', onAuthFailure, fetch: fetchFn })
+    await expect(
+      c.events(() => {}, new AbortController().signal),
+    ).rejects.toMatchObject({ status: 401 })
+    expect(onAuthFailure).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchFn)).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(fetchFn).mock.calls[0][0])).toBe('/api/events')
+    expect(vi.mocked(fetchFn).mock.calls[0][1]?.headers).toMatchObject({
+      Authorization: 'Bearer t',
+    })
+  })
+})
