@@ -93,6 +93,16 @@ Caddy terminating TLS in front of the hub is not optional: `cryohub` stays bound
 to loopback, and same-origin is what keeps the token out of any third-party
 context.
 
+### Updates
+
+`npm run build` writes `dist/precache.json` (a build hash plus the list of
+files the service worker precaches). A page that is open when a new build is
+served keeps running the old one until the user taps **Reload** on the
+"Update available" bar — the worker never swaps code under a live session, and
+nothing that is not a `2xx` is ever cached, so a bad deploy cannot be pinned
+offline. Hashed `/assets/*` files are served cache-first; everything else is
+network-first.
+
 ## Chamber Hub
 
 The app talks to a **Chamber Hub** (`cryohub`): your own machine's agent
