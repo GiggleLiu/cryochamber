@@ -238,13 +238,12 @@ export class HubClient {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      await readSse(
-        '/api/events',
-        { Authorization: this.authHeaderValue() },
-        onEvent,
+      await readSse('/api/events', {
         signal,
-        this.fetchFn,
-      )
+        headers: { Authorization: this.authHeaderValue() },
+        onEvent,
+        fetch: this.fetchFn,
+      })
     } catch (e) {
       if (isUnauthorized(e)) this.noteAuthFailure()
       throw e
