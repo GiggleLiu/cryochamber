@@ -21,13 +21,37 @@
  */
 const PREFIX = 'agent-console-'
 
-/** The current cache name, resolved once per worker from the build manifest. */
+/**
+ * The current cache name, resolved once per worker from the build manifest.
+ *
+ * A failed lookup is *not* memoized: a rejected `activate` still activates, so a
+ * worker that restarted while offline would otherwise never learn its cache name
+ * again — old caches would survive forever and the global `caches.match` (oldest
+ * first) would keep serving the previous build's shell. Clearing the memo lets
+ * the next request retry the fetch.
+ */
 let cacheNamePromise = null
 function cacheName() {
   cacheNamePromise ??= fetch('/precache.json', { cache: 'reload' })
     .then((r) => r.json())
     .then((m) => ({ name: PREFIX + m.hash, files: m.files }))
+    .catch((e) => {
+      cacheNamePromise = null
+      throw e
+    })
   return cacheNamePromise
+}
+
+/**
+ * Read `req` from *this build's* cache — never from a stale one left behind by
+ * an activate that could not resolve the manifest. If the name is still
+ * unavailable, degrade to the global lookup: serving a possibly-old shell beats
+ * serving nothing when the network is down.
+ */
+function matchCurrent(req) {
+  return cacheName()
+    .then(({ name }) => caches.open(name).then((c) => c.match(req)))
+    .catch(() => caches.match(req))
 }
 
 self.addEventListener('install', (e) => {
@@ -64,7 +88,11 @@ function isPrivate(pathname) {
 function storeIfOk(request, res) {
   if (!res || !res.ok) return res
   const copy = res.clone()
-  cacheName().then(({ name }) => caches.open(name).then((c) => c.put(request, copy)))
+  // Fire-and-forget: a cache write that fails (quota, unknown name) must not
+  // reject into nowhere — the response has already been handed to the page.
+  cacheName()
+    .then(({ name }) => caches.open(name).then((c) => c.put(request, copy)))
+    .catch(() => {})
   return res
 }
 
@@ -76,7 +104,7 @@ self.addEventListener('fetch', (e) => {
 
   if (url.pathname.startsWith('/assets/')) {
     e.respondWith(
-      caches.match(req).then((hit) => hit || fetch(req).then((res) => storeIfOk(req, res))),
+      matchCurrent(req).then((hit) => hit || fetch(req).then((res) => storeIfOk(req, res))),
     )
     return
   }
@@ -85,7 +113,7 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(req)
         .then((res) => storeIfOk(req, res))
-        .catch(() => caches.match('/index.html').then((hit) => hit || Response.error())),
+        .catch(() => matchCurrent('/index.html').then((hit) => hit || Response.error())),
     )
     return
   }
@@ -93,6 +121,6 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(req)
       .then((res) => storeIfOk(req, res))
-      .catch(() => caches.match(req).then((hit) => hit || Response.error())),
+      .catch(() => matchCurrent(req).then((hit) => hit || Response.error())),
   )
 })
