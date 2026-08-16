@@ -380,7 +380,7 @@ book-deploy: book
 
 # Tag and push a release (triggers CI publish to crates.io)
 # Usage: make release V=x.y.z
-release:
+release: console-build
 ifndef V
 	$(error Usage: make release V=x.y.z)
 endif
