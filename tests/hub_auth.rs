@@ -80,8 +80,9 @@ fn setup_with_scope(scope_of: impl Fn(&str) -> String) -> Matrix {
     let ctx = AuthCtx::load(&tokens_path).unwrap();
 
     // A minimal installed console, so the public page surface is the same on
-    // every machine: the default console root would be whatever the developer
-    // running these tests has in ~/.cryo/console.
+    // every machine: the embedded source is populated only if the developer
+    // built the console, so `console_dir` is pinned to make the test
+    // deterministic either way.
     let console = tmp.path().join("console");
     std::fs::create_dir_all(console.join("assets")).unwrap();
     std::fs::write(

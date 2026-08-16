@@ -125,6 +125,11 @@ token or open an invite link, and *Add to Home Screen*.
 The console's own pages stay unauthenticated under `--public` — they are the
 login screen. Everything under `/api` is behind the token.
 
+In public mode every credential — guests and the owner alike — is throttled on
+sends and uploads to a burst of 5 and 10 per minute; past that the hub answers
+`429` with a `Retry-After` header. Every accepted send wakes an agent, so the
+limit is what keeps an invite link from running up the owner's bill.
+
 ## Serving a build from somewhere else (`console_dir`)
 
 You never need this to use the console. It exists for development and for

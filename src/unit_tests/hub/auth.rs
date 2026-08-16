@@ -86,8 +86,9 @@ fn router_with_scope(
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
     // An empty console root, so page routes answer the same way on every
-    // machine: the default would resolve to whatever the developer running
-    // these tests happens to have installed in ~/.cryo/console.
+    // machine: the embedded source is populated only if the developer built
+    // the console, so `console_dir` is pinned to make the test deterministic
+    // either way.
     let config = crate::hub::config::HubConfig {
         console_dir: Some(tmp.path().join("console")),
         ..crate::hub::config::HubConfig::default()
