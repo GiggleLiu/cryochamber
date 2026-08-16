@@ -300,4 +300,59 @@ fn active_content_types_are_downgraded_to_octet_stream_for_attachments() {
     }
     assert_eq!(attachment_content_type("pic.png"), "image/png");
     assert_eq!(attachment_content_type("doc.pdf"), "application/pdf");
+    // Case is not a loophole, and only the *last* extension decides.
+    assert_eq!(
+        attachment_content_type("pic.SVG"),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        attachment_content_type("PAGE.HTML"),
+        "application/octet-stream"
+    );
+    assert_eq!(attachment_content_type("x.svg.png"), "image/png");
+    assert_eq!(
+        attachment_content_type("x.png.svg"),
+        "application/octet-stream"
+    );
+}
+
+/// The header the route actually emits. Downgrading in a helper is worth
+/// nothing if the call site drifts back to `mime_for`, so this drives the real
+/// router: upload, then fetch the stored attachment and read its headers.
+#[tokio::test]
+async fn served_attachments_never_carry_an_active_content_type() {
+    let (_tmp, router, id) = setup();
+    for (upload_name, expected_type) in [
+        ("page.html", "application/octet-stream"),
+        ("pic.SVG", "application/octet-stream"),
+        ("pic.png", "image/png"),
+    ] {
+        let (status, body) = upload(
+            &router,
+            &id,
+            multipart_body(BOUNDARY, upload_name, upload_name.as_bytes()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "upload {upload_name}");
+        let stored = stored_name(&body);
+        assert!(stored.ends_with(upload_name), "stored {stored}");
+
+        let resp = get(&router, &format!("/api/chambers/{id}/files/{stored}")).await;
+        assert_eq!(resp.status(), StatusCode::OK, "get {stored}");
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected_type),
+            "content-type for {upload_name}"
+        );
+        assert!(
+            resp.headers()
+                .get("content-disposition")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .contains("attachment"),
+            "content-disposition for {upload_name}"
+        );
+    }
 }
