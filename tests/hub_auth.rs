@@ -1084,3 +1084,28 @@ async fn an_exhausted_bucket_never_speaks_before_the_authorization_decision() {
         "same ordering in the upload handler"
     );
 }
+
+#[tokio::test]
+async fn an_owner_stream_ends_when_the_owner_token_is_replaced() {
+    let m = setup();
+    let mut stream = m.events(As::Owner).await;
+    m.app.tx.send(new_message(&m.alpha, "BEFORE")).unwrap();
+    let first = drain(&mut stream, 1, 2000).await;
+    assert!(first.contains("BEFORE"), "got {first}");
+
+    // Rotate through the same store the guard reads from.
+    let tokens_path = m.workspace.join("tokens.json");
+    let mut tf = cryochamber::hub::tokens::load_tokens(&tokens_path).unwrap();
+    tf.owner = Some(cryochamber::hub::tokens::generate_token().unwrap());
+    cryochamber::hub::tokens::save_tokens(&tokens_path, &tf).unwrap();
+
+    m.app
+        .tx
+        .send(new_message(&m.alpha, "AFTER-ROTATE"))
+        .unwrap();
+    let tail = drain(&mut stream, 1, 500).await;
+    assert!(
+        !tail.contains("AFTER-ROTATE"),
+        "old owner token kept receiving: {tail}"
+    );
+}

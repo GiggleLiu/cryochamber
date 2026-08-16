@@ -244,3 +244,94 @@ async fn a_lagging_client_is_told_to_resync_instead_of_losing_events_silently() 
         &text[..text.len().min(120)]
     );
 }
+
+/// Owner token + live store, the way the public-mode guard hands them over.
+fn owner_live(dir: &std::path::Path) -> (Arc<crate::hub::auth::AuthCtx>, String) {
+    let mut tf = crate::hub::tokens::TokenFile::default();
+    let owner = tf.ensure_owner().unwrap();
+    let path = dir.join("tokens.json");
+    crate::hub::tokens::save_tokens(&path, &tf).unwrap();
+    (crate::hub::auth::AuthCtx::load(&path).unwrap(), owner)
+}
+
+#[tokio::test]
+async fn rotating_the_owner_token_ends_the_owner_stream() {
+    // The owner's stream is as long-lived as a guest's. If the owner token is
+    // replaced (rotation after a leak, say), the old credential's stream must
+    // end, not keep delivering every chamber's traffic to whoever holds it.
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+    let (ctx, owner) = owner_live(dir.path());
+
+    let response = get_events(
+        State(app.clone()),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        Some(axum::Extension(ctx.clone())),
+        Some(axum::Extension(crate::hub::auth::BearerToken(owner))),
+    )
+    .await
+    .into_response();
+    let mut stream = response.into_body().into_data_stream();
+
+    app.tx.send(new_message("mine", "before-rotate")).unwrap();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+        .await
+        .expect("first event should arrive")
+        .expect("stream open")
+        .unwrap();
+    assert!(String::from_utf8_lossy(&first).contains("before-rotate"));
+
+    ctx.mutate(|store| {
+        store.owner = Some(crate::hub::tokens::generate_token()?);
+        Ok(())
+    })
+    .expect("rotation should persist");
+
+    app.tx.send(new_message("mine", "AFTER-ROTATE")).unwrap();
+    let mut tail = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+    let mut ended = false;
+    loop {
+        match tokio::time::timeout_at(deadline, stream.next()).await {
+            Ok(Some(Ok(bytes))) => tail.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(Some(Err(e))) => panic!("stream error: {e}"),
+            Ok(None) => {
+                ended = true;
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    assert!(
+        !tail.contains("AFTER-ROTATE"),
+        "old owner token kept receiving: {tail}"
+    );
+    assert!(ended, "the stream must END (EOF), not merely fall silent");
+}
+
+#[tokio::test]
+async fn a_live_owner_stream_still_receives_log_lines() {
+    // Guests never get log lines. Making the owner's scope live must not turn
+    // the owner into a guest by accident.
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+    let (ctx, owner) = owner_live(dir.path());
+
+    let response = get_events(
+        State(app.clone()),
+        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+        Some(axum::Extension(ctx)),
+        Some(axum::Extension(crate::hub::auth::BearerToken(owner))),
+    )
+    .await
+    .into_response();
+    app.tx
+        .send(SseEvent::LogLine {
+            chamber_id: "mine".into(),
+            line: "OWNER-LOG".into(),
+        })
+        .unwrap();
+
+    let text = drain(response, 1).await;
+    assert!(text.contains("OWNER-LOG"), "owner lost log lines: {text}");
+}

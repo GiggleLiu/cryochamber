@@ -20,15 +20,18 @@ use crate::hub::tokens::Role;
 /// How the per-event filter decides what this stream may carry.
 ///
 /// The auth guard runs once, when the stream is opened; an SSE connection then
-/// stays alive indefinitely. So the invite case re-authorizes against the
-/// *live* token store on every event: revoking an invite has to silence its
-/// already-open stream, not just its next request. Without a store handle (unit
-/// tests, and any caller that layers `Role` without `AuthCtx`) it falls back to
-/// the scope frozen at connect time.
+/// stays alive indefinitely. So in public mode *every* stream — owner and
+/// invite alike — re-authorizes against the live token store on each event:
+/// revoking an invite, or rotating the owner token, has to end its already-open
+/// stream, not just its next request. Without a store handle (unit tests that
+/// layer a `Role` without `AuthCtx`) it falls back to the scope frozen at
+/// connect time.
 enum StreamScope {
-    /// Owner, or open (loopback) mode.
+    /// Open (loopback) mode: no roles, nothing filtered.
     Unfiltered,
+    /// A guest scope fixed at connect time (no live store available).
     Frozen(Vec<String>),
+    /// Public mode. Re-resolved per event.
     Live {
         /// The exact credential this stream was opened with — never the invite
         /// name. Names are reusable after revocation: binding to one let a
@@ -56,31 +59,34 @@ impl StreamScope {
         }
     }
 
-    /// Whether this stream carries anything for a guest — i.e. it is an invite
-    /// scope, frozen or live. Guests never receive log lines: the console does
-    /// not show them a log, and log output can carry tool output, paths, or
-    /// credentials that were never meant to leave the owner's screen.
-    fn is_guest(&self) -> bool {
-        !matches!(self, Self::Unfiltered)
-    }
-
-    /// May this stream carry an event about `chamber_id` (`None` for
-    /// index-level events, which carry no chamber content)?
-    fn allows(&self, chamber_id: Option<&str>) -> bool {
-        match self {
-            Self::Unfiltered => true,
-            Self::Frozen(chambers) => {
-                chamber_id.is_none_or(|id| crate::hub::auth::scope_covers(chambers, id))
-            }
+    /// May this stream carry `event`? Resolves the credential once and applies
+    /// both rules: chamber scope (a guest sees only its chambers) and content
+    /// class (a guest never sees log lines — tool output can carry paths or
+    /// credentials that were never meant to leave the owner's screen).
+    fn admits(&self, event: &SseEvent) -> bool {
+        let chamber_id = match event {
+            SseEvent::NewMessage { chamber_id, .. }
+            | SseEvent::StatusChange { chamber_id }
+            | SseEvent::LogLine { chamber_id, .. } => Some(chamber_id.as_str()),
+            SseEvent::IndexChanged => None,
+        };
+        let is_log = matches!(event, SseEvent::LogLine { .. });
+        let guest_scope: Option<Vec<String>> = match self {
+            Self::Unfiltered => return true,
+            Self::Frozen(chambers) => Some(chambers.clone()),
             Self::Live { token, ctx } => match ctx.resolve(token) {
-                // Revoked, or replaced by a different token: nothing at all
-                // reaches this stream, not even index events.
-                None => false,
-                Some(Role::Owner) => true,
-                Some(Role::Invite { chambers, .. }) => {
-                    chamber_id.is_none_or(|id| crate::hub::auth::scope_covers(&chambers, id))
-                }
+                // Revoked, or replaced: nothing at all reaches this stream,
+                // not even index events.
+                None => return false,
+                Some(Role::Owner) => None,
+                Some(Role::Invite { chambers, .. }) => Some(chambers),
             },
+        };
+        match guest_scope {
+            None => true,
+            Some(chambers) => {
+                !is_log && chamber_id.is_none_or(|id| crate::hub::auth::scope_covers(&chambers, id))
+            }
         }
     }
 }
@@ -108,15 +114,15 @@ pub async fn get_events(
     token: Option<axum::Extension<BearerToken>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let scope = match (role, ctx, token) {
-        (
-            Some(axum::Extension(Role::Invite { .. })),
-            Some(axum::Extension(ctx)),
-            Some(axum::Extension(BearerToken(token))),
-        ) => StreamScope::Live { token, ctx },
+        // Public mode: the guard supplied the store and the credential, so the
+        // stream re-authorizes live — for the owner exactly as for a guest.
+        (Some(_), Some(axum::Extension(ctx)), Some(axum::Extension(BearerToken(token)))) => {
+            StreamScope::Live { token, ctx }
+        }
         (Some(axum::Extension(Role::Invite { chambers, .. })), _, _) => {
             StreamScope::Frozen(chambers)
         }
-        // Owner, or open (local) mode: unfiltered.
+        // Owner without a store (unit tests), or open (local) mode: unfiltered.
         _ => StreamScope::Unfiltered,
     };
     let rx = app.tx.subscribe();
@@ -145,16 +151,7 @@ pub async fn get_events(
                     return Some(Ok(Event::default().event("resync").data("{}")));
                 }
             };
-            let chamber_id = match &event {
-                SseEvent::NewMessage { chamber_id, .. }
-                | SseEvent::StatusChange { chamber_id }
-                | SseEvent::LogLine { chamber_id, .. } => Some(chamber_id.as_str()),
-                SseEvent::IndexChanged => None,
-            };
-            if !scope.allows(chamber_id) {
-                return None;
-            }
-            if scope.is_guest() && matches!(event, SseEvent::LogLine { .. }) {
+            if !scope.admits(&event) {
                 return None;
             }
             let ev = match event {
