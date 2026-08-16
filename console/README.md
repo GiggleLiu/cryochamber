@@ -74,9 +74,17 @@ far more usually — by opening an invite link, which signs you in on the spot.
 
 ## Deploy
 
-1. `npm run build` → static files in `dist/`.
-2. Point `console_dir` in `cryohub.toml` at this directory's `dist/`, or copy it
-   to the host and serve it yourself (see `deploy/Caddyfile`).
+1. `make console-install` (from the repo root) → builds and installs the site to
+   `~/.cryo/console`, beside the hub's other global state. Override the
+   destination with `CONSOLE_PREFIX=/some/where make console-install`.
+2. Point `console_dir` in `cryohub.toml` at that directory — **once**. The path
+   has to be absolute: the hub canonicalizes it from the service process's
+   working directory, which launchd/systemd choose, not you. Pointing it into a
+   git checkout works right up until a `git clean`, a rebuild, or a moved
+   worktree deletes the build under the running hub — and then every page is a
+   bare `404` while the hub itself still looks healthy. After this, deploying is
+   `make console-install && cryohub restart`, with no config change.
+   (Or copy `dist/` to a host and serve it yourself — see `deploy/Caddyfile`.)
 3. Install Caddy; copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`, set the
    real domain, and `systemctl reload caddy`. HTTPS is automatic.
 4. Open the URL on a phone and use **Add to Home Screen**.

@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-install book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -30,6 +30,7 @@ help:
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
 	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
+	@echo "  console-install - Build the Agent Console into ~/.cryo/console for the hub to serve"
 	@echo "  book         - Build mdbook documentation (en + zh)"
 	@echo "  book-serve   - Build and serve the full book (en + zh) at :3000"
 	@echo "  book-serve-live - mdbook serve with live reload (English book only; zh links 404 here)"
@@ -123,6 +124,20 @@ run-plan:
 # Install the cryo CLI
 cli:
 	cargo install --path .
+
+# Build the Agent Console and install it where the hub can serve it for good.
+# The hub reads `console_dir` as a plain path and canonicalizes it from the
+# service process's cwd, so it must be absolute — and pointing it at a git
+# checkout means a `git clean` or a moved worktree silently 404s the site.
+# CONSOLE_PREFIX is the machine's copy, beside the other global cryo state.
+CONSOLE_PREFIX ?= $(HOME)/.cryo/console
+console-install:
+	cd console && npm install && npm run build
+	@mkdir -p "$(CONSOLE_PREFIX)"
+	rsync -a --delete console/dist/ "$(CONSOLE_PREFIX)/"
+	@echo "Installed to $(CONSOLE_PREFIX)"
+	@echo "Point the hub at it once:  console_dir = \"$(CONSOLE_PREFIX)\"  in $${XDG_CONFIG_HOME:-$$HOME/.config}/cryo/cryohub.toml"
+	@echo "Then:  cryohub restart"
 
 # Run an example
 # Usage: make example DIR=examples/chambers/mr-lazy
