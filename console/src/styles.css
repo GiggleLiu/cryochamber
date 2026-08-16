@@ -1447,6 +1447,78 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .row-value.is-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
 
+/* The last session's own words, as prose under the status card. Full width
+   and wrapping: as a `.row-value` it was one clipped monospace line that also
+   squeezed its label onto two. Clamped to six lines, opened by the button the
+   component only renders when the clamp actually bit. */
+.last-session {
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.last-session-caption {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.last-session-body {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+.last-session-body.is-expanded {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+}
+.last-session-more {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--link);
+  cursor: pointer;
+}
+.last-session + .group-label { padding-top: var(--sp-6); }
+
+/* Recent days: three columns to scan down, the day left and its counts right,
+   tabular so the digits line up. */
+.digest-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.digest-table th,
+.digest-table td {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-sm);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.digest-table th:first-child,
+.digest-table td:first-child { text-align: left; }
+.digest-table th {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.digest-table tbody td { border-top: 1px solid var(--line); }
+.digest-day { color: var(--ink-2); }
+.digest-failed { color: var(--warn); font-weight: 600; }
+
 .todo-list { padding: 0 var(--sp-4); }
 .todo-row {
   display: flex;
