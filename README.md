@@ -36,39 +36,34 @@ If your AI agent supports custom skills, you can skip the manual `plan.md` step:
 
 Start Cryohub to monitor the chamber in your browser:
 ```bash
+make console-install   # once: builds the web UI into ~/.cryo/console
 cryohub start
 ```
 
-Cryohub is the local web dashboard for Cryochamber. It runs once per user,
-discovers chambers on this machine, and gives you a browser UI for status,
-logs, messages, TODOs, notes, and lifecycle controls.
+Cryohub runs once per user, discovers chambers on this machine, and serves the
+**Agent Console** — a browser UI for status, logs, messages, TODOs, notes, and
+lifecycle controls, on a desktop or a phone.
 
 → **CLI reference:** <https://giggleliu.github.io/cryochamber/reference/cli.html>  
 → **中文文档:** <https://giggleliu.github.io/cryochamber/zh/>
 
 ## Agent Console
 
-The dashboard above is built into the `cryohub` binary and is meant for the
-machine it runs on. The **Agent Console** in [`console/`](console/README.md) is
-the other end: an installable phone app (Android + iOS) for reading and
-steering your chambers from anywhere, over the same authenticated `/api` the
-dashboard uses. One chamber is one flat conversation; a friend gets in through
-an invite link scoped to the chambers you name.
-
-Build it and point the hub at the build:
+The [`console/`](console/README.md) app is what cryohub serves, and it is also
+an installable phone app (Android + iOS) for reading and steering your chambers
+from anywhere over the same authenticated `/api`. One chamber is one flat
+conversation; a friend gets in through an invite link scoped to the chambers
+you name.
 
 ```bash
-cd console && npm ci && npm run build
+make console-install
 ```
 
-```toml
-# ~/.config/cryo/cryohub.toml
-console_dir = "/path/to/cryochamber/console/dist"
-```
-
-With `console_dir` set, cryohub serves the console at `/` instead of the
-bundled dashboard — one process for both the API and the app, no separate
-static file server. Leave it unset and nothing changes.
+That builds it and installs it to `~/.cryo/console`, which is where the hub
+looks by default — one process serves both the API and the app, with no config
+and no separate static file server. Set `console_dir` in
+`~/.config/cryo/cryohub.toml` only to serve a build from somewhere else, and
+make that path absolute.
 
 Then mint an owner token and start the hub with auth enforced:
 

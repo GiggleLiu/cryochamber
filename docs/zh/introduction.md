@@ -32,9 +32,9 @@ cryohub start      # 在浏览器中打开打印出的仪表盘 URL
 cryohub start    # 打印本地仪表盘 URL——在浏览器中打开
 ```
 
-![Cryohub 仪表盘显示 chamber 的状态、消息和日志尾部](images/cryohub-dashboard.png)
+![Agent Console 显示 chamber 的对话，包含智能体报告、表格和图像](images/agent-console.png)
 
-[Cryohub](./reference/cli.md#hub-cryohub) 是本地 Web 仪表盘：chamber 状态、消息历史、TODO、笔记、日志尾部，以及生命周期控制，还有向智能体发送消息的输入框。若要从网页或手机远程收发消息，可以用 [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip) 把 chamber 桥接到 Zulip。
+[Cryohub](./reference/cli.md#hub-cryohub) 提供 **Agent Console**：每个 chamber 一条平铺的对话，chamber 状态、TODO、笔记、日志尾部与生命周期控制都在一步之遥，手机和桌面浏览器都能用。用 `make console-install` 安装一次即可，hub 会从 `~/.cryo/console` 读取，无需任何配置。若要从网页或手机远程收发消息，可以用 [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip) 把 chamber 桥接到 Zulip。
 
 ## Chamber 的保证
 

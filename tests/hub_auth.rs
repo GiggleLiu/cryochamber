@@ -79,7 +79,22 @@ fn setup_with_scope(scope_of: impl Fn(&str) -> String) -> Matrix {
     save_tokens(&tokens_path, &tf).unwrap();
     let ctx = AuthCtx::load(&tokens_path).unwrap();
 
-    let router = build_router_public_with_config(app.clone(), ctx, HubConfig::default());
+    // A minimal installed console, so the public page surface is the same on
+    // every machine: the default console root would be whatever the developer
+    // running these tests has in ~/.cryo/console.
+    let console = tmp.path().join("console");
+    std::fs::create_dir_all(console.join("assets")).unwrap();
+    std::fs::write(
+        console.join("index.html"),
+        "<!doctype html><h1>console</h1>",
+    )
+    .unwrap();
+    std::fs::write(console.join("assets/app.js"), "export const x = 1;").unwrap();
+    let config = HubConfig {
+        console_dir: Some(console),
+        ..HubConfig::default()
+    };
+    let router = build_router_public_with_config(app.clone(), ctx, config);
     Matrix {
         workspace: tmp.path().to_path_buf(),
         _tmp: tmp,
@@ -716,14 +731,10 @@ async fn matrix_unknown_api_routes_are_owner_only_by_default() {
 async fn matrix_public_surface() {
     let m = setup();
 
-    for uri in [
-        "/",
-        "/c/anything",
-        &format!("/c/{}", m.alpha),
-        "/assets/web.css",
-        "/assets/logo.svg",
-        "/assets/mark.svg",
-    ] {
+    // `/c/{chamber-id}` is deliberately absent: that was the retired
+    // dashboard's per-chamber URL. The console has no page routes of its own —
+    // any non-file path is the app shell, which then asks for a token.
+    for uri in ["/", "/c/anything", "/assets/app.js"] {
         assert_eq!(
             m.status(As::Anonymous, "GET", uri).await,
             StatusCode::OK,

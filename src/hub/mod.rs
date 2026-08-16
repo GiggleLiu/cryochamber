@@ -53,42 +53,11 @@ pub fn build_router_with_config(
 ) -> Router {
     let mut configured_hosts = vec![config.host.clone()];
     configured_hosts.extend(config.public_hosts.iter().cloned());
-    let router = Router::new();
-    // A configured console takes over the page surface: its build emits its
-    // own `/assets`, and leaving the bundled shell's pages registered would
-    // shadow them with a second, unrelated dashboard. (The `/assets/vendor/*`
-    // routes below stay registered in both modes; a Vite build never emits
-    // those names, so nothing is shadowed.)
-    let router = match &config.console_dir {
-        Some(_) => router,
-        None => router
-            .route("/", get(crate::hub::routes::pages::get_index))
-            .route("/c/{id}", get(crate::hub::routes::pages::get_index))
-            .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
-            .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
-            .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark)),
-    };
-    let router = router
-        .route(
-            "/assets/vendor/katex.min.css",
-            get(crate::hub::routes::pages::get_katex_css),
-        )
-        .route(
-            "/assets/vendor/katex.min.js",
-            get(crate::hub::routes::pages::get_katex_js),
-        )
-        .route(
-            "/assets/vendor/marked.min.js",
-            get(crate::hub::routes::pages::get_marked_js),
-        )
-        .route(
-            "/assets/vendor/purify.min.js",
-            get(crate::hub::routes::pages::get_purify_js),
-        )
-        .route(
-            "/assets/vendor/fonts/{name}",
-            get(crate::hub::routes::pages::get_font),
-        )
+    // The page surface belongs entirely to the console, which is served from
+    // disk by the fallback below. The hub registers no page routes of its own:
+    // a Vite build emits its own `/`, `/assets` and everything under them, and
+    // a second dashboard registered here would shadow them.
+    let router = Router::new()
         .route(
             "/api/chambers",
             get(crate::hub::routes::chambers::get_chambers),
@@ -157,6 +126,12 @@ pub fn build_router_with_config(
             "/api/chambers/{id}/files/{name}",
             get(crate::hub::routes::files::get_file),
         )
+        // Owner-only by default-deny: a chamber's own working files, which is
+        // where an agent's output actually lives when it links to it.
+        .route(
+            "/api/chambers/{id}/workspace/{*path}",
+            get(crate::hub::routes::files::get_workspace_file),
+        )
         .route("/api/events", get(crate::hub::routes::events::get_events))
         .route(
             "/api/whoami",
@@ -174,12 +149,9 @@ pub fn build_router_with_config(
         .with_state(app);
     // The console fallback needs no `AppState`, so it is attached after
     // `with_state` and only ever sees paths no hub route claimed.
-    let router = match config.console_dir {
-        Some(dir) => {
-            router.fallback(move |req| crate::hub::routes::console::serve(dir.clone(), req))
-        }
-        None => router,
-    };
+    let console_root = config.console_root();
+    let router =
+        router.fallback(move |req| crate::hub::routes::console::serve(console_root.clone(), req));
     let router = router
         // Bound the buffered body so the 25 MB attachment cap binds before an
         // unbounded upload is read into memory. The slack covers multipart

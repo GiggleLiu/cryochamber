@@ -79,38 +79,6 @@ async fn list_chambers_returns_both() {
 }
 
 #[tokio::test]
-async fn logo_asset_route_serves_svg() {
-    let tmp = tempfile::tempdir().unwrap();
-    let app = setup_app(&tmp);
-    let router = build_router_with_config(app, HubConfig::default());
-
-    let resp = router
-        .oneshot(
-            Request::builder()
-                .uri("/assets/logo.svg")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(
-        resp.headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok()),
-        Some("image/svg+xml; charset=utf-8")
-    );
-
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert!(
-        bytes.starts_with(b"<svg"),
-        "logo route should serve SVG bytes"
-    );
-}
-
-#[tokio::test]
 async fn send_message_writes_to_correct_chamber() {
     let tmp = tempfile::tempdir().unwrap();
     let app = setup_app(&tmp);

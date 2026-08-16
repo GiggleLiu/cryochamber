@@ -7,7 +7,7 @@ fn classification_matches_spec_matrix() {
     let cases = [
         (Method::GET, "/", Public),
         (Method::GET, "/c/abc", Public),
-        (Method::GET, "/assets/web.css", Public),
+        (Method::GET, "/assets/index-abc123.js", Public),
         (Method::GET, "/api/chambers", AnyToken),
         (Method::GET, "/api/events", AnyToken),
         (Method::GET, "/api/whoami", AnyToken),
@@ -85,8 +85,14 @@ fn router_with_scope(
     let ctx = AuthCtx::load(&path).unwrap();
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
-    let router =
-        crate::hub::build_router_with_config(app.clone(), crate::hub::config::HubConfig::default());
+    // An empty console root, so page routes answer the same way on every
+    // machine: the default would resolve to whatever the developer running
+    // these tests happens to have installed in ~/.cryo/console.
+    let config = crate::hub::config::HubConfig {
+        console_dir: Some(tmp.path().join("console")),
+        ..crate::hub::config::HubConfig::default()
+    };
+    let router = crate::hub::build_router_with_config(app.clone(), config);
     (apply_auth(router, app, ctx), owner, invite.token)
 }
 
@@ -159,8 +165,14 @@ async fn guard_enforces_401_403_404() {
         .await,
         StatusCode::NOT_FOUND
     );
-    // static pages stay public
-    assert_eq!(status_for(&router, "GET", "/", None).await, StatusCode::OK);
+    // Pages stay public: the guard hands `/` straight to the console fallback
+    // instead of 401ing it. No console is installed under this temp root, so
+    // that fallback answers with the setup page — which is the point, since an
+    // auth failure would be 401/403 no matter what is installed.
+    assert_eq!(
+        status_for(&router, "GET", "/", None).await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
 }
 
 #[tokio::test]
@@ -319,11 +331,13 @@ fn a_mutation_that_cannot_be_persisted_does_not_take_effect() {
 async fn guard_leaves_non_api_paths_public_even_when_they_start_with_api() {
     let tmp = tempfile::tempdir().unwrap();
     let (router, _owner, _invite) = public_router(&tmp);
-    // `/apiary` is not under `/api/`: it is an ordinary (unknown) page, so the
-    // guard must let it through to the router — which 404s it, not 401s it.
+    // `/apiary` is not under `/api/`: it is an ordinary page, so the guard must
+    // let it through to the console fallback rather than 401 it. With no
+    // console installed here, the fallback's answer is the setup page — the
+    // point being that auth never entered into it.
     assert_eq!(
         status_for(&router, "GET", "/apiary", None).await,
-        StatusCode::NOT_FOUND
+        StatusCode::SERVICE_UNAVAILABLE
     );
     // `/api` itself stays guarded.
     assert_eq!(

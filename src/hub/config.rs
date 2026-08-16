@@ -25,12 +25,26 @@ pub struct HubConfig {
     /// open mode while a proxy is still publishing it to the internet.
     #[serde(default)]
     pub public: bool,
-    /// A built Agent Console (`console/dist`) to serve instead of the bundled
-    /// `web_shell.html` dashboard. Unset means the hub is exactly what it has
-    /// always been — the console is opt-in, and pointing at a directory that
-    /// is not a finished build is the only way to get it wrong.
+    /// Where the built Agent Console lives. Unset means
+    /// [`crate::hub::paths::global_console_dir`] (`~/.cryo/console`), which is
+    /// where `make console-install` puts it — so the usual install needs no
+    /// configuration at all. Set this only to serve a build from somewhere
+    /// else, and make it absolute: the hub canonicalizes it from the service
+    /// process's working directory, which launchd/systemd choose.
     #[serde(default)]
     pub console_dir: Option<PathBuf>,
+}
+
+impl HubConfig {
+    /// The directory the console is served from — the configured one, or the
+    /// global install path. Always answers; whether a build is actually there
+    /// is decided per request, so installing the console does not require
+    /// restarting the hub.
+    pub fn console_root(&self) -> PathBuf {
+        self.console_dir
+            .clone()
+            .unwrap_or_else(crate::hub::paths::global_console_dir)
+    }
 }
 
 fn default_host() -> String {

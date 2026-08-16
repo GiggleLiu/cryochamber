@@ -191,26 +191,51 @@ async fn api_routes_still_work_when_the_console_is_served() {
     assert_eq!(status, StatusCode::OK);
 }
 
+#[test]
+fn an_unset_console_dir_means_the_global_install_path() {
+    // The usual install configures nothing at all: `make console-install` puts
+    // the build where the hub already looks.
+    assert_eq!(
+        HubConfig::default().console_root(),
+        crate::hub::paths::global_console_dir()
+    );
+}
+
 #[tokio::test]
-async fn without_console_dir_the_bundled_shell_still_answers() {
-    // Regression guard for every existing deployment: no `console_dir`, no
-    // change — `/`, `/c/{id}` and the bundled assets behave exactly as before.
+async fn a_hub_with_no_console_installed_says_so_instead_of_404ing() {
+    // The failure this replaces: a hub serving a console directory that was
+    // moved or never built answered every page with a bare 404 while looking
+    // perfectly healthy, which reads as a broken hub rather than a missing
+    // build.
     let workspace = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
     let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
-    let router = crate::hub::build_router_with_config(app, HubConfig::default());
+    let config = HubConfig {
+        console_dir: Some(empty.path().to_path_buf()),
+        ..HubConfig::default()
+    };
+    let router = crate::hub::build_router_with_config(app, config);
 
     let (status, ctype, body) = get(router.clone(), "/").await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(ctype.starts_with("text/html"), "content-type was {ctype}");
-    assert!(body.contains("<title>Cryohub</title>"), "body was {body}");
+    assert!(
+        body.contains("make console-install"),
+        "the page must name the command that fixes it; body was {body}"
+    );
+    assert!(
+        body.contains(&empty.path().display().to_string()),
+        "the page must name the directory it looked in; body was {body}"
+    );
 
-    let (status, ctype, _) = get(router.clone(), "/assets/web.css").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(ctype.starts_with("text/css"), "content-type was {ctype}");
-
-    // An unknown path is still a plain 404, not an SPA entry.
-    let (status, _, _) = get(router, "/user_uploads/42/report").await;
+    // A missing hashed asset stays a 404: answering it with HTML would break
+    // the module loader instead of reporting the bad build.
+    let (status, _, _) = get(router.clone(), "/assets/index-abc123.js").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The API is untouched by any of this.
+    let (status, _, _) = get(router, "/api/chambers").await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[test]

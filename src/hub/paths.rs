@@ -34,6 +34,18 @@ pub fn global_chambers_dir() -> PathBuf {
     std::env::temp_dir().join(".cryo").join("chambers")
 }
 
+/// Where `make console-install` puts the built Agent Console, and where the
+/// hub looks when `console_dir` is not configured. A machine-global path
+/// beside the chamber registry, deliberately not inside any checkout: the hub
+/// runs as a service and serves this directory for as long as it lives.
+pub fn global_console_dir() -> PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".cryo").join("console");
+    }
+
+    std::env::temp_dir().join(".cryo").join("console")
+}
+
 fn state_root() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
         if !dir.is_empty() {
