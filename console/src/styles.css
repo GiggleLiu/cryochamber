@@ -959,7 +959,7 @@ input, select, textarea { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 .row-muted { color: var(--ink-3); font-size: var(--fs-sm); }
-.row-danger { justify-content: center; color: var(--danger); font-weight: 500; }
+.row-danger { color: var(--danger); font-weight: 500; }
 .row-danger:active { background: var(--surface-press); }
 
 .group-spaced { margin-top: var(--sp-6); }
@@ -1447,13 +1447,14 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .row-value.is-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
 
-/* The last session's own words, as prose under the status card. Full width
-   and wrapping: as a `.row-value` it was one clipped monospace line that also
-   squeezed its label onto two. Clamped to six lines, opened by the button the
-   component only renders when the clamp actually bit. */
+/* The session's number and the agent's own words, as prose at the head of the
+   Log sheet. Full width and wrapping: as a `.row-value` it was one clipped
+   monospace line that also squeezed its label onto two. Clamped to six lines,
+   opened by the button the component only renders when the clamp actually bit. */
 .last-session {
   padding: var(--sp-3) var(--sp-4) var(--sp-4);
   background: var(--surface);
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
 .last-session-caption {
@@ -1517,7 +1518,7 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .digest-table tbody td { border-top: 1px solid var(--line); }
 /* Same breathing room a `.group` leaves before the next label — the table
-   replaced a list here and must not sit flush against DETAIL. */
+   must not sit flush against the label that follows it. */
 .digest-table + .group-label { padding-top: var(--sp-6); }
 .digest-day { color: var(--ink-2); }
 .digest-failed { color: var(--warn); font-weight: 600; }
@@ -1562,34 +1563,6 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .tab-html ul, .tab-html ol { padding-left: var(--sp-5); list-style: revert; }
 .tab-html p, .tab-html li { margin: var(--sp-2) 0; }
-
-.sync-list { padding: 0 var(--sp-4); }
-.sync-card {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-3) 0;
-  border-bottom: 1px solid var(--line);
-}
-.sync-name { flex: 1 1 auto; font-size: var(--fs-md); font-weight: 600; }
-.sync-badge {
-  flex: none;
-  padding: 0 var(--sp-2);
-  font-size: var(--fs-2xs);
-  line-height: 20px;
-  color: var(--on-brand);
-  background: var(--brand);
-  border-radius: var(--r-full);
-}
-.sync-badge.is-off { color: var(--ink-3); background: var(--surface-2); }
-.sync-target {
-  flex: 1 1 100%;
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  color: var(--ink-3);
-  overflow-wrap: anywhere;
-}
 
 .log-pre {
   max-height: 55vh;

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ControlsSheet, statePillLabel } from './ControlsSheet'
 import { HubClient, type ChamberStatus } from '../api/hubClient'
@@ -60,7 +60,7 @@ beforeEach(() => {
   useAppStore.setState({ creds, hubRole: 'owner', client: makeHub() })
 })
 
-test('the status group names the chamber, its state, and its session', async () => {
+test('the status group names the chamber and its state, and nothing that belongs to the log', async () => {
   useAppStore.setState({
     client: makeHub(status({ running: true, agent_running: true, next_wake: 'in 2 h', session_summary: 'swept the decoders' })),
   })
@@ -69,13 +69,13 @@ test('the status group names the chamber, its state, and its session', async () 
   // The sheet is titled by the chamber, the way the gear's sheet is titled by
   // what it is about.
   expect(screen.getByRole('heading', { name: 'alpha' })).toBeInTheDocument()
-  expect(screen.getByText('#7')).toBeInTheDocument()
   expect(screen.getByText('in 2 h')).toBeInTheDocument()
-  // The summary is prose under the card, not a right-aligned row value: a
-  // sentence squeezed into the value column truncated and wrapped its label.
-  const summary = screen.getByText('swept the decoders')
-  expect(summary.closest('.row')).toBeNull()
-  expect(screen.getByText('Last session')).toBeInTheDocument()
+  // The session number and the agent's summary are the log's business now:
+  // the controls sheet is opened for the state and the buttons, and must not
+  // scroll to reach them.
+  expect(screen.queryByText('#7')).toBeNull()
+  expect(screen.queryByText('swept the decoders')).toBeNull()
+  expect(screen.queryByText(/^Session/)).toBeNull()
 })
 
 test('a stopped chamber hides the wake line and a completed plan is called out', async () => {
@@ -92,59 +92,6 @@ test('state pill wording covers every state', () => {
   expect(statePillLabel(status({ running: false }), false)).toBe('Stopped')
   // Archived wins: an archived chamber is put away whatever its runtime says.
   expect(statePillLabel(status({ running: true, agent_running: true }), true)).toBe('Archived')
-})
-
-describe('last session summary', () => {
-  const LONG = 'Swept the decoders and rewrote the notes. '.repeat(20).trim()
-
-  /** jsdom lays nothing out, so the clamp has to be simulated: a body taller
-   * than its box is exactly what `-webkit-line-clamp` produces in a browser. */
-  function overflowing(yes: boolean) {
-    const spy = vi
-      .spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
-      .mockReturnValue(yes ? 400 : 100)
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(100)
-    return spy
-  }
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  test('a summary that fits is shown whole, with nothing to tap', async () => {
-    overflowing(false)
-    useAppStore.setState({ client: makeHub(status({ session_summary: 'swept the decoders' })) })
-    renderSheet()
-    const body = await screen.findByText('swept the decoders')
-    // Whole text, wrapping prose — no truncation marker of any kind.
-    expect(body).toHaveTextContent('swept the decoders')
-    expect(body).not.toHaveClass('row-value')
-    expect(screen.queryByRole('button', { name: /show more/i })).toBeNull()
-  })
-
-  test('a summary too long for the clamp expands on tap and folds back', async () => {
-    overflowing(true)
-    useAppStore.setState({ client: makeHub(status({ session_summary: LONG })) })
-    renderSheet()
-    const body = await screen.findByText(LONG)
-    // Clamped, but complete: the DOM holds every word even while folded.
-    expect(body.textContent).toBe(LONG)
-    expect(body).not.toHaveClass('is-expanded')
-    const more = screen.getByRole('button', { name: /show more/i })
-    expect(more).toHaveAttribute('aria-expanded', 'false')
-    await userEvent.click(more)
-    expect(body).toHaveClass('is-expanded')
-    const less = screen.getByRole('button', { name: /show less/i })
-    expect(less).toHaveAttribute('aria-expanded', 'true')
-    await userEvent.click(less)
-    expect(body).not.toHaveClass('is-expanded')
-  })
-
-  test('no summary, no block', async () => {
-    renderSheet()
-    await screen.findByText('Stopped')
-    expect(screen.queryByText('Last session')).toBeNull()
-  })
 })
 
 describe('lifecycle row', () => {
@@ -332,58 +279,6 @@ test('closing the sheet unsubscribes from its chamber', async () => {
   expect(hub.chamberStatus).toHaveBeenCalledTimes(1)
 })
 
-describe('recent days', () => {
-  const twoDays = () =>
-    makeHub(
-      status({
-        daily_digests: [
-          { date: '2026-08-15', total_sessions: 4, failed_sessions: 1, latest_session: 7 },
-          { date: '2026-08-14', total_sessions: 1, failed_sessions: 0, latest_session: 3 },
-        ],
-      }),
-    )
-
-  test('daily digests render as a table, one row per day, in payload order', async () => {
-    useAppStore.setState({ client: twoDays() })
-    renderSheet()
-    const table = await screen.findByRole('table', { name: 'Recent days' })
-    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
-      'Day',
-      'Sessions',
-      'Failed',
-    ])
-    const rows = within(table).getAllByRole('row')
-    // Header row plus one per day, newest first, exactly as the hub sent them.
-    expect(rows).toHaveLength(3)
-    expect(within(rows[1]).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      '2026-08-15',
-      '4',
-      '1',
-    ])
-    expect(within(rows[2]).getAllByRole('cell').map((c) => c.textContent)).toEqual([
-      '2026-08-14',
-      '1',
-      '0',
-    ])
-  })
-
-  test('a day with failures marks the failed count, a clean day does not', async () => {
-    useAppStore.setState({ client: twoDays() })
-    renderSheet()
-    const table = await screen.findByRole('table', { name: 'Recent days' })
-    const rows = within(table).getAllByRole('row')
-    expect(within(rows[1]).getAllByRole('cell')[2]).toHaveClass('digest-failed')
-    expect(within(rows[2]).getAllByRole('cell')[2]).not.toHaveClass('digest-failed')
-  })
-
-  test('no digests, no section', async () => {
-    renderSheet()
-    await screen.findByText('Stopped')
-    expect(screen.queryByRole('table')).toBeNull()
-    expect(screen.queryByText('Recent days')).toBeNull()
-  })
-})
-
 test('a failed status load stays inline in the sheet', async () => {
   const hub = useAppStore.getState().client as HubClient
   vi.mocked(hub.chamberStatus).mockRejectedValue(new ApiError(500, 'HTTP 500'))
@@ -461,7 +356,7 @@ describe('detail sections', () => {
     expect(screen.getByRole('button', { name: 'Launch' })).toBeInTheDocument()
   })
 
-  test('the Sync, Settings and Log sections are wired to this chamber', async () => {
+  test('the Settings and Log sections are wired to this chamber', async () => {
     const hub = makeHub(
       status({
         log_tail: 'boot line one',
@@ -469,19 +364,21 @@ describe('detail sections', () => {
         settings_rows: [{ key: 'agent', value: 'claude', kind: 'scalar' }],
       }),
     )
-    vi.spyOn(hub, 'chamberSync').mockResolvedValue([
-      { backend: 'zulip', configured: true, installed: true, running: false, target: 'stream', last_pushed_session: null, log_tail_path: '' },
-    ])
     useAppStore.setState({ client: hub })
     renderSheet()
     await screen.findByText('Stopped')
     await open('Log')
     expect(await screen.findByText(/boot line one/)).toBeInTheDocument()
+    // The Log sheet is where the session number lives now.
+    expect(screen.getByText('Session #7')).toBeInTheDocument()
     await open('Settings')
     expect(await screen.findByText('claude')).toBeInTheDocument()
-    await open('Sync')
-    expect(await screen.findByRole('button', { name: 'Start zulip sync' })).toBeInTheDocument()
-    expect(hub.chamberSync).toHaveBeenCalledWith('cham-a')
+  })
+
+  test('there is no Sync section', async () => {
+    renderSheet()
+    await screen.findByText('Stopped')
+    expect(screen.queryByRole('button', { name: /^Sync/ })).toBeNull()
   })
 
   test('an empty plan says which file is missing', async () => {

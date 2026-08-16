@@ -1,10 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import {
-  HubClient,
-  type ChamberStatus,
-  type DailyDigest,
-  type LifecycleAction,
-} from '../api/hubClient'
+import { useCallback, useEffect, useState } from 'react'
+import { HubClient, type ChamberStatus, type LifecycleAction } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
 import { subscribeChamberEvents } from '../store/chamberEvents'
 import { ApiError, isUnauthorized } from '../api/types'
@@ -12,11 +7,10 @@ import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
 import { TodosTab } from './controls/TodosTab'
 import { HtmlTab } from './controls/HtmlTab'
-import { SyncTab } from './controls/SyncTab'
 import { SettingsTab } from './controls/SettingsTab'
 import { LogTab } from './controls/LogTab'
 
-const SECTIONS = ['Todos', 'Plan', 'Notes', 'Sync', 'Settings', 'Log'] as const
+const SECTIONS = ['Todos', 'Plan', 'Notes', 'Settings', 'Log'] as const
 export type ControlsSection = (typeof SECTIONS)[number]
 
 /** What the hub said, when it said nothing: the panel's status words. */
@@ -39,84 +33,6 @@ export function statePillLabel(
   if (status.agent_running) return 'Working'
   if (status.running) return 'Asleep'
   return 'Stopped'
-}
-
-/**
- * What the agent said as it went to sleep, as prose under the status card.
- *
- * It used to be a right-aligned `.row` value: one monospace line that clipped
- * mid-sentence and pushed its own label onto a second line. A summary is a
- * sentence or three, so it gets the full width, wraps, and is clamped only
- * when it is genuinely long — and then it says so and opens on tap.
- *
- * The status payload carries no timestamp for it (`session_summary` is parsed
- * out of the current session's hibernate line), so the caption is the caption
- * alone; add the time here the day the hub reports one.
- */
-function LastSession({ summary }: { summary: string }) {
-  const [expanded, setExpanded] = useState(false)
-  const [clamped, setClamped] = useState(false)
-  const body = useRef<HTMLParagraphElement>(null)
-
-  // Whether the clamp actually bit is a layout question, so it is asked of the
-  // laid-out element rather than guessed from the character count. Deliberately
-  // not re-asked on expand: once open, the box grows to fit and would report
-  // "fits", taking the button that folds it back away.
-  useLayoutEffect(() => {
-    const el = body.current
-    if (!el) return
-    setClamped(el.scrollHeight > el.clientHeight + 1)
-  }, [summary])
-
-  return (
-    <div className="last-session">
-      <p className="last-session-caption">Last session</p>
-      <p ref={body} className={`last-session-body${expanded ? ' is-expanded' : ''}`}>
-        {summary}
-      </p>
-      {clamped && (
-        <button
-          className="last-session-more"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-        >
-          {expanded ? 'Show less' : 'Show more'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-/**
- * Recent days as a table, because that is what it is: three aligned columns
- * the eye can scan down. As one sentence per day ("2026-08-15: 4 sessions, 1
- * failed") the failure count was buried at the end of a muted line.
- */
-function RecentDays({ digests }: { digests: DailyDigest[] }) {
-  return (
-    <table className="digest-table" aria-label="Recent days">
-      <thead>
-        <tr>
-          <th scope="col">Day</th>
-          <th scope="col">Sessions</th>
-          <th scope="col">Failed</th>
-        </tr>
-      </thead>
-      <tbody>
-        {digests.map((d) => (
-          <tr key={d.date}>
-            <td className="digest-day">{d.date}</td>
-            <td>{d.total_sessions}</td>
-            {/* Only a real failure is coloured; a column of warm zeroes would
-                make the one day that matters invisible. */}
-            <td className={d.failed_sessions > 0 ? 'digest-failed' : undefined}>
-              {d.failed_sessions}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
 }
 
 /**
@@ -240,10 +156,6 @@ export function ControlsSheet({
               State
               <span className={`row-value state-${pill!.toLowerCase()}`}>{pill}</span>
             </div>
-            <div className="row">
-              Session
-              <span className="row-value">#{status.session}</span>
-            </div>
             {/* Only a started chamber has a real schedule; a stopped one reports
                 whatever was pending when it died, which reads as nonsense. */}
             {status.running && status.next_wake && (
@@ -259,7 +171,6 @@ export function ControlsSheet({
               </div>
             )}
           </div>
-          {status.session_summary && <LastSession summary={status.session_summary} />}
 
           <p className="group-label">Actions</p>
           <div className="group">
@@ -323,13 +234,6 @@ export function ControlsSheet({
             </div>
           )}
 
-          {status.daily_digests.length > 0 && (
-            <>
-              <p className="group-label">Recent days</p>
-              <RecentDays digests={status.daily_digests} />
-            </>
-          )}
-
           <p className="group-label">Detail</p>
           <div className="group">
             {SECTIONS.map((name) => (
@@ -358,9 +262,16 @@ export function ControlsSheet({
           {section === 'Notes' && (
             <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
           )}
-          {section === 'Sync' && <SyncTab chamberId={chamberId} />}
           {section === 'Settings' && <SettingsTab status={status} />}
-          {section === 'Log' && <LogTab chamberId={chamberId} logTail={status.log_tail} />}
+          {section === 'Log' && (
+            <LogTab
+              chamberId={chamberId}
+              session={status.session}
+              sessionSummary={status.session_summary}
+              digests={status.daily_digests}
+              logTail={status.log_tail}
+            />
+          )}
         </Sheet>
       )}
     </Sheet>

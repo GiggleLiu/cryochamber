@@ -38,3 +38,30 @@ export function inlineImageLinks(html: string): string {
   }
   return changed ? doc.body.innerHTML : html
 }
+
+/**
+ * Keep the browser from fetching hub attachments on its own. An `<img src>`
+ * pointing at `/api/chambers/…/files/…` is requested the moment it enters the
+ * DOM — without the bearer token, so in the default (authenticated) mode it
+ * 401s and paints a broken-image glyph until the blob swap in the message
+ * body replaces it. This parks the URL in `data-upload-src` instead, and the
+ * swap is the only thing that ever sets `src`.
+ *
+ * Runs on already-sanitized HTML; the attribute it adds carries a value the
+ * sanitizer had already admitted as `src`, so it widens nothing. Callers only
+ * apply it when they have a fetcher — with none, the plain `src` is the only
+ * way the image can load at all (open mode).
+ */
+export function deferHubImages(html: string): string {
+  if (!html.includes('<img')) return html
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  let changed = false
+  for (const img of Array.from(doc.querySelectorAll('img[src]'))) {
+    const src = img.getAttribute('src') ?? ''
+    if (!HUB_FILES_RE.test(src)) continue
+    img.setAttribute('data-upload-src', src)
+    img.removeAttribute('src')
+    changed = true
+  }
+  return changed ? doc.body.innerHTML : html
+}

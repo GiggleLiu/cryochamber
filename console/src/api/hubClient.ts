@@ -78,16 +78,6 @@ export interface TodoItem {
   created: string
 }
 
-export interface SyncSummary {
-  backend: string
-  configured: boolean
-  installed: boolean
-  running: boolean
-  target: string
-  last_pushed_session: number | null
-  log_tail_path: string
-}
-
 /** `GET /api/chambers/{id}/status`. The raw `cryo.toml` is deliberately absent
  * from the hub's payload (it can hold an API key); `has_config` plus the masked
  * `settings_rows` are what the UI gets. */
@@ -112,7 +102,7 @@ export interface ChamberStatus {
 /** Every lifecycle route the hub actually serves. There is no `wake` route. */
 export type LifecycleAction = 'start' | 'stop' | 'restart' | 'reset' | 'archive' | 'unarchive'
 
-/** The `{ok, message}` shape every lifecycle and sync action answers with. */
+/** The `{ok, message}` shape every lifecycle action answers with. */
 export interface ActionResult {
   ok: boolean
   message: string
@@ -134,7 +124,7 @@ function apiMessage(body: unknown): string | undefined {
   return undefined
 }
 
-/** A 200 the hub used to say no: `{ok:false, message}` on lifecycle/sync. */
+/** A 200 the hub used to say no: `{ok:false, message}` on lifecycle actions. */
 function isRefusal(body: unknown): boolean {
   return !!body && typeof body === 'object' && (body as { ok?: unknown }).ok === false
 }
@@ -307,21 +297,6 @@ export class HubClient {
 
   async chamberTodos(chamberId: string): Promise<TodoItem[]> {
     return this.request<TodoItem[]>(`/api/chambers/${encodeURIComponent(chamberId)}/todos`)
-  }
-
-  async chamberSync(chamberId: string): Promise<SyncSummary[]> {
-    return this.request<SyncSummary[]>(`/api/chambers/${encodeURIComponent(chamberId)}/sync`)
-  }
-
-  async syncAction(
-    chamberId: string,
-    backend: string,
-    verb: 'start' | 'stop',
-  ): Promise<ActionResult> {
-    return this.request<ActionResult>(
-      `/api/chambers/${encodeURIComponent(chamberId)}/sync/${encodeURIComponent(backend)}/${verb}`,
-      { method: 'POST' },
-    )
   }
 
   /** The hub answers 200 with `{ok:false, message}` for a refused action;

@@ -11,7 +11,7 @@ const IMAGE_PATH = '/api/chambers/cham-a/files/ab_plot.png'
 /** The real authenticated fetcher the component is handed in the app: a
  * `HubClient.fetchBlob` over a stubbed transport, so the bearer header and the
  * ApiError on failure are the client's own and not a test invention. */
-function fetcher(respond: () => Response, onAuthFailure?: () => void) {
+function fetcher(respond: () => Response | Promise<Response>, onAuthFailure?: () => void) {
   const fetchFn = vi.fn(async () => respond()) as unknown as typeof fetch
   const client = new HubClient({ token: 'tok', fetch: fetchFn, onAuthFailure })
   return { fetchBlob: (url: string) => client.fetchBlob(url), fetchFn }
@@ -266,6 +266,55 @@ describe('chamber attachments', () => {
     const img = container.querySelector('img')!
     await waitFor(() => expect(img.getAttribute('src')).toBe('blob:mock-1'))
     expect(fetchFn).toHaveBeenCalledWith(IMAGE_PATH, AUTH_GET)
+  })
+
+  test('an attachment image never carries the raw hub URL as its src', async () => {
+    // Before the swap the browser must have nothing to fetch on its own: a
+    // bare `src` would be requested without the bearer token, 401, and paint
+    // a broken image until the blob arrived.
+    let release!: (r: Response) => void
+    const gate = new Promise<Response>((r) => {
+      release = r
+    })
+    const { fetchBlob, fetchFn } = fetcher(() => gate)
+    const { container } = await renderBody(
+      { source: `![plot.png](${IMAGE_PATH})`, fetchBlob },
+      'img',
+    )
+    const img = container.querySelector('img')!
+    expect(img.hasAttribute('src')).toBe(false)
+    expect(img.dataset.uploadSrc).toBe(IMAGE_PATH)
+    expect(fetchFn).toHaveBeenCalledWith(IMAGE_PATH, AUTH_GET)
+    release(okBlobResponse())
+    await waitFor(() => expect(img.getAttribute('src')).toBe('blob:mock-1'))
+  })
+
+  test('a swap in flight still lands when the fetcher identity changes under it', async () => {
+    // Same markdown, new fetcher. React re-sets the innerHTML, so the <img> is
+    // a fresh node; whichever fetch answers first has to fill it in — the
+    // first one's result used to be dropped as belonging to a stale effect,
+    // and the thumbnail stayed blank until tapped.
+    let release!: (r: Response) => void
+    const gate = new Promise<Response>((r) => {
+      release = r
+    })
+    const first = fetcher(() => gate)
+    const { container, rerender } = await renderBody(
+      { source: `![plot.png](${IMAGE_PATH})`, fetchBlob: first.fetchBlob },
+      'img',
+    )
+    // The second fetcher never answers: only the first result can do it.
+    const second = fetcher(() => new Promise<Response>(() => {}))
+    rerender(<MessageBody source={`![plot.png](${IMAGE_PATH})`} fetchBlob={second.fetchBlob} />)
+    release(okBlobResponse())
+    await waitFor(() =>
+      expect(container.querySelector('img')!.getAttribute('src')).toBe('blob:mock-1'),
+    )
+  })
+
+  test('without a fetcher the plain src stays, as the only way the image can load', async () => {
+    const { container } = await renderBody({ source: `![plot.png](${IMAGE_PATH})` }, 'img')
+    expect(container.querySelector('img')!.getAttribute('src')).toBe(IMAGE_PATH)
   })
 
   test('non-attachment images are left untouched', async () => {

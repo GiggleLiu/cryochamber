@@ -34,7 +34,7 @@ Owner token (save it — or reprint later with `cryohub token owner`):
 |---|---|---|
 | 项目列表 | 全部 chamber，含状态点、下次唤醒、待回答问题标记、已完成 / 已归档分组 | 仅被邀请的 chamber，平铺 |
 | 对话 | 阅读、发送、上传文件、打开附件 | 相同，仅限被邀请的 chamber |
-| **⋯ Chamber 控制**（启动、停止、重启、重置、归档；Todos · Plan · Notes · Sync · Settings · Log 标签页） | 有 | 从不显示 |
+| **⋯ Chamber 控制**（启动、停止、重启、重置、归档；Todos · Plan · Notes · Settings · Log 标签页） | 有 | 从不显示 |
 | **Invite**（铸造链接、People with access、Remove） | 有 | 从不显示 |
 | **+ 新建 chamber**、*Refresh chambers*、*Show completed & archived* | 有 | 从不显示 |
 

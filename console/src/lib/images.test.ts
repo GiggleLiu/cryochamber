@@ -1,4 +1,4 @@
-import { IMAGE_EXT_RE, inlineImageLinks } from './images'
+import { IMAGE_EXT_RE, deferHubImages, inlineImageLinks } from './images'
 
 test('IMAGE_EXT_RE recognises picture extensions, case-insensitively', () => {
   for (const name of ['a.png', 'a.JPG', 'a.jpeg', 'b.gif', 'c.webp', 'd.svg', 'e.avif', 'f.bmp', 'g.ico']) {
@@ -41,4 +41,28 @@ test('the link text becomes the alt text when it differs from the filename', () 
 test('a percent-encoded filename is decoded for the extension check', () => {
   const out = inlineImageLinks('<a href="/api/chambers/x/files/my%20photo.png">my photo.png</a>')
   expect(out).toContain('<img')
+})
+
+describe('deferHubImages', () => {
+  test('parks a hub image src in data-upload-src and drops src', () => {
+    const out = deferHubImages('<p><img src="/api/chambers/c/files/a.png" alt="a"></p>')
+    expect(out).toContain('data-upload-src="/api/chambers/c/files/a.png"')
+    expect(out).not.toMatch(/ src=/)
+    expect(out).toContain('alt="a"')
+  })
+
+  test('leaves non-hub images and image-free html untouched', () => {
+    const plain = '<p><img src="/static/logo.png" alt="logo"></p>'
+    expect(deferHubImages(plain)).toBe(plain)
+    expect(deferHubImages('<p>no pictures</p>')).toBe('<p>no pictures</p>')
+  })
+
+  test('composes with inlineImageLinks: the thumbnail is deferred too', () => {
+    const out = deferHubImages(
+      inlineImageLinks('<a href="/api/chambers/c/files/a.png">a.png</a>'),
+    )
+    expect(out).toContain('class="msg-thumb"')
+    expect(out).toContain('data-upload-src="/api/chambers/c/files/a.png"')
+    expect(out).not.toMatch(/<img[^>]* src=/)
+  })
 })

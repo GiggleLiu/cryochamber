@@ -137,7 +137,6 @@ async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
     }),
   )
   await page.route('**/api/chambers/cham-a/todos', (r) => r.fulfill({ json: [] }))
-  await page.route('**/api/chambers/cham-a/sync', (r) => r.fulfill({ json: [] }))
   await page.route('**/api/chambers/cham-a/start', (r) => {
     mock.actions.push('cham-a/start')
     running = true
@@ -298,9 +297,6 @@ test('an owner launches a chamber from Controls and sees it working', async ({ p
   await expect.poll(() => hub.actions).toEqual(['cham-a/start'])
   // The pill moves because the refetched status says so, not because we clicked.
   await expect(page.getByText('Working')).toBeVisible()
-  // Label and value are separate nodes in the status row, hence the row-level
-  // assertion rather than a "Session #7" text match.
-  await expect(page.locator('.row').filter({ hasText: /^Session#\d+$/ })).toHaveText('Session#7')
 
   // The detail sheets read the same status payload. Each opens over the
   // controls list and is closed again, the way the stack is meant to be used.
@@ -310,6 +306,8 @@ test('an owner launches a chamber from Controls and sees it working', async ({ p
   await plan.getByRole('button', { name: 'Close' }).click()
 
   await page.getByRole('button', { name: 'Log' }).click()
+  // The session number heads the log now, above the raw tail.
+  await expect(page.getByText('Session #7')).toBeVisible()
   await expect(page.getByRole('log')).toContainText('session 7 started')
 })
 

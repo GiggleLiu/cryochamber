@@ -135,18 +135,14 @@ describe('owner chamber routes', () => {
     expect(init?.headers).not.toHaveProperty('X-Cryo-CSRF')
   })
 
-  test('chamberTodos and chamberSync GET their routes', async () => {
-    const fetchFn = mockFetch((url) =>
-      String(url).endsWith('/todos')
-        ? [{ id: 1, text: 'check the runner', done: false, claimed: false, at: '2026-08-15T18:00', created: '2026-08-14T09:00' }]
-        : [{ backend: 'zulip', configured: true, installed: true, running: false, target: '#research', last_pushed_session: 3, log_tail_path: '/tmp/z.log' }],
-    )
+  test('chamberTodos GETs its route', async () => {
+    const fetchFn = mockFetch(() => [
+      { id: 1, text: 'check the runner', done: false, claimed: false, at: '2026-08-15T18:00', created: '2026-08-14T09:00' },
+    ])
     const c = new HubClient({ ...OPTS, fetch: fetchFn })
     expect((await c.chamberTodos('cham-a'))[0].text).toBe('check the runner')
-    expect((await c.chamberSync('cham-a'))[0].backend).toBe('zulip')
     expect(vi.mocked(fetchFn).mock.calls.map(([u]) => String(u))).toEqual([
       '/api/chambers/cham-a/todos',
-      '/api/chambers/cham-a/sync',
     ])
   })
 
@@ -158,15 +154,6 @@ describe('owner chamber routes', () => {
     expect(String(url)).toBe('/api/chambers/cham-a/start')
     expect(init?.method).toBe('POST')
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer tok123', 'X-Cryo-CSRF': '1' })
-  })
-
-  test('syncAction POSTs backend and verb into the path', async () => {
-    const fetchFn = mockFetch(() => ({ ok: true, message: 'zulip start' }))
-    const c = new HubClient({ ...OPTS, fetch: fetchFn })
-    expect(await c.syncAction('cham-a', 'zulip', 'stop')).toEqual({ ok: true, message: 'zulip start' })
-    const [url, init] = vi.mocked(fetchFn).mock.calls[0]
-    expect(String(url)).toBe('/api/chambers/cham-a/sync/zulip/stop')
-    expect(init?.headers).toMatchObject({ 'X-Cryo-CSRF': '1' })
   })
 
   test('chamber ids are percent-encoded into every path', async () => {

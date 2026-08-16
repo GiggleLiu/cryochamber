@@ -46,7 +46,7 @@ can reach `127.0.0.1`. Sharing and invite links do not work in open mode.
 |---|---|---|
 | Projects list | every chamber, with status dots, next wake, open-question badge, Completed / Archived groups | only the invited chamber(s), flat |
 | Conversation | read, send, upload files, open attachments | same, for the invited chamber only |
-| **⋯ Chamber controls** (launch, stop, restart, reset, archive; Todos · Plan · Notes · Sync · Settings · Log tabs) | yes | never shown |
+| **⋯ Chamber controls** (launch, stop, restart, reset, archive; Todos · Plan · Notes · Settings · Log tabs) | yes | never shown |
 | **Invite** (mint links, People with access, Remove) | yes | never shown |
 | **+ New chamber**, *Refresh chambers*, *Show completed & archived* | yes | never shown |
 

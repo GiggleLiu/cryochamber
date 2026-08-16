@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sanitizeHtml } from './sanitize'
 import { filenameFromHref, triggerBlobDownload, HUB_FILES_RE } from '../lib/download'
-import { IMAGE_EXT_RE, inlineImageLinks } from '../lib/images'
+import { IMAGE_EXT_RE, deferHubImages, inlineImageLinks } from '../lib/images'
 import { isUnauthorized } from '../api/types'
 
 export { sanitizeHtml } from './sanitize'
@@ -55,6 +55,9 @@ export function MessageBody({
   // Upload path -> live object URL. Cached so innerHTML replacements and the
   // lightbox never refetch; revoked only on unmount.
   const blobCache = useRef(new Map<string, string>())
+  // Whether the component is still mounted: a swap that resolves after unmount
+  // must revoke the object URL it just made instead of caching it.
+  const mounted = useRef(true)
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
   // One inline alert slot for anything the body itself could not do: an
   // attachment that would not load, a clipboard that refused.
@@ -84,8 +87,11 @@ export function MessageBody({
     : plainTextFallback(source)
   // A plain link to an image attachment becomes an inline thumbnail; this runs
   // after the sanitizer so nothing it inserts can widen what the sanitizer let
-  // through.
-  const sanitized = inlineImageLinks(sanitizeHtml(rendered))
+  // through. With a fetcher in hand, hub images then lose their `src` before
+  // they reach the DOM: the browser must not request them unauthenticated
+  // (a 401 and a broken-image glyph until the swap below lands).
+  const inlined = inlineImageLinks(sanitizeHtml(rendered))
+  const sanitized = fetchBlob ? deferHubImages(inlined) : inlined
 
   // Authenticated image loading. React re-sets this div's innerHTML whenever
   // the rendered HTML changes (and dev StrictMode/remounts can do it too);
@@ -96,7 +102,6 @@ export function MessageBody({
   useEffect(() => {
     const root = ref.current
     if (!root) return
-    let disposed = false
     const decorate = () => {
       // Copy affordance on every code block. The button goes in a positioned
       // wrapper beside the <pre>, not inside it: <pre> scrolls sideways, and a
@@ -120,24 +125,45 @@ export function MessageBody({
       // observer itself must not be gated on it.
       if (!fetchBlob) return
       for (const img of Array.from(root.querySelectorAll('img'))) {
-        const src = img.getAttribute('src') ?? ''
+        // Deferred by `deferHubImages` (the usual case) or still carrying a
+        // plain hub src (HTML that reached the DOM some other way).
+        const src = img.dataset.uploadSrc ?? img.getAttribute('src') ?? ''
         if (!HUB_FILES_RE.test(src)) continue
         const cached = blobCache.current.get(src)
         if (cached) {
           img.dataset.uploadSrc = src
           img.setAttribute('src', cached)
+          img.dataset.authSwap = 'done'
           continue
         }
         if (img.dataset.authSwap === 'pending') continue
         img.dataset.authSwap = 'pending'
         img.dataset.uploadSrc = src
+        // The result lands whatever happens to this effect in the meantime,
+        // on every <img> that currently wants this file — not only the node
+        // the fetch was started for. It used to be dropped once the effect
+        // had been cleaned up, and that raced: React re-sets innerHTML on a
+        // re-render, this effect's observer fires on that change *before*
+        // the effect is cleaned up and marks the fresh node pending with a
+        // closure about to be disposed, and the next effect then skips the
+        // node as already claimed. The thumbnail stayed blank until the
+        // lightbox fetched the file itself on tap.
         fetchBlob(src)
           .then((blob) => {
-            if (disposed) return
             const url = URL.createObjectURL(blob)
+            if (!mounted.current) {
+              if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url)
+              return
+            }
             blobCache.current.set(src, url)
-            img.setAttribute('src', url)
-            img.dataset.authSwap = 'done'
+            const wanting = new Set<HTMLImageElement>([img])
+            for (const el of Array.from(ref.current?.querySelectorAll('img') ?? [])) {
+              if (el.dataset.uploadSrc === src) wanting.add(el)
+            }
+            for (const el of wanting) {
+              el.setAttribute('src', url)
+              el.dataset.authSwap = 'done'
+            }
           })
           .catch(() => {
             delete img.dataset.authSwap
@@ -147,16 +173,15 @@ export function MessageBody({
     decorate()
     const observer = new MutationObserver(decorate)
     observer.observe(root, { childList: true, subtree: true })
-    return () => {
-      disposed = true
-      observer.disconnect()
-    }
+    return () => observer.disconnect()
   }, [fetchBlob, sanitized])
 
   // Revoke cached object URLs only when the component goes away for good.
   useEffect(() => {
     const cache = blobCache.current
+    mounted.current = true
     return () => {
+      mounted.current = false
       if (typeof URL.revokeObjectURL === 'function') {
         for (const url of cache.values()) URL.revokeObjectURL(url)
       }
@@ -270,7 +295,12 @@ export function MessageBody({
     }
     const img = target.closest('img')
     if (img && root?.contains(img)) {
-      setLightbox({ src: img.getAttribute('src') ?? '', alt: img.getAttribute('alt') ?? '' })
+      const alt = img.getAttribute('alt') ?? ''
+      // A hub image goes through the authenticated path, cached or not — its
+      // `src` may still be empty while the swap is in flight.
+      const upload = img.dataset.uploadSrc
+      if (upload) openLightbox(upload, alt, img)
+      else setLightbox({ src: img.getAttribute('src') ?? '', alt })
     }
   }
 
