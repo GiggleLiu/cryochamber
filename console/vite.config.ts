@@ -8,8 +8,26 @@ const pkg = JSON.parse(
   readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
 ) as { version: string }
 
+/**
+ * KaTeX's CSS lists every face as woff2 → woff → ttf. Every browser the
+ * console supports takes the woff2, so the other two formats are 40 files
+ * (~1.2 MB) that ship inside the cryohub binary for nothing. Dropping them
+ * leaves dangling fallback URLs in the CSS that only a woff2-less browser
+ * would ever request.
+ */
+function katexWoff2Only() {
+  return {
+    name: 'katex-woff2-only',
+    generateBundle(_: unknown, bundle: Record<string, unknown>) {
+      for (const name of Object.keys(bundle)) {
+        if (/KaTeX_.*\.(ttf|woff)$/.test(name)) delete bundle[name]
+      }
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), katexWoff2Only()],
   // Single source of truth for the version shown in Settings.
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: {
