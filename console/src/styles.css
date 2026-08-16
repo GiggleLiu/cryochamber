@@ -1516,6 +1516,9 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
 }
 .digest-table tbody td { border-top: 1px solid var(--line); }
+/* Same breathing room a `.group` leaves before the next label — the table
+   replaced a list here and must not sit flush against DETAIL. */
+.digest-table + .group-label { padding-top: var(--sp-6); }
 .digest-day { color: var(--ink-2); }
 .digest-failed { color: var(--warn); font-weight: 600; }
 
