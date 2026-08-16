@@ -1,16 +1,15 @@
-> **This app was imported here as a squashed subtree**, so `git log console/`
-> starts at the import. The build is served by `cryohub` itself — set
-> `console_dir` in `cryohub.toml` to this directory's `dist/` and there is no
-> separate static file server to run.
+# Agent Console — developer notes
 
-# Agent Console
+The Agent Console is the web surface `cryohub` serves. **User documentation
+lives in the mdbook:** [Agent Console](https://giggleliu.github.io/cryochamber/agent-console.html)
+(sign-in, owner vs guest, invites, PWA install, public deployment behind
+Caddy). This file is only about working on the app.
 
-An installable phone app (Android + iOS) for reading and steering the AI agents
-running in your [Chamber Hub](#chamber-hub). **One chamber = one project = one
-flat conversation** — no topics to pick, no threads to lose track of.
-
-It is a static site: a Vite + React build that talks to the hub's REST API on
-its own origin. No backend of its own, no database, no telemetry.
+It is a static site — Vite + React + TypeScript, Zustand for state,
+markdown-it + KaTeX + DOMPurify for message bodies — that talks to the hub's
+REST API and SSE stream on its own origin. No backend of its own, no database,
+no telemetry. `console/` was imported as a squashed subtree, so `git log
+console/` starts at the import.
 
 <p align="center">
   <img src="docs/screenshots/projects.png" alt="Projects list with unread badges" width="260">
@@ -18,80 +17,53 @@ its own origin. No backend of its own, no database, no telemetry.
   <img src="docs/screenshots/report.png" alt="A long agent report with markdown, display math and a code block" width="260">
 </p>
 
-## What it does
+## Develop
 
-- **Projects list** — every chamber your token can reach, with unread counts and
-  the last message as a preview. Hide the ones you do not care about in
-  Settings.
-- **One conversation per project** — opens on the newest message, follows new
-  ones while you are at the bottom, and offers a jump chip instead of yanking
-  the view when you have scrolled back.
-- **Full markdown rendering** — tables, code blocks, LaTeX via KaTeX, emoji and
-  @-mentions, rendered client-side and sanitized before it reaches the DOM. Long
-  agent reports render as full-width cards so wide code and tables stay readable
-  on a phone.
-- **Composer** — auto-growing field, `@`-mention autocomplete, file upload, and
-  Enter-to-send when a hardware keyboard is attached.
-- **Owner controls** — for the hub owner only, a **⋯** button in any
-  conversation opens that chamber's controls: launch, stop, restart, archive or
-  reset it, and read its todos, `plan.md`, `NOTES.md`, message-sync backends,
-  `cryo.toml` and a live `cryo.log` tail. Everything the bundled control panel
-  does, from the phone. Guests never see any of it.
-- **Sharing per chamber** — an **Invite** button in the conversation header
-  mints a link scoped to *that* chamber and copies it in one gesture, and lists
-  everyone who currently holds one so access can be removed again.
-- **New chambers** — the `+` on the projects list creates one, optionally with
-  a provider and API key, and drops you straight into its conversation.
-- **Attachments** — images and file links are fetched with your token, so
-  chamber files display and download without a public URL.
-- **Offline-tolerant** — an event loop with backoff and a reconnect notice that
-  does not shove the page around. A message you send appears immediately and
-  says whether it landed; a failed one waits in the thread for a tap to retry.
-- **Drafts and dark mode** — a half-written message survives leaving the project
-  or reloading, per project; the theme follows the system or your choice.
-- **No accounts** — one owner token, and a friend gets in through an invite
-  link scoped to the one project you minted it from.
-
-There are **no push notifications** by design: the app only syncs while it is
-open. It is a console you check, not a pager.
-
-## Quick start
+Node ≥ 22, the version CI builds with.
 
 ```sh
-npm install
+npm ci
 npm run dev        # http://localhost:5173 — /api proxies to 127.0.0.1:8765
 npm test           # unit and component tests (Vitest)
 npm run e2e        # Playwright end-to-end tests against a mocked hub
 npm run build      # type-check, then emit static files to dist/
 ```
 
+`npm run dev` needs a hub on `127.0.0.1:8765` (`cryohub start --foreground` in
+another terminal). Sign in with the owner token (`cryohub token owner`) or an
+invite link.
+
 `npm run e2e` starts its own dev server on 5173. If that port is already taken —
-another checkout, another worktree — set `E2E_PORT` so the suite tests *this*
-tree rather than silently reusing whatever is already listening.
+another checkout, another worktree — set `E2E_PORT` (e.g. `E2E_PORT=5199 npm run
+e2e`) so the suite tests *this* tree rather than silently reusing whatever is
+already listening. In CI the suite runs on Chromium and keeps an HTML report on
+failure.
 
-Sign in by pasting an access token: either the owner token the hub printed, or —
-far more usually — by opening an invite link, which signs you in on the spot.
+From the repo root, `make console-check` runs `npm ci`, `tsc --noEmit` and
+Vitest; `make check` includes it.
 
-## Deploy
+## Ship a build to a running hub
 
-1. `make console-install` (from the repo root) → builds and installs the site to
-   `~/.cryo/console`, beside the hub's other global state. Override the
-   destination with `CONSOLE_PREFIX=/some/where make console-install`.
-2. Point `console_dir` in `cryohub.toml` at that directory — **once**. The path
-   has to be absolute: the hub canonicalizes it from the service process's
-   working directory, which launchd/systemd choose, not you. Pointing it into a
-   git checkout works right up until a `git clean`, a rebuild, or a moved
-   worktree deletes the build under the running hub — and then every page is a
-   bare `404` while the hub itself still looks healthy. After this, deploying is
-   `make console-install && cryohub restart`, with no config change.
-   (Or copy `dist/` to a host and serve it yourself — see `deploy/Caddyfile`.)
-3. Install Caddy; copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`, set the
-   real domain, and `systemctl reload caddy`. HTTPS is automatic.
-4. Open the URL on a phone and use **Add to Home Screen**.
+The released `cryohub` embeds `console/dist/` at compile time, so a normal
+install has nothing to configure. While developing you can serve *this
+checkout's* build instead:
 
-Caddy terminating TLS in front of the hub is not optional: `cryohub` stays bound
-to loopback, and same-origin is what keeps the token out of any third-party
-context.
+```sh
+make console-build          # from the repo root: npm ci && npm run build → console/dist/
+```
+
+then in `~/.config/cryo/cryohub.toml`:
+
+```toml
+console_dir = "/absolute/path/to/cryochamber/console/dist"
+```
+
+and `cryohub restart`. The path must be absolute — the hub canonicalizes it
+from the service process's working directory. `cryohub status` prints
+`Console: embedded` or `Console: <path> (present|missing)`. Remove the key to
+go back to the embedded build.
+
+To bake a fresh build into the binary: `make console-build && cargo build`.
 
 ### Updates
 
@@ -103,99 +75,21 @@ nothing that is not a `2xx` is ever cached, so a bad deploy cannot be pinned
 offline. Hashed `/assets/*` files are served cache-first; everything else is
 network-first.
 
-## Chamber Hub
-
-The app talks to a **Chamber Hub** (`cryohub`): your own machine's agent
-chambers, served straight to a phone.
-
-The thing that matters: a hub has **no accounts**. There is one owner token, and
-everyone else gets an **invite link** scoped to the project it was minted from.
-Opening the link *is* signing in.
-
-### Set it up
-
-```sh
-cryohub token owner          # prints the owner token — once. Keep it.
-cryohub start --public       # listens on 127.0.0.1:8765
-```
-
-The app talks to the hub that serves it — same origin, `/api`. In dev,
-`npm run dev` proxies `/api` to `127.0.0.1:8765`.
-
-In production the `agents.example.com` block in `deploy/Caddyfile` does the same
-— copy it, replace the hostname, and make sure that name has a DNS record
-pointing at the host **before** reloading Caddy, or no certificate can be
-issued. `cryohub` itself stays bound to loopback; Caddy is the only way in.
-
-### Invite someone
-
-1. Sign in on the hub server and paste the owner token into **Access token**.
-2. Open the project you want to share and tap **Invite** in its header.
-3. Optionally name the person ("Who is this for?"; blank becomes `guest-1`,
-   `guest-2`, …), then **Copy invite link**. The link is minted, scoped to that
-   one chamber, and copied to your clipboard in a single step.
-4. Send it to them. It is shown **once** — the hub stores only a hash, so it
-   cannot be retrieved later. Lost link, new link.
-5. They open it on their phone, land straight in that project, and can **Add
-   to Home Screen** like any other install.
-
-**People with access** on the same sheet lists every active link that reaches
-this chamber, with an "also: …" note when a link spans more than one. **Remove**
-revokes it after a confirm; the link stops working immediately — the next thing
-that person's app does gets a 401 and drops them at the login screen with
-*"This invite link is no longer valid."*
-
-An invite holder sees chat and nothing else: no Invite button, no chamber
-controls, no `+`, no owner rows in Settings. That is a UI decision on top of the
-real one — the hub classifies every owner route default-deny, so a guest calling
-one directly gets a 403 regardless of what the app draws.
-
-The token never appears in a URL the app requests — it rides in an
-`Authorization: Bearer` header, and the `#invite=` fragment is stripped from the
-address bar the moment it is read, before anything else runs.
-
-## FAQ
-
-**Why is a project missing from the list?**
-The app shows the chambers the hub hands your token. Check the hub's scope for
-that token, or *Settings → Projects* in case it is hidden.
-
-**Can I use it on a desktop browser?**
-Yes. Bars, the message canvas and the composer dock stay full-bleed, but what
-you read is clamped to an 800px column and centred, so a reply is never a
-single line stretched across a monitor. There is no breakpoint: on a phone the
-column is wider than the screen and every surface is edge-to-edge exactly as
-before, and a window wider than the column simply grows gutters. Enter sends
-when a hardware keyboard is present.
-
-**What is stored on my phone?**
-The access token, the name the hub knows you by, and a small cache of recent
-messages, all in `localStorage`. Logging out clears them.
-
-**Where did the Share screen in Settings go?**
-Sharing is per project now, so it lives in the project: open the conversation
-and tap **Invite**. A link that spans several chambers (minted on the CLI) still
-works and shows up in each of their People lists.
-
-**Is message content from the server trusted?**
-No. Markdown is rendered client-side and then sanitized before it reaches the
-DOM: an allowlist of tags and attributes, inline styles filtered down to the
-properties KaTeX needs (no URLs, no fixed positioning), and `url()` stripped
-from SVG paint attributes. See `src/components/sanitize.ts`.
-
 ## Project layout
 
 ```
-src/api/             Chamber Hub client, SSE reader, errors, types
-src/store/           app state (Zustand), credential storage, local message cache
-src/hooks/           the event loop (register + one SSE stream, with backoff)
-src/components/      MessageBody + sanitizer, Composer, icon set
+src/api/             hub client (typed methods, ApiError), SSE reader, types
+src/store/           app state (Zustand), credential storage, local cache
+src/hooks/           the event loop (one SSE stream, backoff, resync)
+src/components/      MessageBody + sanitizer, Composer, Sheet, UpdateBar, icons
 src/views/           Login, Projects, Conversation, Settings, Invite, Controls, New chamber
 src/views/controls/  the Controls sheet's tabs: todos, plan/notes, sync, settings, log
-src/lib/             markdown+KaTeX renderer, theme, outbox, date/preview/colour helpers
+src/lib/             markdown+KaTeX renderer, theme, outbox, SW update flow, helpers
 src/styles.css       the design system (tokens first, then components, then dark)
+public/sw.js         service worker: precache list, cache-first assets, update prompt
 e2e/                 Playwright: smoke + layout contract, hub flows, screenshot harness
 scripts/             icon generation from public/icons/icon.svg
+deploy/Caddyfile     the reverse-proxy block the mdbook guide quotes
 ```
 
 ## Regenerating the app icon
@@ -203,9 +97,19 @@ scripts/             icon generation from public/icons/icon.svg
 Edit `public/icons/icon.svg`, then:
 
 ```sh
-node scripts/generate-icons.mjs   # rewrites icon-180/192/512.png
+node scripts/generate-icons.mjs          # rewrites icon-180/192/512.png
+node scripts/generate-maskable-icon.mjs  # rewrites icon-maskable-512.png
 ```
 
-It renders through the Chromium that Playwright already installs, so there is no
-extra dependency. The PNGs are committed, so a plain `npm run build` never needs
-a browser.
+Both render through the Chromium that Playwright already installs, so there is
+no extra dependency. The maskable variant insets the mark so the OS's circular /
+squircle crop never clips it. The PNGs are committed, so a plain `npm run build`
+never needs a browser.
+
+## Trust boundary
+
+Message content from the server is not trusted. Markdown is rendered
+client-side and then sanitized before it reaches the DOM: an allowlist of tags
+and attributes, inline styles filtered down to the properties KaTeX needs (no
+URLs, no fixed positioning, clamped lengths), `url()` stripped from SVG paint
+attributes. See `src/components/sanitize.ts`. The hub adds a CSP on the page.
