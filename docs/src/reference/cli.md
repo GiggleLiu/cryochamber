@@ -32,7 +32,7 @@ Run these from inside a chamber directory unless noted otherwise.
 
 | Command | What it does |
 |---------|--------------|
-| `cryohub start [--host <ip>] [--port <n>]` | Install a service that survives reboot. Enforces bearer auth by default, printing the owner token on first run (the only time it is shown). `--host` and `--port` also update the saved hub config. |
+| `cryohub start [--host <ip>] [--port <n>]` | Install a service that survives reboot. Enforces bearer auth by default, printing the owner token on first run (`cryohub token owner` reprints it). `--host` and `--port` also update the saved hub config. |
 | `cryohub start --foreground` | Run the hub in the current terminal instead of installing a service. |
 | `cryohub stop` | Uninstall the global hub service. |
 | `cryohub restart` | Restart the installed global hub service without reinstalling it. |

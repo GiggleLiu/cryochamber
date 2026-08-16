@@ -21,7 +21,7 @@ token, and the console shows a login screen. The first run creates the owner
 token and prints it — that line is your login, so keep it:
 
 ```
-Owner token (shown once — paste it into the console to sign in):
+Owner token (save it — or reprint later with `cryohub token owner`):
 3f9c…
 ```
 

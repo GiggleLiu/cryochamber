@@ -15,7 +15,7 @@ cryohub start        # http://127.0.0.1:8765
 `cryohub start` 默认以**公开模式**运行：每个 `/api` 路由都需要 bearer token，控制台会显示登录页。首次启动会创建 owner token 并打印出来——这一行就是你的登录凭据，请保存好：
 
 ```
-Owner token (shown once — paste it into the console to sign in):
+Owner token (save it — or reprint later with `cryohub token owner`):
 3f9c…
 ```
 

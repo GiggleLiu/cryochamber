@@ -32,7 +32,7 @@
 
 | 命令 | 作用 |
 |---------|--------------|
-| `cryohub start [--host <ip>] [--port <n>]` | 安装一个重启后依然存活的服务。默认强制 bearer 鉴权，并在首次运行时打印 owner token（唯一一次显示的时机）。`--host` 和 `--port` 同时更新已保存的 hub 配置。 |
+| `cryohub start [--host <ip>] [--port <n>]` | 安装一个重启后依然存活的服务。默认强制 bearer 鉴权，并在首次运行时打印 owner token（之后可用 `cryohub token owner` 再次打印）。`--host` 和 `--port` 同时更新已保存的 hub 配置。 |
 | `cryohub start --foreground` | 在当前终端运行 hub，而不是安装服务。 |
 | `cryohub stop` | 卸载全局 hub 服务。 |
 | `cryohub restart` | 重启已安装的全局 hub 服务，无需重新安装。 |
