@@ -36,47 +36,37 @@ If your AI agent supports custom skills, you can skip the manual `plan.md` step:
 
 Start Cryohub to monitor the chamber in your browser:
 ```bash
-make console-install   # once: builds the web UI into ~/.cryo/console
 cryohub start
 ```
 
 Cryohub runs once per user, discovers chambers on this machine, and serves the
 **Agent Console** — a browser UI for status, logs, messages, TODOs, notes, and
-lifecycle controls, on a desktop or a phone.
+lifecycle controls, on a desktop or a phone. It is embedded in the binary;
+there is nothing else to install.
 
 → **CLI reference:** <https://giggleliu.github.io/cryochamber/reference/cli.html>  
 → **中文文档:** <https://giggleliu.github.io/cryochamber/zh/>
 
 ## Agent Console
 
-The [`console/`](console/README.md) app is what cryohub serves, and it is also
-an installable phone app (Android + iOS) for reading and steering your chambers
-from anywhere over the same authenticated `/api`. One chamber is one flat
-conversation; a friend gets in through an invite link scoped to the chambers
-you name.
+The Agent Console is what cryohub serves, and it is also an installable phone
+app (Android + iOS) for reading and steering your chambers from anywhere over
+the same authenticated `/api`. One chamber is one flat conversation; a friend
+gets in through an invite link scoped to the one chamber you minted it from.
 
-```bash
-make console-install
-```
-
-That builds it and installs it to `~/.cryo/console`, which is where the hub
-looks by default — one process serves both the API and the app, with no config
-and no separate static file server. Set `console_dir` in
-`~/.config/cryo/cryohub.toml` only to serve a build from somewhere else, and
-make that path absolute.
-
-Then mint an owner token and start the hub with auth enforced:
+To reach it beyond loopback, mint an owner token and start the hub with auth
+enforced, then put a TLS proxy in front:
 
 ```bash
 cryohub token owner     # prints the token once — this is your login
 cryohub start --public
 ```
 
-`--public` is required before exposing the hub beyond loopback: it puts every
-`/api` route behind a bearer token. The console's own pages stay public — they
-are the login screen. See
-[`console/README.md`](console/README.md) for invites, deployment behind TLS,
-and the Zulip backend the same app also speaks.
+`--public` puts every `/api` route behind a bearer token; the console's own
+pages stay public — they are the login screen. Sign-in, invites, PWA install
+and the Caddy deployment are in the
+[Agent Console guide](https://giggleliu.github.io/cryochamber/agent-console.html);
+developer notes live in [`console/README.md`](console/README.md).
 
 ## Features
 

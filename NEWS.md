@@ -6,11 +6,28 @@ Security and reliability hardening.
 
 ### Cryohub
 
-- **Dashboard speaks Chinese.** The cryohub web UI ships a Simplified Chinese
-  (zh-CN) translation alongside English. A language toggle in the top bar
-  switches the whole UI; the choice persists and a Chinese-locale browser
-  defaults to Chinese on first visit. Server-provided strings (status
-  summaries, dates, message bodies) remain in their source language.
+- **The Agent Console replaces the bundled dashboard** (breaking). `cryohub`
+  no longer serves the old `web_shell.html` panel; its only web surface is the
+  Agent Console — a phone-first, installable app with one flat conversation
+  per chamber, owner controls (lifecycle, todos, plan, notes, sync, settings,
+  live log), and **per-chamber invite links** that give a guest one
+  conversation and nothing else. The console is **embedded in the binary**:
+  `cargo install cryochamber && cryohub start` is the whole install. Set
+  `console_dir` in `cryohub.toml` only to serve a different build. See the
+  [Agent Console guide](https://giggleliu.github.io/cryochamber/agent-console.html).
+- **The console UI is English-only for now.** The Chinese translation of the
+  removed dashboard did not carry over; a console string table is a follow-up.
+- **`cryohub.toml` rejects unknown keys** instead of silently dropping them on
+  the next save, and is written atomically.
+- **`/api/whoami` reports the hub version and the owner's name**, so a client
+  can show who it is signed in as and which build it is talking to.
+- **`POST /api/chambers/:id/send` returns the created message id**, so a client
+  can reconcile its optimistic echo with the stored message.
+- **Streams resync instead of going stale.** The SSE endpoint emits a `resync`
+  event when a client may have missed updates, and owner streams are closed on
+  token rotation so a revoked credential stops receiving events.
+- **Sends and uploads are rate-limited per credential in public mode**, and a
+  throttled caller gets a `429` with a `Retry-After` header.
 
 ### Security
 
