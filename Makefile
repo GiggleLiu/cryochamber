@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build console-check book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -14,7 +14,8 @@ help:
 	@echo "  fmt          - Format code with rustfmt"
 	@echo "  fmt-check    - Check code formatting"
 	@echo "  clippy       - Run clippy lints"
-	@echo "  check        - Quick check (fmt + clippy + test)"
+	@echo "  check        - Quick check (fmt + clippy + test + console-check)"
+	@echo "  console-check - Type-check and unit-test the Agent Console (npm ci, tsc, vitest)"
 	@echo "  coverage     - Generate coverage report (requires cargo-llvm-cov)"
 	@echo "  clean        - Clean build artifacts (cargo clean)"
 	@echo "  example-clean - Remove auto-generated files from examples"
@@ -63,8 +64,13 @@ clippy:
 	cargo clippy --all-targets -- -D warnings
 
 # Quick check before commit
-check: fmt-check clippy test
+check: fmt-check clippy test console-check
 	@echo "All checks passed!"
+
+# Type-check and unit-test the Agent Console. Uses `npm ci` so the lockfile is
+# never rewritten by a local run.
+console-check:
+	cd console && npm ci && npx tsc --noEmit && npx vitest run
 
 # Generate coverage report (requires: cargo install cargo-llvm-cov)
 coverage:
