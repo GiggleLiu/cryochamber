@@ -9,10 +9,21 @@ repository = "https://github.com/GiggleLiu/cryochamber"
 keywords = ["ai-agent", "automation", "scheduler", "daemon", "hibernation"]
 categories = ["command-line-utilities"]
 build = "build.rs"
-# The Agent Console is a separate Node app, served from a path at runtime
-# rather than compiled in. Publishing its sources and screenshots would add
-# megabytes that no `cargo install` can use.
-exclude = ["console/"]
+# Ship exactly what the binaries need. `include` (not `exclude`) because
+# `console/dist/` is gitignored and only an explicit include overrides that:
+# the built Agent Console must travel inside the crate so `cargo install`
+# users get it out of the binary (an operator-set `console_dir` is the one
+# override that reads a build from disk instead). Console *sources* stay out.
+include = [
+    "src/**",
+    "tests/**",
+    "templates/**",
+    "/build.rs",
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE",
+    "console/dist/**",
+]
 
 [[bin]]
 name = "cryo"
