@@ -36,3 +36,53 @@ test('Escape closes the sheet, and focus starts inside it', async () => {
   await userEvent.keyboard('{Escape}')
   expect(onClose).toHaveBeenCalledTimes(1)
 })
+
+test('a parent re-render with a new onClose does not steal focus from a field inside', async () => {
+  function Parent({ tick }: { tick: number }) {
+    // A fresh lambda each render, exactly like every real caller.
+    return (
+      <Sheet title="Invite to alpha" label="Invite" onClose={() => void tick}>
+        <input aria-label="Label" />
+      </Sheet>
+    )
+  }
+  const { rerender } = render(<Parent tick={0} />)
+  const input = screen.getByRole('textbox', { name: 'Label' })
+  await userEvent.click(input)
+  expect(input).toHaveFocus()
+  rerender(<Parent tick={1} />)
+  rerender(<Parent tick={2} />)
+  expect(input).toHaveFocus()
+})
+
+test('Escape calls the latest onClose after a re-render', async () => {
+  const first = vi.fn()
+  const second = vi.fn()
+  const { rerender } = render(
+    <Sheet title="t" label="t" onClose={first}><p>b</p></Sheet>,
+  )
+  rerender(<Sheet title="t" label="t" onClose={second}><p>b</p></Sheet>)
+  await userEvent.keyboard('{Escape}')
+  expect(first).not.toHaveBeenCalled()
+  expect(second).toHaveBeenCalledTimes(1)
+})
+
+test('focus returns to where it came from when the sheet unmounts', async () => {
+  function Host({ open }: { open: boolean }) {
+    return (
+      <>
+        <button type="button">Opener</button>
+        {open && (
+          <Sheet title="t" label="t" onClose={() => {}}><p>b</p></Sheet>
+        )}
+      </>
+    )
+  }
+  const { rerender } = render(<Host open={false} />)
+  const opener = screen.getByRole('button', { name: 'Opener' })
+  opener.focus()
+  rerender(<Host open={true} />)
+  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus()
+  rerender(<Host open={false} />)
+  expect(opener).toHaveFocus()
+})
