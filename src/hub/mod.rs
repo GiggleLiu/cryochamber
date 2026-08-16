@@ -4,6 +4,7 @@ pub mod discovery;
 pub mod lifecycle;
 pub mod mime;
 pub mod paths;
+pub mod ratelimit;
 pub mod routes;
 pub mod security;
 pub mod state;
