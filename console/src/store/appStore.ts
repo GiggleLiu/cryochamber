@@ -115,6 +115,12 @@ export interface AppState {
   /** Hub role behind the current token; null until whoami answers. Owner-only
    *  UI — the per-chamber Invite sheet — keys off this. */
   hubRole: HubRole | null
+  /** The name the hub stamps on this token's messages: what makes a bubble
+   *  "mine". Empty until a session exists. */
+  selfName: string
+  /** Version of the hub serving this console; null until whoami answers. */
+  hubVersion: string | null
+  setHubVersion(v: string | null): void
   /** Unconfirmed sends per stream. Session-local: never cached, cleared on logout. */
   outboxByStream: Record<number, OutboxItem[]>
   setCreds(c: Credentials): void
@@ -195,6 +201,8 @@ const initialData = {
   connection: 'connecting' as Connection,
   loginReason: null as string | null,
   hubRole: null as HubRole | null,
+  selfName: '',
+  hubVersion: null as string | null,
   outboxByStream: {} as Record<number, OutboxItem[]>,
 }
 
@@ -218,12 +226,20 @@ export const useAppStore = create<AppState>()((set, get) => {
     const cached = loadCachedState(c)
     set({
       creds: c,
-      client: new HubClient(c),
+      // The client owns the only 401 path in the app: whatever call sees the
+      // revoked token, the app signs out exactly once.
+      client: new HubClient({
+        token: c.token,
+        onAuthFailure: () => get().logout(AUTH_LOGOUT_REASON),
+      }),
       view: { name: 'projects' },
       loginReason: null,
+      selfName: c.name,
+      // The role travels with the credentials now: whoami resolved it before
+      // this call, and a boot from storage re-asks and corrects it.
+      hubRole: c.role,
       // The list preference is this account's own, so it is re-read here rather
-      // than carried over from whoever was signed in before. The role is left
-      // alone: whoami sets it just before this call.
+      // than carried over from whoever was signed in before.
       showCompletedArchived: loadShowCompleted(c),
       ...(cached ? { streams: cached.streams, messagesByStream: cached.messagesByStream } : {}),
     })
@@ -309,7 +325,7 @@ export const useAppStore = create<AppState>()((set, get) => {
     set((state) => {
       const messagesByStream = { ...state.messagesByStream }
       const unreadByStream = { ...state.unreadByStream }
-      const self = state.creds?.email
+      const self = state.selfName
       // Only what this batch delivered, so an outbox item is retired by its own
       // echo rather than by an identical message from last week.
       const arrived: Record<number, Message[]> = {}
@@ -388,6 +404,7 @@ export const useAppStore = create<AppState>()((set, get) => {
   setOwnUserId: (id) => set({ ownUserId: id }),
   setUsers: (users) => set({ users }),
   setHubRole: (role) => set({ hubRole: role }),
+  setHubVersion: (v) => set({ hubVersion: v }),
 
   enqueueOutbox: (streamId, content) => {
     const localId = nextLocalId

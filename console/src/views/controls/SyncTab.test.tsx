@@ -2,12 +2,12 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SyncTab } from './SyncTab'
 import { HubClient, type SyncSummary } from '../../api/hubClient'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../../store/appStore'
+import { useAppStore, resetAppStore } from '../../store/appStore'
 import { emitChamberEvent } from '../../store/chamberEvents'
 import { ApiError } from '../../api/types'
 import type { Credentials } from '../../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 
 function summary(overrides: Partial<SyncSummary> = {}): SyncSummary {
   return {
@@ -18,7 +18,7 @@ function summary(overrides: Partial<SyncSummary> = {}): SyncSummary {
 }
 
 function makeHub(list: SyncSummary[]): HubClient {
-  const client = new HubClient(creds, vi.fn())
+  const client = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(client, 'chamberSync').mockResolvedValue(list)
   vi.spyOn(client, 'syncAction').mockResolvedValue({ ok: true, message: 'zulip start' })
   return client
@@ -72,7 +72,7 @@ test('a running backend offers Stop', async () => {
 
 test('an ok:false action is reported inline and the button comes back', async () => {
   const hub = makeHub([summary()])
-  vi.mocked(hub.syncAction).mockRejectedValue(new ApiError(200, 'cryo-zulip not found'))
+  vi.mocked(hub.syncAction).mockRejectedValue(new ApiError(200, 'cryo-zulip not found', true))
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
   await userEvent.click(await screen.findByRole('button', { name: 'Start zulip sync' }))
@@ -80,18 +80,18 @@ test('an ok:false action is reported inline and the button comes back', async ()
   expect(screen.getByRole('button', { name: 'Start zulip sync' })).toBeEnabled()
 })
 
-test('a 401 signs out', async () => {
+test('a 401 stays silent — the client already signed out', async () => {
   const hub = makeHub([])
   vi.mocked(hub.chamberSync).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-  expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+  await waitFor(() => expect(hub.chamberSync).toHaveBeenCalled())
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 test('a refusal outlives the status event that follows it', async () => {
   const hub = makeHub([summary()])
-  vi.mocked(hub.syncAction).mockRejectedValue(new ApiError(200, 'cryo-zulip not found'))
+  vi.mocked(hub.syncAction).mockRejectedValue(new ApiError(200, 'cryo-zulip not found', true))
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
   await userEvent.click(await screen.findByRole('button', { name: 'Start zulip sync' }))

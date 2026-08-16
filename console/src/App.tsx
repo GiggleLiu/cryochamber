@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from './store/appStore'
-import { loadCredentials } from './store/auth'
-import { loadServers } from './api/servers'
+import { loadCredentials, saveCredentials } from './store/auth'
 import { useEventLoop } from './hooks/useEventLoop'
 import { INVALID_INVITE_REASON, MALFORMED_INVITE_REASON, signInWithHubToken } from './lib/hubSignIn'
 import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
-import { logoutIfAuthError } from './lib/authGuard'
+import { isUnauthorized } from './api/types'
 import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
@@ -57,32 +56,31 @@ export default function App() {
       useAppStore.getState().logout(MALFORMED_INVITE_REASON)
       return
     }
-    void (async () => {
-      const hub = (await loadServers().catch(() => []))[0]
-      if (!hub) {
-        useAppStore.getState().logout(INVALID_INVITE_REASON)
-        return
-      }
-      try {
-        await signInWithHubToken(hub.prefix, inviteToken, hub.sendTopic ?? '')
-      } catch {
-        useAppStore.getState().logout(INVALID_INVITE_REASON)
-      }
-    })()
+    void signInWithHubToken(inviteToken).catch(() =>
+      useAppStore.getState().logout(INVALID_INVITE_REASON),
+    )
   }, [inviteToken])
 
-  // Stored credentials carry no role (it is the hub's answer, not ours), so a
-  // boot from cache re-asks once. This is also the first thing that can tell us
-  // the stored token was revoked while the app was closed, so a 401 signs out
-  // here rather than waiting for the event loop; other failures stay silent and
+  // Stored credentials carry a role and a name, but both are the hub's answer
+  // and both can be stale, so every boot re-asks — this call is also the
+  // revocation probe (a 401 signs out through the client's own hook rather
+  // than waiting for the event loop). Other failures stay silent and
   // owner-only UI simply stays hidden.
   useEffect(() => {
     if (!client) return
-    if (useAppStore.getState().hubRole) return
     client
       .whoami()
-      .then((who) => useAppStore.getState().setHubRole(who.role))
-      .catch((e) => logoutIfAuthError(e, INVALID_INVITE_REASON))
+      .then((who) => {
+        const s = useAppStore.getState()
+        s.setHubRole(who.role)
+        s.setHubVersion(who.hub_version ?? null)
+        if (!s.creds) return
+        if (s.creds.role === who.role && (!who.name || s.creds.name === who.name)) return
+        const next = { ...s.creds, role: who.role, name: who.name ?? s.creds.name }
+        saveCredentials(next)
+        useAppStore.setState({ creds: next, selfName: next.name })
+      })
+      .catch(() => {})
   }, [creds, client])
 
   // A guest's link is tied to one chamber, so landing them in a list of one is
@@ -117,9 +115,8 @@ export default function App() {
       if (!HUB_FILES_RE.test(href)) return
       e.preventDefault()
       const name = filenameFromHref(href)
-      // Chamber file paths are already absolute app paths — never re-prefix.
-      downloadUpload(href, client.authHeaderValue()).catch((err) => {
-        if (logoutIfAuthError(err)) return
+      downloadUpload((u) => client.fetchBlob(u), href).catch((err) => {
+        if (isUnauthorized(err)) return
         setDownloadNote(`Could not download ${name}. Check your connection and try again.`)
       })
     }

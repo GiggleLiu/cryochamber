@@ -126,11 +126,8 @@ export interface MockOptions {
 export async function mockHub(page: Page, opts: MockOptions = {}): Promise<void> {
   await page.clock.setFixedTime(NOW)
 
-  await page.route('**/servers.json', (r) =>
-    r.fulfill({ json: [{ name: 'Chamber Hub', prefix: '', kind: 'hub', sendTopic: '' }] }),
-  )
   await page.route('**/api/whoami', (r) =>
-    r.fulfill({ json: { role: 'owner', name: 'Jin-Guo Liu' } }),
+    r.fulfill({ json: { role: 'owner', name: 'Jin-Guo Liu', hub_version: '0.3.0' } }),
   )
   await page.route('**/api/chambers', async (r: Route) => {
     if (opts.hangRegister) return
@@ -148,7 +145,9 @@ export async function mockHub(page: Page, opts: MockOptions = {}): Promise<void>
     }
     await r.fulfill({ json: thread })
   })
-  await page.route('**/api/chambers/*/send', (r) => r.fulfill({ json: { ok: true } }))
+  await page.route('**/api/chambers/*/send', (r) =>
+    r.fulfill({ json: { ok: true, id: 'inbox/2026-08-16T10-00-00_human_1.md' } }),
+  )
   await page.route('**/api/chambers/*/files/**', (r) =>
     r.fulfill({ contentType: 'image/svg+xml', body: PLOT_SVG }),
   )

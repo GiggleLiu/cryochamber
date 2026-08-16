@@ -3,13 +3,7 @@ import App from './App'
 import { useAppStore, resetAppStore } from './store/appStore'
 import { saveCredentials } from './store/auth'
 
-vi.mock('./api/servers', () => ({
-  loadServers: vi.fn(async () => [
-    { name: 'Chamber Hub', prefix: '', kind: 'hub', sendTopic: '' },
-  ]),
-}))
-
-const creds = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
+const creds = { token: 'tok', name: 'Alice', role: 'owner' as const }
 
 beforeEach(() => {
   resetAppStore()
@@ -113,7 +107,7 @@ describe('invite-link onboarding', () => {
     expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
     expect(window.location.hash).toBe('')
     const saved = JSON.parse(localStorage.getItem('agent-console.credentials')!)
-    expect(saved).toMatchObject({ kind: 'hub', email: 'Alice', apiKey: TOKEN })
+    expect(saved).toEqual({ token: TOKEN, name: 'Alice', role: 'invite' })
     expect(useAppStore.getState().hubRole).toBe('invite')
     // The token rides in the Authorization header, never in a query string.
     for (const [url] of vi.mocked(fetch).mock.calls) expect(String(url)).not.toContain(TOKEN)
@@ -160,13 +154,7 @@ describe('invite-link onboarding', () => {
     // The owner's entry point is the hub, not any one chamber — and theirs is
     // where New chamber and the folds live.
     stubHub('owner', [{ id: '%2Ftmp%2Falpha', name: 'alpha' }])
-    useAppStore.getState().setCreds({
-      kind: 'hub',
-      prefix: '',
-      email: 'human',
-      apiKey: 'ab'.repeat(16),
-      sendTopic: '',
-    })
+    useAppStore.getState().setCreds({ token: 'ab'.repeat(16), name: 'human', role: 'owner' })
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
   })
@@ -193,7 +181,7 @@ describe('invite-link onboarding', () => {
   })
 
   test('a stored token the hub now rejects lands on login with a reason', async () => {
-    saveCredentials({ ...creds, apiKey: 'revoked' })
+    saveCredentials({ ...creds, token: 'revoked' })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
     render(<App />)
     // Previously absorbed silently, leaving cached projects on screen behind a
@@ -230,17 +218,29 @@ describe('invite-link onboarding', () => {
     }
   })
 
-  test('stored hub credentials repopulate the role at boot', async () => {
-    saveCredentials({ ...creds, email: 'Owner' })
+  test('boot whoami corrects a stale stored role and name, and reports the hub version', async () => {
+    // The stored record is the hub's last answer, not a fact: an invite that
+    // has since been promoted (or renamed) must not run the session on it.
+    saveCredentials({ token: 'tok', name: 'Old Name', role: 'invite' })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) =>
         String(url).endsWith('/api/whoami')
-          ? new Response(JSON.stringify({ role: 'owner', name: 'Owner' }), { status: 200 })
+          ? new Response(
+              JSON.stringify({ role: 'owner', name: 'Owner', hub_version: '0.3.0' }),
+              { status: 200 },
+            )
           : new Response(JSON.stringify([]), { status: 200 }),
       ),
     )
     render(<App />)
     await waitFor(() => expect(useAppStore.getState().hubRole).toBe('owner'))
+    expect(useAppStore.getState().hubVersion).toBe('0.3.0')
+    expect(useAppStore.getState().selfName).toBe('Owner')
+    expect(JSON.parse(localStorage.getItem('agent-console.credentials')!)).toEqual({
+      token: 'tok',
+      name: 'Owner',
+      role: 'owner',
+    })
   })
 })

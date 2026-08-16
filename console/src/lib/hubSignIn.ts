@@ -12,20 +12,14 @@ export const MALFORMED_INVITE_REASON = 'This invite link is not valid.'
 
 /**
  * Exchange a hub access token (owner or invite) for a signed-in session: ask
- * the hub who the bearer is, record the role, then store the credentials.
+ * the hub who the bearer is, then store the identity it answered with.
  * Rejects when the token is rejected — callers decide how to say so, since the
  * invite-link path and the paste-a-token path word it differently.
  */
-export async function signInWithHubToken(
-  prefix: string,
-  token: string,
-  sendTopic = '',
-): Promise<void> {
-  const probe = new HubClient({ kind: 'hub', prefix, email: '', apiKey: token, sendTopic })
+export async function signInWithHubToken(token: string): Promise<void> {
+  const probe = new HubClient({ token })
   const who = await probe.whoami()
   const store = useAppStore.getState()
-  store.setHubRole(who.role)
-  // `name` is what the hub labels this token's messages with; it is also the
-  // identity the composer sends as, so it doubles as the account email field.
-  store.setCreds({ kind: 'hub', prefix, email: who.name ?? 'human', apiKey: token, sendTopic })
+  store.setHubVersion(who.hub_version ?? null)
+  store.setCreds({ token, name: who.name ?? 'human', role: who.role })
 }

@@ -20,14 +20,14 @@ function tokenFingerprint(token: string): string {
 
 /**
  * The namespace every per-account local store hangs off: drafts, hidden
- * projects, and the chamber/message id maps.
+ * projects, the chamber/message id maps, and the message cache.
  *
  * Keyed by the token itself (fingerprinted), never by the display name:
  * invite names are reusable after revocation, so a later "Alice" token on
  * the same browser must not inherit the old Alice's drafts, id maps, or
- * hidden projects. Prefix stays in the key — one token name on two hubs is
- * two namespaces — and the backend kind keeps the key's shape stable.
+ * hidden projects. The `hub|` prefix keeps the key's shape stable — the
+ * console only ever talks to the hub that served it.
  */
-export function accountKey(c: Pick<Credentials, 'kind' | 'prefix' | 'apiKey'>): string {
-  return `${c.kind}|${c.prefix}|${tokenFingerprint(c.apiKey)}`
+export function accountKey(c: Pick<Credentials, 'token'>): string {
+  return `hub|${tokenFingerprint(c.token)}`
 }

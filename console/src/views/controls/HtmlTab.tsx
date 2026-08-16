@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import { sanitizeHtml } from '../../components/sanitize'
-import { useAppStore } from '../../store/appStore'
 
 /**
  * `plan_html` / `notes_html` — markdown the *server* already rendered and
@@ -8,8 +7,7 @@ import { useAppStore } from '../../store/appStore'
  * an agent, i.e. untrusted, and one escaping layer is one bug away from none.
  */
 export function HtmlTab({ html, empty }: { html: string; empty: string }) {
-  const prefix = useAppStore((s) => s.creds?.prefix ?? '')
-  const clean = useMemo(() => sanitizeHtml(html, prefix), [html, prefix])
+  const clean = useMemo(() => sanitizeHtml(html), [html])
   // Judged after sanitizing: markup that reduces to nothing is as empty as
   // no markup, and an empty styled block says less than the copy does.
   if (clean.trim() === '') return <p className="tab-empty">{empty}</p>

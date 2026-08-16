@@ -1,5 +1,5 @@
 import { isUnauthorized } from '../api/types'
-import { useAppStore, AUTH_LOGOUT_REASON, type OutboxItem } from '../store/appStore'
+import { useAppStore, type OutboxItem } from '../store/appStore'
 
 /** Draft storage key for a project's composer, namespaced per account — two
  * tokens each number their own chambers from 1. */
@@ -16,8 +16,8 @@ export const ECHO_TIMEOUT_MS = 10_000
  * bubble to `sent` — it stays until the message itself shows up in the thread,
  * so nothing vanishes into a gap between the POST and the event; a non-auth
  * failure marks it retryable (tap to retry, never automatically: see the
- * OutboxItem docs); a 401 takes the app's single logout path, which clears the
- * outbox along with everything else. */
+ * OutboxItem docs); a 401 has already signed the app out inside the client,
+ * which clears the outbox along with everything else. */
 function attempt(streamId: number, streamName: string, content: string, localId: number): void {
   const client = useAppStore.getState().client
   if (!client) {
@@ -30,10 +30,7 @@ function attempt(streamId: number, streamName: string, content: string, localId:
       setTimeout(() => useAppStore.getState().resolveOutbox(streamId, localId), ECHO_TIMEOUT_MS)
     },
     (e: unknown) => {
-      if (isUnauthorized(e)) {
-        useAppStore.getState().logout(AUTH_LOGOUT_REASON)
-        return
-      }
+      if (isUnauthorized(e)) return
       useAppStore.getState().failOutbox(streamId, localId)
     },
   )

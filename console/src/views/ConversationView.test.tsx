@@ -1,13 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ConversationView, isRichMessage } from './ConversationView'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import { HubClient } from '../api/hubClient'
 import { ECHO_TIMEOUT_MS, sendViaOutbox } from '../lib/outbox'
 import type { Credentials, Message } from '../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { token: 'k', name: 'me@b.c', role: 'owner' }
 
 function makeMsg(id: number, overrides: Partial<Message> = {}): Message {
   return {
@@ -22,7 +22,7 @@ function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
     getMessages: vi.fn(async () => [makeMsg(1), makeMsg(2)]),
     sendMessage: vi.fn(async () => 99),
     markStreamRead: vi.fn(async () => {}),
-    authHeaderValue: vi.fn(() => 'Bearer k'),
+    fetchBlob: vi.fn(async () => new Blob(['x'])),
     getOwnUser: vi.fn(async () => ({ user_id: 7 })),
     chamberIdFor: vi.fn(() => 'cham-a'),
     ...overrides,
@@ -33,6 +33,9 @@ beforeEach(() => {
   resetAppStore()
   useAppStore.setState({
     creds,
+    // What the hub stamps on this token's messages: the name that makes a
+    // bubble "mine".
+    selfName: creds.name,
     streams: [{ stream_id: 1, name: 'alpha', description: 'A' }],
   })
 })
@@ -153,14 +156,16 @@ test('does not refetch own user once known', async () => {
   expect(client.getOwnUser).not.toHaveBeenCalled()
 })
 
-test('auth error while fetching own user logs out', async () => {
+test('an auth error while fetching own user is left to the client', async () => {
+  // The 401 signed the app out inside the client; the view only has to not
+  // paint an error over it.
   const client = fakeClient({
     getOwnUser: vi.fn().mockRejectedValue(new ApiError(401, 'HTTP 401')),
   })
   useAppStore.setState({ client })
   render(<ConversationView streamId={1} />)
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-  expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+  await waitFor(() => expect(client.getOwnUser).toHaveBeenCalled())
+  expect(useAppStore.getState().ownUserId).toBeNull()
 })
 
 test('non-auth error while fetching own user is ignored silently', async () => {
@@ -393,8 +398,8 @@ describe('message loading', () => {
         ? new Response('{}', { status: 404 })
         : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
     ) as unknown as typeof fetch
-    const hubCreds = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
-    const client = new HubClient(hubCreds, fetchFn)
+    const hubCreds = { token: 'tok', name: 'Alice', role: 'owner' as const }
+    const client = new HubClient({ token: hubCreds.token, fetch: fetchFn })
     await client.register()
     useAppStore.setState({
       client,
@@ -415,9 +420,9 @@ describe('message loading', () => {
     const fetchFn = vi.fn(async () => {
       throw new TypeError('Failed to fetch')
     }) as unknown as typeof fetch
-    const hubCreds = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
+    const hubCreds = { token: 'tok', name: 'Alice', role: 'owner' as const }
     useAppStore.setState({
-      client: new HubClient(hubCreds, fetchFn),
+      client: new HubClient({ token: hubCreds.token, fetch: fetchFn }),
       creds: hubCreds,
       view: { name: 'conversation', streamId: 1 },
     })

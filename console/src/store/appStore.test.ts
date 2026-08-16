@@ -1,11 +1,11 @@
 import { act, renderHook } from '@testing-library/react'
-import { useAppStore, resetAppStore, showCompletedKey, useIsOwner } from './appStore'
+import { useAppStore, resetAppStore, showCompletedKey, useIsOwner, AUTH_LOGOUT_REASON } from './appStore'
 import { loadCredentials } from './auth'
 import { loadCachedState, saveCachedState } from './cache'
 import type { Credentials, InitialState, Message } from '../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
-const otherCreds: Credentials = { ...creds, prefix: '/other', email: 'Bob', apiKey: 'k2' }
+const creds: Credentials = { token: 'k', name: 'me@b.c', role: 'owner' }
+const otherCreds: Credentials = { token: 'k2', name: 'Bob', role: 'invite' }
 
 const initial: InitialState = {
   subscriptions: [
@@ -37,6 +37,36 @@ test('setCreds stores creds, builds a client, navigates to projects', () => {
   expect(s.creds).toEqual(creds)
   expect(s.client).not.toBeNull()
   expect(s.view).toEqual({ name: 'projects' })
+  // The identity the hub answered with travels into the store: the name that
+  // makes a bubble "mine", and the role owner-only UI keys off.
+  expect(s.selfName).toBe('me@b.c')
+  expect(s.hubRole).toBe('owner')
+})
+
+test('the client setCreds builds signs the app out on a 401, once', async () => {
+  // The app's single logout path: whichever call meets the revoked token.
+  const fetchMock = vi.fn(async () => new Response('', { status: 401 }))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    useAppStore.getState().setCreds(creds)
+    const client = useAppStore.getState().client!
+    await expect(client.whoami()).rejects.toMatchObject({ status: 401 })
+    expect(useAppStore.getState().creds).toBeNull()
+    expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+    // A second failing call must not log out again over the next session.
+    useAppStore.getState().setCreds(creds)
+    await expect(client.chamberStatus('x')).rejects.toMatchObject({ status: 401 })
+    expect(useAppStore.getState().creds).toEqual(creds)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('setHubVersion records what whoami reported', () => {
+  useAppStore.getState().setHubVersion('0.3.0')
+  expect(useAppStore.getState().hubVersion).toBe('0.3.0')
+  useAppStore.getState().setHubVersion(null)
+  expect(useAppStore.getState().hubVersion).toBeNull()
 })
 
 test('applyInitialState sorts streams and merges per-topic unreads', () => {
@@ -323,7 +353,7 @@ describe('outbox', () => {
   test('an echo retires our bubble even when the sender name differs', () => {
     // The hub stamps its own sender on what we send (`alice (invite)` for
     // `Alice`), so matching on the address left every bubble stuck.
-    useAppStore.getState().setCreds({ ...creds, email: 'Alice' })
+    useAppStore.getState().setCreds({ ...creds, name: 'Alice' })
     const id = useAppStore.getState().enqueueOutbox(1, 'ping')
     useAppStore.getState().markOutboxSent(1, id)
     useAppStore.getState().applyEvents([
@@ -333,7 +363,7 @@ describe('outbox', () => {
   })
 
   test('an unrelated new message leaves the bubble pending', () => {
-    useAppStore.getState().setCreds({ ...creds, email: 'Alice' })
+    useAppStore.getState().setCreds({ ...creds, name: 'Alice' })
     const id = useAppStore.getState().enqueueOutbox(1, 'ping')
     useAppStore.getState().markOutboxSent(1, id)
     useAppStore.getState().applyEvents([
@@ -372,7 +402,7 @@ describe('useIsOwner', () => {
 })
 
 describe('show completed & archived', () => {
-  const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'tok', sendTopic: '' }
+  const creds: Credentials = { token: 'tok', name: 'Owner', role: 'owner' }
 
   test('defaults off and persists per account', () => {
     useAppStore.getState().setCreds(creds)
@@ -384,7 +414,7 @@ describe('show completed & archived', () => {
   test("signing back in re-reads this account's own choice", () => {
     useAppStore.getState().setCreds(creds)
     act(() => useAppStore.getState().setShowCompletedArchived(true))
-    const other: Credentials = { ...creds, apiKey: 'other-token' }
+    const other: Credentials = { ...creds, token: 'other-token' }
     useAppStore.getState().setCreds(other)
     expect(useAppStore.getState().showCompletedArchived).toBe(false)
     useAppStore.getState().setCreds(creds)

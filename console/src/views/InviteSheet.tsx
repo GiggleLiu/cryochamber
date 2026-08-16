@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HubClient, type Invite } from '../api/hubClient'
-import { ApiError } from '../api/types'
+import { ApiError, isUnauthorized } from '../api/types'
 import { useAppStore } from '../store/appStore'
-import { logoutIfAuthError } from '../lib/authGuard'
 import { relativeTimeLabel } from '../lib/format'
 import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
@@ -39,8 +38,7 @@ function isOpenMode(e: unknown): boolean {
 function mintErrorMessage(e: unknown): string {
   if (isOpenMode(e)) return OPEN_MODE_MESSAGE
   if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
-    const said = e.message.trim()
-    if (said && said !== `HTTP ${e.status}`) return said
+    if (e.hubSaid) return e.message
     return e.status === 400
       ? 'That label is already in use — pick another.'
       : 'The hub refused to create this invite link.'
@@ -92,7 +90,7 @@ export function InviteSheet({
         setListError(null)
       })
       .catch((e) => {
-        if (logoutIfAuthError(e)) return
+        if (isUnauthorized(e)) return
         setListError(
           isOpenMode(e)
             ? OPEN_MODE_MESSAGE
@@ -147,7 +145,7 @@ export function InviteSheet({
         setCopyFailed(true)
       }
     } catch (e) {
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       setError(mintErrorMessage(e))
     } finally {
       setBusy(false)
@@ -162,7 +160,7 @@ export function InviteSheet({
       .revokeInvite(invite.name)
       .then(refresh)
       .catch((e) => {
-        if (logoutIfAuthError(e)) return
+        if (isUnauthorized(e)) return
         setError(`Could not remove ${invite.name}. Check your connection and try again.`)
       })
   }

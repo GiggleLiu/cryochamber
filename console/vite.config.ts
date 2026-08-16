@@ -1,13 +1,7 @@
 /// <reference types="vitest/config" />
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-
-const pkg = JSON.parse(
-  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
-) as { version: string }
 
 /**
  * KaTeX's CSS lists every face as woff2 → woff → ttf. Every browser the
@@ -60,7 +54,6 @@ function precacheManifest(): Plugin {
 export default defineConfig({
   plugins: [react(), katexWoff2Only(), precacheManifest()],
   // Single source of truth for the version shown in Settings.
-  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: {
     proxy: {
       // A local `cryohub start` listens here. Same-origin in dev, exactly as

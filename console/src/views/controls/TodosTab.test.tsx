@@ -1,12 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { TodosTab, sortTodos } from './TodosTab'
 import { HubClient, type TodoItem } from '../../api/hubClient'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../../store/appStore'
+import { useAppStore, resetAppStore } from '../../store/appStore'
 import { emitChamberEvent } from '../../store/chamberEvents'
 import { ApiError } from '../../api/types'
 import type { Credentials } from '../../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 
 function todo(id: number, overrides: Partial<TodoItem> = {}): TodoItem {
   return {
@@ -16,7 +16,7 @@ function todo(id: number, overrides: Partial<TodoItem> = {}): TodoItem {
 }
 
 function makeHub(items: TodoItem[]): HubClient {
-  const client = new HubClient(creds, vi.fn())
+  const client = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(client, 'chamberTodos').mockResolvedValue(items)
   return client
 }
@@ -91,13 +91,13 @@ test('a failed load stays inline', async () => {
   )
 })
 
-test('a 401 signs out', async () => {
+test('a 401 stays silent — the client already signed out', async () => {
   const hub = makeHub([])
   vi.mocked(hub.chamberTodos).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   useAppStore.setState({ client: hub })
   render(<TodosTab chamberId="cham-a" />)
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-  expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+  await waitFor(() => expect(hub.chamberTodos).toHaveBeenCalled())
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 test('a failed refresh keeps the loaded list on screen beside the error', async () => {

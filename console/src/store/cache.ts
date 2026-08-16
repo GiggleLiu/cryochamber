@@ -1,4 +1,5 @@
-import type { Message, StreamSub } from '../api/types'
+import type { Credentials, Message, StreamSub } from '../api/types'
+import { accountKey } from '../lib/account'
 
 /**
  * Per-account local cache of streams and recent messages, so a reload paints
@@ -21,11 +22,13 @@ export interface CachedState {
   messagesByStream: Record<number, Message[]>
 }
 
-export function cacheKey(creds: { prefix: string; email: string }): string {
-  return `${CACHE_PREFIX}${creds.prefix}|${creds.email}`
+/** Per token, like every other per-account store: a name is reusable, a token
+ * is not, so a later invite of the same name never reads the old one's cache. */
+export function cacheKey(creds: Pick<Credentials, 'token'>): string {
+  return CACHE_PREFIX + accountKey(creds)
 }
 
-export function loadCachedState(creds: { prefix: string; email: string }): CachedState | null {
+export function loadCachedState(creds: Pick<Credentials, 'token'>): CachedState | null {
   try {
     const raw = localStorage.getItem(cacheKey(creds))
     if (!raw) return null
@@ -40,7 +43,7 @@ export function loadCachedState(creds: { prefix: string; email: string }): Cache
 }
 
 export function saveCachedState(
-  creds: { prefix: string; email: string },
+  creds: Pick<Credentials, 'token'>,
   streams: StreamSub[],
   messagesByStream: Record<number, Message[]>,
 ): void {
@@ -63,7 +66,7 @@ export function saveCachedState(
   }
 }
 
-export function clearCachedState(creds: { prefix: string; email: string }): void {
+export function clearCachedState(creds: Pick<Credentials, 'token'>): void {
   try {
     localStorage.removeItem(cacheKey(creds))
   } catch {

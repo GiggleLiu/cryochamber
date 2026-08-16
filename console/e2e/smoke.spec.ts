@@ -9,7 +9,7 @@ test('token login → projects → conversation → send', async ({ page }) => {
   await mockHub(page, { chambers: [{ id: 'cham-a', name: 'qec-decoders' }] })
   await page.route('**/api/chambers/cham-a/send', (r) => {
     sent.push(JSON.parse(r.request().postData() ?? 'null'))
-    return r.fulfill({ json: { ok: true } })
+    return r.fulfill({ json: { ok: true, id: 'inbox/2026-08-16T10-00-00_human_1.md' } })
   })
 
   await signIn(page)
@@ -21,7 +21,8 @@ test('token login → projects → conversation → send', async ({ page }) => {
   await page.getByRole('textbox').fill('run the next batch')
   await page.getByRole('button', { name: /^send$/i }).click()
   await expect(page.getByRole('textbox')).toHaveValue('')
-  await expect.poll(() => sent).toEqual([{ body: 'run the next batch', from: 'Jin-Guo Liu' }])
+  // No `from`: the hub stamps the sender on what it receives.
+  await expect.poll(() => sent).toEqual([{ body: 'run the next batch' }])
 })
 
 test.describe('phone layout contract', () => {

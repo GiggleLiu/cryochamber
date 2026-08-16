@@ -1,40 +1,30 @@
-import { saveCredentials, loadCredentials, clearCredentials } from './auth'
-import type { Credentials } from '../api/types'
+import { loadCredentials, saveCredentials, clearCredentials } from './auth'
 
-const creds: Credentials = {
-  kind: 'hub',
-  prefix: '',
-  email: 'Alice',
-  apiKey: 'secret',
-  sendTopic: '',
-}
+beforeEach(() => localStorage.clear())
 
-test('round-trips credentials through localStorage', () => {
-  saveCredentials(creds)
-  expect(loadCredentials()).toEqual(creds)
+test('round-trips credentials', () => {
+  saveCredentials({ token: 'tok', name: 'Alice', role: 'invite' })
+  expect(loadCredentials()).toEqual({ token: 'tok', name: 'Alice', role: 'invite' })
 })
 
-test('returns null when nothing stored', () => {
-  expect(loadCredentials()).toBeNull()
-})
-
-test('returns null on corrupt stored JSON', () => {
-  localStorage.setItem('agent-console.credentials', '{not json')
-  expect(loadCredentials()).toBeNull()
-})
-
-test('credentials for another backend are discarded, forcing a re-login', () => {
-  // What an older build stored. No client here can talk to it, so booting into
-  // it would strand the user in a session that fails every request.
+test('migrates the pre-cutover record: apiKey→token, email→name, role placeholder', () => {
   localStorage.setItem(
     'agent-console.credentials',
-    JSON.stringify({ prefix: '/elsewhere', email: 'a@b.c', apiKey: 'k', sendTopic: '' }),
+    JSON.stringify({ kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k1', sendTopic: '' }),
   )
+  expect(loadCredentials()).toEqual({ token: 'k1', name: 'Owner', role: 'invite' })
+})
+
+test('returns null when nothing stored, on corrupt JSON, and on a record without a token', () => {
+  expect(loadCredentials()).toBeNull()
+  localStorage.setItem('agent-console.credentials', '{nope')
+  expect(loadCredentials()).toBeNull()
+  localStorage.setItem('agent-console.credentials', JSON.stringify({ name: 'x' }))
   expect(loadCredentials()).toBeNull()
 })
 
-test('clearCredentials removes stored value', () => {
-  saveCredentials(creds)
+test('clearCredentials removes the record', () => {
+  saveCredentials({ token: 'tok', name: 'A', role: 'owner' })
   clearCredentials()
   expect(loadCredentials()).toBeNull()
 })

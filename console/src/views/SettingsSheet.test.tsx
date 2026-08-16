@@ -9,7 +9,7 @@ import type { Credentials, InitialState } from '../api/types'
 beforeEach(() => {
   resetAppStore()
   useAppStore.setState({
-    creds: { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
+    creds: { token: 'k', name: 'me@b.c', role: 'owner' },
     settingsOpen: true,
     streams: [
       { stream_id: 1, name: 'alpha', description: 'A' },
@@ -23,9 +23,20 @@ test('names the token, what it can do, and which hub it opens', () => {
   render(<SettingsSheet />)
   expect(screen.getByText(/me@b\.c/)).toBeInTheDocument()
   expect(screen.getByText('Guest')).toBeInTheDocument()
-  // A hub entry's prefix is empty — it means "this origin", and an empty row
-  // would tell an operator nothing about where they are signed in.
+  // The console is served by the hub it talks to, so the origin is the only
+  // honest answer to "where am I signed in".
   expect(screen.getByText(window.location.origin)).toBeInTheDocument()
+})
+
+test('the version line reports the hub, not the bundle', () => {
+  useAppStore.setState({ hubVersion: '1.2.3' })
+  render(<SettingsSheet />)
+  expect(screen.getByText('cryohub v1.2.3')).toBeInTheDocument()
+})
+
+test('before whoami answers, the version line still names the hub', () => {
+  render(<SettingsSheet />)
+  expect(screen.getByText('cryohub')).toBeInTheDocument()
 })
 
 test('an owner is named as one', () => {
@@ -103,10 +114,7 @@ describe('appearance', () => {
 
 describe('owner-only rows', () => {
   function ownerHub() {
-    const client = new HubClient(
-      { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
-      vi.fn(),
-    )
+    const client = new HubClient({ token: 'k', fetch: vi.fn() })
     vi.spyOn(client, 'refreshIndex').mockResolvedValue(undefined)
     vi.spyOn(client, 'register').mockResolvedValue({
       subscriptions: [{ stream_id: 3, name: 'gamma', description: '' }],
@@ -133,13 +141,14 @@ describe('owner-only rows', () => {
     await waitFor(() => expect(useAppStore.getState().streams.map((s) => s.name)).toEqual(['gamma']))
   })
 
-  test('a 401 while refreshing signs out', async () => {
+  test('a 401 while refreshing shows no inline error — the client already signed out', async () => {
     const client = ownerHub()
     vi.mocked(client.refreshIndex).mockRejectedValue(new ApiError(401, 'HTTP 401'))
     useAppStore.setState({ hubRole: 'owner', client })
     render(<SettingsSheet />)
     await userEvent.click(screen.getByRole('button', { name: 'Refresh chambers' }))
-    await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
+    await waitFor(() => expect(client.refreshIndex).toHaveBeenCalled())
+    expect(screen.queryByText(/Could not refresh/)).toBeNull()
   })
 
   test('a guest sees neither owner row', () => {
@@ -157,8 +166,8 @@ describe('owner-only rows', () => {
 })
 
 test('a refresh that finishes after logout does not touch the next session', async () => {
-  const creds: Credentials = { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' }
-  const hub = new HubClient(creds, vi.fn())
+  const creds: Credentials = { token: 'k', name: 'me@b.c', role: 'owner' }
+  const hub = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(hub, 'refreshIndex').mockResolvedValue(undefined)
   let resolveRegister!: (v: InitialState) => void
   vi.spyOn(hub, 'register').mockReturnValue(new Promise((r) => { resolveRegister = r }))
@@ -167,10 +176,10 @@ test('a refresh that finishes after logout does not touch the next session', asy
   await userEvent.click(screen.getByRole('button', { name: 'Refresh chambers' }))
   // Sign out and back in as another token while the register is in flight.
   useAppStore.getState().logout()
-  const other = new HubClient({ ...creds, apiKey: 'other-token' }, vi.fn())
-  useAppStore.setState({ client: other, creds: { ...creds, apiKey: 'other-token' }, hubRole: 'owner' })
+  const other = new HubClient({ token: 'other-token', fetch: vi.fn() })
+  useAppStore.setState({ client: other, creds: { ...creds, token: 'other-token' }, hubRole: 'owner' })
   resolveRegister({ subscriptions: [{ stream_id: 1, name: 'stale-list', description: '' }], unread: [] })
   await new Promise((r) => setTimeout(r, 10))
   expect(useAppStore.getState().streams).toEqual([])
-  expect(useAppStore.getState().creds?.apiKey).toBe('other-token')
+  expect(useAppStore.getState().creds?.token).toBe('other-token')
 })

@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { HubClient, type SyncSummary } from '../../api/hubClient'
 import { useAppStore } from '../../store/appStore'
 import { subscribeChamberEvents } from '../../store/chamberEvents'
-import { ApiError } from '../../api/types'
-import { logoutIfAuthError } from '../../lib/authGuard'
+import { ApiError, isUnauthorized } from '../../api/types'
 import { AlertCircle } from '../../components/Icon'
 
 /** One card per message-sync backend, with the one control that matters. The
@@ -30,7 +29,7 @@ export function SyncTab({ chamberId }: { chamberId: string }) {
       setItems(await hub.chamberSync(chamberId))
       setLoadError(null)
     } catch (e) {
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       setLoadError('Could not load message sync. Check your connection and try again.')
     }
   }, [hub, chamberId])
@@ -56,12 +55,14 @@ export function SyncTab({ chamberId }: { chamberId: string }) {
       // No optimistic flip: the card moves when the hub says the daemon did.
       await load()
     } catch (e) {
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       // A refusal reaches here too now (the client throws on `{ok:false}`), so
       // the cards are refreshed before the hub's own words are shown.
       await load().catch(() => {})
+      // The hub's own sentence when it sent one; otherwise the connection
+      // copy — a synthesized `HTTP 502` is not an answer to anybody.
       const fallback = `Could not change ${item.backend} sync. Check your connection and try again.`
-      setActionError(e instanceof ApiError ? e.message || fallback : fallback)
+      setActionError(e instanceof ApiError && e.hubSaid ? e.message : fallback)
     } finally {
       setPending(null)
     }

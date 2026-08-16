@@ -167,7 +167,7 @@ export function filterStyleAttribute(style: string): string | null {
 /** SVG presentation attributes that accept a `url(#…)` paint reference. */
 const PAINT_ATTRS = ['fill', 'stroke', 'filter', 'mask', 'clip-path']
 
-export function sanitizeHtml(html: string, prefix: string, selfUserId?: number): string {
+export function sanitizeHtml(html: string, selfUserId?: number): string {
   const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })
   const doc = new DOMParser().parseFromString(clean, 'text/html')
   // The visible math is .katex-html; .katex-mathml is the MathML fallback whose
@@ -220,22 +220,20 @@ export function sanitizeHtml(html: string, prefix: string, selfUserId?: number):
     }
   }
   // Same-origin absolute URLs (e.g. a pasted attachment link) are folded back
-  // to app-relative paths so they get the server prefix like any other relative
-  // link — otherwise a click navigates the SPA itself.
+  // to app-relative paths — otherwise a click navigates the SPA itself, and
+  // the attachment handlers never see the href.
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const relativize = (url: string): string =>
     origin && url.startsWith(origin + '/') ? url.slice(origin.length) : url
-  const proxied = (path: string): string =>
-    path.startsWith(prefix + '/') ? path : prefix + path
   for (const a of Array.from(doc.querySelectorAll('a'))) {
     const href = relativize(a.getAttribute('href') ?? '')
-    if (href.startsWith('/')) a.setAttribute('href', proxied(href))
+    if (href.startsWith('/')) a.setAttribute('href', href)
     a.setAttribute('target', '_blank')
     a.setAttribute('rel', 'noopener noreferrer')
   }
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = relativize(img.getAttribute('src') ?? '')
-    if (src.startsWith('/')) img.setAttribute('src', proxied(src))
+    if (src.startsWith('/')) img.setAttribute('src', src)
   }
   return doc.body.innerHTML
 }

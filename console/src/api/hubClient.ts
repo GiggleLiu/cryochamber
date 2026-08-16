@@ -1,6 +1,7 @@
-import { ApiError } from './types'
+import { ApiError, isUnauthorized } from './types'
+import { readSse } from './sse'
 import { accountKey, fnv1a } from '../lib/account'
-import type { Credentials, InitialState, Message, StreamSub, User } from './types'
+import type { InitialState, Message, StreamSub, User } from './types'
 
 /** Stream ids are allocated from ONE map for every account on this hub, keyed
  * by account *and* chamber. The app shows the chambers of every token it
@@ -244,37 +245,59 @@ function isRefusal(body: unknown): boolean {
   return !!body && typeof body === 'object' && (body as { ok?: unknown }).ok === false
 }
 
+export interface HubClientOptions {
+  token: string
+  /** Runs once per 401 before the ApiError propagates: the app's single
+   * logout path. Nothing else in the client interprets 401. */
+  onAuthFailure?: () => void
+  fetch?: typeof fetch
+}
+
+/** `GET /api/whoami`. An owner token answers with its owner name; an invite
+ * token also lists the chambers it reaches. */
+export interface WhoAmI {
+  role: 'owner' | 'invite'
+  name?: string
+  chambers?: string[]
+  hub_version?: string
+}
+
 /**
  * The app's only client: register/getMessages/sendMessage/… over the chamber
  * hub's REST API. Bearer token auth; every mutating call also carries the
  * `X-Cryo-CSRF` header the hub requires.
  */
 export class HubClient {
-  constructor(
-    private creds: Credentials,
-    fetchFn: typeof fetch = fetch,
-  ) {
+  private readonly token: string
+  private readonly onAuthFailure: (() => void) | undefined
+  private readonly fetchFn: typeof fetch
+  private authFailed = false
+
+  constructor(opts: HubClientOptions) {
+    this.token = opts.token
+    this.onAuthFailure = opts.onAuthFailure
     // Native window.fetch throws "Illegal invocation" when called as a member
     // (this.fetchFn(...) binds `this` to the client). Bind to undefined so
     // every call is the browser-legal bare invocation.
-    this.fetchFn = fetchFn.bind(undefined)
+    this.fetchFn = (opts.fetch ?? fetch).bind(undefined)
   }
-  private fetchFn: typeof fetch
+
   /** stream name -> chamber id, refreshed by every register(). */
   private byName = new Map<string, string>()
   private byStreamId = new Map<number, string>()
 
   /** Namespace for this token's persisted id maps. */
   private get account(): string {
-    return accountKey(this.creds)
+    return accountKey({ token: this.token })
   }
 
   authHeaderValue(): string {
-    return `Bearer ${this.creds.apiKey}`
+    return `Bearer ${this.token}`
   }
 
   /** Every hub request goes through here: bearer header always, CSRF header on
-   * anything that is not a GET. Nothing may build its own fetch call. */
+   * anything that is not a GET, and the one place a 401 is noticed. Nothing
+   * may build its own fetch call. */
   private async send(path: string, init: RequestInit = {}): Promise<Response> {
     const headers: Record<string, string> = {
       Authorization: this.authHeaderValue(),
@@ -282,7 +305,17 @@ export class HubClient {
     }
     // The hub rejects state-changing requests without this header.
     if (init.method && init.method !== 'GET') headers['X-Cryo-CSRF'] = '1'
-    return this.fetchFn(`${this.creds.prefix}${path}`, { ...init, headers })
+    const res = await this.fetchFn(path, { ...init, headers })
+    if (res.status === 401) this.noteAuthFailure()
+    return res
+  }
+
+  /** Once per client: a revoked token fails every in-flight call at once and
+   * logout must not run for each of them. */
+  private noteAuthFailure(): void {
+    if (this.authFailed) return
+    this.authFailed = true
+    this.onAuthFailure?.()
   }
 
   /** Every JSON call goes through here. Two failure shapes exist on the hub —
@@ -291,13 +324,36 @@ export class HubClient {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await this.send(path, init)
     const body: unknown = await res.json().catch(() => null)
-    if (!res.ok) throw new ApiError(res.status, apiMessage(body) ?? `HTTP ${res.status}`)
-    if (isRefusal(body)) throw new ApiError(res.status, apiMessage(body) ?? 'Request refused')
+    const said = apiMessage(body)
+    if (!res.ok) throw new ApiError(res.status, said ?? `HTTP ${res.status}`, said !== undefined)
+    if (isRefusal(body)) {
+      throw new ApiError(res.status, said ?? 'Request refused', said !== undefined)
+    }
     return body as T
   }
 
-  async whoami(): Promise<{ role: 'owner' | 'invite'; name?: string }> {
-    return this.request<{ role: 'owner' | 'invite'; name?: string }>('/api/whoami')
+  async whoami(): Promise<WhoAmI> {
+    return this.request<WhoAmI>('/api/whoami')
+  }
+
+  /** Authenticated fetch of a chamber attachment (or any hub file URL). */
+  async fetchBlob(url: string): Promise<Blob> {
+    const res = await this.send(url)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
+    return res.blob()
+  }
+
+  /** The one `/api/events` stream. A 401 on connect takes the same hook. */
+  async events(
+    onEvent: (event: string, data: string) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await readSse('/api/events', { Authorization: this.authHeaderValue() }, onEvent, signal)
+    } catch (e) {
+      if (isUnauthorized(e)) this.noteAuthFailure()
+      throw e
+    }
   }
 
   async register(): Promise<InitialState> {
@@ -440,7 +496,7 @@ export class HubClient {
     await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: content, from: this.creds.email }),
+      body: JSON.stringify({ body: content }),
     })
     return Date.now()
   }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore } from '../store/appStore'
 import { draftKey, sendViaOutbox } from '../lib/outbox'
 import { accountKey } from '../lib/account'
 import { isUnauthorized } from '../api/types'
@@ -168,10 +168,7 @@ export function Composer({ streamName, streamId }: { streamName: string; streamI
       const uri = await client.uploadFile(file, streamName)
       insertLink(file.name, uri)
     } catch (err) {
-      if (isUnauthorized(err)) {
-        useAppStore.getState().logout(AUTH_LOGOUT_REASON)
-        return
-      }
+      if (isUnauthorized(err)) return
       setUploadError(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)

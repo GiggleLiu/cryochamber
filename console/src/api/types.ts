@@ -1,20 +1,10 @@
-/** Which backend a server/credential pair talks to. Only the chamber hub is
- * supported; the field stays so servers.json keeps documenting itself. */
-export type ServerKind = 'hub'
-
-export interface ServerConfig {
-  name: string
-  prefix: string
-  sendTopic?: string
-  kind?: ServerKind
-}
-
+/** The whole identity on a hub: the bearer token, the name the hub labels
+ * this token's messages with (`whoami.name`), and the role behind it. Origin
+ * is implicit — the console is served by the hub it talks to. */
 export interface Credentials {
-  prefix: string
-  email: string
-  apiKey: string
-  sendTopic: string
-  kind: ServerKind
+  token: string
+  name: string
+  role: 'owner' | 'invite'
 }
 
 export interface Message {
@@ -100,20 +90,24 @@ export function isReadFlagsEvent(ev: AppEvent): ev is FlagsEvent {
 
 /** Every failed hub call, whatever the transport said: `status` is the HTTP
  * status (200 when the hub answered `{ok:false}`), `message` is the hub's own
- * sentence when it gave one. */
+ * sentence when it gave one — and `hubSaid` is how a caller knows which of the
+ * two it holds. A synthesized `HTTP 502` is not something to show a user; the
+ * hub's own sentence is the most useful thing on the screen. */
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** True only when the hub's response body carried the words in `message`. */
+    public readonly hubSaid: boolean = false,
   ) {
     super(message)
     this.name = 'ApiError'
   }
 }
 
-/** A revoked or foreign token. The client has already run `onAuthFailure`
- * (logout) by the time a caller sees this; callers use it only to skip their
- * inline error path. */
+/** A revoked or foreign token. The `HubClient` that raised it has already run
+ * its `onAuthFailure` hook — the app's one logout path — so callers use this
+ * only to skip their own inline error path. */
 export function isUnauthorized(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401
 }

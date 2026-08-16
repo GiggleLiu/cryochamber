@@ -1,19 +1,9 @@
-/** Shared authenticated-attachment helpers. */
-import { ApiError } from '../api/types'
+/** Shared attachment helpers. Fetching is the client's job (it owns the token
+ * and the 401 hook); what stays here is everything about the href and the save. */
 
 /** Chamber attachment routes: /api/chambers/{id}/files/{name}. They need the
  * Authorization header, so a plain navigation would 401. */
 export const HUB_FILES_RE = /^\/api\/chambers\/[^/]+\/files\//
-
-/** Throws ApiError, not a bare Error: an attachment that comes back 401 is
- * the same revoked-credentials signal as any other request, and callers route
- * it through isUnauthorized to the one logout path. */
-export function fetchBlob(url: string, authHeader: string): Promise<Blob> {
-  return fetch(url, { headers: { Authorization: authHeader } }).then((res) => {
-    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
-    return res.blob()
-  })
-}
 
 /** Last path segment of an attachment href (query/fragment stripped), URL-decoded. */
 export function filenameFromHref(href: string): string {
@@ -39,8 +29,11 @@ export function triggerBlobDownload(blob: Blob, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-/** Fetch an attachment with auth and save it. Throws on fetch failure. */
-export async function downloadUpload(url: string, authHeader: string): Promise<void> {
-  const blob = await fetchBlob(url, authHeader)
+/** Fetch with the given authenticated fetcher and save under the href's name. */
+export async function downloadUpload(
+  fetchBlob: (url: string) => Promise<Blob>,
+  url: string,
+): Promise<void> {
+  const blob = await fetchBlob(url)
   triggerBlobDownload(blob, filenameFromHref(url))
 }

@@ -119,21 +119,13 @@ cryohub token owner          # prints the owner token — once. Keep it.
 cryohub start --public       # listens on 127.0.0.1:8765
 ```
 
-Point the app at it with a hub entry in `public/servers.json`:
+The app talks to the hub that serves it — same origin, `/api`. In dev,
+`npm run dev` proxies `/api` to `127.0.0.1:8765`.
 
-```json
-{ "name": "Chamber Hub", "prefix": "", "kind": "hub", "sendTopic": "" }
-```
-
-`prefix: ""` means "this origin": the hub is served from the same host as the
-app, under `/api`. In dev, `npm run dev` proxies `/api` to `127.0.0.1:8765`. In
-production the `agents.example.com` block in `deploy/Caddyfile` does the same —
-copy it, replace the hostname, and make sure that name has a DNS record pointing
-at the host **before** reloading Caddy, or no certificate can be issued.
-`cryohub` itself stays bound to loopback; Caddy is the only way in.
-
-`public/servers.json` normally holds exactly this one entry; with one entry the
-login screen drops the server picker.
+In production the `agents.example.com` block in `deploy/Caddyfile` does the same
+— copy it, replace the hostname, and make sure that name has a DNS record
+pointing at the host **before** reloading Caddy, or no certificate can be
+issued. `cryohub` itself stays bound to loopback; Caddy is the only way in.
 
 ### Invite someone
 

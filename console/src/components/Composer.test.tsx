@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer, filterUsers, mentionQueryAt } from './Composer'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import type { HubClient } from '../api/hubClient'
 import type { User } from '../api/types'
@@ -26,11 +26,13 @@ beforeEach(() => {
   // from an empty composer.
   localStorage.clear()
   useAppStore.setState({
-    creds: { kind: 'hub', prefix: '', email: 'me@b.c', apiKey: 'k', sendTopic: '' },
+    creds: { token: 'k', name: 'me@b.c', role: 'owner' },
   })
 })
 
-test('401 send triggers logout with the auth reason', async () => {
+test('a 401 send is not offered as a retry — the client already signed out', async () => {
+  // Marking it failed would invite the user to tap retry against a token the
+  // hub has already refused.
   const client = fakeClient({
     sendMessage: vi.fn().mockRejectedValue(new ApiError(401, 'HTTP 401')),
   })
@@ -39,8 +41,8 @@ test('401 send triggers logout with the auth reason', async () => {
   const box = screen.getByRole('textbox')
   await userEvent.type(box, 'do it')
   await userEvent.click(screen.getByRole('button', { name: /send/i }))
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-  expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+  await waitFor(() => expect(client.sendMessage).toHaveBeenCalled())
+  expect(useAppStore.getState().outboxByStream[1]).toMatchObject([{ state: 'sending' }])
 })
 
 test('a non-auth send failure leaves a failed outbox item, not restored text', async () => {
@@ -83,9 +85,9 @@ describe('per-project drafts', () => {
   // Spelled out rather than built with draftKey(), so the stored key shape is
   // actually pinned by a test. The account segment is the fingerprint of the
   // token (apiKey 'k'), never the display name — names are reusable.
-  const KEY_1 = 'agent-console.draft.hub||ee0c38ea156277d1.1'
-  const KEY_2 = 'agent-console.draft.hub||ee0c38ea156277d1.2'
-  const OTHER_CREDS = { kind: 'hub' as const, prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' }
+  const KEY_1 = 'agent-console.draft.hub|ee0c38ea156277d1.1'
+  const KEY_2 = 'agent-console.draft.hub|ee0c38ea156277d1.2'
+  const OTHER_CREDS = { token: 'tok', name: 'Alice', role: 'owner' as const }
 
   test('typing persists a draft under the project key', async () => {
     useAppStore.setState({ client: fakeClient() })
@@ -130,7 +132,7 @@ describe('per-project drafts', () => {
     expect(screen.getByRole('textbox')).toHaveValue('')
     await userEvent.type(screen.getByRole('textbox'), 'other work')
     await waitFor(() =>
-      expect(localStorage.getItem('agent-console.draft.hub||a210d45de0363526.1')).toBe('other work'),
+      expect(localStorage.getItem('agent-console.draft.hub|a210d45de0363526.1')).toBe('other work'),
     )
     expect(localStorage.getItem(KEY_1)).toBe('work in progress')
   })
@@ -425,7 +427,7 @@ describe('mention candidates without a user directory (hub)', () => {
     useAppStore.setState({
       client,
       users: null,
-      creds: { kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '' },
+      creds: { token: 'tok', name: 'Alice', role: 'owner' },
       streams: [{ stream_id: 1, name: 'alpha', description: '' }],
       messagesByStream: {
         1: [

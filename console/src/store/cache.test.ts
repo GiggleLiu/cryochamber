@@ -7,8 +7,10 @@ import {
 } from './cache'
 import type { Message } from '../api/types'
 
-const account = { prefix: '', email: 'Alice' }
-const other = { prefix: '', email: 'Bob' }
+// Two tokens, which is what separates two caches — a reused display name does
+// not.
+const account = { token: 'tok-alice' }
+const other = { token: 'tok-bob' }
 const streams = [{ stream_id: 1, name: 'alpha', description: 'A' }]
 
 function makeMsg(id: number): Message {

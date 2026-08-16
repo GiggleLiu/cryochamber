@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { useAppStore, useIsOwner, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
 import { UnresolvedProjectError } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
@@ -56,11 +56,11 @@ export function ConversationView({ streamId }: { streamId: number }) {
   const outbox = useAppStore((s) => s.outboxByStream[streamId])
   const loadedStreams = useAppStore((s) => s.loadedStreams)
   const creds = useAppStore((s) => s.creds)
+  const selfName = useAppStore((s) => s.selfName)
   const client = useAppStore((s) => s.client)
   const ownUserId = useAppStore((s) => s.ownUserId)
   const setOwnUserId = useAppStore((s) => s.setOwnUserId)
   const navigate = useAppStore((s) => s.navigate)
-  const logout = useAppStore((s) => s.logout)
   const isOwner = useIsOwner()
   const [sheet, setSheet] = useState<'invite' | 'controls' | null>(null)
   const chamberId = client?.chamberIdFor(streamId)
@@ -147,7 +147,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
       .then((msgs) => useAppStore.getState().setMessages(streamId, msgs))
       .catch((e) => {
         if (isUnauthorized(e)) {
-          logout(AUTH_LOGOUT_REASON)
+          // The client already signed the app out; nothing to add here.
         } else if (e instanceof ApiError && e.status === 404 && !(e instanceof UnresolvedProjectError)) {
           // Scope was revoked while we were looking at it: leave quietly — and
           // take the project with us, or it stays in the list and fails again
@@ -160,20 +160,18 @@ export function ConversationView({ streamId }: { streamId: number }) {
           setLoadError(e instanceof Error ? e.message : String(e))
         }
       })
-  }, [client, stream, historyLoaded, name, streamId, logout, navigate, retryToken])
+  }, [client, stream, historyLoaded, name, streamId, navigate, retryToken])
 
   // Fetch the signed-in user's id once per session so their own @mentions can
-  // be highlighted. Auth failures take the existing logout path; transient
-  // errors are ignored silently (mentions just render unhighlighted).
+  // be highlighted. A 401 already signed the app out inside the client;
+  // transient errors are ignored silently (mentions render unhighlighted).
   useEffect(() => {
     if (!client || ownUserId !== null) return
     client
       .getOwnUser()
       .then((me) => setOwnUserId(me.user_id))
-      .catch((e) => {
-        if (isUnauthorized(e)) logout(AUTH_LOGOUT_REASON)
-      })
-  }, [client, ownUserId, setOwnUserId, logout])
+      .catch(() => {})
+  }, [client, ownUserId, setOwnUserId])
 
   useEffect(() => {
     if (!client || !loaded) return
@@ -184,10 +182,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
       attempts += 1
       client.markStreamRead(streamId).catch((e) => {
         if (cancelled) return
-        if (isUnauthorized(e)) {
-          logout(AUTH_LOGOUT_REASON)
-          return
-        }
+        if (isUnauthorized(e)) return
         // Transient failure: retry once after 3s, then give up silently.
         if (attempts < 2) timer = setTimeout(attempt, 3000)
       })
@@ -198,7 +193,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [client, streamId, loaded, messageCount, logout])
+  }, [client, streamId, loaded, messageCount])
 
   // The project can also vanish underneath us from a re-register that no longer
   // lists it. Rendering nothing would leave a blank screen with no way out, so
@@ -275,7 +270,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
         {messages?.map((m, i) => {
           const prev = messages[i - 1]
           const gap = !prev || m.timestamp - prev.timestamp >= GAP_SECONDS
-          const isSelf = m.sender_email === creds.email
+          const isSelf = m.sender_email === selfName
           // Runs of messages from one sender read as one turn: the repeated
           // avatar and name are noise, so only the first of a run carries them.
           const grouped = !gap && !!prev && prev.sender_email === m.sender_email
@@ -306,8 +301,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
                   <div className="bubble">
                     <MessageBody
                       source={m.content}
-                      prefix={creds.prefix}
-                      authHeader={client?.authHeaderValue()}
+                      fetchBlob={client ? (u) => client.fetchBlob(u) : undefined}
                       selfUserId={ownUserId ?? undefined}
                     />
                   </div>
@@ -325,7 +319,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
               <div className="bubble">
                 {/* Rendering the raw text approximates what the server will
                     echo back; it disappears the moment it does. */}
-                <MessageBody source={o.content} prefix={creds.prefix} />
+                <MessageBody source={o.content} />
               </div>
               {o.state === 'sending' ? (
                 <div className="send-state">Sending…</div>

@@ -5,9 +5,7 @@ import { useAppStore, resetAppStore } from '../store/appStore'
 import { HubClient } from '../api/hubClient'
 import type { Credentials } from '../api/types'
 
-const creds: Credentials = {
-  kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok', sendTopic: '',
-}
+const creds: Credentials = { token: 'tok', name: 'Alice', role: 'owner' }
 
 /** A live SSE response: chunks are delivered, then the stream stays open the
  * way a real connection does (closing it would make the loop re-register). */
@@ -38,7 +36,7 @@ test('registers chambers and applies SSE message events', async () => {
       : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
   )
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   await waitFor(() => expect(useAppStore.getState().streams).toHaveLength(1))
   const streamId = useAppStore.getState().streams[0].stream_id
@@ -68,7 +66,7 @@ test('a status event refreshes chamber liveness into the store', async () => {
     )
   })
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   // The banner would otherwise keep claiming the agent is awake until the next
   // register, which can be minutes away.
@@ -89,7 +87,7 @@ test('a failed status refresh is swallowed and leaves the loop running', async (
       : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha', running: true, agent_running: true }]), { status: 200 })
   })
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   await waitFor(() => expect(useAppStore.getState().streams[0]?.agentRunning).toBe(true))
   // The stale value survives, and the connection is not torn down.
@@ -99,10 +97,11 @@ test('a failed status refresh is swallowed and leaves the loop running', async (
   unmount()
 })
 
-test('a 401 on the status refresh signs the user out', async () => {
+test('a 401 on the status refresh reaches the client\'s logout hook', async () => {
   // The refresh can be the first authenticated call after a revocation —
   // swallowing it like a transient failure would leave a signed-in UI
   // behind a dead token.
+  const onAuthFailure = vi.fn()
   const fetchMock = vi.fn(async (url: string) => {
     if (String(url).includes('/api/events')) {
       return liveStream(['event: status\ndata: {"chamber_id":"cham-a"}\n\n'])
@@ -112,17 +111,22 @@ test('a 401 on the status refresh signs the user out', async () => {
       : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha', running: true, agent_running: true }]), { status: 200 })
   })
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token, onAuthFailure }) })
   const { unmount } = renderHook(() => useEventLoop())
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
+  await waitFor(() => expect(onAuthFailure).toHaveBeenCalledTimes(1))
   unmount()
 })
 
-test('a 401 on register logs the user out', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
-  useAppStore.setState({ client: new HubClient(creds) })
+test('a 401 on register stops the loop instead of retrying a dead token', async () => {
+  const onAuthFailure = vi.fn()
+  const fetchMock = vi.fn(async () => new Response('', { status: 401 }))
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient({ token: creds.token, onAuthFailure }) })
   const { unmount } = renderHook(() => useEventLoop())
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
+  await waitFor(() => expect(onAuthFailure).toHaveBeenCalledTimes(1))
+  const attempts = fetchMock.mock.calls.length
+  await new Promise((r) => setTimeout(r, 50))
+  expect(fetchMock.mock.calls.length).toBe(attempts)
   unmount()
 })
 
@@ -139,7 +143,7 @@ test('an index event re-registers so a changed chamber scope is picked up', asyn
     return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
   })
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   await waitFor(() => expect(registers).toBe(2))
   unmount()
@@ -156,7 +160,7 @@ test('an immediately-closed stream backs off instead of spinning', async () => {
     return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
   })
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   await waitFor(() => expect(registers).toBe(1))
   // Well inside the 1s backoff: a spinning loop would have re-registered many
@@ -174,7 +178,7 @@ test('the reconnect gap is reported, not hidden behind a live banner', async () 
     return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
   })
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   // A clean EOF used to sleep with the connection still marked 'live', so the
   // user saw no reconnecting banner during the gap.
@@ -202,7 +206,7 @@ test('repeated SSE failures grow the wait instead of retrying at one second', as
       return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
-    useAppStore.setState({ client: new HubClient(creds) })
+    useAppStore.setState({ client: new HubClient({ token: creds.token }) })
     const { unmount } = renderHook(() => useEventLoop())
 
     for (const expected of [1000, 2000, 4000]) {
@@ -250,7 +254,7 @@ test('a stream that delivers an event resets the wait to its floor', async () =>
       return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
-    useAppStore.setState({ client: new HubClient(creds) })
+    useAppStore.setState({ client: new HubClient({ token: creds.token }) })
     const { unmount } = renderHook(() => useEventLoop())
 
     for (const expected of [1000, 2000]) {
@@ -282,7 +286,7 @@ test('status and log events reach a per-chamber subscriber', async () => {
       : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
   )
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   await waitFor(() => expect(heard).toHaveLength(2))
   expect(heard[0]).toEqual({ type: 'status', chamberId: 'cham-a' })
@@ -304,7 +308,7 @@ test('a malformed log payload is skipped without killing the stream', async () =
       : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
   )
   vi.stubGlobal('fetch', fetchMock)
-  useAppStore.setState({ client: new HubClient(creds) })
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
   const { unmount } = renderHook(() => useEventLoop())
   await waitFor(() => expect(heard).toHaveLength(1))
   expect(heard[0]).toEqual({ type: 'log', chamberId: 'cham-a', line: 'ok' })

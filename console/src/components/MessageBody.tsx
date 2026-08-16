@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { sanitizeHtml } from './sanitize'
-import { fetchBlob, filenameFromHref, triggerBlobDownload, HUB_FILES_RE } from '../lib/download'
-import { logoutIfAuthError } from '../lib/authGuard'
+import { filenameFromHref, triggerBlobDownload, HUB_FILES_RE } from '../lib/download'
+import { isUnauthorized } from '../api/types'
 
 export { sanitizeHtml } from './sanitize'
 export { filenameFromHref } from '../lib/download'
@@ -44,14 +44,14 @@ export function plainTextFallback(source: string): string {
 
 export function MessageBody({
   source,
-  prefix,
-  authHeader,
+  fetchBlob,
   selfUserId,
 }: {
   /** Raw markdown, rendered and then sanitized below. */
   source: string
-  prefix: string
-  authHeader?: string
+  /** Authenticated fetcher for chamber attachments (the signed-in client's).
+   * Absent for a bubble with no session behind it — a pending send. */
+  fetchBlob?: (url: string) => Promise<Blob>
   selfUserId?: number
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -85,7 +85,7 @@ export function MessageBody({
   const rendered = markdownModule
     ? markdownModule.renderMarkdown(source)
     : plainTextFallback(source)
-  const sanitized = sanitizeHtml(rendered, prefix, selfUserId)
+  const sanitized = sanitizeHtml(rendered, selfUserId)
 
   // Authenticated image loading. React re-sets this div's innerHTML whenever
   // the rendered HTML changes (and dev StrictMode/remounts can do it too);
@@ -116,9 +116,9 @@ export function MessageBody({
         btn.textContent = 'Copy'
         wrap.appendChild(btn)
       }
-      // Authenticated images. Only this half needs the header, so the observer
-      // itself must not be gated on it.
-      if (!authHeader) return
+      // Authenticated images. Only this half needs the fetcher, so the
+      // observer itself must not be gated on it.
+      if (!fetchBlob) return
       for (const img of Array.from(root.querySelectorAll('img'))) {
         const src = img.getAttribute('src') ?? ''
         if (!HUB_FILES_RE.test(src)) continue
@@ -131,7 +131,7 @@ export function MessageBody({
         if (img.dataset.authSwap === 'pending') continue
         img.dataset.authSwap = 'pending'
         img.dataset.uploadSrc = src
-        fetchBlob(src, authHeader)
+        fetchBlob(src)
           .then((blob) => {
             if (disposed) return
             const url = URL.createObjectURL(blob)
@@ -151,7 +151,7 @@ export function MessageBody({
       disposed = true
       observer.disconnect()
     }
-  }, [authHeader, prefix, sanitized])
+  }, [fetchBlob, sanitized])
 
   // Revoke cached object URLs only when the component goes away for good.
   useEffect(() => {
@@ -184,11 +184,11 @@ export function MessageBody({
       setLightbox({ src: innerImg.getAttribute('src') ?? href, alt })
       return
     }
-    if (!authHeader) {
+    if (!fetchBlob) {
       setLightbox({ src: href, alt })
       return
     }
-    fetchBlob(href, authHeader)
+    fetchBlob(href)
       .then((blob) => {
         const url = URL.createObjectURL(blob)
         blobCache.current.set(href, url)
@@ -196,19 +196,19 @@ export function MessageBody({
       })
       .catch((e) => {
         // A 401 here is not a broken image, it is a revoked session.
-        if (logoutIfAuthError(e)) return
+        if (isUnauthorized(e)) return
         setNotice(`Could not load ${alt || 'image'}. Check your connection and try again.`)
       })
   }
 
   async function download(href: string, name: string) {
-    if (!authHeader) return
+    if (!fetchBlob) return
     try {
-      const blob = await fetchBlob(href, authHeader)
+      const blob = await fetchBlob(href)
       triggerBlobDownload(blob, name)
       setNotice(null)
     } catch (e) {
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       // A plain navigation would just hit the server without auth — surface
       // the failure instead of silently doing nothing.
       setNotice(`Could not download ${name}. Check your connection and try again.`)

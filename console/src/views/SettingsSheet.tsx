@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { HubClient } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
-import { logoutIfAuthError } from '../lib/authGuard'
+import { isUnauthorized } from '../api/types'
 import { applyTheme, readTheme, type Theme } from '../lib/theme'
 import { Sheet } from '../components/Sheet'
 
@@ -11,10 +11,9 @@ const THEMES: Array<{ value: Theme; label: string }> = [
   { value: 'dark', label: 'Dark' },
 ]
 
-/** Where this session is signed in. A hub entry carries an empty prefix — it
- * means "this origin" — so the origin is what an operator can actually read. */
-export function hubLabel(prefix: string): string {
-  if (prefix) return prefix
+/** Where this session is signed in. The console is served by the hub it talks
+ * to, so the origin is both the truth and what an operator can actually read. */
+export function hubLabel(): string {
   return typeof window === 'undefined' ? '' : window.location.origin
 }
 
@@ -30,6 +29,7 @@ export function hubLabel(prefix: string): string {
 export function SettingsSheet() {
   const creds = useAppStore((s) => s.creds)
   const hubRole = useAppStore((s) => s.hubRole)
+  const hubVersion = useAppStore((s) => s.hubVersion)
   const client = useAppStore((s) => s.client)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
   const setShowCompletedArchived = useAppStore((s) => s.setShowCompletedArchived)
@@ -65,7 +65,7 @@ export function SettingsSheet() {
       useAppStore.getState().applyInitialState(init)
     } catch (e) {
       if (stale()) return
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       setRefreshError('Could not refresh. Check your connection and try again.')
     } finally {
       setRefreshing(false)
@@ -78,7 +78,7 @@ export function SettingsSheet() {
       <div className="group">
         <div className="row">
           Signed in as
-          <span className="row-value">{creds.email}</span>
+          <span className="row-value">{creds.name}</span>
         </div>
         {/* A hub has no accounts — the token is the whole identity — so the
             honest thing to show is which kind of token this is. */}
@@ -88,7 +88,7 @@ export function SettingsSheet() {
         </div>
         <div className="row">
           Hub
-          <span className="row-value">{hubLabel(creds.prefix)}</span>
+          <span className="row-value">{hubLabel()}</span>
         </div>
       </div>
 
@@ -149,7 +149,9 @@ export function SettingsSheet() {
         </button>
       </div>
 
-      <p className="app-version">Agent Console v{__APP_VERSION__}</p>
+      {/* The hub's version, not the console's: one hub serves this page, and
+          a stale bundle would report a number nobody can act on. */}
+      <p className="app-version">{hubVersion ? `cryohub v${hubVersion}` : 'cryohub'}</p>
     </Sheet>
   )
 }

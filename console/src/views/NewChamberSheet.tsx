@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { HubClient, type NewChamberPayload } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
-import { logoutIfAuthError } from '../lib/authGuard'
+import { isUnauthorized } from '../api/types'
 import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
 
@@ -83,7 +83,7 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
       if (streamId !== undefined) navigate({ name: 'conversation', streamId })
     } catch (e) {
       if (stale()) return
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)

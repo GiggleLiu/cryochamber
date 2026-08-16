@@ -1,19 +1,13 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LoginView } from './LoginView'
-import { loadServers } from '../api/servers'
 import { useAppStore, resetAppStore } from '../store/appStore'
-import type { ServerConfig } from '../api/types'
 
-const HUB_SERVER: ServerConfig = { name: 'Chamber Hub', prefix: '', kind: 'hub', sendTopic: '' }
 const TOKEN = 'ef'.repeat(16)
-
-vi.mock('../api/servers', () => ({ loadServers: vi.fn() }))
 
 beforeEach(() => {
   resetAppStore()
   localStorage.clear()
-  vi.mocked(loadServers).mockResolvedValue([HUB_SERVER])
 })
 
 afterEach(() => vi.unstubAllGlobals())
@@ -25,7 +19,7 @@ test('sign-in asks for an access token and nothing else', async () => {
   expect(screen.queryByLabelText(/^password$/i)).toBeNull()
 })
 
-test('single server: no server picker rendered', async () => {
+test('there is no server to pick: the console talks to the hub that served it', async () => {
   render(<LoginView />)
   await screen.findByLabelText(/access token/i)
   expect(screen.queryByLabelText(/server/i)).toBeNull()
@@ -33,17 +27,20 @@ test('single server: no server picker rendered', async () => {
 
 test('submitting the token signs in via whoami and stores credentials', async () => {
   const fetchMock = vi.fn(
-    async () => new Response(JSON.stringify({ role: 'owner', name: 'Jin' }), { status: 200 }),
+    async () =>
+      new Response(JSON.stringify({ role: 'owner', name: 'Jin', hub_version: '0.3.0' }), {
+        status: 200,
+      }),
   )
   vi.stubGlobal('fetch', fetchMock)
   render(<LoginView />)
   await userEvent.type(await screen.findByLabelText(/access token/i), TOKEN)
   await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
   await waitFor(() => expect(useAppStore.getState().creds).not.toBeNull())
-  expect(useAppStore.getState().creds).toEqual({
-    kind: 'hub', prefix: '', email: 'Jin', apiKey: TOKEN, sendTopic: '',
-  })
+  expect(useAppStore.getState().creds).toEqual({ token: TOKEN, name: 'Jin', role: 'owner' })
   expect(useAppStore.getState().hubRole).toBe('owner')
+  expect(useAppStore.getState().selfName).toBe('Jin')
+  expect(useAppStore.getState().hubVersion).toBe('0.3.0')
   // Bearer header, never a query string.
   expect(fetchMock).toHaveBeenCalledWith(
     '/api/whoami',

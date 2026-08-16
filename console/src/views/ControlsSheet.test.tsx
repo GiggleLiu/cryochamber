@@ -2,12 +2,12 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ControlsSheet, digestLine, statePillLabel } from './ControlsSheet'
 import { HubClient, type ChamberStatus } from '../api/hubClient'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, resetAppStore } from '../store/appStore'
 import { emitChamberEvent } from '../store/chamberEvents'
 import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 
 function status(overrides: Partial<ChamberStatus> = {}): ChamberStatus {
   return {
@@ -20,7 +20,7 @@ function status(overrides: Partial<ChamberStatus> = {}): ChamberStatus {
 }
 
 function makeHub(s: ChamberStatus = status()): HubClient {
-  const client = new HubClient(creds, vi.fn())
+  const client = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(client, 'chamberStatus').mockResolvedValue(s)
   vi.spyOn(client, 'chamberTodos').mockResolvedValue([])
   vi.spyOn(client, 'lifecycle').mockResolvedValue({ ok: true, message: 'Started' })
@@ -165,7 +165,7 @@ describe('lifecycle row', () => {
   test('an ok:false response is shown as an error and the buttons come back', async () => {
     const hub = useAppStore.getState().client as HubClient
     vi.mocked(hub.lifecycle).mockRejectedValue(
-      new ApiError(200, 'Unarchive the chamber before launching it'),
+      new ApiError(200, 'Unarchive the chamber before launching it', true),
     )
     renderSheet()
     await screen.findByText('Stopped')
@@ -179,7 +179,7 @@ describe('lifecycle row', () => {
   test('a refusal outlives the status events that keep arriving', async () => {
     const hub = useAppStore.getState().client as HubClient
     vi.mocked(hub.lifecycle).mockRejectedValue(
-      new ApiError(200, 'Unarchive the chamber before launching it'),
+      new ApiError(200, 'Unarchive the chamber before launching it', true),
     )
     renderSheet()
     await screen.findByText('Stopped')
@@ -220,14 +220,25 @@ describe('lifecycle row', () => {
     expect(screen.queryByText(/starts fresh/)).toBeNull()
   })
 
-  test('a 401 from an action signs out', async () => {
+  test('a 401 from an action stays silent — the client already signed out', async () => {
     const hub = useAppStore.getState().client as HubClient
     vi.mocked(hub.lifecycle).mockRejectedValue(new ApiError(401, 'HTTP 401'))
     renderSheet()
     await screen.findByText('Stopped')
     await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
-    await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-    expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+    await waitFor(() => expect(hub.lifecycle).toHaveBeenCalled())
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  test('a transport failure is reported as one, not as words the hub never said', async () => {
+    const hub = useAppStore.getState().client as HubClient
+    vi.mocked(hub.lifecycle).mockRejectedValue(new ApiError(502, 'HTTP 502'))
+    renderSheet()
+    await screen.findByText('Stopped')
+    await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /Could not start alpha\. Check your connection/,
+    )
   })
 })
 

@@ -9,7 +9,6 @@ import { test, expect, type Page } from '@playwright/test'
  */
 const TOKEN = 'ab'.repeat(16) // invite: scoped to one chamber
 const OWNER_TOKEN = 'cc'.repeat(16) // owner: sees both
-const HUB_SERVERS = [{ name: 'Chamber Hub', prefix: '', kind: 'hub', sendTopic: '' }]
 
 /** The hub holds two chambers; an invite is only ever told about its own. */
 const CHAMBERS = [
@@ -28,9 +27,9 @@ const MESSAGE = {
   is_question: false,
 }
 
-/** What the hub stamps on the message the client sends below. Deliberately
- * different from the `from` the client puts in the POST body: the thread must
- * show the server's word on who spoke, never the client's claim. */
+/** What the hub stamps on the message the client sends below. The client never
+ * names a sender, so this is the only word on who spoke — and the thread must
+ * show it verbatim. */
 const SERVER_STAMPED_SENDER = 'alice (invite)'
 
 interface HubMock {
@@ -68,12 +67,12 @@ interface HubOptions {
 async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
   const mock: HubMock = { sent: [], created: [], registers: 0, actions: [], revoked: [] }
 
-  await page.route('**/servers.json', (r) => r.fulfill({ json: HUB_SERVERS }))
-
   await page.route('**/api/whoami', (r) =>
     opts.whoamiStatus
       ? r.fulfill({ status: opts.whoamiStatus, body: '' })
-      : r.fulfill({ json: { role: opts.role ?? 'invite', name: 'Alice' } }),
+      : r.fulfill({
+          json: { role: opts.role ?? 'invite', name: 'Alice', hub_version: '0.3.0' },
+        }),
   )
 
   // Scope is the hub's answer, per token: the owner's own chamber is simply not
@@ -97,7 +96,7 @@ async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
   await page.route('**/api/chambers/cham-a/send', (r) => {
     mock.sent.push(JSON.parse(r.request().postData() ?? 'null'))
     releaseStream()
-    return r.fulfill({ json: { ok: true } })
+    return r.fulfill({ json: { ok: true, id: 'inbox/2026-08-16T10-00-00_human_1.md' } })
   })
 
   await page.route('**/api/tokens', (r) => {
@@ -202,7 +201,7 @@ test('invite link → scoped project → markdown thread → send', async ({ pag
 
   await page.getByRole('textbox').fill('continue')
   await page.keyboard.press('Enter')
-  await expect.poll(() => hub.sent).toEqual([{ body: 'continue', from: 'Alice' }])
+  await expect.poll(() => hub.sent).toEqual([{ body: 'continue' }])
 })
 
 test('a message pushed over SSE appears without a reload, as the server named it', async ({
@@ -215,14 +214,14 @@ test('a message pushed over SSE appears without a reload, as the server named it
 
   await page.getByRole('textbox').fill('continue')
   await page.keyboard.press('Enter')
-  await expect.poll(() => hub.sent).toEqual([{ body: 'continue', from: 'Alice' }])
+  await expect.poll(() => hub.sent).toEqual([{ body: 'continue' }])
 
   // Delivered by the event stream into the open conversation — no navigation,
   // no re-fetch.
   const echoed = page.locator('.msg-row.msg-other', { hasText: 'continue' })
   await expect(echoed).toBeVisible()
-  // The client claimed to be "Alice" in the POST; the hub stamped its own
-  // answer, and the thread shows the hub's.
+  // The client sent no sender at all; the hub stamped its own, and the thread
+  // shows the hub's.
   await expect(echoed.locator('.sender-label')).toHaveText(SERVER_STAMPED_SENDER)
   expect(await echoed.locator('.sender-label').textContent()).not.toBe('Alice')
 })

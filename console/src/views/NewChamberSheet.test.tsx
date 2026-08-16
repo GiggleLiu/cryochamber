@@ -2,11 +2,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NewChamberSheet, buildNewChamberPayload } from './NewChamberSheet'
 import { HubClient } from '../api/hubClient'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import type { Credentials, InitialState } from '../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 
 const REGISTERED: InitialState = {
   subscriptions: [{ stream_id: 9, name: 'gamma', description: '' }],
@@ -14,7 +14,7 @@ const REGISTERED: InitialState = {
 }
 
 function makeHub(): HubClient {
-  const client = new HubClient(creds, vi.fn())
+  const client = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(client, 'createChamber').mockResolvedValue({ id: 'cham-new' })
   vi.spyOn(client, 'register').mockResolvedValue(REGISTERED)
   vi.spyOn(client, 'streamIdFor').mockReturnValue(9)
@@ -94,14 +94,14 @@ test('the hub error is shown verbatim and the form stays open', async () => {
   expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled()
 })
 
-test('a 401 signs out', async () => {
+test('a 401 shows no inline error — the client already signed out', async () => {
   const hub = useAppStore.getState().client as HubClient
   vi.mocked(hub.createChamber).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   render(<NewChamberSheet onClose={() => {}} />)
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
   await userEvent.click(screen.getByRole('button', { name: 'Create' }))
-  await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-  expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
+  await waitFor(() => expect(hub.createChamber).toHaveBeenCalled())
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 test('closing while a create is in flight waits for the outcome', async () => {

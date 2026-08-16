@@ -1,8 +1,7 @@
 import { useEffect } from 'react'
 import { isUnauthorized } from '../api/types'
 import { HubClient } from '../api/hubClient'
-import { readSse } from '../api/sse'
-import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore } from '../store/appStore'
 import { emitChamberEvent } from '../store/chamberEvents'
 
 /** Thrown out of the SSE callback when the hub says the chamber index changed:
@@ -68,72 +67,63 @@ export function useEventLoop(): void {
           }
           const healthTimer = setTimeout(markHealthy, SSE_HEALTHY_MS)
           try {
-            await readSse(
-              '/api/events',
-              { Authorization: client.authHeaderValue() },
-              (event, payload) => {
-                markHealthy()
-                if (event === 'index') throw new ReregisterSignal()
-                if (event === 'status') {
-                  // Two audiences: the projects list, refreshed from the index,
-                  // and whatever sheet is open on this chamber, which re-reads
-                  // its own detail. Parse first — a payload we cannot read
-                  // still deserves the index refresh.
-                  try {
-                    const { chamber_id } = JSON.parse(payload) as { chamber_id: string }
-                    if (chamber_id) emitChamberEvent({ type: 'status', chamberId: chamber_id })
-                  } catch {
-                    /* malformed payload: the index refresh below still runs */
-                  }
-                  // Fire and forget for transient failures — a stale banner
-                  // heals on the next status event. A 401 is different: this
-                  // refresh may be the first authenticated call after a
-                  // revocation, and swallowing it would leave a signed-in UI
-                  // behind a dead token.
-                  client
-                    .chamberStatuses()
-                    .then((l) => store.getState().updateStreamStatus(l))
-                    .catch((e) => {
-                      if (isUnauthorized(e)) store.getState().logout(AUTH_LOGOUT_REASON)
-                    })
-                  return
-                }
-                if (event === 'log') {
-                  try {
-                    const { chamber_id, line } = JSON.parse(payload) as {
-                      chamber_id: string
-                      line: string
-                    }
-                    if (chamber_id) {
-                      emitChamberEvent({ type: 'log', chamberId: chamber_id, line: line ?? '' })
-                    }
-                  } catch {
-                    /* malformed payload: skip the line, keep the stream */
-                  }
-                  return
-                }
-                if (event !== 'message') return
+            await client.events((event, payload) => {
+              markHealthy()
+              if (event === 'index') throw new ReregisterSignal()
+              if (event === 'status') {
+                // Two audiences: the projects list, refreshed from the index,
+                // and whatever sheet is open on this chamber, which re-reads
+                // its own detail. Parse first — a payload we cannot read
+                // still deserves the index refresh.
                 try {
-                  const m = JSON.parse(payload) as {
-                    id?: string
+                  const { chamber_id } = JSON.parse(payload) as { chamber_id: string }
+                  if (chamber_id) emitChamberEvent({ type: 'status', chamberId: chamber_id })
+                } catch {
+                  /* malformed payload: the index refresh below still runs */
+                }
+                // Fire and forget: a stale banner heals on the next status
+                // event, and a 401 has already signed the app out inside the
+                // client — there is nothing left for this catch to do.
+                client
+                  .chamberStatuses()
+                  .then((l) => store.getState().updateStreamStatus(l))
+                  .catch(() => {})
+                return
+              }
+              if (event === 'log') {
+                try {
+                  const { chamber_id, line } = JSON.parse(payload) as {
                     chamber_id: string
-                    from: string
-                    subject: string
-                    body: string
-                    timestamp: string
-                    is_question: boolean
+                    line: string
                   }
-                  const msg = client.toChamberEventMessage(m)
-                  if (msg) {
-                    store.getState().applyEvents([{ id: seq++, type: 'message', message: msg }])
+                  if (chamber_id) {
+                    emitChamberEvent({ type: 'log', chamberId: chamber_id, line: line ?? '' })
                   }
                 } catch {
-                  // malformed payload: skip (the index signal is thrown above,
-                  // outside this try, so it is never swallowed here)
+                  /* malformed payload: skip the line, keep the stream */
                 }
-              },
-              abort.signal,
-            )
+                return
+              }
+              if (event !== 'message') return
+              try {
+                const m = JSON.parse(payload) as {
+                  id?: string
+                  chamber_id: string
+                  from: string
+                  subject: string
+                  body: string
+                  timestamp: string
+                  is_question: boolean
+                }
+                const msg = client.toChamberEventMessage(m)
+                if (msg) {
+                  store.getState().applyEvents([{ id: seq++, type: 'message', message: msg }])
+                }
+              } catch {
+                // malformed payload: skip (the index signal is thrown above,
+                // outside this try, so it is never swallowed here)
+              }
+            }, abort.signal)
           } finally {
             clearTimeout(healthTimer)
           }
@@ -149,10 +139,9 @@ export function useEventLoop(): void {
         } catch (e) {
           if (stopped) return
           if (e instanceof ReregisterSignal) continue
-          if (isUnauthorized(e)) {
-            store.getState().logout(AUTH_LOGOUT_REASON)
-            return
-          }
+          // A 401 already signed the app out inside the client; this loop's
+          // job is only to stop.
+          if (isUnauthorized(e)) return
           store.getState().setConnection('offline')
           await sleep(backoff)
           backoff = Math.min(backoff * 2, 30000)

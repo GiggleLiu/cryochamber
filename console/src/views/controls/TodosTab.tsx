@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { HubClient, type TodoItem } from '../../api/hubClient'
 import { useAppStore } from '../../store/appStore'
 import { subscribeChamberEvents } from '../../store/chamberEvents'
-import { logoutIfAuthError } from '../../lib/authGuard'
+import { isUnauthorized } from '../../api/types'
 import { AlertCircle } from '../../components/Icon'
 
 /**
@@ -43,7 +43,7 @@ export function TodosTab({ chamberId }: { chamberId: string }) {
       setItems(await hub.chamberTodos(chamberId))
       setError(null)
     } catch (e) {
-      if (logoutIfAuthError(e)) return
+      if (isUnauthorized(e)) return
       setError('Could not load todos. Check your connection and try again.')
     }
   }, [hub, chamberId])

@@ -2,11 +2,11 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { InviteSheet, defaultInviteLabel } from './InviteSheet'
 import { HubClient, type Invite } from '../api/hubClient'
-import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
+import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
 
-const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
+const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 const NEW_TOKEN = 'ff'.repeat(16)
 
 const ALICE: Invite = {
@@ -36,7 +36,7 @@ function makeHub(invites: Invite[] = [ALICE, BOTH, GONE]): HubClient {
     }
     return new Response(JSON.stringify({ invites }), { status: 200 })
   })
-  const client = new HubClient(creds, fetchFn as unknown as typeof fetch)
+  const client = new HubClient({ token: creds.token, fetch: fetchFn as unknown as typeof fetch })
   vi.spyOn(client, 'chamberIdFor').mockImplementation((sid) =>
     sid === 1 ? 'cham-a' : sid === 2 ? 'cham-b' : undefined,
   )
@@ -193,13 +193,11 @@ test('cancelling the confirm leaves the invite alone', async () => {
 })
 
 describe('errors', () => {
-  test('a 401 signs out instead of showing an inline error', async () => {
+  test('a 401 shows no inline error — signing out is the whole answer', async () => {
     const hub = useAppStore.getState().client as HubClient
     vi.spyOn(hub, 'listInvites').mockRejectedValue(new ApiError(401, 'HTTP 401'))
     renderSheet()
-    await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
-    expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
-    // Signed out is the whole answer: no inline complaint underneath it.
+    await waitFor(() => expect(hub.listInvites).toHaveBeenCalled())
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByText(/Could not load who has access/)).toBeNull()
   })
@@ -257,7 +255,7 @@ describe('errors', () => {
   test('a 4xx the hub explains is quoted in the hub\'s own words', async () => {
     const hub = useAppStore.getState().client as HubClient
     vi.spyOn(hub, 'createInvite').mockRejectedValue(
-      new ApiError(400, "an active invite named 'Bob' already exists"),
+      new ApiError(400, "an active invite named 'Bob' already exists", true),
     )
     renderSheet()
     await screen.findAllByRole('listitem')
@@ -284,7 +282,7 @@ describe('errors', () => {
 
 test('a hub in open mode says sharing needs public mode, not "check your connection"', async () => {
   const fetchFn = vi.fn(async () => new Response('', { status: 503 }))
-  const client = new HubClient(creds, fetchFn as unknown as typeof fetch)
+  const client = new HubClient({ token: creds.token, fetch: fetchFn as unknown as typeof fetch })
   useAppStore.setState({ client })
   render(<InviteSheet chamberId="cham-a" chamberName="alpha" onClose={() => {}} />)
   const alert = await screen.findByRole('alert')
