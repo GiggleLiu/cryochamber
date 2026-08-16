@@ -29,7 +29,7 @@ export function defaultInviteLabel(invites: Invite[]): string {
  * mode: there is no access control to share, so invites cannot exist. That is
  * a configuration fact, not a connectivity problem, and is worded as one. */
 export const OPEN_MODE_MESSAGE =
-  'Sharing needs public mode. Restart the hub with `cryohub start --public` (after `cryohub token owner`).'
+  'This hub runs in open mode (no authentication), so invite links cannot work. Restart it with `cryohub start` — bearer auth is the default — to enable sharing.'
 
 function isOpenMode(e: unknown): boolean {
   return e instanceof ApiError && e.status === 503

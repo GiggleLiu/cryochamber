@@ -27,10 +27,14 @@ pub struct HubConfig {
     /// guard and every request comes back 403.
     #[serde(default)]
     pub public_hosts: Vec<String>,
-    /// Whether bearer auth is enforced. Persisted, so a later plain
-    /// `cryohub start` — or a reboot — cannot silently drop the hub back to
-    /// open mode while a proxy is still publishing it to the internet.
-    #[serde(default)]
+    /// Whether bearer auth is enforced. Defaults to `true`: a hub whose whole
+    /// point is to be reachable from a phone should not have to be turned
+    /// secure by hand, and sharing (invites) only works with auth on.
+    /// Persisted, so a later plain `cryohub start` — or a reboot — cannot
+    /// silently drop the hub back to open mode while a proxy is still
+    /// publishing it to the internet; equally, a file that already spells
+    /// `public = false` keeps its open mode across the upgrade.
+    #[serde(default = "default_public")]
     pub public: bool,
     /// Overrides the console embedded in the binary. Set this only to serve a
     /// build from somewhere else, and make it absolute: the hub canonicalizes
@@ -83,6 +87,10 @@ fn default_owner_name() -> String {
     "human".to_string()
 }
 
+fn default_public() -> bool {
+    true
+}
+
 impl Default for HubConfig {
     fn default() -> Self {
         Self {
@@ -91,7 +99,7 @@ impl Default for HubConfig {
             chamber_root: default_chamber_root(),
             owner_name: default_owner_name(),
             public_hosts: Vec::new(),
-            public: false,
+            public: default_public(),
             console_dir: None,
         }
     }

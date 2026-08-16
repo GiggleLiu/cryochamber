@@ -30,13 +30,13 @@ enum Commands {
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
-        /// Enforce bearer-token auth on every /api route (required before
-        /// exposing the hub beyond loopback). Needs `cryohub token owner`.
-        /// Saved to cryohub.toml, so later starts stay public.
+        /// Enforce bearer auth (the default). Saved to cryohub.toml.
         #[arg(long)]
         public: bool,
-        /// Turn public mode back off. Disabling auth is never implicit: a
-        /// plain `cryohub start` keeps whatever mode is saved.
+        /// Run without authentication (open mode, loopback only). Sharing and
+        /// invites do not work in open mode. Saved to cryohub.toml, so
+        /// disabling auth is never implicit: a plain `cryohub start` keeps
+        /// whatever mode is saved.
         #[arg(long, conflicts_with = "public")]
         no_public: bool,
     },
@@ -121,10 +121,13 @@ fn cmd_start(
     std::fs::create_dir_all(&config.chamber_root)?;
 
     // Before binding a socket AND before installing a service: a public hub
-    // with no owner token can never be administered, and an installed unit
-    // would just crash-loop under KeepAlive.
+    // needs an owner token to be administrable at all, and the operator has to
+    // see it while they are still at the terminal — a service start would
+    // otherwise print it into a log file nobody reads.
     if config.public {
-        cryochamber::hub::require_owner_token()?;
+        if let Some(token) = cryochamber::hub::ensure_owner_token()? {
+            cryochamber::hub::announce_owner_token(&token);
+        }
     }
 
     if foreground {

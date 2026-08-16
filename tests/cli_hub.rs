@@ -296,18 +296,58 @@ fn token_owner_create_list_revoke_roundtrip() {
     cryohub_in(home.path(), &["token", "revoke", "Alice"]).failure();
 }
 
+/// A host that cannot resolve makes `serve` fail at bind time — after
+/// `cmd_start` has written the config and settled the owner token, so these
+/// tests observe the startup path without ever leaving a server listening.
+const UNBINDABLE: &[&str] = &[
+    "--foreground",
+    "--host",
+    "cryohub-test.invalid",
+    "--port",
+    "0",
+];
+
+fn start_unbindable(home: &std::path::Path, extra: &[&str]) -> assert_cmd::assert::Assert {
+    let mut args = vec!["start"];
+    args.extend_from_slice(extra);
+    args.extend_from_slice(UNBINDABLE);
+    cryohub_in(home, &args)
+}
+
 #[test]
-fn start_public_without_owner_token_fails_fast() {
-    // --foreground so no OS service is installed. With an empty config home
-    // there is no owner token, so the process must refuse to bind at all
-    // rather than serving a public port that nobody can administer.
+fn start_mints_and_prints_the_owner_token_on_first_run() {
+    // Bearer auth is the default, so a brand-new hub has to hand the operator
+    // the token while they are still looking at the terminal — it is not
+    // recoverable from the console, and nothing else prints it.
     let home = tempfile::tempdir().unwrap();
-    cryohub_in(
-        home.path(),
-        &["start", "--public", "--foreground", "--port", "0"],
-    )
-    .failure()
-    .stderr(contains("cryohub token owner"));
+
+    let first = start_unbindable(home.path(), &[]).failure();
+    let stdout = String::from_utf8(first.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("Owner token (shown once"),
+        "first start must print the owner token: {stdout}"
+    );
+    let printed = stdout
+        .lines()
+        .find(|l| predicates::str::is_match("^[0-9a-f]{64}$").unwrap().eval(l))
+        .unwrap_or_else(|| panic!("no 64-hex token in stdout: {stdout}"))
+        .to_string();
+
+    // It is the real, persisted owner token, not a one-off string.
+    cryohub_in(home.path(), &["token", "owner"])
+        .success()
+        .stdout(contains(printed.as_str()));
+
+    // And it is shown exactly once: a later start neither reprints nor rotates.
+    let second = start_unbindable(home.path(), &[]).failure();
+    let stdout2 = String::from_utf8(second.get_output().stdout.clone()).unwrap();
+    assert!(
+        !stdout2.contains("Owner token"),
+        "an existing owner token must not be reprinted: {stdout2}"
+    );
+    cryohub_in(home.path(), &["token", "owner"])
+        .success()
+        .stdout(contains(printed.as_str()));
 }
 
 /// `~/config/cryo/cryohub.toml` under a `cryohub_in` home.
@@ -317,14 +357,18 @@ fn hub_config_text(home: &std::path::Path) -> String {
 }
 
 #[test]
-fn start_public_fails_before_installing_a_service() {
-    // The service path used to skip the owner-token check entirely: it reported
+fn a_rejected_config_fails_before_installing_a_service() {
+    // The service path used to skip its preconditions entirely: it reported
     // success, installed a KeepAlive unit, and left the daemon crash-looping.
-    // Note the absence of --foreground.
+    // Note the absence of --foreground: this is the install path.
     let home = tempfile::tempdir().unwrap();
-    cryohub_in(home.path(), &["start", "--public"])
+    let config = home.path().join("config/cryo/cryohub.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, "console_dir = \"console/dist\"\n").unwrap();
+
+    cryohub_in(home.path(), &["start"])
         .failure()
-        .stderr(contains("cryohub token owner"));
+        .stderr(contains("console_dir"));
 
     // Nothing was installed, in this HOME or anywhere it could have written.
     #[cfg(target_os = "macos")]
@@ -339,7 +383,7 @@ fn start_public_fails_before_installing_a_service() {
         assert_eq!(
             installed,
             0,
-            "a failed --public start must install no service unit ({})",
+            "a failed start must install no service unit ({})",
             unit_dir.display()
         );
     }
@@ -349,49 +393,22 @@ fn start_public_fails_before_installing_a_service() {
 }
 
 #[test]
-fn public_mode_is_persisted_and_only_an_explicit_flag_clears_it() {
+fn public_mode_is_the_default_and_only_an_explicit_flag_clears_it() {
     let home = tempfile::tempdir().unwrap();
 
-    // Turning it on is saved even though the start itself fails (no owner
-    // token yet) — the config write happens before the precondition check.
-    cryohub_in(
-        home.path(),
-        &["start", "--public", "--foreground", "--port", "0"],
-    )
-    .failure()
-    .stderr(contains("cryohub token owner"));
+    // A plain first start is public, and says so on disk and in `status`.
+    start_unbindable(home.path(), &[]).failure();
     assert!(
         hub_config_text(home.path()).contains("public = true"),
-        "--public must be saved to cryohub.toml: {}",
+        "a plain start must save public mode: {}",
         hub_config_text(home.path())
     );
     cryohub_in(home.path(), &["status"])
         .success()
         .stdout(contains("Mode: public (bearer auth)"));
 
-    // A *plain* start must not silently drop back to open mode: with no owner
-    // token it still refuses, which is only possible if it read the saved mode.
-    cryohub_in(home.path(), &["start", "--foreground", "--port", "0"])
-        .failure()
-        .stderr(contains("cryohub token owner"));
-    assert!(hub_config_text(home.path()).contains("public = true"));
-
-    // Disabling is explicit. The unresolvable host makes the open-mode start
-    // fail at bind time, after the config has been written, so the test never
-    // leaves a server running.
-    cryohub_in(
-        home.path(),
-        &[
-            "start",
-            "--no-public",
-            "--foreground",
-            "--host",
-            "cryohub-test.invalid",
-            "--port",
-            "0",
-        ],
-    )
-    .failure();
+    // Disabling is explicit...
+    start_unbindable(home.path(), &["--no-public"]).failure();
     assert!(
         hub_config_text(home.path()).contains("public = false"),
         "--no-public must be saved: {}",
@@ -400,6 +417,19 @@ fn public_mode_is_persisted_and_only_an_explicit_flag_clears_it() {
     cryohub_in(home.path(), &["status"])
         .success()
         .stdout(contains("Mode: open (loopback)"));
+
+    // ...and so is undoing it: a plain start must not silently re-enable auth
+    // and lock out a hub the operator deliberately left open.
+    start_unbindable(home.path(), &[]).failure();
+    assert!(hub_config_text(home.path()).contains("public = false"));
+
+    start_unbindable(home.path(), &["--public"]).failure();
+    assert!(hub_config_text(home.path()).contains("public = true"));
+    start_unbindable(home.path(), &[]).failure();
+    assert!(
+        hub_config_text(home.path()).contains("public = true"),
+        "a plain start must not drop public mode"
+    );
 }
 
 #[test]
@@ -413,7 +443,10 @@ fn start_help_documents_public_mode() {
     let home = tempfile::tempdir().unwrap();
     cryohub_in(home.path(), &["start", "--help"])
         .success()
-        .stdout(contains("--public"));
+        .stdout(contains("--public"))
+        .stdout(contains("--no-public"))
+        .stdout(contains("bearer auth"))
+        .stdout(contains("open mode"));
 }
 
 #[test]

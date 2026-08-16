@@ -185,35 +185,63 @@ pub fn build_router_public_with_config(
     crate::hub::auth::apply_auth(router, app, ctx)
 }
 
-/// Refuse public mode unless an owner token exists.
+/// Make sure a public hub has an owner token, creating one on first run.
 ///
-/// A public hub without one could never be administered — no invites, no
-/// revocation — so starting is worse than not starting. Both entry points
-/// check it: `serve` before binding a socket, and `cryohub start` before
-/// *installing a service*, since a KeepAlive unit that fails on boot would
-/// otherwise restart forever.
-pub fn require_owner_token() -> anyhow::Result<()> {
-    let path = crate::hub::tokens::default_tokens_path();
-    if crate::hub::tokens::load_tokens(&path)?.owner.is_none() {
-        anyhow::bail!(
-            "public mode requires an owner token — run `cryohub token owner` first \
-             (store: {})",
-            path.display()
-        );
+/// Public mode is the default, so a missing owner token is the normal state of
+/// a brand-new hub, not an operator error: the hub mints one instead of
+/// refusing to start (a hub nobody can administer *is* the failure this used
+/// to prevent, and creating the token prevents it just as well).
+///
+/// Returns `Some(token)` only when it had to create it — the one moment the
+/// secret can be shown. An existing token is never re-read out of the store
+/// here; `cryohub token owner` remains the way to print it again.
+pub fn ensure_owner_token() -> anyhow::Result<Option<String>> {
+    ensure_owner_token_at(&crate::hub::tokens::default_tokens_path())
+}
+
+/// [`ensure_owner_token`] against an explicit store path.
+pub fn ensure_owner_token_at(path: &std::path::Path) -> anyhow::Result<Option<String>> {
+    if crate::hub::tokens::load_tokens(path)?.owner.is_some() {
+        return Ok(None);
     }
-    Ok(())
+    // Through `AuthCtx` so the CLI, the API, and startup all share one
+    // transaction: the token is on disk before it is considered to exist.
+    let ctx = crate::hub::auth::AuthCtx::load(path)?;
+    let token = ctx
+        .mutate(|store| store.ensure_owner())
+        .map_err(|e| match e {
+            crate::hub::auth::MutateError::Rejected(e) => e,
+            crate::hub::auth::MutateError::Persist(e) => {
+                e.context("owner token could not be written; no change was made")
+            }
+        })?;
+    Ok(Some(token))
+}
+
+/// Print a freshly created owner token. Stdout carries the secret so it can be
+/// piped; the explanation and the store path go to stderr, matching
+/// `cryohub token owner`.
+pub fn announce_owner_token(token: &str) {
+    println!("Owner token (shown once — paste it into the console to sign in):\n{token}");
+    eprintln!(
+        "Stored in {}",
+        crate::hub::tokens::default_tokens_path().display()
+    );
 }
 
 /// Serve the hub. In `public` mode every `/api` route is behind the bearer
 /// guard; otherwise the hub is the loopback-only dashboard it has always been.
 ///
-/// The owner-token precondition is checked *first*, before any workspace scan
-/// or socket bind: a public hub without an owner token could never be
-/// administered, and failing after the port is open would be worse than not
-/// starting at all.
+/// The owner token is settled *first*, before any workspace scan or socket
+/// bind: a public hub without an owner token could never be administered, and
+/// discovering that after the port is open would be worse than not starting at
+/// all. `cryohub start` normally creates it a moment earlier; this call is what
+/// covers `cryohub daemon` after someone deletes the store.
 pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
     let ctx = if public {
-        require_owner_token()?;
+        if let Some(token) = ensure_owner_token()? {
+            announce_owner_token(&token);
+        }
         Some(crate::hub::auth::AuthCtx::load(
             &crate::hub::tokens::default_tokens_path(),
         )?)

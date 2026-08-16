@@ -159,23 +159,18 @@ fn hub_effective_config_persists_host_and_port_overrides() {
 
 #[test]
 fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
-    // Public mode is a security posture, not a command-line detail: once set it
-    // must survive a plain restart (and a reboot), and only an explicit
-    // `--no-public` may clear it. Otherwise a `cryohub start` typed from muscle
-    // memory silently un-authenticates a hub a reverse proxy is publishing.
+    // Public mode is a security posture, not a command-line detail: it is on by
+    // default, and only an explicit `--no-public` may clear it — and that
+    // choice, too, must survive a plain restart in both directions. Otherwise a
+    // `cryohub start` typed from muscle memory silently un-authenticates a hub
+    // a reverse proxy is publishing.
     let config_home = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
     use cryochamber::hub::config::effective_config;
 
     assert!(
-        !effective_config(None, None, None).unwrap().public,
-        "a fresh config defaults to open mode"
-    );
-
-    assert!(effective_config(None, None, Some(true)).unwrap().public);
-    assert!(
         effective_config(None, None, None).unwrap().public,
-        "a plain start must not drop public mode"
+        "a fresh config defaults to public (bearer auth)"
     );
     assert!(
         cryochamber::hub::config::load_config().unwrap().public,
@@ -183,7 +178,38 @@ fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
     );
 
     assert!(!effective_config(None, None, Some(false)).unwrap().public);
+    assert!(
+        !effective_config(None, None, None).unwrap().public,
+        "a plain start must not re-enable auth behind the operator's back"
+    );
     assert!(!cryochamber::hub::config::load_config().unwrap().public);
+
+    assert!(effective_config(None, None, Some(true)).unwrap().public);
+    assert!(
+        effective_config(None, None, None).unwrap().public,
+        "a plain start must not drop public mode"
+    );
+    assert!(cryochamber::hub::config::load_config().unwrap().public);
+}
+
+/// Configs written before public mode was the default carry no `public` key;
+/// they must come back as public, while a file that explicitly says
+/// `public = false` keeps the open mode its operator chose.
+#[test]
+fn hub_config_without_a_public_key_loads_as_public() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "host = \"127.0.0.1\"\nport = 8765\n").unwrap();
+
+    assert!(cryochamber::hub::config::load_config().unwrap().public);
+
+    std::fs::write(&path, "host = \"127.0.0.1\"\nport = 8765\npublic = false\n").unwrap();
+    assert!(
+        !cryochamber::hub::config::load_config().unwrap().public,
+        "an explicit `public = false` must stay open"
+    );
 }
 
 /// A relative `console_dir` resolves from whatever working directory

@@ -128,3 +128,36 @@ fn load_missing_file_yields_default() {
     assert!(tf.owner.is_none());
     assert!(tf.invites.is_empty());
 }
+
+/// Public mode is the default, so first start has to *mint* the owner token
+/// rather than refuse — and it must show it exactly once, since the store is
+/// the only other place it lives.
+#[test]
+fn ensure_owner_token_creates_on_first_call_and_stays_quiet_afterwards() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tokens.json");
+
+    let created = crate::hub::ensure_owner_token_at(&path)
+        .unwrap()
+        .expect("a store without an owner must yield the token it created");
+    assert_eq!(created.len(), 64);
+    assert!(
+        path.exists(),
+        "the token must be persisted before it is shown"
+    );
+    assert_eq!(
+        load_tokens(&path).unwrap().owner.as_deref(),
+        Some(created.as_str())
+    );
+
+    assert_eq!(
+        crate::hub::ensure_owner_token_at(&path).unwrap(),
+        None,
+        "an existing owner token must never be reprinted"
+    );
+    assert_eq!(
+        load_tokens(&path).unwrap().owner.as_deref(),
+        Some(created.as_str()),
+        "and must not be rotated"
+    );
+}
