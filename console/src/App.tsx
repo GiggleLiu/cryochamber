@@ -81,7 +81,10 @@ export default function App() {
         useAppStore.setState({ creds: next, selfName: next.name })
       })
       .catch(() => {})
-  }, [creds, client])
+    // Keyed on the client, not the credentials: a corrected name writes creds
+    // back without replacing the client, and re-asking whoami for our own edit
+    // would be a second round-trip that can only agree with the first.
+  }, [client])
 
   // A guest's link is tied to one chamber, so landing them in a list of one is
   // a step that says nothing. Once per app start, and only from the default

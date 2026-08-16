@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
 import { UnresolvedProjectError } from '../api/hubClient'
@@ -64,6 +64,12 @@ export function ConversationView({ streamId }: { streamId: number }) {
   const isOwner = useIsOwner()
   const [sheet, setSheet] = useState<'invite' | 'controls' | null>(null)
   const chamberId = client?.chamberIdFor(streamId)
+  // Memoised: MessageBody keys its decorate effect on this, and a fresh arrow
+  // every render would tear down and rebuild its MutationObserver each time.
+  const fetchBlob = useMemo(
+    () => (client ? (url: string) => client.fetchBlob(url) : undefined),
+    [client],
+  )
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
   const [showJump, setShowJump] = useState(false)
@@ -301,7 +307,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
                   <div className="bubble">
                     <MessageBody
                       source={m.content}
-                      fetchBlob={client ? (u) => client.fetchBlob(u) : undefined}
+                      fetchBlob={fetchBlob}
                       selfUserId={ownUserId ?? undefined}
                     />
                   </div>
