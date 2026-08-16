@@ -324,7 +324,7 @@ fn start_mints_and_prints_the_owner_token_on_first_run() {
     let first = start_unbindable(home.path(), &[]).failure();
     let stdout = String::from_utf8(first.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.contains("Owner token (shown once"),
+        stdout.contains("Owner token (save it"),
         "first start must print the owner token: {stdout}"
     );
     let printed = stdout

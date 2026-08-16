@@ -192,9 +192,9 @@ pub fn build_router_public_with_config(
 /// refusing to start (a hub nobody can administer *is* the failure this used
 /// to prevent, and creating the token prevents it just as well).
 ///
-/// Returns `Some(token)` only when it had to create it — the one moment the
-/// secret can be shown. An existing token is never re-read out of the store
-/// here; `cryohub token owner` remains the way to print it again.
+/// Returns `Some(token)` only when it had to create it, so a caller at a
+/// terminal can show it. An existing token is never re-read out of the store
+/// here; `cryohub token owner` is how it is printed again.
 pub fn ensure_owner_token() -> anyhow::Result<Option<String>> {
     ensure_owner_token_at(&crate::hub::tokens::default_tokens_path())
 }
@@ -218,11 +218,15 @@ pub fn ensure_owner_token_at(path: &std::path::Path) -> anyhow::Result<Option<St
     Ok(Some(token))
 }
 
-/// Print a freshly created owner token. Stdout carries the secret so it can be
-/// piped; the explanation and the store path go to stderr, matching
-/// `cryohub token owner`.
+/// Print a freshly created owner token, for `cryohub start` at a terminal.
+///
+/// Stdout carries the secret so it can be piped; the explanation and the store
+/// path go to stderr, matching `cryohub token owner`. Only call this where the
+/// output is a terminal the operator is looking at — a service start writes its
+/// stdout to a world-readable log, which is exactly what `save_tokens`' 0600
+/// mode exists to avoid.
 pub fn announce_owner_token(token: &str) {
-    println!("Owner token (shown once — paste it into the console to sign in):\n{token}");
+    println!("Owner token (save it — or reprint later with `cryohub token owner`):\n{token}");
     eprintln!(
         "Stored in {}",
         crate::hub::tokens::default_tokens_path().display()
@@ -239,8 +243,11 @@ pub fn announce_owner_token(token: &str) {
 /// covers `cryohub daemon` after someone deletes the store.
 pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
     let ctx = if public {
-        if let Some(token) = ensure_owner_token()? {
-            announce_owner_token(&token);
+        // Mint but do not print: this path is normally a launchd/systemd unit
+        // whose stdout is a 0644 log file. The token is recoverable from the
+        // store, so there is nothing to gain by leaking it into a log.
+        if ensure_owner_token()?.is_some() {
+            eprintln!("Created a new owner token — run `cryohub token owner` to print it.");
         }
         Some(crate::hub::auth::AuthCtx::load(
             &crate::hub::tokens::default_tokens_path(),

@@ -130,8 +130,9 @@ fn load_missing_file_yields_default() {
 }
 
 /// Public mode is the default, so first start has to *mint* the owner token
-/// rather than refuse — and it must show it exactly once, since the store is
-/// the only other place it lives.
+/// rather than refuse. The token comes back only on the call that created it:
+/// callers that are not a terminal (the service path) must have nothing to
+/// print, and only `cryohub token owner` reads it out again.
 #[test]
 fn ensure_owner_token_creates_on_first_call_and_stays_quiet_afterwards() {
     let dir = tempfile::tempdir().unwrap();
@@ -153,7 +154,7 @@ fn ensure_owner_token_creates_on_first_call_and_stays_quiet_afterwards() {
     assert_eq!(
         crate::hub::ensure_owner_token_at(&path).unwrap(),
         None,
-        "an existing owner token must never be reprinted"
+        "an existing owner token must never be handed back for printing"
     );
     assert_eq!(
         load_tokens(&path).unwrap().owner.as_deref(),
