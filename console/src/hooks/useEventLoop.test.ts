@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react'
 import { waitFor } from '@testing-library/react'
-import { useEventLoop } from './useEventLoop'
+import { useEventLoop, sleep } from './useEventLoop'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { HubClient } from '../api/hubClient'
 import type { Credentials } from '../api/types'
@@ -194,6 +194,9 @@ test.each(['index', 'resync'])(
     useAppStore.setState({ client: new HubClient({ token: creds.token }) })
     const { unmount } = renderHook(() => useEventLoop())
     await waitFor(() => expect(reads).toBe(2))
+    // Re-registering resets the loaded set, which is what makes an open
+    // conversation refetch its history.
+    expect(useAppStore.getState().loadedChambers).toEqual([])
     unmount()
   },
 )
@@ -362,4 +365,127 @@ test('a malformed log payload is skipped without killing the stream', async () =
   await waitFor(() => expect(heard).toHaveLength(1))
   expect(heard[0]).toEqual({ type: 'log', chamberId: 'cham-a', line: 'ok' })
   unmount()
+})
+
+describe('sleep', () => {
+  afterEach(() => vi.useRealTimers())
+
+  test('resolves after its delay', async () => {
+    vi.useFakeTimers()
+    let done = false
+    void sleep(500).then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(499)
+    expect(done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(done).toBe(true)
+  })
+
+  test('resolves early when the page becomes visible', async () => {
+    vi.useFakeTimers()
+    let done = false
+    void sleep(30_000).then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(done).toBe(false)
+    // jsdom's visibilityState is 'visible'; the transition event is what we
+    // listen for.
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(true)
+  })
+
+  test('ignores a transition to hidden', async () => {
+    vi.useFakeTimers()
+    const original = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    try {
+      let done = false
+      void sleep(30_000).then(() => { done = true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(done).toBe(false)
+    } finally {
+      delete (document as { visibilityState?: string }).visibilityState
+      if (original) Object.defineProperty(Document.prototype, 'visibilityState', original)
+    }
+  })
+
+  test('resolves when the signal aborts', async () => {
+    vi.useFakeTimers()
+    const ac = new AbortController()
+    let done = false
+    void sleep(30_000, ac.signal).then(() => { done = true })
+    ac.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(true)
+  })
+})
+
+test('a stalled stream reconnects immediately, without a backoff sleep', async () => {
+  vi.useFakeTimers()
+  try {
+    const sleeps: number[] = []
+    const realTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      if (ms !== undefined && ms >= 1000 && ms < 10_000) sleeps.push(ms)
+      return realTimeout(fn, ms)
+    }) as typeof setTimeout)
+
+    let registers = 0
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/api/events')) {
+        // One keepalive, then a connection that neither speaks nor closes.
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode(': keepalive\n'))
+            init?.signal?.addEventListener('abort', () =>
+              c.error(new DOMException('The operation was aborted.', 'AbortError')),
+            )
+          },
+        })
+        return new Response(body, { status: 200 })
+      }
+      registers += 1
+      return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    useAppStore.setState({ client: new HubClient({ token: creds.token }) })
+    const { unmount } = renderHook(() => useEventLoop())
+    await vi.waitFor(() => expect(registers).toBe(1))
+    // 30 s of silence trips the watchdog; the loop must be back on
+    // register() right away, not after a 1 s (or longer) backoff.
+    await vi.advanceTimersByTimeAsync(30_001)
+    await vi.waitFor(() => expect(registers).toBe(2), { timeout: 500, interval: 10 })
+    expect(sleeps).toEqual([])
+    unmount()
+  } finally {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  }
+})
+
+test('coming back to the foreground cuts the reconnect wait short', async () => {
+  vi.useFakeTimers()
+  try {
+    let registers = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/api/events')) {
+        // Every stream closes at once, so the loop is always in its backoff.
+        return new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 })
+      }
+      registers += 1
+      return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    useAppStore.setState({ client: new HubClient({ token: creds.token }) })
+    const { unmount } = renderHook(() => useEventLoop())
+    await vi.waitFor(() => expect(useAppStore.getState().connection).toBe('offline'))
+    expect(registers).toBe(1)
+    document.dispatchEvent(new Event('visibilitychange'))
+    // waitFor advances fake time by `interval` per check: 500 ms in total is
+    // well inside the 1 s backoff, so only the visibility cut can get us here.
+    await vi.waitFor(() => expect(registers).toBe(2), { timeout: 500, interval: 10 })
+    unmount()
+  } finally {
+    vi.useRealTimers()
+  }
 })

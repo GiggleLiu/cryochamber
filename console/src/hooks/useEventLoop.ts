@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { isUnauthorized } from '../api/types'
+import { isSseStall } from '../api/sse'
 import { HubClient } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
 import { emitChamberEvent } from '../store/chamberEvents'
@@ -12,8 +13,27 @@ class ReregisterSignal extends Error {}
  * counts as healthy enough to reset the backoff. */
 const SSE_HEALTHY_MS = 10_000
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+/**
+ * Wait `ms` — but return early when the page becomes visible (a phone coming
+ * back to the foreground should not sit out the rest of a 30 s backoff) or
+ * when `signal` aborts (the loop is being torn down).
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>
+    const finish = () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') finish()
+    }
+    timer = setTimeout(finish, ms)
+    document.addEventListener('visibilitychange', onVisibility)
+    signal?.addEventListener('abort', finish, { once: true })
+  })
 }
 
 function waitForVisible(): Promise<void> {
@@ -128,16 +148,24 @@ export function useEventLoop(): void {
           // never proved healthy (proxy dropping it, server restarting) also
           // widens the wait, so the loop cannot spin.
           store.getState().setConnection('offline')
-          await sleep(backoff)
+          await sleep(backoff, abort.signal)
           if (!healthy) backoff = Math.min(backoff * 2, 30000)
         } catch (e) {
           if (stopped) return
           if (e instanceof ReregisterSignal) continue
+          if (isSseStall(e)) {
+            // A half-open connection: nothing arrived for SSE_STALL_MS but the
+            // socket never closed. The hub is not known to be down, so this is
+            // not a failure to back off from — reconnect now, at the floor.
+            backoff = 1000
+            store.getState().setConnection('connecting')
+            continue
+          }
           // A 401 already signed the app out inside the client; this loop's
           // job is only to stop.
           if (isUnauthorized(e)) return
           store.getState().setConnection('offline')
-          await sleep(backoff)
+          await sleep(backoff, abort.signal)
           backoff = Math.min(backoff * 2, 30000)
         }
       }
