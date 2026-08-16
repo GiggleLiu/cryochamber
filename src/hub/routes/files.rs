@@ -1,16 +1,7 @@
-//! Chamber files over HTTP, in two flavours.
-//!
-//! **Attachments** — uploads land in `<chamber>/messages/attachments/` (where
-//! chat-bridge also materializes platform attachments) and are served back
-//! with a containment check that never lets a request name escape that
-//! directory. An invite scoped to the chamber may read them.
-//!
-//! **Workspace files** — an agent writes its output into the chamber itself
-//! (`articles/review.pdf`) and links to it by relative path, so those links
-//! have to resolve to something. They are served read-only, owner-only, from
-//! anywhere under the chamber root that is not hidden and not configuration:
-//! a chamber directory holds the agent's provider keys, and a download route
-//! is no place to hand them out.
+//! Chamber attachments over HTTP: uploads land in
+//! `<chamber>/messages/attachments/` (where chat-bridge also materializes
+//! platform attachments) and are served back with a containment check that
+//! never lets a request name escape that directory.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,11 +17,6 @@ use crate::hub::mime::mime_for;
 use crate::hub::state::AppState;
 
 pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
-
-/// Largest workspace file served in one response. The body is read into
-/// memory, so this bounds a request the way the upload cap bounds the other
-/// direction; a report or a figure fits many times over.
-pub const MAX_WORKSPACE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// How much a single chamber's attachments directory may hold before further
 /// uploads are refused with 507. The per-file cap bounds one request; this
@@ -275,105 +261,6 @@ pub async fn get_file(
         bytes,
     )
         .into_response())
-}
-
-/// Config files that are never downloadable, at any depth. `cryo.toml` carries
-/// the chamber's provider block — API keys in plain text — and nothing in the
-/// console needs to fetch it as a file.
-const NEVER_SERVED: [&str; 1] = ["cryo.toml"];
-
-/// Resolve a slash-separated relative path against the chamber root, or `None`
-/// if it is not a plain, visible, contained file.
-///
-/// Rejects, in order: empty input, absolute paths, any traversal or empty
-/// segment, any hidden segment (`.cryo/`, `.knowledge/`, dotfiles), and any
-/// name on [`NEVER_SERVED`]. What survives is joined and canonicalized, and
-/// the result must still sit under the canonical chamber root — which is what
-/// stops a symlink inside the chamber from reaching outside it.
-fn contained_workspace_file(chamber: &Path, rel: &str) -> Option<PathBuf> {
-    if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
-        return None;
-    }
-    let mut joined = PathBuf::new();
-    for segment in rel.split('/') {
-        if segment.is_empty() || segment.starts_with('.') {
-            return None;
-        }
-        if NEVER_SERVED
-            .iter()
-            .any(|deny| segment.eq_ignore_ascii_case(deny))
-        {
-            return None;
-        }
-        joined.push(segment);
-    }
-    let root = chamber.canonicalize().ok()?;
-    let resolved = root.join(joined).canonicalize().ok()?;
-    if !resolved.starts_with(&root) {
-        return None;
-    }
-    resolved.is_file().then_some(resolved)
-}
-
-/// Serve one file from the chamber's own directory.
-///
-/// Owner-only: the auth classifier's default-deny already makes it so, and it
-/// must stay that way — an invite is scoped to a *conversation*, not to the
-/// filesystem the agent works in.
-pub async fn get_workspace_file(
-    State(app): State<Arc<AppState>>,
-    AxumPath((id, path)): AxumPath<(String, String)>,
-) -> Result<Response, StatusCode> {
-    let (chamber, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let decoded = percent_decode(&path);
-    let read_path = decoded.clone();
-    let found = tokio::task::spawn_blocking(move || {
-        let file = contained_workspace_file(&chamber, &read_path)?;
-        let size = std::fs::metadata(&file).ok()?.len();
-        if size > MAX_WORKSPACE_FILE_BYTES {
-            return None;
-        }
-        std::fs::read(&file).ok()
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
-    // The name the browser saves under is derived from the request, never from
-    // the path on disk, and is reduced to one safe segment first.
-    let name = safe_name(decoded.rsplit('/').next().unwrap_or("download"));
-    Ok((
-        [
-            (header::CONTENT_TYPE, mime_for(&name).to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{name}\""),
-            ),
-        ],
-        found,
-    )
-        .into_response())
-}
-
-/// Percent-decoding for the one thing that reaches this route encoded: a path
-/// segment with a space or a non-ASCII name. Invalid escapes are left as-is
-/// rather than dropped, so a literal `%` in a filename still matches.
-fn percent_decode(raw: &str) -> String {
-    let bytes = raw.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
-            if let Some(v) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]

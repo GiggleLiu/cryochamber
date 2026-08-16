@@ -126,12 +126,6 @@ pub fn build_router_with_config(
             "/api/chambers/{id}/files/{name}",
             get(crate::hub::routes::files::get_file),
         )
-        // Owner-only by default-deny: a chamber's own working files, which is
-        // where an agent's output actually lives when it links to it.
-        .route(
-            "/api/chambers/{id}/workspace/{*path}",
-            get(crate::hub::routes::files::get_workspace_file),
-        )
         .route("/api/events", get(crate::hub::routes::events::get_events))
         .route(
             "/api/whoami",
