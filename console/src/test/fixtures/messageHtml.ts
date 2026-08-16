@@ -48,16 +48,3 @@ export const katexSvgSqrt =
 export const tableMarkup =
   '<table><thead><tr><th>name</th><th>score</th></tr></thead>' +
   '<tbody><tr><td>a</td><td>1</td></tr><tr><td>b</td><td>2</td></tr></tbody></table>'
-
-export const emojiThumbsUp =
-  '<p><span class="emoji emoji-1f44d" title="thumbs up">:thumbs_up:</span></p>'
-
-export const emojiFlagCn = '<p><span class="emoji emoji-1f1e8-1f1f3">:cn:</span></p>'
-
-export const emojiImg = '<p><img class="emoji" alt="🎉" src="/static/emoji/tada.png"></p>'
-
-export const userMention =
-  '<p>ping <span class="user-mention" data-user-id="42" title="@Alice Doe">@Alice Doe</span></p>'
-
-export const userGroupMention =
-  '<p><span class="user-group-mention" data-user-group-id="1">@everyone</span></p>'

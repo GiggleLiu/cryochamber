@@ -105,25 +105,6 @@ describe('math / markdown rendering fidelity', () => {
     expect(out).toContain('<td>')
   })
 
-  test('converts spritesheet emoji spans to Unicode characters', () => {
-    const out = sanitizeHtml(fx.emojiThumbsUp)
-    expect(out).toContain('👍')
-    expect(out).not.toContain(':thumbs_up:')
-    expect(out).not.toContain('emoji-1f44d')
-  })
-
-  test('converts multi-codepoint emoji spans to a combined Unicode sequence', () => {
-    const out = sanitizeHtml(fx.emojiFlagCn)
-    expect(out).toContain('🇨🇳')
-    expect(out).not.toContain(':cn:')
-  })
-
-  test('converts emoji img elements to their alt text', () => {
-    const out = sanitizeHtml(fx.emojiImg)
-    expect(out).toContain('🎉')
-    expect(out).not.toContain('<img')
-  })
-
   test('keeps layout style attributes but still strips event handlers', () => {
     const out = sanitizeHtml('<div style="height:1.2em" onclick="alert(1)">hi</div>')
     expect(out).toContain('style="height:1.2em;"')
@@ -192,24 +173,6 @@ describe('inline style filtering', () => {
   })
 })
 
-describe('emoji codepoint decoding', () => {
-  test.each([
-    ['out of Unicode range', 'emoji-110000'],
-    ['lone surrogate', 'emoji-d800'],
-    ['absurdly large hex', 'emoji-fffffffffffff'],
-    ['too many codepoints', 'emoji-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8-1f1e8'],
-  ])('leaves the element untouched for %s', (_name, cls) => {
-    const html = `<p><span class="emoji ${cls}">:x:</span></p>`
-    expect(() => sanitizeHtml(html)).not.toThrow()
-    expect(sanitizeHtml(html)).toContain(':x:')
-  })
-
-  test('still decodes valid codepoints at the range boundary', () => {
-    const out = sanitizeHtml('<p><span class="emoji-10ffff">:x:</span></p>')
-    expect(out).not.toContain(':x:')
-  })
-})
-
 test('leaves app-relative links and images exactly as written', () => {
   // The console is served by the hub it talks to, so a chamber file path is
   // already the URL to fetch — there is no prefix to graft on.
@@ -235,34 +198,14 @@ test.each([
   expect(out).not.toContain('javascript:')
 })
 
-test('keeps mention spans with their classes and data-user-id', () => {
-  const out = sanitizeHtml(fx.userMention)
-  expect(out).toContain('class="user-mention"')
-  expect(out).toContain('data-user-id="42"')
-  expect(out).toContain('title="@Alice Doe"')
-})
-
-test('keeps group-mention spans', () => {
-  const out = sanitizeHtml(fx.userGroupMention)
-  expect(out).toContain('class="user-group-mention"')
-})
-
-test('selfUserId match adds the mention-me highlight class', () => {
-  const out = sanitizeHtml(fx.userMention, 42)
-  expect(out).toContain('mention-me')
-  expect(out).toContain('user-mention mention-me')
-  expect(out).toContain('data-user-id="42"')
-})
-
-test('non-matching selfUserId leaves mentions unhighlighted', () => {
-  const out = sanitizeHtml(fx.userMention, 7)
-  expect(out).not.toContain('mention-me')
-  expect(out).toContain('data-user-id="42"')
-})
-
-test('selfUserId does not highlight group mentions (no data-user-id)', () => {
-  const out = sanitizeHtml(fx.userGroupMention, 1)
-  expect(out).not.toContain('mention-me')
+test('unknown class tokens and data-user-id survive untouched — no emoji or mention rewriting', () => {
+  const html = sanitizeHtml(
+    '<span class="emoji-1f44d">:thumbs_up:</span>' +
+      '<span class="user-mention" data-user-id="7">@me</span>',
+  )
+  expect(html).toContain('emoji-1f44d')
+  expect(html).toContain(':thumbs_up:')
+  expect(html).not.toContain('mention-me')
 })
 
 describe('markdown rendering', () => {

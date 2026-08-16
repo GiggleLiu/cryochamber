@@ -10,46 +10,10 @@ const ALLOWED_TAGS = [
 ]
 const ALLOWED_ATTR = [
   'href', 'src', 'alt', 'title', 'class', 'start', 'datetime', 'aria-hidden', 'data-code-language',
-  // mentions carry the referenced user id so we can highlight the signed-in user
-  'data-user-id',
   // inline styles carry all of KaTeX's math layout; SVG attrs keep the vector glyphs
   'style', 'viewBox', 'd', 'width', 'height', 'preserveAspectRatio', 'xmlns',
   'x1', 'y1', 'x2', 'y2', 'stroke-width', 'fill',
 ]
-
-// Spritesheet emoji: class tokens like `emoji-1f44d` / `emoji-1f1e8-1f1f3`
-// encode one or more hex codepoints. We ship no spritesheet CSS, so without
-// this the user would see the raw `:thumbs_up:` marker.
-const EMOJI_CLASS_RE = /^emoji-([0-9a-f]+(?:-[0-9a-f]+)*)$/
-const MAX_EMOJI_CODEPOINTS = 8
-const MAX_CODEPOINT = 0x10ffff
-
-/**
- * Decodes an `emoji-<hex>[-<hex>…]` class token to its Unicode string, or null
- * when the token is not a well-formed codepoint sequence. A malicious message
- * can carry any hex the class regex accepts — `emoji-110000` or `emoji-d800`
- * would make String.fromCodePoint throw a RangeError and take the whole
- * conversation view down with it.
- */
-export function decodeEmojiToken(token: string): string | null {
-  const groups = token.split('-')
-  if (groups.length === 0 || groups.length > MAX_EMOJI_CODEPOINTS) return null
-  const codepoints: number[] = []
-  for (const group of groups) {
-    if (!/^[0-9a-f]{1,6}$/.test(group)) return null
-    const cp = parseInt(group, 16)
-    if (!Number.isInteger(cp) || cp < 0 || cp > MAX_CODEPOINT) return null
-    // Lone surrogates are not scalar values; fromCodePoint accepts them but the
-    // resulting string is ill-formed UTF-16.
-    if (cp >= 0xd800 && cp <= 0xdfff) return null
-    codepoints.push(cp)
-  }
-  try {
-    return String.fromCodePoint(...codepoints)
-  } catch {
-    return null
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Inline style filtering
@@ -167,7 +131,7 @@ export function filterStyleAttribute(style: string): string | null {
 /** SVG presentation attributes that accept a `url(#…)` paint reference. */
 const PAINT_ATTRS = ['fill', 'stroke', 'filter', 'mask', 'clip-path']
 
-export function sanitizeHtml(html: string, selfUserId?: number): string {
+export function sanitizeHtml(html: string): string {
   const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR })
   const doc = new DOMParser().parseFromString(clean, 'text/html')
   // The visible math is .katex-html; .katex-mathml is the MathML fallback whose
@@ -192,31 +156,6 @@ export function sanitizeHtml(html: string, selfUserId?: number): string {
       // CSS escapes (e.g. `\75\72\6c(...)`) tokenize back into `url(...)`;
       // any backslash in a paint value is hostile enough to drop outright.
       if (/url\s*\(/i.test(value) || value.includes('\\')) el.removeAttribute(attr)
-    }
-  }
-  // Replace spritesheet emoji spans with their Unicode characters.
-  for (const el of Array.from(doc.querySelectorAll('[class]'))) {
-    const token = Array.from(el.classList).find((c) => EMOJI_CLASS_RE.test(c))
-    if (!token) continue
-    const decoded = decodeEmojiToken(token.slice('emoji-'.length))
-    // Malformed codepoints: leave the element exactly as it is rather than
-    // crash the view.
-    if (decoded === null) continue
-    el.replaceWith(document.createTextNode(decoded))
-  }
-  // Emoji can also arrive as <img class="emoji" alt="…"> instead of a span.
-  for (const img of Array.from(doc.querySelectorAll('img.emoji'))) {
-    img.replaceWith(document.createTextNode(img.getAttribute('alt') ?? ''))
-  }
-  // Highlight the signed-in user's own mentions (spans carrying a
-  // data-user-id; group mentions carry no user id).
-  if (selfUserId !== undefined) {
-    for (const el of Array.from(
-      doc.querySelectorAll('span.user-mention, span.user-group-mention'),
-    )) {
-      if (el.getAttribute('data-user-id') === String(selfUserId)) {
-        el.classList.add('mention-me')
-      }
     }
   }
   // Same-origin absolute URLs (e.g. a pasted attachment link) are folded back

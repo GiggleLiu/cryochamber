@@ -680,7 +680,7 @@ input, select, textarea { font: inherit; color: inherit; }
   text-align: center;
 }
 
-/* @-mentions; the signed-in user's own mention gets the amber self-highlight. */
+/* @-mentions carried in a message body. */
 .message-body .user-mention, .message-body .user-group-mention {
   padding: 0 0.2em;
   color: var(--link);
@@ -688,7 +688,6 @@ input, select, textarea { font: inherit; color: inherit; }
   border-radius: var(--r-xs);
   font-weight: 500;
 }
-.message-body .mention-me { color: #7a4d00; background: #ffe6a0; }
 
 /* A standing note above the composer, not a toast: it stays for as long as the
    agent sleeps, so it reads as part of the chrome rather than as an alert. */
@@ -1377,8 +1376,6 @@ input, select, textarea { font: inherit; color: inherit; }
   --focus-ring: 0 0 0 3px rgba(8, 207, 102, 0.45);
   --press-veil: rgba(255, 255, 255, 0.08);
   }
-
-  :root:not([data-theme='light']) .message-body .mention-me { color: #ffd980; background: #4a3a13; }
 }
 
 :root[data-theme='dark'] {
@@ -1422,8 +1419,6 @@ input, select, textarea { font: inherit; color: inherit; }
   --focus-ring: 0 0 0 3px rgba(8, 207, 102, 0.45);
   --press-veil: rgba(255, 255, 255, 0.08);
 }
-
-:root[data-theme='dark'] .message-body .mention-me { color: #ffd980; background: #4a3a13; }
 
 /* The state's own word, coloured in place: it is a row value like any other,
    so it takes the value column's type and only the colour carries the state. */

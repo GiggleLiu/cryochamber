@@ -45,14 +45,12 @@ export function plainTextFallback(source: string): string {
 export function MessageBody({
   source,
   fetchBlob,
-  selfUserId,
 }: {
   /** Raw markdown, rendered and then sanitized below. */
   source: string
   /** Authenticated fetcher for chamber attachments (the signed-in client's).
    * Absent for a bubble with no session behind it — a pending send. */
   fetchBlob?: (url: string) => Promise<Blob>
-  selfUserId?: number
 }) {
   const ref = useRef<HTMLDivElement>(null)
   // Upload path -> live object URL. Cached so innerHTML replacements and the
@@ -85,7 +83,7 @@ export function MessageBody({
   const rendered = markdownModule
     ? markdownModule.renderMarkdown(source)
     : plainTextFallback(source)
-  const sanitized = sanitizeHtml(rendered, selfUserId)
+  const sanitized = sanitizeHtml(rendered)
 
   // Authenticated image loading. React re-sets this div's innerHTML whenever
   // the rendered HTML changes (and dev StrictMode/remounts can do it too);
