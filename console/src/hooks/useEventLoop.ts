@@ -38,7 +38,7 @@ export function useEventLoop(): void {
     let backoff = 1000
     const store = useAppStore
 
-    // register() lists the chambers in scope; a single SSE stream carries
+    // listChambers() is the scope read; a single SSE stream carries
     // everything after that.
     async function run(client: HubClient) {
       while (!stopped) {
@@ -49,14 +49,13 @@ export function useEventLoop(): void {
         }
         try {
           store.getState().setConnection('connecting')
-          const init = await client.register()
+          const chambers = await client.listChambers()
           if (stopped) return
-          // Re-registering clears loadedStreams, so an open conversation
+          // Re-reading the index clears loadedChambers, so an open conversation
           // re-fetches its history over whatever the events left behind.
-          store.getState().applyInitialState(init)
+          store.getState().setChambers(chambers)
           store.getState().setConnection('live')
-          let seq = 1
-          // A successful register() says nothing about the stream that follows:
+          // A successful index read says nothing about the stream that follows:
           // resetting the backoff here made a connection that dies instantly
           // retry forever at one second. The reset waits for proof — a first
           // event, or SSE_HEALTHY_MS of staying open.
@@ -69,7 +68,9 @@ export function useEventLoop(): void {
           try {
             await client.events((event, payload) => {
               markHealthy()
-              if (event === 'index') throw new ReregisterSignal()
+              // `resync` is the hub asking for the same thing `index` does:
+              // read the scope again from the top.
+              if (event === 'index' || event === 'resync') throw new ReregisterSignal()
               if (event === 'status') {
                 // Two audiences: the projects list, refreshed from the index,
                 // and whatever sheet is open on this chamber, which re-reads
@@ -85,8 +86,8 @@ export function useEventLoop(): void {
                 // event, and a 401 has already signed the app out inside the
                 // client — there is nothing left for this catch to do.
                 client
-                  .chamberStatuses()
-                  .then((l) => store.getState().updateStreamStatus(l))
+                  .listChambers()
+                  .then((l) => store.getState().updateChamberStatus(l))
                   .catch(() => {})
                 return
               }
@@ -106,18 +107,11 @@ export function useEventLoop(): void {
               }
               if (event !== 'message') return
               try {
-                const m = JSON.parse(payload) as {
-                  id?: string
-                  chamber_id: string
-                  from: string
-                  subject: string
-                  body: string
-                  timestamp: string
-                  is_question: boolean
-                }
-                const msg = client.toChamberEventMessage(m)
-                if (msg) {
-                  store.getState().applyEvents([{ id: seq++, type: 'message', message: msg }])
+                const msg = client.toEventMessage(JSON.parse(payload))
+                // A message for a chamber outside our scope has no row to land
+                // in; dropping it keeps the store's keys and the list agreeing.
+                if (msg && store.getState().chambers.some((c) => c.id === msg.chamberId)) {
+                  store.getState().applyMessage(msg)
                 }
               } catch {
                 // malformed payload: skip (the index signal is thrown above,
@@ -128,7 +122,7 @@ export function useEventLoop(): void {
             clearTimeout(healthTimer)
           }
           if (stopped) return
-          // Stream ended cleanly → the loop re-registers, but there is a gap
+          // Stream ended cleanly → the loop reconnects, but there is a gap
           // before it does and the user is not receiving anything during it, so
           // say so rather than leaving the banner claiming 'live'. A stream that
           // never proved healthy (proxy dropping it, server restarting) also

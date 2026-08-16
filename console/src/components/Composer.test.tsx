@@ -1,24 +1,38 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Composer, filterUsers, mentionQueryAt } from './Composer'
+import { Composer, filterNames, mentionQueryAt } from './Composer'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import type { HubClient } from '../api/hubClient'
-import type { User } from '../api/types'
+import type { ChamberMessage } from '../api/types'
 
 function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
   return {
-    sendMessage: vi.fn(async () => 42),
-    getUsers: vi.fn(async () => []),
+    sendMessage: vi.fn(async () => ({ id: 'inbox/42.md' })),
     ...overrides,
   } as unknown as HubClient
 }
 
-const users: User[] = [
-  { user_id: 1, full_name: 'Alice Doe', email: 'alice@b.c', is_bot: false },
-  { user_id: 2, full_name: 'Alex Mercer', email: 'alex@b.c', is_bot: false },
-  { user_id: 3, full_name: 'Bob', email: 'bob@b.c', is_bot: false },
-]
+/** Mention candidates are whoever has spoken in this conversation, so a cast
+ * of senders is seeded into the thread rather than into a user directory. */
+function saidBy(...senders: string[]): ChamberMessage[] {
+  return senders.map((sender, i) => ({
+    id: `outbox/${i}.md`,
+    chamberId: 'cham-a',
+    direction: 'outbox' as const,
+    sender,
+    subject: '',
+    body: `m${i}`,
+    timestamp: `2026-08-15T10:0${i}:00`,
+    session: null,
+    isQuestion: false,
+  }))
+}
+
+/** The cast the mention tests type `@al` against. */
+function seedSenders(senders: string[] = ['Alice Doe', 'Alex Mercer', 'Bob']) {
+  useAppStore.setState({ messagesByChamber: { 'cham-a': saidBy(...senders) } })
+}
 
 beforeEach(() => {
   resetAppStore()
@@ -37,12 +51,12 @@ test('a 401 send is not offered as a retry — the client already signed out', a
     sendMessage: vi.fn().mockRejectedValue(new ApiError(401, 'HTTP 401')),
   })
   useAppStore.setState({ client })
-  render(<Composer streamName="alpha" streamId={1} />)
+  render(<Composer chamberId="cham-a" />)
   const box = screen.getByRole('textbox')
   await userEvent.type(box, 'do it')
   await userEvent.click(screen.getByRole('button', { name: /send/i }))
   await waitFor(() => expect(client.sendMessage).toHaveBeenCalled())
-  expect(useAppStore.getState().outboxByStream[1]).toMatchObject([{ state: 'sending' }])
+  expect(useAppStore.getState().outboxByChamber['cham-a']).toMatchObject([{ state: 'sending' }])
 })
 
 test('a non-auth send failure leaves a failed outbox item, not restored text', async () => {
@@ -50,13 +64,13 @@ test('a non-auth send failure leaves a failed outbox item, not restored text', a
     sendMessage: vi.fn().mockRejectedValue(new Error('boom')),
   })
   useAppStore.setState({ client })
-  render(<Composer streamName="alpha" streamId={1} />)
+  render(<Composer chamberId="cham-a" />)
   const box = screen.getByRole('textbox')
   await userEvent.type(box, 'keep me')
   await userEvent.click(screen.getByRole('button', { name: /send/i }))
   await waitFor(() =>
-    expect(useAppStore.getState().outboxByStream[1]).toMatchObject([
-      { content: 'keep me', state: 'failed' },
+    expect(useAppStore.getState().outboxByChamber['cham-a']).toMatchObject([
+      { body: 'keep me', state: 'failed' },
     ]),
   )
   // The pending bubble owns the text now — putting it back in the composer too
@@ -68,48 +82,49 @@ test('a non-auth send failure leaves a failed outbox item, not restored text', a
 test('a successful send moves its outbox item to sent, not away', async () => {
   const client = fakeClient()
   useAppStore.setState({ client })
-  render(<Composer streamName="alpha" streamId={1} />)
+  render(<Composer chamberId="cham-a" />)
   await userEvent.type(screen.getByRole('textbox'), 'ship it')
   await userEvent.click(screen.getByRole('button', { name: /send/i }))
   // Queued optimistically; it stays as a `sent` bubble until the thread itself
   // shows the message, so nothing disappears into that gap.
   await waitFor(() =>
-    expect(useAppStore.getState().outboxByStream[1]).toMatchObject([
-      { content: 'ship it', state: 'sent' },
+    expect(useAppStore.getState().outboxByChamber['cham-a']).toMatchObject([
+      { body: 'ship it', state: 'sent' },
     ]),
   )
-  expect(client.sendMessage).toHaveBeenCalledWith('alpha', 'ship it')
+  expect(client.sendMessage).toHaveBeenCalledWith('cham-a', 'ship it')
 })
 
-describe('per-project drafts', () => {
+describe('per-chamber drafts', () => {
   // Spelled out rather than built with draftKey(), so the stored key shape is
   // actually pinned by a test. The account segment is the fingerprint of the
-  // token (apiKey 'k'), never the display name — names are reusable.
-  const KEY_1 = 'agent-console.draft.hub|ee0c38ea156277d1.1'
-  const KEY_2 = 'agent-console.draft.hub|ee0c38ea156277d1.2'
+  // token (token 'k'), never the display name — names are reusable; the last
+  // segment is the hub's own chamber id.
+  const KEY_1 = 'agent-console.draft.hub|ee0c38ea156277d1.cham-a'
+  const KEY_2 = 'agent-console.draft.hub|ee0c38ea156277d1.cham-b'
   const OTHER_CREDS = { token: 'tok', name: 'Alice', role: 'owner' as const }
 
-  test('typing persists a draft under the project key', async () => {
+  test('typing persists a draft under the chamber key', async () => {
     useAppStore.setState({ client: fakeClient() })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     await userEvent.type(screen.getByRole('textbox'), 'half a thought')
     await waitFor(() => expect(localStorage.getItem(KEY_1)).toBe('half a thought'))
   })
 
-  test('remounting restores this project draft and not another project one', () => {
+  test('remounting restores this chamber draft and not another chamber one', () => {
     localStorage.setItem(KEY_1, 'alpha draft')
     localStorage.setItem(KEY_2, 'beta draft')
     useAppStore.setState({ client: fakeClient() })
-    const { unmount } = render(<Composer streamName="alpha" streamId={1} />)
+    const { unmount } = render(<Composer chamberId="cham-a" />)
     expect(screen.getByRole('textbox')).toHaveValue('alpha draft')
     unmount()
-    render(<Composer streamName="beta" streamId={2} />)
+    render(<Composer chamberId="cham-b" />)
     expect(screen.getByRole('textbox')).toHaveValue('beta draft')
   })
 
   test('sending clears the draft', async () => {
     useAppStore.setState({ client: fakeClient() })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     await userEvent.type(screen.getByRole('textbox'), 'go')
     await userEvent.click(screen.getByRole('button', { name: /send/i }))
     await waitFor(() => expect(localStorage.getItem(KEY_1)).toBeNull())
@@ -118,21 +133,23 @@ describe('per-project drafts', () => {
   test('emptying the box drops the draft', async () => {
     localStorage.setItem(KEY_1, 'stale')
     useAppStore.setState({ client: fakeClient() })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     await userEvent.clear(screen.getByRole('textbox'))
     await waitFor(() => expect(localStorage.getItem(KEY_1)).toBeNull())
   })
 
-  test('another account never picks up the draft of the same project number', async () => {
+  test('another account never picks up the draft of the same chamber', async () => {
     localStorage.setItem(KEY_1, 'work in progress')
     useAppStore.setState({ client: fakeClient(), creds: OTHER_CREDS })
-    render(<Composer streamName="alpha" streamId={1} />)
-    // Every token numbers its own chambers from 1: project 1 here is a
-    // different project entirely.
+    render(<Composer chamberId="cham-a" />)
+    // A chamber id is shared across tokens, but a draft is not: it is the
+    // other account's unsent work and must stay theirs.
     expect(screen.getByRole('textbox')).toHaveValue('')
     await userEvent.type(screen.getByRole('textbox'), 'other work')
     await waitFor(() =>
-      expect(localStorage.getItem('agent-console.draft.hub|a210d45de0363526.1')).toBe('other work'),
+      expect(localStorage.getItem('agent-console.draft.hub|a210d45de0363526.cham-a')).toBe(
+        'other work',
+      ),
     )
     expect(localStorage.getItem(KEY_1)).toBe('work in progress')
   })
@@ -149,40 +166,36 @@ describe('mention query helpers', () => {
     expect(mentionQueryAt('mail me at a@b.c', 13)).toBeNull()
   })
 
-  test('filterUsers lists prefix matches first, then includes, capped at 8', () => {
-    const list: User[] = [
-      { user_id: 1, full_name: 'Alex', email: 'a@b.c', is_bot: false },
-      { user_id: 2, full_name: 'Vitaly', email: 'v@b.c', is_bot: false },
-      { user_id: 3, full_name: 'Alice', email: 'al@b.c', is_bot: false },
-      { user_id: 4, full_name: 'Zed', email: 'z@b.c', is_bot: false },
-    ]
-    expect(filterUsers(list, 'al').map((u) => u.full_name)).toEqual(['Alex', 'Alice', 'Vitaly'])
-    const many: User[] = Array.from({ length: 12 }, (_, i) => ({
-      user_id: i, full_name: `User ${i}`, email: '', is_bot: false,
-    }))
-    expect(filterUsers(many, '')).toHaveLength(8)
+  test('filterNames lists prefix matches first, then includes, capped at 8', () => {
+    expect(filterNames(['Alex', 'Vitaly', 'Alice', 'Zed'], 'al')).toEqual([
+      'Alex',
+      'Alice',
+      'Vitaly',
+    ])
+    expect(filterNames(Array.from({ length: 12 }, (_, i) => `User ${i}`), '')).toHaveLength(8)
   })
 })
 
 describe('@-mention autocomplete', () => {
   test('typing @al opens a filtered panel; Enter inserts the mention', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ping @al')
     const options = await screen.findAllByRole('option')
     expect(options.map((o) => o.textContent)).toEqual(['Alice Doe', 'Alex Mercer'])
-    expect(client.getUsers).toHaveBeenCalledTimes(1)
     await userEvent.keyboard('{Enter}')
     expect(box).toHaveValue('ping @**Alice Doe** ')
     expect(screen.queryByRole('listbox')).toBeNull()
   })
 
   test('ArrowDown moves the active row and Enter confirms it', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ping @al')
     await screen.findAllByRole('option')
@@ -195,9 +208,10 @@ describe('@-mention autocomplete', () => {
   })
 
   test('Tab confirms the selected user', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, '@al')
     await screen.findAllByRole('option')
@@ -206,9 +220,10 @@ describe('@-mention autocomplete', () => {
   })
 
   test('click confirms the clicked user', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ping @al')
     const options = await screen.findAllByRole('option')
@@ -217,9 +232,10 @@ describe('@-mention autocomplete', () => {
   })
 
   test('Escape closes the panel without inserting', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ping @al')
     await screen.findAllByRole('option')
@@ -229,19 +245,20 @@ describe('@-mention autocomplete', () => {
   })
 
   test('no panel opens while typing plain words without @', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'hello world')
     expect(screen.queryByRole('listbox')).toBeNull()
-    expect(client.getUsers).not.toHaveBeenCalled()
   })
 
   test('panel closes once the @ is deleted', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, '@al')
     await screen.findAllByRole('option')
@@ -250,16 +267,17 @@ describe('@-mention autocomplete', () => {
   })
 
   test('send still sends the mention text after autocomplete', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ping @al')
     await screen.findAllByRole('option')
     await userEvent.keyboard('{Enter}')
     await userEvent.click(screen.getByRole('button', { name: /send/i }))
     await waitFor(() => expect(box).toHaveValue(''))
-    expect(client.sendMessage).toHaveBeenCalledWith('alpha', 'ping @**Alice Doe** ')
+    expect(client.sendMessage).toHaveBeenCalledWith('cham-a', 'ping @**Alice Doe** ')
   })
 })
 
@@ -272,7 +290,7 @@ describe('file upload', () => {
       uploadFile: vi.fn(async () => '/user_uploads/2/ab/report.pdf'),
     })
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'see ')
     await userEvent.upload(attach(), new File(['pdf'], 'report.pdf', { type: 'application/pdf' }))
@@ -287,7 +305,7 @@ describe('file upload', () => {
       uploadFile: vi.fn().mockRejectedValue(new ApiError(400, 'File too large')),
     })
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'keep this')
     await userEvent.upload(attach(), new File(['x'], 'big.pdf', { type: 'application/pdf' }))
@@ -301,7 +319,7 @@ describe('file upload', () => {
       uploadFile: vi.fn(() => new Promise<string>((r) => { resolveUpload = r })),
     })
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'hello')
     const sendBtn = screen.getByRole('button', { name: /send/i })
@@ -318,7 +336,7 @@ describe('file upload', () => {
   test('re-picking the same file works (input is reset)', async () => {
     const client = fakeClient({ uploadFile: vi.fn(async () => '/user_uploads/1/aa/a.txt') })
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     const input = attach()
     const f = new File(['x'], 'a.txt', { type: 'text/plain' })
@@ -354,10 +372,10 @@ describe('Enter to send', () => {
     stubPointer(true)
     const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ship it{Enter}')
-    await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith('alpha', 'ship it'))
+    await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith('cham-a', 'ship it'))
     expect(box).toHaveValue('')
   })
 
@@ -365,7 +383,7 @@ describe('Enter to send', () => {
     stubPointer(true)
     const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'line one{Shift>}{Enter}{/Shift}line two')
     expect(box).toHaveValue('line one\nline two')
@@ -376,7 +394,7 @@ describe('Enter to send', () => {
     stubPointer(false)
     const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'line one{Enter}line two')
     expect(box).toHaveValue('line one\nline two')
@@ -385,9 +403,10 @@ describe('Enter to send', () => {
 
   test('Enter with the mention panel open confirms the mention, never sends', async () => {
     stubPointer(true)
-    const client = fakeClient({ getUsers: vi.fn(async () => users) })
+    const client = fakeClient()
     useAppStore.setState({ client })
-    render(<Composer streamName="alpha" streamId={1} />)
+    seedSenders()
+    render(<Composer chamberId="cham-a" />)
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'ping @al')
     await screen.findAllByRole('option')
@@ -403,10 +422,9 @@ test('text typed while an upload is pending survives link insertion', async () =
   const client = {
     uploadFile: vi.fn(() => new Promise<string>((r) => { resolveUpload = r })),
     sendMessage: vi.fn(),
-    getUsers: vi.fn(async () => []),
   } as unknown as HubClient
   useAppStore.setState({ client })
-  render(<Composer streamName="alpha" streamId={1} />)
+  render(<Composer chamberId="cham-a" />)
   const box = screen.getByRole('textbox', { name: /message/i })
   await userEvent.type(box, 'first ')
   const file = new File(['x'], 'notes.txt', { type: 'text/plain' })
@@ -421,40 +439,51 @@ test('text typed while an upload is pending survives link insertion', async () =
   )
 })
 
-describe('mention candidates without a user directory (hub)', () => {
-  test('suggests senders seen in the conversation when the user list is empty', async () => {
-    const client = fakeClient({ getUsers: vi.fn(async () => []) })
-    useAppStore.setState({
-      client,
-      users: null,
-      creds: { token: 'tok', name: 'Alice', role: 'owner' },
-      streams: [{ stream_id: 1, name: 'alpha', description: '' }],
-      messagesByStream: {
-        1: [
-          { id: 1, sender_full_name: 'agent', sender_email: 'agent', timestamp: 1,
-            content: 'one', stream_id: 1, subject: '' },
-          { id: 2, sender_full_name: 'agent', sender_email: 'agent', timestamp: 2,
-            content: 'two', stream_id: 1, subject: '' },
-        ],
-      },
-    })
-    render(<Composer streamName="alpha" streamId={1} />)
+describe('mention candidates come from the thread, not a user directory', () => {
+  test('a sender who spoke twice is offered once', async () => {
+    // The hub has no user list at all, so the only names worth offering are
+    // the ones this conversation has actually seen.
+    useAppStore.setState({ client: fakeClient() })
+    seedSenders(['agent', 'agent'])
+    render(<Composer chamberId="cham-a" />)
     await userEvent.type(screen.getByRole('textbox'), '@ag')
     const options = await screen.findAllByRole('option')
     expect(options).toHaveLength(1)
     expect(options[0]).toHaveTextContent('agent')
   })
+
+  test('another chamber\'s senders are not offered here', async () => {
+    useAppStore.setState({
+      client: fakeClient(),
+      messagesByChamber: { 'cham-b': saidBy('Alice Doe') },
+    })
+    render(<Composer chamberId="cham-a" />)
+    await userEvent.type(screen.getByRole('textbox'), '@al')
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
 })
 
-test('upload passes the stream name so hub uploads reach the right chamber', async () => {
+test('a draft is kept per chamber, keyed by the hub id', async () => {
+  useAppStore.setState({ client: fakeClient() })
+  const { unmount } = render(<Composer chamberId="cham-a" />)
+  await userEvent.type(screen.getByRole('textbox'), 'half a sentence')
+  await waitFor(() =>
+    expect(Object.keys(localStorage).some((k) => k.endsWith('.cham-a'))).toBe(true),
+  )
+  unmount()
+  render(<Composer chamberId="cham-b" />)
+  expect(screen.getByRole('textbox')).toHaveValue('')
+})
+
+test('upload posts to this chamber so hub uploads reach the right mailbox', async () => {
   const client = fakeClient({ uploadFile: vi.fn(async () => '/api/chambers/c1/files/a_a.txt') })
   useAppStore.setState({ client })
-  render(<Composer streamName="alpha" streamId={1} />)
+  render(<Composer chamberId="cham-a" />)
   await userEvent.upload(
     screen.getByLabelText('Attach file', { selector: 'input' }) as HTMLInputElement,
     new File(['x'], 'a.txt', { type: 'text/plain' }),
   )
   await waitFor(() =>
-    expect(client.uploadFile).toHaveBeenCalledWith(expect.any(File), 'alpha'),
+    expect(client.uploadFile).toHaveBeenCalledWith(expect.any(File), 'cham-a'),
   )
 })

@@ -72,15 +72,14 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
     const stale = () => useAppStore.getState().client !== hub
     try {
       const { id } = await hub.createChamber(payload)
-      // The index changed, so re-register rather than waiting for the `index`
+      // The index changed, so re-read it rather than waiting for the `index`
       // event the hub also emits — the new chamber has to exist in the store
       // before we can navigate into it.
-      const init = await hub.register()
+      const list = await hub.listChambers()
       if (stale()) return
-      useAppStore.getState().applyInitialState(init)
-      const streamId = hub.streamIdFor(id)
+      useAppStore.getState().setChambers(list)
       onClose()
-      if (streamId !== undefined) navigate({ name: 'conversation', streamId })
+      navigate({ name: 'conversation', chamberId: id })
     } catch (e) {
       if (stale()) return
       if (isUnauthorized(e)) return

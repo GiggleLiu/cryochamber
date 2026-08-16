@@ -1,12 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAppStore, useIsOwner } from '../store/appStore'
+import { ACCESS_REVOKED_NOTICE, useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
-import { UnresolvedProjectError } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
 import { StatusDot } from '../components/StatusDot'
-import { initial, separatorLabel, tileColor } from '../lib/format'
+import { initial, messageSeconds, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
 import { InviteSheet } from './InviteSheet'
 import { ControlsSheet } from './ControlsSheet'
@@ -50,20 +49,16 @@ function SkeletonThread() {
   )
 }
 
-export function ConversationView({ streamId }: { streamId: number }) {
-  const stream = useAppStore((s) => s.streams.find((x) => x.stream_id === streamId))
-  const messages = useAppStore((s) => s.messagesByStream[streamId])
-  const outbox = useAppStore((s) => s.outboxByStream[streamId])
-  const loadedStreams = useAppStore((s) => s.loadedStreams)
-  const creds = useAppStore((s) => s.creds)
+export function ConversationView({ chamberId }: { chamberId: string }) {
+  const chamber = useAppStore((s) => s.chambers.find((c) => c.id === chamberId))
+  const messages = useAppStore((s) => s.messagesByChamber[chamberId])
+  const outbox = useAppStore((s) => s.outboxByChamber[chamberId])
+  const loadedChambers = useAppStore((s) => s.loadedChambers)
   const selfName = useAppStore((s) => s.selfName)
   const client = useAppStore((s) => s.client)
-  const ownUserId = useAppStore((s) => s.ownUserId)
-  const setOwnUserId = useAppStore((s) => s.setOwnUserId)
   const navigate = useAppStore((s) => s.navigate)
   const isOwner = useIsOwner()
   const [sheet, setSheet] = useState<'invite' | 'controls' | null>(null)
-  const chamberId = client?.chamberIdFor(streamId)
   // Memoised: MessageBody keys its decorate effect on this, and a fresh arrow
   // every render would tear down and rebuild its MutationObserver each time.
   const fetchBlob = useMemo(
@@ -78,12 +73,11 @@ export function ConversationView({ streamId }: { streamId: number }) {
   // Whether the reader is parked at the newest message. Kept in a ref because
   // the scroll handler and the message effect both read it without re-render.
   const pinnedRef = useRef(true)
-  const name = stream?.name ?? ''
   const loaded = messages !== undefined
-  // History is loaded when the stream is in loadedStreams, not merely when a
-  // (possibly event-seeded) message list exists: after a re-register the marker
-  // is cleared so gaps over cached messages get re-fetched.
-  const historyLoaded = loadedStreams.includes(streamId)
+  // History is loaded when the chamber is in loadedChambers, not merely when a
+  // (possibly event-seeded) message list exists: after an index re-read the
+  // marker is cleared so gaps over cached messages get re-fetched.
+  const historyLoaded = loadedChambers.includes(chamberId)
   const messageCount = messages?.length ?? 0
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -117,7 +111,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
     setShowJump(false)
     setHasNew(false)
     scrollToLatest('auto')
-  }, [streamId, scrollToLatest])
+  }, [chamberId, scrollToLatest])
 
   // New messages follow the reader: scroll if they are at the bottom, and
   // otherwise offer the jump chip rather than yanking the viewport.
@@ -146,69 +140,46 @@ export function ConversationView({ streamId }: { streamId: number }) {
   }, [messageCount, scrollToLatest])
 
   useEffect(() => {
-    if (!client || !stream || historyLoaded) return
+    if (!client || !chamber || historyLoaded) return
     setLoadError(null)
     client
-      .getMessages(name)
-      .then((msgs) => useAppStore.getState().setMessages(streamId, msgs))
+      .getMessages(chamberId)
+      .then((msgs) => useAppStore.getState().setMessages(chamberId, msgs))
       .catch((e) => {
-        if (isUnauthorized(e)) {
-          // The client already signed the app out; nothing to add here.
-        } else if (e instanceof ApiError && e.status === 404 && !(e instanceof UnresolvedProjectError)) {
-          // Scope was revoked while we were looking at it: leave quietly — and
-          // take the project with us, or it stays in the list and fails again
-          // on every tap. Only the hub's own 404 says that; a name the client
-          // could not resolve (register() has not run yet — offline cold boot)
-          // takes the ordinary retryable error path, or an offline tap would
-          // delete a cached project for good.
-          useAppStore.getState().pruneStream(streamId)
-        } else {
-          setLoadError(e instanceof Error ? e.message : String(e))
-        }
-      })
-  }, [client, stream, historyLoaded, name, streamId, navigate, retryToken])
-
-  // Fetch the signed-in user's id once per session so their own @mentions can
-  // be highlighted. A 401 already signed the app out inside the client;
-  // transient errors are ignored silently (mentions render unhighlighted).
-  useEffect(() => {
-    if (!client || ownUserId !== null) return
-    client
-      .getOwnUser()
-      .then((me) => setOwnUserId(me.user_id))
-      .catch(() => {})
-  }, [client, ownUserId, setOwnUserId])
-
-  useEffect(() => {
-    if (!client || !loaded) return
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let attempts = 0
-    const attempt = (): void => {
-      attempts += 1
-      client.markStreamRead(streamId).catch((e) => {
-        if (cancelled) return
         if (isUnauthorized(e)) return
-        // Transient failure: retry once after 3s, then give up silently.
-        if (attempts < 2) timer = setTimeout(attempt, 3000)
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          // Scope was revoked while we were looking at it: leave quietly — and
+          // take the chamber with us, or it stays in the list and fails again
+          // on every tap. Only the hub's own answer says that; a transport
+          // failure takes the retryable path below, or an offline tap would
+          // delete a cached chamber for good.
+          useAppStore.getState().pruneChamber(chamberId, ACCESS_REVOKED_NOTICE)
+          return
+        }
+        setLoadError(e instanceof Error ? e.message : String(e))
       })
-    }
-    attempt()
-    useAppStore.getState().clearUnread(streamId)
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-  }, [client, streamId, loaded, messageCount])
+  }, [client, chamber, historyLoaded, chamberId, retryToken])
 
-  // The project can also vanish underneath us from a re-register that no longer
-  // lists it. Rendering nothing would leave a blank screen with no way out, so
-  // go where the user can act.
+  // Reading a conversation is what marks it read: the watermark moves to the
+  // newest message on screen, which is the whole of the unread accounting.
   useEffect(() => {
-    if (!stream) navigate({ name: 'projects' })
-  }, [stream, navigate])
+    if (loaded) useAppStore.getState().markRead(chamberId)
+  }, [chamberId, loaded, messageCount])
 
-  if (!stream || !creds) return null
+  // The chamber can also vanish underneath us from an index re-read that no
+  // longer lists it. Rendering nothing would leave a blank screen with no way
+  // out, so go where the user can act — but only if the view still points
+  // here: `pruneChamber` navigates as it drops the chamber, and navigating a
+  // second time would clear the notice it left explaining why.
+  useEffect(() => {
+    if (chamber) return
+    const current = useAppStore.getState().view
+    if (current.name === 'conversation' && current.chamberId === chamberId) {
+      navigate({ name: 'projects' })
+    }
+  }, [chamber, chamberId, navigate])
+
+  if (!chamber) return null
 
   return (
     <div className="conversation">
@@ -223,14 +194,12 @@ export function ConversationView({ streamId }: { streamId: number }) {
         <h1>
           {/* Liveness before the name: the state the composer note explains in
               words, readable at a glance without opening the controls sheet. */}
-          <StatusDot running={stream.running} agentRunning={stream.agentRunning} />
-          <span className="topbar-title-text">{stream.name}</span>
+          <StatusDot running={chamber.running} agentRunning={chamber.agentRunning} />
+          <span className="topbar-title-text">{chamber.name}</span>
         </h1>
         {/* Owner-only, and absent (not disabled) for everyone else: a guest is
-            never shown a control they cannot use. `chamberId` is unknown before
-            the first register(), and an invite for an unknown chamber is not a
-            thing we can mint. */}
-        {isOwner && chamberId && (
+            never shown a control they cannot use. */}
+        {isOwner && (
           <div className="topbar-actions">
             <button className="icon-btn" aria-label="Invite" onClick={() => setSheet('invite')}>
               <UserPlus />
@@ -275,17 +244,18 @@ export function ConversationView({ streamId }: { streamId: number }) {
 
         {messages?.map((m, i) => {
           const prev = messages[i - 1]
-          const gap = !prev || m.timestamp - prev.timestamp >= GAP_SECONDS
-          const isSelf = m.sender_email === selfName
+          const seconds = messageSeconds(m)
+          const gap = !prev || seconds - messageSeconds(prev) >= GAP_SECONDS
+          const isSelf = m.sender === selfName
           // Runs of messages from one sender read as one turn: the repeated
           // avatar and name are noise, so only the first of a run carries them.
-          const grouped = !gap && !!prev && prev.sender_email === m.sender_email
-          const rich = isRichMessage(m.content)
+          const grouped = !gap && !!prev && prev.sender === m.sender
+          const rich = isRichMessage(m.body)
           return (
             <Fragment key={m.id}>
               {gap && (
                 <div className="time-pill">
-                  {separatorLabel(m.timestamp, undefined, prev?.timestamp)}
+                  {separatorLabel(seconds, undefined, prev ? messageSeconds(prev) : undefined)}
                 </div>
               )}
               <div
@@ -297,19 +267,15 @@ export function ConversationView({ streamId }: { streamId: number }) {
               >
                 <div
                   className={`avatar${grouped ? ' avatar-hidden' : ''}`}
-                  style={{ background: tileColor(m.sender_email) }}
+                  style={{ background: tileColor(m.sender) }}
                   aria-hidden="true"
                 >
-                  {initial(m.sender_full_name, m.sender_email)}
+                  {initial(m.sender)}
                 </div>
                 <div className="msg-col">
-                  {!isSelf && !grouped && <div className="sender-label">{m.sender_full_name}</div>}
+                  {!isSelf && !grouped && <div className="sender-label">{m.sender}</div>}
                   <div className="bubble">
-                    <MessageBody
-                      source={m.content}
-                      fetchBlob={fetchBlob}
-                      selfUserId={ownUserId ?? undefined}
-                    />
+                    <MessageBody source={m.body} fetchBlob={fetchBlob} />
                   </div>
                 </div>
               </div>
@@ -320,12 +286,12 @@ export function ConversationView({ streamId }: { streamId: number }) {
         {/* Unconfirmed sends live after the thread: the user sees their message
             land immediately, and a failure stays theirs to retry. */}
         {(outbox ?? []).map((o) => (
-          <div className="msg-row msg-self msg-pending" key={o.localId}>
+          <div className="msg-row msg-self msg-pending" key={o.clientId}>
             <div className="msg-col">
               <div className="bubble">
-                {/* Rendering the raw text approximates what the server will
-                    echo back; it disappears the moment it does. */}
-                <MessageBody source={o.content} />
+                {/* Rendering the raw text approximates what the thread will
+                    show back; it disappears the moment it does. */}
+                <MessageBody source={o.body} />
               </div>
               {o.state === 'sending' ? (
                 <div className="send-state">Sending…</div>
@@ -335,7 +301,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
               ) : (
                 <button
                   className="send-state send-failed"
-                  onClick={() => retryOutboxItem(o, name)}
+                  onClick={() => retryOutboxItem(o)}
                 >
                   Failed — tap to retry
                 </button>
@@ -359,33 +325,33 @@ export function ConversationView({ streamId }: { streamId: number }) {
       {/* Persistent, and the composer stays enabled: queuing for a sleeping
           agent is the intended way to use it, so this states where the message
           goes rather than standing in its way. */}
-      {stream.running === false ? (
+      {!chamber.running ? (
         <p className="asleep-note is-stopped" role="status">
           Chamber is not running — messages will wait in its inbox until it is started
         </p>
-      ) : stream.agentRunning === false ? (
+      ) : !chamber.agentRunning ? (
         <p className="asleep-note" role="status">
           {`Agent is asleep — messages will be read at the next wake${
-            stream.nextWake ? ` · ${stream.nextWake}` : ''
+            chamber.nextWakeDisplay ? ` · ${chamber.nextWakeDisplay}` : ''
           }`}
         </p>
       ) : null}
 
-      <Composer streamName={name} streamId={streamId} />
+      <Composer chamberId={chamberId} />
 
-      {sheet === 'invite' && chamberId && (
+      {sheet === 'invite' && (
         <InviteSheet
           chamberId={chamberId}
-          chamberName={stream.name}
+          chamberName={chamber.name}
           onClose={() => setSheet(null)}
         />
       )}
 
-      {sheet === 'controls' && chamberId && (
+      {sheet === 'controls' && (
         <ControlsSheet
           chamberId={chamberId}
-          chamberName={stream.name}
-          archived={stream.archived === true}
+          chamberName={chamber.name}
+          archived={chamber.archived}
           onClose={() => setSheet(null)}
         />
       )}

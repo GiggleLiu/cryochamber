@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from './store/appStore'
 import { loadCredentials, saveCredentials } from './store/auth'
+import { purgeLegacyStorage } from './store/cache'
 import { useEventLoop } from './hooks/useEventLoop'
 import { INVALID_INVITE_REASON, MALFORMED_INVITE_REASON, signInWithHubToken } from './lib/hubSignIn'
 import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
@@ -36,11 +37,16 @@ export default function App() {
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const hubRole = useAppStore((s) => s.hubRole)
-  const streamCount = useAppStore((s) => s.streams.length)
+  const chamberCount = useAppStore((s) => s.chambers.length)
+  const accessNotice = useAppStore((s) => s.accessNotice)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
   const [downloadNote, setDownloadNote] = useState<string | null>(null)
 
   useEffect(() => {
+    // Before anything reads storage: the pre-cutover build's id maps and
+    // message cache are keyed on numbers this build has no use for, and a
+    // stale cache under a live key would be read as this build's own.
+    purgeLegacyStorage()
     if (!useAppStore.getState().creds) {
       const saved = loadCredentials()
       if (saved) useAppStore.getState().setCreds(saved)
@@ -94,12 +100,12 @@ export default function App() {
   // something.
   const landed = useRef(false)
   useEffect(() => {
-    if (landed.current || hubRole !== 'invite' || streamCount !== 1) return
+    if (landed.current || hubRole !== 'invite' || chamberCount !== 1) return
     const store = useAppStore.getState()
     if (store.view.name !== 'projects') return
     landed.current = true
-    store.navigate({ name: 'conversation', streamId: store.streams[0].stream_id })
-  }, [hubRole, streamCount])
+    store.navigate({ name: 'conversation', chamberId: store.chambers[0].id })
+  }, [hubRole, chamberCount])
 
   // Last line of defense against SPA-rebooting attachment clicks: whatever
   // rendered the anchor (message body, a stale bundle, future views), a click
@@ -140,8 +146,13 @@ export default function App() {
       {downloadNote && (
         <div className="banner banner-info" role="status">{downloadNote}</div>
       )}
+      {/* A chamber pruned from under the user leaves them on the list with no
+          explanation otherwise; cleared by the next navigation. */}
+      {accessNotice && (
+        <div className="banner banner-info" role="status">{accessNotice}</div>
+      )}
       {view.name === 'conversation' ? (
-        <ConversationView streamId={view.streamId} />
+        <ConversationView chamberId={view.chamberId} />
       ) : (
         <ProjectsView />
       )}

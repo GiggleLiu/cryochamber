@@ -1,74 +1,91 @@
-import type { Credentials, Message, StreamSub } from '../api/types'
+import type { Chamber, ChamberMessage } from '../api/types'
 import { accountKey } from '../lib/account'
 
 /**
- * Per-account local cache of streams and recent messages, so a reload paints
- * the projects list and open conversations instantly while the network
- * refresh (register + history fetch) reconciles in the background.
- *
- * Same trust level as the stored credentials: anyone who can read
- * localStorage already holds the API key, so caching message content adds no
- * new exposure. Cleared on logout alongside the credentials.
+ * Per-account local cache: the chamber list, the tail of each conversation,
+ * and the read watermark per chamber, so a reload paints instantly and unread
+ * counts survive it. Same trust level as the stored token; cleared on logout.
  */
 
-export const CACHE_PREFIX = 'agent-console.cache.'
+/** Distinct from the pre-cutover `agent-console.cache.` prefix, which is not
+ * a prefix of this one, so purging the old keys cannot touch the new. */
+export const CACHE_PREFIX = 'agent-console.cache2.'
 
-/** Kept per stream; message bodies are bulky and localStorage quota is ~5MB,
+/** Kept per chamber; message bodies are bulky and localStorage quota is ~5MB,
  * so cache only what one screenful of catch-up needs. */
 export const MAX_CACHED_MESSAGES = 30
 
+/** Keys the pre-cutover build wrote, removed once at boot. */
+const LEGACY_PREFIXES = [
+  'agent-console.cache.',
+  'agent-console.hub-ids.',
+  'agent-console.hub-msgids.',
+]
+
 export interface CachedState {
-  streams: StreamSub[]
-  messagesByStream: Record<number, Message[]>
+  chambers: Chamber[]
+  messagesByChamber: Record<string, ChamberMessage[]>
+  lastReadByChamber: Record<string, string>
 }
 
 /** Per token, like every other per-account store: a name is reusable, a token
  * is not, so a later invite of the same name never reads the old one's cache. */
-export function cacheKey(creds: Pick<Credentials, 'token'>): string {
+export function cacheKey(creds: { token: string }): string {
   return CACHE_PREFIX + accountKey(creds)
 }
 
-export function loadCachedState(creds: Pick<Credentials, 'token'>): CachedState | null {
+export function loadCachedState(creds: { token: string }): CachedState | null {
   try {
     const raw = localStorage.getItem(cacheKey(creds))
     if (!raw) return null
-    const parsed = JSON.parse(raw) as CachedState
-    if (!Array.isArray(parsed.streams) || typeof parsed.messagesByStream !== 'object') {
+    const p = JSON.parse(raw) as Partial<CachedState>
+    if (!Array.isArray(p.chambers) || !p.messagesByChamber || typeof p.messagesByChamber !== 'object') {
       return null
     }
-    return parsed
+    return {
+      chambers: p.chambers,
+      messagesByChamber: p.messagesByChamber,
+      lastReadByChamber:
+        p.lastReadByChamber && typeof p.lastReadByChamber === 'object' ? p.lastReadByChamber : {},
+    }
   } catch {
     return null
   }
 }
 
-export function saveCachedState(
-  creds: Pick<Credentials, 'token'>,
-  streams: StreamSub[],
-  messagesByStream: Record<number, Message[]>,
-): void {
-  const trimmed: Record<number, Message[]> = {}
-  for (const [id, msgs] of Object.entries(messagesByStream)) {
-    if (msgs.length > 0) trimmed[Number(id)] = msgs.slice(-MAX_CACHED_MESSAGES)
+export function saveCachedState(creds: { token: string }, state: CachedState): void {
+  const messagesByChamber: Record<string, ChamberMessage[]> = {}
+  for (const [id, msgs] of Object.entries(state.messagesByChamber)) {
+    if (msgs.length > 0) messagesByChamber[id] = msgs.slice(-MAX_CACHED_MESSAGES)
   }
   const key = cacheKey(creds)
   try {
-    localStorage.setItem(key, JSON.stringify({ streams, messagesByStream: trimmed }))
+    localStorage.setItem(key, JSON.stringify({ ...state, messagesByChamber }))
   } catch {
-    // Quota exceeded (or storage unavailable): a partial cache is worse than
-    // none, so drop this account's entry and carry on — the app works without
-    // it, just without the instant first paint.
+    // Quota or no storage: a partial cache is worse than none.
     try {
       localStorage.removeItem(key)
     } catch {
-      /* storage is entirely unavailable; nothing to do */
+      /* storage entirely unavailable */
     }
   }
 }
 
-export function clearCachedState(creds: Pick<Credentials, 'token'>): void {
+export function clearCachedState(creds: { token: string }): void {
   try {
     localStorage.removeItem(cacheKey(creds))
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Drop everything the pre-cutover build persisted except the credentials
+ * record (which `loadCredentials` migrates). Idempotent; runs once at boot. */
+export function purgeLegacyStorage(): void {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (LEGACY_PREFIXES.some((p) => key.startsWith(p))) localStorage.removeItem(key)
+    }
   } catch {
     /* storage unavailable */
   }

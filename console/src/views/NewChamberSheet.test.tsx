@@ -4,20 +4,27 @@ import { NewChamberSheet, buildNewChamberPayload } from './NewChamberSheet'
 import { HubClient } from '../api/hubClient'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
-import type { Credentials, InitialState } from '../api/types'
+import type { Chamber, Credentials } from '../api/types'
 
 const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 
-const REGISTERED: InitialState = {
-  subscriptions: [{ stream_id: 9, name: 'gamma', description: '' }],
-  unread: [],
-}
+const INDEX: Chamber[] = [
+  {
+    id: 'cham-new',
+    name: 'gamma',
+    running: false,
+    agentRunning: false,
+    nextWakeDisplay: null,
+    completed: false,
+    archived: false,
+    hasOpenQuestion: false,
+  },
+]
 
 function makeHub(): HubClient {
   const client = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(client, 'createChamber').mockResolvedValue({ id: 'cham-new' })
-  vi.spyOn(client, 'register').mockResolvedValue(REGISTERED)
-  vi.spyOn(client, 'streamIdFor').mockReturnValue(9)
+  vi.spyOn(client, 'listChambers').mockResolvedValue(INDEX)
   return client
 }
 
@@ -34,9 +41,10 @@ test('a name alone is enough, and success re-registers and opens the chamber', a
   await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
   expect(hub.createChamber).toHaveBeenCalledWith({ name: 'gamma' })
-  await waitFor(() => expect(hub.register).toHaveBeenCalledTimes(1))
-  expect(useAppStore.getState().streams.map((s) => s.name)).toEqual(['gamma'])
-  expect(useAppStore.getState().view).toEqual({ name: 'conversation', streamId: 9 })
+  await waitFor(() => expect(hub.listChambers).toHaveBeenCalledTimes(1))
+  expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['gamma'])
+  // Straight into the chamber by the id the hub minted — no lookup in between.
+  expect(useAppStore.getState().view).toEqual({ name: 'conversation', chamberId: 'cham-new' })
   expect(onClose).toHaveBeenCalledTimes(1)
 })
 

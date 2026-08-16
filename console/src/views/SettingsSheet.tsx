@@ -58,11 +58,11 @@ export function SettingsSheet() {
     const stale = () => useAppStore.getState().client !== hub
     try {
       await hub.refreshIndex()
-      // The hub also emits `index`, but re-registering here means the list is
+      // The hub also emits `index`, but re-reading here means the list is
       // already correct when the sheet closes rather than a beat later.
-      const init = await hub.register()
+      const list = await hub.listChambers()
       if (stale()) return
-      useAppStore.getState().applyInitialState(init)
+      useAppStore.getState().setChambers(list)
     } catch (e) {
       if (stale()) return
       if (isUnauthorized(e)) return

@@ -3,19 +3,12 @@
  * while the chamber is up but the agent sleeps between wakes, gray when the
  * chamber is not running at all.
  *
- * It renders nothing when the hub has not said — a hub that predates the
- * liveness fields must not have every chamber painted as stopped — and it is
+ * Both flags are booleans by the time they get here — the client boundary maps
+ * an absent flag to `false` — so there is no "unknown" state to draw. It is
  * the same dot everywhere the chamber is named, so liveness never requires
  * opening the controls sheet to read.
  */
-export function StatusDot({
-  running,
-  agentRunning,
-}: {
-  running: boolean | undefined
-  agentRunning: boolean | undefined
-}) {
-  if (running === undefined) return null
+export function StatusDot({ running, agentRunning }: { running: boolean; agentRunning: boolean }) {
   const state = agentRunning ? ' is-awake' : running ? ' is-running' : ''
   const label = agentRunning
     ? 'agent working'

@@ -7,85 +7,43 @@ export interface Credentials {
   role: 'owner' | 'invite'
 }
 
-export interface Message {
-  id: number
-  sender_full_name: string
-  sender_email: string
-  timestamp: number
-  content: string // markdown source, rendered client-side
-  stream_id: number
-  subject: string
-}
-
-export interface User {
-  user_id: number
-  full_name: string
-  email: string
-  is_bot: boolean
-}
-
-export interface StreamSub {
-  stream_id: number
+/** A chamber as the projects list needs it. Absent liveness flags from an
+ * older hub are mapped to `false` at the client boundary — see `toChamber` —
+ * so views never reason about `undefined`. */
+export interface Chamber {
+  id: string
   name: string
-  description: string
-  /** Whether the chamber daemon is started at all. Absent until the hub says. */
-  running?: boolean
-  /** Whether a session is executing right now; implies `running`. */
-  agentRunning?: boolean
-  /** Display form of the next scheduled wake. Only a started chamber has
-   *  one — a stopped chamber's schedule is a stale leftover and never shown. */
-  nextWake?: string | null
-  /** The latest session reported a completed plan. */
-  completed?: boolean
-  /** Put away by the operator; it cannot run until unarchived. */
-  archived?: boolean
-  /** The agent asked something and is waiting on a reply. */
-  hasOpenQuestion?: boolean
+  /** The chamber daemon holds its lock (the chamber is started). */
+  running: boolean
+  /** A session is executing right now; implies `running`. */
+  agentRunning: boolean
+  /** Display form of the next scheduled wake; null for a stopped chamber. */
+  nextWakeDisplay: string | null
+  completed: boolean
+  archived: boolean
+  hasOpenQuestion: boolean
 }
 
-export interface UnreadStreamEntry {
-  stream_id: number
-  topic: string
-  unread_message_ids: number[]
+export interface ChamberMessage {
+  /** The hub's mailbox id, `"{inbox|outbox}/{filename}"`. Unique per chamber,
+   * NOT time-ordered across directions — order by `messageKey`. */
+  id: string
+  chamberId: string
+  direction: 'inbox' | 'outbox'
+  sender: string
+  subject: string
+  /** Markdown source, rendered client-side. */
+  body: string
+  /** `%Y-%m-%dT%H:%M:%S`, local time as the hub formats it. */
+  timestamp: string
+  session: number | null
+  isQuestion: boolean
 }
 
-export interface InitialState {
-  subscriptions: StreamSub[]
-  unread: UnreadStreamEntry[]
-}
-
-export interface MessageEvent {
-  id: number
-  type: 'message'
-  message: Message
-}
-
-export interface FlagsEvent {
-  id: number
-  type: 'update_message_flags'
-  flag: string
-  op?: 'add' | 'remove'
-  messages: number[]
-}
-
-export type AppEvent = MessageEvent | FlagsEvent | { id: number; type: string }
-
-export function isMessageEvent(ev: AppEvent): ev is MessageEvent {
-  return (
-    ev.type === 'message' &&
-    'message' in ev &&
-    typeof (ev as MessageEvent).message === 'object' &&
-    (ev as MessageEvent).message !== null
-  )
-}
-
-export function isReadFlagsEvent(ev: AppEvent): ev is FlagsEvent {
-  return (
-    ev.type === 'update_message_flags' &&
-    (ev as FlagsEvent).flag === 'read' &&
-    'messages' in ev &&
-    Array.isArray((ev as FlagsEvent).messages)
-  )
+/** The sort/watermark key: timestamp first, id as the tie-breaker. String
+ * comparison on it is time order. */
+export function messageKey(m: Pick<ChamberMessage, 'id' | 'timestamp'>): string {
+  return `${m.timestamp} ${m.id}`
 }
 
 /** Every failed hub call, whatever the transport said: `status` is the HTTP

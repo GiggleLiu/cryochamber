@@ -65,7 +65,7 @@ export function InviteSheet({
   onClose: () => void
 }) {
   const client = useAppStore((s) => s.client)
-  const streams = useAppStore((s) => s.streams)
+  const chambers = useAppStore((s) => s.chambers)
   // Every active invite, not just this chamber's: the name of one scoped
   // elsewhere is still a name this hub will refuse.
   const [active, setActive] = useState<Invite[] | null>(null)
@@ -109,16 +109,12 @@ export function InviteSheet({
   // names are simply unknown, and a 400 then says so honestly.
   const listPending = active === null && listError === null
 
-  /** Names of the other chambers an invite also reaches, resolved through the
-   * ids the last register() mapped; chambers outside our own scope simply do
-   * not resolve and are left unnamed. */
+  /** Names of the other chambers an invite also reaches. Chambers outside our
+   * own scope are not in the list and are left unnamed. */
   function alsoNames(invite: Invite): string[] {
-    return streams
-      .filter((s) => {
-        const id = hub?.chamberIdFor(s.stream_id)
-        return id !== undefined && id !== chamberId && invite.chambers.includes(id)
-      })
-      .map((s) => s.name)
+    return chambers
+      .filter((c) => c.id !== chamberId && invite.chambers.includes(c.id))
+      .map((c) => c.name)
   }
 
   async function copyLink() {

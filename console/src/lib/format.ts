@@ -112,3 +112,11 @@ export function relativeTimeLabel(iso: string, now: Date = new Date()): string {
   if (days < 30) return `${days}d ago`
   return listTimeLabel(Math.floor(ms / 1000), now)
 }
+
+/** Seconds since epoch for a hub message timestamp (`%Y-%m-%dT%H:%M:%S`), for
+ * the day separators and list labels above, which all count in seconds. An
+ * unparseable stamp becomes 0 rather than NaN — a wrong date is recoverable
+ * on screen, `Invalid Date` is not. */
+export function messageSeconds(m: { timestamp: string }): number {
+  return Math.floor((Date.parse(m.timestamp) || 0) / 1000)
+}

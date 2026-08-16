@@ -2,30 +2,68 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectsView, foldedLabel } from './ProjectsView'
 import { useAppStore, resetAppStore } from '../store/appStore'
+import type { Chamber, ChamberMessage } from '../api/types'
+
+function chamber(id: string, name = id, extra: Partial<Chamber> = {}): Chamber {
+  return {
+    id,
+    name,
+    running: false,
+    agentRunning: false,
+    nextWakeDisplay: null,
+    completed: false,
+    archived: false,
+    hasOpenQuestion: false,
+    ...extra,
+  }
+}
+
+function msg(n: number, chamberId = 'cham-a', sender = 'agent', body = `m${n}`): ChamberMessage {
+  return {
+    id: `outbox/${n}.md`,
+    chamberId,
+    direction: 'outbox',
+    sender,
+    subject: '',
+    body,
+    timestamp: `2026-08-15T10:0${n}:00`,
+    session: null,
+    isQuestion: false,
+  }
+}
 
 beforeEach(() => {
   resetAppStore()
   useAppStore.setState({
-    streams: [
-      { stream_id: 1, name: 'alpha', description: 'Project A' },
-      { stream_id: 2, name: 'beta', description: 'Project B' },
-    ],
-    unreadByStream: { 1: [10, 11] },
+    chambers: [chamber('cham-a', 'alpha'), chamber('cham-b', 'beta')],
+    selfName: 'me',
     connection: 'live',
   })
 })
 
-test('renders visible streams with unread badges', () => {
+test('unread is what sits above the watermark, from anyone but us', () => {
+  useAppStore.setState({
+    messagesByChamber: { 'cham-a': [msg(1), msg(2, 'cham-a', 'me'), msg(3)] },
+    lastReadByChamber: {},
+  })
   render(<ProjectsView />)
   expect(screen.getByText('alpha')).toBeInTheDocument()
-  expect(screen.getByText('Project A')).toBeInTheDocument()
-  expect(screen.getByText('2')).toBeInTheDocument() // unread badge
+  expect(screen.getByLabelText('2 unread')).toHaveTextContent('2')
 })
 
-test('tapping a card navigates to the conversation', async () => {
+test('a watermark at the newest message clears the badge', () => {
+  useAppStore.setState({
+    messagesByChamber: { 'cham-a': [msg(1), msg(2)] },
+    lastReadByChamber: { 'cham-a': '2026-08-15T10:02:00 outbox/2.md' },
+  })
+  render(<ProjectsView />)
+  expect(screen.queryByLabelText(/unread/)).toBeNull()
+})
+
+test('tapping a card navigates to the conversation by chamber id', async () => {
   render(<ProjectsView />)
   await userEvent.click(screen.getByRole('button', { name: /alpha/ }))
-  expect(useAppStore.getState().view).toEqual({ name: 'conversation', streamId: 1 })
+  expect(useAppStore.getState().view).toEqual({ name: 'conversation', chamberId: 'cham-a' })
 })
 
 test('gear opens settings', async () => {
@@ -35,25 +73,25 @@ test('gear opens settings', async () => {
 })
 
 test('empty state message when nothing visible', () => {
-  useAppStore.setState({ streams: [] })
+  useAppStore.setState({ chambers: [] })
   render(<ProjectsView />)
   expect(screen.getByText(/no projects/i)).toBeInTheDocument()
 })
 
 test('skeleton rows stand in for the list until the first register lands', () => {
-  useAppStore.setState({ streams: [], connection: 'connecting' })
+  useAppStore.setState({ chambers: [], connection: 'connecting' })
   const { container } = render(<ProjectsView />)
   expect(container.querySelectorAll('.skeleton-row').length).toBeGreaterThan(0)
   expect(screen.queryByText(/no projects/i)).toBeNull()
 })
 
 describe('agent status dots', () => {
-  test('one dot per project the hub reported on, labelled by state', () => {
+  test('one dot per project, labelled by state', () => {
     useAppStore.setState({
-      streams: [
-        { stream_id: 1, name: 'alpha', description: 'A', running: true, agentRunning: true },
-        { stream_id: 2, name: 'beta', description: 'B', running: true, agentRunning: false },
-        { stream_id: 3, name: 'gamma', description: 'C', running: false, agentRunning: false },
+      chambers: [
+        chamber('cham-a', 'alpha', { running: true, agentRunning: true }),
+        chamber('cham-b', 'beta', { running: true }),
+        chamber('cham-c', 'gamma'),
       ],
     })
     const { container } = render(<ProjectsView />)
@@ -65,17 +103,10 @@ describe('agent status dots', () => {
     expect(container.querySelectorAll('.status-dot')).toHaveLength(3)
   })
 
-  test('a project whose liveness is unknown carries no dot at all', () => {
-    const { container } = render(<ProjectsView />)
-    expect(container.querySelector('.status-dot')).toBeNull()
-  })
-
   test('the dot reads before the name, not on the tile', () => {
     // Liveness answered at a glance is the whole point: it must sit on the
     // name line the eye already reads, ahead of the name itself.
-    useAppStore.setState({
-      streams: [{ stream_id: 1, name: 'alpha', description: 'A', running: true }],
-    })
+    useAppStore.setState({ chambers: [chamber('cham-a', 'alpha', { running: true })] })
     const { container } = render(<ProjectsView />)
     const head = container.querySelector('.stream-head')
     expect(head?.firstElementChild).toHaveClass('status-dot')
@@ -83,21 +114,14 @@ describe('agent status dots', () => {
   })
 })
 
-test('a cached last message replaces the description as the row preview', () => {
+test('the last message is the row preview', () => {
   useAppStore.setState({
-    messagesByStream: {
-      1: [
-        {
-          id: 5, sender_full_name: 'Agent', sender_email: 'bot@b.c',
-          timestamp: 1755100000, content: '<p>Sweep <strong>finished</strong>.</p>',
-          stream_id: 1, subject: '',
-        },
-      ],
+    messagesByChamber: {
+      'cham-a': [msg(5, 'cham-a', 'agent', '<p>Sweep <strong>finished</strong>.</p>')],
     },
   })
   render(<ProjectsView />)
   expect(screen.getByText('Sweep finished.')).toBeInTheDocument()
-  expect(screen.queryByText('Project A')).toBeNull()
 })
 
 describe('new chamber', () => {
@@ -122,13 +146,13 @@ describe('new chamber', () => {
 
 describe('groups, badge and meta line', () => {
   const MIXED = [
-    { stream_id: 1, name: 'alpha', description: 'A', running: true, agentRunning: true },
-    { stream_id: 2, name: 'beta', description: 'B', completed: true },
-    { stream_id: 3, name: 'gamma', description: 'C', archived: true },
+    chamber('cham-a', 'alpha', { running: true, agentRunning: true }),
+    chamber('cham-b', 'beta', { completed: true }),
+    chamber('cham-c', 'gamma', { archived: true }),
   ]
 
   test('completed and archived chambers are hidden until the owner asks for them', () => {
-    useAppStore.setState({ streams: MIXED, hubRole: 'owner', showCompletedArchived: false })
+    useAppStore.setState({ chambers: MIXED, hubRole: 'owner', showCompletedArchived: false })
     render(<ProjectsView />)
     expect(screen.getByText('alpha')).toBeInTheDocument()
     expect(screen.queryByText('beta')).toBeNull()
@@ -136,7 +160,7 @@ describe('groups, badge and meta line', () => {
   })
 
   test('with the toggle on they appear as their own collapsed groups', () => {
-    useAppStore.setState({ streams: MIXED, hubRole: 'owner', showCompletedArchived: true })
+    useAppStore.setState({ chambers: MIXED, hubRole: 'owner', showCompletedArchived: true })
     const { container } = render(<ProjectsView />)
     expect(screen.getByText('Completed (1)')).toBeInTheDocument()
     expect(screen.getByText('Archived (1)')).toBeInTheDocument()
@@ -147,7 +171,7 @@ describe('groups, badge and meta line', () => {
   })
 
   test('a guest never sees the groups even with the flag set', () => {
-    useAppStore.setState({ streams: MIXED, hubRole: 'invite', showCompletedArchived: true })
+    useAppStore.setState({ chambers: MIXED, hubRole: 'invite', showCompletedArchived: true })
     const { container } = render(<ProjectsView />)
     expect(screen.queryByText(/^Completed/)).toBeNull()
     expect(screen.queryByText(/^Archived/)).toBeNull()
@@ -155,7 +179,7 @@ describe('groups, badge and meta line', () => {
   })
 
   test('a guest still sees their completed and archived chambers as ordinary rows', () => {
-    useAppStore.setState({ streams: MIXED, hubRole: 'invite', showCompletedArchived: false })
+    useAppStore.setState({ chambers: MIXED, hubRole: 'invite', showCompletedArchived: false })
     const { container } = render(<ProjectsView />)
     // The owner-only fold is not a filter for anyone else: a guest scoped to a
     // finished chamber would otherwise be left staring at an empty list.
@@ -167,7 +191,7 @@ describe('groups, badge and meta line', () => {
 
   test('an open question is badged with an explanation', () => {
     useAppStore.setState({
-      streams: [{ stream_id: 1, name: 'alpha', description: 'A', hasOpenQuestion: true }],
+      chambers: [chamber('cham-a', 'alpha', { hasOpenQuestion: true })],
     })
     render(<ProjectsView />)
     const badge = screen.getByTitle('Open question — agent is waiting on you')
@@ -175,10 +199,12 @@ describe('groups, badge and meta line', () => {
   })
 
   test('a running chamber shows its next wake; a stopped one does not', () => {
+    // A stopped chamber's `nextWakeDisplay` is already nulled at the client
+    // boundary, so the list has nothing stale to print.
     useAppStore.setState({
-      streams: [
-        { stream_id: 1, name: 'alpha', description: 'A', running: true, nextWake: 'in 2 h' },
-        { stream_id: 2, name: 'beta', description: 'B', running: false, nextWake: 'in 2 h' },
+      chambers: [
+        chamber('cham-a', 'alpha', { running: true, nextWakeDisplay: 'in 2 h' }),
+        chamber('cham-b', 'beta', { running: false, nextWakeDisplay: null }),
       ],
     })
     render(<ProjectsView />)
@@ -189,16 +215,16 @@ describe('groups, badge and meta line', () => {
 
 describe('the folded chambers are always accounted for', () => {
   const MIXED_ACTIVE = [
-    { stream_id: 1, name: 'alpha', description: 'A' },
-    { stream_id: 2, name: 'beta', description: 'B', completed: true },
-    { stream_id: 3, name: 'gamma', description: 'C', archived: true },
+    chamber('cham-a', 'alpha'),
+    chamber('cham-b', 'beta', { completed: true }),
+    chamber('cham-c', 'gamma', { archived: true }),
   ]
 
   test('a reveal row counts what the toggle is hiding', () => {
     // The old empty-state hint only fired when nothing active was left, so a
     // single active chamber was enough to make a completed one look lost.
     useAppStore.setState({
-      streams: MIXED_ACTIVE,
+      chambers: MIXED_ACTIVE,
       hubRole: 'owner',
       showCompletedArchived: false,
     })
@@ -208,7 +234,7 @@ describe('the folded chambers are always accounted for', () => {
 
   test('tapping it unfolds them in place', async () => {
     useAppStore.setState({
-      streams: MIXED_ACTIVE,
+      chambers: MIXED_ACTIVE,
       hubRole: 'owner',
       showCompletedArchived: false,
     })
@@ -221,7 +247,7 @@ describe('the folded chambers are always accounted for', () => {
 
   test('a guest is never shown a fold they do not have', () => {
     useAppStore.setState({
-      streams: MIXED_ACTIVE,
+      chambers: MIXED_ACTIVE,
       hubRole: 'invite',
       showCompletedArchived: false,
     })
@@ -240,9 +266,9 @@ test('an owner whose chambers are all put away is told where they went', () => {
   useAppStore.setState({
     hubRole: 'owner',
     showCompletedArchived: false,
-    streams: [
-      { stream_id: 1, name: 'done', description: '', completed: true },
-      { stream_id: 2, name: 'old', description: '', archived: true },
+    chambers: [
+      chamber('cham-a', 'done', { completed: true }),
+      chamber('cham-b', 'old', { archived: true }),
     ],
   })
   render(<ProjectsView />)

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 import { useAppStore, resetAppStore } from './store/appStore'
 import { saveCredentials } from './store/auth'
@@ -15,6 +15,37 @@ beforeEach(() => {
 afterEach(() => {
   window.history.replaceState(null, '', '/')
   vi.unstubAllGlobals()
+})
+
+test('the pre-cutover build\'s storage is purged at boot', async () => {
+  // Its id maps and message cache are keyed on numbers this build has no use
+  // for; left behind they are dead weight the quota still counts.
+  localStorage.setItem('agent-console.hub-ids.v2', '{}')
+  localStorage.setItem('agent-console.hub-msgids.hub||x', '{}')
+  localStorage.setItem('agent-console.cache.hub||x', '{}')
+  render(<App />)
+  await screen.findByRole('heading', { name: 'Agent Console' })
+  await waitFor(() =>
+    expect(Object.keys(localStorage).filter((k) => k.startsWith('agent-console.hub-'))).toEqual([]),
+  )
+  expect(localStorage.getItem('agent-console.cache.hub||x')).toBeNull()
+})
+
+test('a chamber pruned from under the user is explained on the list', async () => {
+  saveCredentials(creds)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      new Response(
+        JSON.stringify(String(url).endsWith('/api/whoami') ? { role: 'owner', name: 'Alice' } : []),
+        { status: 200 },
+      ),
+    ),
+  )
+  render(<App />)
+  await screen.findByRole('heading', { name: 'Projects' })
+  act(() => useAppStore.getState().setAccessNotice('You no longer have access to this chamber.'))
+  expect(await screen.findByText(/no longer have access/i)).toBeInTheDocument()
 })
 
 test('shows login when no credentials are stored', async () => {

@@ -4,17 +4,25 @@ import { SettingsSheet } from './SettingsSheet'
 import { HubClient } from '../api/hubClient'
 import { ApiError } from '../api/types'
 import { useAppStore, resetAppStore } from '../store/appStore'
-import type { Credentials, InitialState } from '../api/types'
+import type { Chamber, Credentials } from '../api/types'
+
+const chamber = (id: string, name = id) => ({
+  id,
+  name,
+  running: true,
+  agentRunning: false,
+  nextWakeDisplay: null,
+  completed: false,
+  archived: false,
+  hasOpenQuestion: false,
+})
 
 beforeEach(() => {
   resetAppStore()
   useAppStore.setState({
     creds: { token: 'k', name: 'me@b.c', role: 'owner' },
     settingsOpen: true,
-    streams: [
-      { stream_id: 1, name: 'alpha', description: 'A' },
-      { stream_id: 2, name: 'beta', description: 'B' },
-    ],
+    chambers: [chamber('cham-a', 'alpha'), chamber('cham-b', 'beta')],
   })
 })
 
@@ -116,10 +124,7 @@ describe('owner-only rows', () => {
   function ownerHub() {
     const client = new HubClient({ token: 'k', fetch: vi.fn() })
     vi.spyOn(client, 'refreshIndex').mockResolvedValue(undefined)
-    vi.spyOn(client, 'register').mockResolvedValue({
-      subscriptions: [{ stream_id: 3, name: 'gamma', description: '' }],
-      unread: [],
-    })
+    vi.spyOn(client, 'listChambers').mockResolvedValue([chamber('cham-c', 'gamma')])
     return client
   }
 
@@ -138,7 +143,9 @@ describe('owner-only rows', () => {
     render(<SettingsSheet />)
     await userEvent.click(screen.getByRole('button', { name: 'Refresh chambers' }))
     expect(client.refreshIndex).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(useAppStore.getState().streams.map((s) => s.name)).toEqual(['gamma']))
+    await waitFor(() =>
+      expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['gamma']),
+    )
   })
 
   test('a 401 while refreshing shows no inline error — the client already signed out', async () => {
@@ -169,8 +176,8 @@ test('a refresh that finishes after logout does not touch the next session', asy
   const creds: Credentials = { token: 'k', name: 'me@b.c', role: 'owner' }
   const hub = new HubClient({ token: creds.token, fetch: vi.fn() })
   vi.spyOn(hub, 'refreshIndex').mockResolvedValue(undefined)
-  let resolveRegister!: (v: InitialState) => void
-  vi.spyOn(hub, 'register').mockReturnValue(new Promise((r) => { resolveRegister = r }))
+  let resolveIndex!: (v: Chamber[]) => void
+  vi.spyOn(hub, 'listChambers').mockReturnValue(new Promise((r) => { resolveIndex = r }))
   useAppStore.setState({ hubRole: 'owner', client: hub, creds })
   render(<SettingsSheet />)
   await userEvent.click(screen.getByRole('button', { name: 'Refresh chambers' }))
@@ -178,8 +185,8 @@ test('a refresh that finishes after logout does not touch the next session', asy
   useAppStore.getState().logout()
   const other = new HubClient({ token: 'other-token', fetch: vi.fn() })
   useAppStore.setState({ client: other, creds: { ...creds, token: 'other-token' }, hubRole: 'owner' })
-  resolveRegister({ subscriptions: [{ stream_id: 1, name: 'stale-list', description: '' }], unread: [] })
+  resolveIndex([chamber('cham-stale', 'stale-list')])
   await new Promise((r) => setTimeout(r, 10))
-  expect(useAppStore.getState().streams).toEqual([])
+  expect(useAppStore.getState().chambers).toEqual([])
   expect(useAppStore.getState().creds?.token).toBe('other-token')
 })

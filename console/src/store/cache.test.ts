@@ -2,57 +2,71 @@ import {
   loadCachedState,
   saveCachedState,
   clearCachedState,
+  purgeLegacyStorage,
   cacheKey,
+  CACHE_PREFIX,
   MAX_CACHED_MESSAGES,
 } from './cache'
-import type { Message } from '../api/types'
+import type { ChamberMessage } from '../api/types'
 
-// Two tokens, which is what separates two caches — a reused display name does
-// not.
-const account = { token: 'tok-alice' }
-const other = { token: 'tok-bob' }
-const streams = [{ stream_id: 1, name: 'alpha', description: 'A' }]
-
-function makeMsg(id: number): Message {
-  return {
-    id, sender_full_name: 'Bot', sender_email: 'bot@b.c',
-    timestamp: 1755100000 + id, content: `m${id}`, stream_id: 1, subject: '',
-  }
-}
-
-beforeEach(() => {
-  localStorage.removeItem(cacheKey(account))
-  localStorage.removeItem(cacheKey(other))
+const creds = { token: 'k' }
+const m = (n: number): ChamberMessage => ({
+  id: `outbox/${n}.md`,
+  chamberId: 'a',
+  direction: 'outbox',
+  sender: 'x',
+  subject: '',
+  body: '',
+  timestamp: `2026-08-15T10:${String(n).padStart(2, '0')}:00`,
+  session: null,
+  isQuestion: false,
 })
 
-test('saved state round-trips', () => {
-  saveCachedState(account, streams, { 1: [makeMsg(1), makeMsg(2)] })
-  const loaded = loadCachedState(account)
-  expect(loaded?.streams).toEqual(streams)
-  expect(loaded?.messagesByStream[1].map((m) => m.id)).toEqual([1, 2])
+beforeEach(() => localStorage.clear())
+
+test('round-trips and trims to the last MAX_CACHED_MESSAGES', () => {
+  const msgs = Array.from({ length: MAX_CACHED_MESSAGES + 5 }, (_, i) => m(i))
+  saveCachedState(creds, {
+    chambers: [],
+    messagesByChamber: { a: msgs },
+    lastReadByChamber: { a: 'w' },
+  })
+  const back = loadCachedState(creds)!
+  expect(back.messagesByChamber.a).toHaveLength(MAX_CACHED_MESSAGES)
+  expect(back.messagesByChamber.a[0].id).toBe('outbox/5.md')
+  expect(back.lastReadByChamber).toEqual({ a: 'w' })
 })
 
-test('missing or corrupt entries load as null', () => {
-  expect(loadCachedState(account)).toBeNull()
-  localStorage.setItem(cacheKey(account), 'not json')
-  expect(loadCachedState(account)).toBeNull()
-  localStorage.setItem(cacheKey(account), JSON.stringify({ streams: 'nope' }))
-  expect(loadCachedState(account)).toBeNull()
+test('an empty conversation is not cached at all', () => {
+  saveCachedState(creds, { chambers: [], messagesByChamber: { a: [] }, lastReadByChamber: {} })
+  expect(loadCachedState(creds)!.messagesByChamber).toEqual({})
 })
 
-test('only the newest messages per stream are kept', () => {
-  const many = Array.from({ length: MAX_CACHED_MESSAGES + 20 }, (_, i) => makeMsg(i + 1))
-  saveCachedState(account, streams, { 1: many, 2: [] })
-  const loaded = loadCachedState(account)
-  expect(loaded?.messagesByStream[1]).toHaveLength(MAX_CACHED_MESSAGES)
-  expect(loaded?.messagesByStream[1].at(-1)?.id).toBe(MAX_CACHED_MESSAGES + 20)
-  expect(loaded?.messagesByStream[2]).toBeUndefined()
+test('a record written before watermarks existed still loads', () => {
+  localStorage.setItem(cacheKey({ token: 'x' }), '{"chambers":[],"messagesByChamber":{}}')
+  expect(loadCachedState({ token: 'x' })!.lastReadByChamber).toEqual({})
 })
 
-test('accounts are cached independently and cleared independently', () => {
-  saveCachedState(account, streams, { 1: [makeMsg(1)] })
-  saveCachedState(other, [], { 1: [makeMsg(9)] })
-  clearCachedState(account)
-  expect(loadCachedState(account)).toBeNull()
-  expect(loadCachedState(other)?.messagesByStream[1].map((m) => m.id)).toEqual([9])
+test('rejects a malformed record', () => {
+  localStorage.setItem(cacheKey({ token: 'x' }), '{"chambers":1}')
+  expect(loadCachedState({ token: 'x' })).toBeNull()
+})
+
+test('purgeLegacyStorage removes the pre-cutover keys and nothing else', () => {
+  localStorage.setItem('agent-console.cache.|me', '{}')
+  localStorage.setItem('agent-console.hub-ids.v2', '{}')
+  localStorage.setItem('agent-console.hub-ids.hub||x', '{}')
+  localStorage.setItem('agent-console.hub-msgids.hub||x', '{}')
+  localStorage.setItem('agent-console.credentials', '{}')
+  localStorage.setItem(`${CACHE_PREFIX}hub|k`, '{}')
+  purgeLegacyStorage()
+  expect(Object.keys(localStorage).sort()).toEqual(
+    [`${CACHE_PREFIX}hub|k`, 'agent-console.credentials'].sort(),
+  )
+})
+
+test('clearCachedState removes the entry', () => {
+  saveCachedState(creds, { chambers: [], messagesByChamber: {}, lastReadByChamber: {} })
+  clearCachedState(creds)
+  expect(loadCachedState(creds)).toBeNull()
 })

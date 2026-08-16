@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import type { StreamSub } from '../api/types'
-import { useAppStore, useIsOwner } from '../store/appStore'
+import type { Chamber } from '../api/types'
+import { unreadCount, useAppStore, useIsOwner } from '../store/appStore'
 import { Gear, Inbox, Plus } from '../components/Icon'
-import { initial, listTimeLabel, previewText, tileColor } from '../lib/format'
+import { initial, listTimeLabel, messageSeconds, previewText, tileColor } from '../lib/format'
 import { NewChamberSheet } from './NewChamberSheet'
 import { StatusDot } from '../components/StatusDot'
 
@@ -32,9 +32,13 @@ function SkeletonList() {
 }
 
 export function ProjectsView() {
-  const streams = useAppStore((s) => s.streams)
-  const unread = useAppStore((s) => s.unreadByStream)
-  const messages = useAppStore((s) => s.messagesByStream)
+  const chambers = useAppStore((s) => s.chambers)
+  // Selected once, at the top: `unreadCount` is derived per row inside `card`,
+  // because a selector returning a fresh map would re-render on every store
+  // write whether or not any count actually moved.
+  const messagesByChamber = useAppStore((s) => s.messagesByChamber)
+  const lastReadByChamber = useAppStore((s) => s.lastReadByChamber)
+  const selfName = useAppStore((s) => s.selfName)
   const connection = useAppStore((s) => s.connection)
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
@@ -45,52 +49,48 @@ export function ProjectsView() {
   // Every chamber this token can reach. The Completed/Archived fold below is
   // the only filing there is — a second, per-project hide switch used to live
   // in Settings and could leave a guest staring at an empty list.
-  const visible = streams
+  const visible = chambers
   // The folds are an owner's filing system, never a filter on anyone else's
   // list: a guest scoped to a finished chamber still sees it as a plain row,
   // so their whole list can never disappear behind a preference they cannot
   // reach. Archived wins over completed: the operator put it away on purpose,
   // and one chamber must never appear in two groups.
-  const archivedList = isOwner ? visible.filter((s) => s.archived === true) : []
-  const completedList = isOwner
-    ? visible.filter((s) => s.archived !== true && s.completed === true)
-    : []
-  const active = isOwner
-    ? visible.filter((s) => s.archived !== true && s.completed !== true)
-    : visible
+  const archivedList = isOwner ? visible.filter((c) => c.archived) : []
+  const completedList = isOwner ? visible.filter((c) => !c.archived && c.completed) : []
+  const active = isOwner ? visible.filter((c) => !c.archived && !c.completed) : visible
   const showGroups = isOwner && showCompletedArchived
   // Nothing to show yet *and* still connecting means the first register is in
   // flight — show the shape of the list rather than an empty state that would
   // be contradicted a moment later. Once offline, the empty state plus the
   // reconnecting banner is the honest report.
-  const loading = streams.length === 0 && connection === 'connecting'
+  const loading = chambers.length === 0 && connection === 'connecting'
 
-  function card(s: StreamSub) {
-    const count = unread[s.stream_id]?.length ?? 0
-    const last = messages[s.stream_id]?.at(-1)
-    const preview = last ? previewText(last.content) : s.description
+  function card(c: Chamber) {
+    const count = unreadCount({ messagesByChamber, lastReadByChamber, selfName }, c.id)
+    const last = messagesByChamber[c.id]?.at(-1)
+    const preview = last ? previewText(last.body) : ''
     return (
-      <li key={s.stream_id}>
+      <li key={c.id}>
         <button
           className="stream-card"
-          onClick={() => navigate({ name: 'conversation', streamId: s.stream_id })}
+          onClick={() => navigate({ name: 'conversation', chamberId: c.id })}
         >
-          <span className="stream-tile" style={{ background: tileColor(s.name) }}>
-            {initial(s.name)}
+          <span className="stream-tile" style={{ background: tileColor(c.name) }}>
+            {initial(c.name)}
           </span>
           <span className="stream-head">
             {/* Liveness reads before the name, the same way it does in the
                 conversation header — the glance that used to need the controls
                 sheet. */}
-            <StatusDot running={s.running} agentRunning={s.agentRunning} />
-            <span className="stream-name">{s.name}</span>
-            {s.hasOpenQuestion && (
+            <StatusDot running={c.running} agentRunning={c.agentRunning} />
+            <span className="stream-name">{c.name}</span>
+            {c.hasOpenQuestion && (
               <span className="question-badge" title="Open question — agent is waiting on you">
                 ?
               </span>
             )}
           </span>
-          {last && <span className="stream-meta">{listTimeLabel(last.timestamp)}</span>}
+          {last && <span className="stream-meta">{listTimeLabel(messageSeconds(last))}</span>}
           {count > 0 && (
             <span className="unread-badge" aria-label={`${count} unread`}>
               {count}
@@ -99,7 +99,9 @@ export function ProjectsView() {
           <span className="stream-desc">{preview}</span>
           {/* Only a started chamber has a real schedule; a stopped one reports
               whatever was pending when it died. */}
-          {s.running && s.nextWake && <span className="stream-wake">next wake {s.nextWake}</span>}
+          {c.running && c.nextWakeDisplay && (
+            <span className="stream-wake">next wake {c.nextWakeDisplay}</span>
+          )}
         </button>
       </li>
     )

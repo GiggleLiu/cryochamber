@@ -1,188 +1,120 @@
 import { create } from 'zustand'
-import { HubClient, HISTORY_FETCH_COUNT } from '../api/hubClient'
-import {
-  isMessageEvent,
-  isReadFlagsEvent,
-  type AppEvent,
-  type Credentials,
-  type InitialState,
-  type Message,
-  type StreamSub,
-  type User,
-} from '../api/types'
+import { HubClient } from '../api/hubClient'
+import { messageKey, type Chamber, type ChamberMessage, type Credentials } from '../api/types'
 import { saveCredentials, clearCredentials } from './auth'
 import { loadCachedState, saveCachedState, clearCachedState, CACHE_PREFIX } from './cache'
 import { accountKey } from '../lib/account'
 import { resetChamberEvents } from './chamberEvents'
 
-/** Per account — every token numbers its own chambers from 1, so one global
- * key would apply the wrong token's preference: whether the projects list
- * shows the completed and archived folds. */
+/** Per account: whether the projects list shows the completed and archived
+ * folds. A name is reusable and a token is not, so the preference is keyed on
+ * the token like every other per-account store. */
 const SHOW_COMPLETED_PREFIX = 'agent-console.show-archived.'
 
-export const AUTH_LOGOUT_REASON =
-  'Your session is no longer valid — please sign in again.'
+export const AUTH_LOGOUT_REASON = 'Your session is no longer valid — please sign in again.'
+export const ACCESS_REVOKED_NOTICE = 'You no longer have access to this chamber.'
 
-function dedupeById(msgs: Message[]): Message[] {
-  const seen = new Set<number>()
-  const out: Message[] = []
-  for (const m of msgs) {
-    if (!seen.has(m.id)) {
-      seen.add(m.id)
-      out.push(m)
-    }
-  }
-  out.sort((a, b) => a.id - b.id)
-  return out
-}
-
-export type View = { name: 'projects' } | { name: 'conversation'; streamId: number }
+export type View = { name: 'projects' } | { name: 'conversation'; chamberId: string }
 export type Connection = 'live' | 'connecting' | 'offline'
 export type HubRole = 'owner' | 'invite'
 
-/**
- * A message the user has sent that the thread has not shown back yet. Rendered
- * as a pending self-bubble so a send is never silently swallowed.
- *
- * `sending` → the request is in flight. `sent` → the server accepted it, and we
- * are waiting for the echo (SSE event or the next history fetch) that turns it
- * into a real message; it is removed when that arrives, or by a short fallback
- * timer if it never does. `failed` → the request failed and retry is the user's
- * to trigger, never automatic: without a server-side idempotency key a retry
- * that failed *after* the server committed would send the command twice.
- */
+/** A message the user sent that the thread has not shown back yet. `sending`
+ * → in flight; `sent` → the hub took it and minted `serverId`, waiting for
+ * that id to arrive through the stream or the next fetch; `failed` → retry is
+ * the user's (no idempotency key on the hub, so never automatic). */
 export interface OutboxItem {
-  /** Negative and monotonically decreasing, so it can key a React list next to
-   *  real message ids without ever colliding with one. */
-  localId: number
-  streamId: number
-  content: string
+  clientId: number
+  chamberId: string
+  body: string
   state: 'sending' | 'sent' | 'failed'
+  serverId: string | null
 }
 
-/** Drop outbox items the server has echoed back into the thread: same project,
- * identical text. Content matching, because the hub has no client-message-id to
- * correlate on yet; only `sent` items are eligible, so a message still in flight
- * is never mistaken for its own confirmation.
- *
- * Deliberately sender-agnostic: the hub stamps its own sender on what we send
- * (`alice (invite)` for `Alice`), so requiring our own address left every hub
- * bubble pending forever. The cost is that someone else posting the identical
- * text into the same project also retires it — a duplicate bubble disappearing
- * is far cheaper than one that never resolves. */
-function reconcileOutbox(
-  outboxByStream: Record<number, OutboxItem[]>,
-  arrived: Record<number, Message[]>,
-): Record<number, OutboxItem[]> {
-  let next = outboxByStream
-  for (const [key, msgs] of Object.entries(arrived)) {
-    const streamId = Number(key)
-    const pending = next[streamId]
-    if (!pending || pending.length === 0) continue
-    const echoed = new Set(msgs.map((m) => m.content.trim()))
-    if (echoed.size === 0) continue
-    const kept = pending.filter((o) => !(o.state === 'sent' && echoed.has(o.content.trim())))
-    if (kept.length !== pending.length) next = { ...next, [streamId]: kept }
+function byKey(a: ChamberMessage, b: ChamberMessage): number {
+  const ka = messageKey(a)
+  const kb = messageKey(b)
+  return ka < kb ? -1 : ka > kb ? 1 : 0
+}
+
+/** Dedupe by id, order by messageKey. */
+function mergeMessages(...lists: ChamberMessage[][]): ChamberMessage[] {
+  const byId = new Map<string, ChamberMessage>()
+  for (const list of lists) for (const m of list) if (!byId.has(m.id)) byId.set(m.id, m)
+  return [...byId.values()].sort(byKey)
+}
+
+/** Unread = messages above this chamber's read watermark from anyone but us.
+ * No watermark means the chamber was never opened on this device: only what
+ * arrived live since (the cached list) counts, which is what a cold boot showed
+ * before too. */
+export function unreadCount(
+  s: Pick<AppState, 'messagesByChamber' | 'lastReadByChamber' | 'selfName'>,
+  chamberId: string,
+): number {
+  const mark = s.lastReadByChamber[chamberId] ?? ''
+  let n = 0
+  for (const m of s.messagesByChamber[chamberId] ?? []) {
+    if (m.sender !== s.selfName && messageKey(m) > mark) n += 1
   }
-  return next
+  return n
 }
 
-let nextLocalId = -1
+let nextClientId = 1
 
 export interface AppState {
   creds: Credentials | null
   client: HubClient | null
   view: View
   settingsOpen: boolean
-  /** A newer console build is installed and waiting; the UpdateBar offers a reload. Transient. */
+  /** A newer console build is installed and waiting; the UpdateBar offers a
+   *  reload. Transient — never cached, never persisted. */
   updateAvailable: boolean
-  streams: StreamSub[]
-  unreadByStream: Record<number, number[]>
-  messagesByStream: Record<number, Message[]>
-  /** Id of the signed-in user; null until fetched once per session. */
-  ownUserId: number | null
-  /** Realm members for @-mention autocomplete; null until lazily fetched. */
-  users: User[] | null
-  /** Streams whose full history has been fetched; cleared on every register so a
-   *  re-register (e.g. expired event queue) re-fetches gaps over cached messages. */
-  loadedStreams: number[]
-  /** Owner preference: show the Completed and Archived groups in the list. */
+  chambers: Chamber[]
+  messagesByChamber: Record<string, ChamberMessage[]>
+  /** `messageKey` of the newest message seen when the chamber was last open. Persisted. */
+  lastReadByChamber: Record<string, string>
+  /** Chambers whose full history has been fetched this connection; cleared on every setChambers. */
+  loadedChambers: string[]
+  /** The name the hub stamps on this token's messages: what makes a bubble "mine". */
+  selfName: string
+  hubRole: HubRole | null
+  /** Version of the hub serving this console; null until whoami answers. */
+  hubVersion: string | null
   showCompletedArchived: boolean
-  setShowCompletedArchived(on: boolean): void
   connection: Connection
   /** Shown on the login screen after an auth-forced logout; cleared on next setCreds. */
   loginReason: string | null
-  /** Hub role behind the current token; null until whoami answers. Owner-only
-   *  UI — the per-chamber Invite sheet — keys off this. */
-  hubRole: HubRole | null
-  /** The name the hub stamps on this token's messages: what makes a bubble
-   *  "mine". Empty until a session exists. */
-  selfName: string
-  /** Version of the hub serving this console; null until whoami answers. */
-  hubVersion: string | null
-  setHubVersion(v: string | null): void
-  /** Unconfirmed sends per stream. Session-local: never cached, cleared on logout. */
-  outboxByStream: Record<number, OutboxItem[]>
+  /** One-line banner after a chamber was pruned from under the user; cleared on navigate. */
+  accessNotice: string | null
+  /** Unconfirmed sends per chamber. Session-local: never cached, cleared on logout. */
+  outboxByChamber: Record<string, OutboxItem[]>
   setCreds(c: Credentials): void
   logout(reason?: string): void
   navigate(v: View): void
   setSettingsOpen(open: boolean): void
   setUpdateAvailable(v: boolean): void
-  applyInitialState(s: InitialState): void
-  /** Merge fresh liveness into the projects already on screen. */
-  updateStreamStatus(
-    list: Array<{
-      stream_id: number
-      running?: boolean
-      agentRunning?: boolean
-      nextWake: string | null
-      completed: boolean
-      archived: boolean
-      hasOpenQuestion: boolean
-    }>,
-  ): void
-  setMessages(streamId: number, msgs: Message[]): void
-  applyEvents(events: AppEvent[]): void
-  clearUnread(streamId: number): void
-  /** Forget a project we no longer have access to: it leaves the list, its
-   *  messages and unreads go, and an open conversation on it returns to the
-   *  projects list. */
-  pruneStream(streamId: number): void
+  setChambers(list: Chamber[]): void
+  /** Merge fresh liveness into the chambers already on screen. */
+  updateChamberStatus(list: Chamber[]): void
+  setMessages(chamberId: string, msgs: ChamberMessage[]): void
+  applyMessage(m: ChamberMessage): void
+  markRead(chamberId: string): void
+  /** Forget a chamber we no longer have access to: it leaves the list, its
+   *  messages and watermark go, and an open conversation on it returns to the
+   *  projects list with a notice. */
+  pruneChamber(chamberId: string, notice?: string): void
+  setAccessNotice(n: string | null): void
+  setShowCompletedArchived(on: boolean): void
   setConnection(c: Connection): void
-  setOwnUserId(id: number): void
-  setUsers(users: User[]): void
   setHubRole(role: HubRole | null): void
-  /** Queue a send and return its local id; the caller drives the request. */
-  enqueueOutbox(streamId: number, content: string): number
-  resolveOutbox(streamId: number, localId: number): void
-  /** The server took it; the bubble now waits for its echo. */
-  markOutboxSent(streamId: number, localId: number): void
-  failOutbox(streamId: number, localId: number): void
-  retryOutbox(streamId: number, localId: number): void
-}
-
-/** Shared by failOutbox/retryOutbox: the only difference is the target state. */
-function setOutboxState(streamId: number, localId: number, next: OutboxItem['state']) {
-  return (state: AppState) => ({
-    outboxByStream: {
-      ...state.outboxByStream,
-      [streamId]: (state.outboxByStream[streamId] ?? []).map((o) =>
-        o.localId === localId ? { ...o, state: next } : o,
-      ),
-    },
-  })
-}
-
-export function showCompletedKey(creds: Credentials): string {
-  return SHOW_COMPLETED_PREFIX + accountKey(creds)
-}
-
-function loadShowCompleted(creds: Credentials): boolean {
-  try {
-    return localStorage.getItem(showCompletedKey(creds)) === 'true'
-  } catch {
-    return false
-  }
+  setHubVersion(v: string | null): void
+  /** Queue a send and return its client id; the caller drives the request. */
+  enqueueOutbox(chamberId: string, body: string): number
+  /** The hub took it and named it; the bubble now waits for that id. */
+  markOutboxSent(chamberId: string, clientId: number, serverId: string): void
+  failOutbox(chamberId: string, clientId: number): void
+  retryOutbox(chamberId: string, clientId: number): void
+  resolveOutbox(chamberId: string, clientId: number): void
 }
 
 const initialData = {
@@ -191,249 +123,270 @@ const initialData = {
   view: { name: 'projects' } as View,
   settingsOpen: false,
   updateAvailable: false,
-  streams: [] as StreamSub[],
-  unreadByStream: {} as Record<number, number[]>,
-  messagesByStream: {} as Record<number, Message[]>,
-  ownUserId: null as number | null,
-  users: null as User[] | null,
-  loadedStreams: [] as number[],
+  chambers: [] as Chamber[],
+  messagesByChamber: {} as Record<string, ChamberMessage[]>,
+  lastReadByChamber: {} as Record<string, string>,
+  loadedChambers: [] as string[],
+  selfName: '',
+  hubRole: null as HubRole | null,
+  hubVersion: null as string | null,
   showCompletedArchived: false,
   connection: 'connecting' as Connection,
   loginReason: null as string | null,
-  hubRole: null as HubRole | null,
-  selfName: '',
-  hubVersion: null as string | null,
-  outboxByStream: {} as Record<number, OutboxItem[]>,
+  accessNotice: null as string | null,
+  outboxByChamber: {} as Record<string, OutboxItem[]>,
+}
+
+/** Shared by failOutbox/retryOutbox: the only difference is the target state. */
+function setOutboxState(chamberId: string, clientId: number, next: OutboxItem['state']) {
+  return (state: AppState) => ({
+    outboxByChamber: {
+      ...state.outboxByChamber,
+      [chamberId]: (state.outboxByChamber[chamberId] ?? []).map((o) =>
+        o.clientId === clientId ? { ...o, state: next } : o,
+      ),
+    },
+  })
+}
+
+export function showCompletedKey(creds: Pick<Credentials, 'token'>): string {
+  return SHOW_COMPLETED_PREFIX + accountKey(creds)
+}
+
+function loadShowCompleted(creds: Pick<Credentials, 'token'>): boolean {
+  try {
+    return localStorage.getItem(showCompletedKey(creds)) === 'true'
+  } catch {
+    return false
+  }
 }
 
 export const useAppStore = create<AppState>()((set, get) => {
-  /** Mirror streams + messages to the per-account local cache so the next
-   * boot paints instantly. Called after every mutation of either. */
+  /** Mirror the list, messages and watermarks to the per-account cache so the
+   * next boot paints instantly and unread counts survive a reload. */
   const persist = () => {
     const s = get()
-    if (s.creds) saveCachedState(s.creds, s.streams, s.messagesByStream)
+    if (s.creds) {
+      saveCachedState(s.creds, {
+        chambers: s.chambers,
+        messagesByChamber: s.messagesByChamber,
+        lastReadByChamber: s.lastReadByChamber,
+      })
+    }
   }
 
   return {
-  ...initialData,
+    ...initialData,
 
-  setCreds: (c) => {
-    saveCredentials(c)
-    // Hydrate from the local cache before any network round-trip: the projects
-    // list and recent messages render immediately; register + history fetches
-    // then merge fresh data on top (loadedStreams stays empty so every opened
-    // conversation still re-fetches).
-    const cached = loadCachedState(c)
-    set({
-      creds: c,
-      // The client owns the only 401 path in the app: whatever call sees the
-      // revoked token, the app signs out exactly once.
-      client: new HubClient({
-        token: c.token,
-        onAuthFailure: () => get().logout(AUTH_LOGOUT_REASON),
-      }),
-      view: { name: 'projects' },
-      loginReason: null,
-      selfName: c.name,
-      // The role travels with the credentials now: whoami resolved it before
-      // this call, and a boot from storage re-asks and corrects it.
-      hubRole: c.role,
-      // The list preference is this account's own, so it is re-read here rather
-      // than carried over from whoever was signed in before.
-      showCompletedArchived: loadShowCompleted(c),
-      ...(cached ? { streams: cached.streams, messagesByStream: cached.messagesByStream } : {}),
-    })
-  },
-
-  logout: (reason) => {
-    const creds = get().creds
-    if (creds) clearCachedState(creds)
-    clearCredentials()
-    set({ ...initialData, loginReason: reason ?? null })
-  },
-
-  navigate: (v) => set({ view: v }),
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
-  setUpdateAvailable: (v) => set({ updateAvailable: v }),
-
-  applyInitialState: (s) => {
-    const unreadByStream: Record<number, number[]> = {}
-    for (const entry of s.unread) {
-      const list = unreadByStream[entry.stream_id] ?? []
-      for (const id of entry.unread_message_ids) {
-        if (!list.includes(id)) list.push(id)
-      }
-      unreadByStream[entry.stream_id] = list
-    }
-    set({
-      streams: [...s.subscriptions].sort((a, b) => a.name.localeCompare(b.name)),
-      unreadByStream,
-      // Runs on every register, including re-register after an expired queue:
-      // clear the loaded marker so open conversations re-fetch gap messages
-      // while the cached lists keep rendering instantly.
-      loadedStreams: [],
-    })
-    persist()
-  },
-
-  updateStreamStatus: (list) => {
-    const byId = new Map(list.map((s) => [s.stream_id, s]))
-    set((state) => ({
-      streams: state.streams.map((s) => {
-        const status = byId.get(s.stream_id)
-        return status
+    setCreds: (c) => {
+      saveCredentials(c)
+      // Hydrate from the local cache before any round-trip: the list and recent
+      // messages render immediately, and the network refresh merges on top
+      // (loadedChambers stays empty so every opened conversation re-fetches).
+      const cached = loadCachedState(c)
+      set({
+        creds: c,
+        // The client owns the only 401 path in the app: whatever call sees the
+        // revoked token, the app signs out exactly once.
+        client: new HubClient({
+          token: c.token,
+          onAuthFailure: () => get().logout(AUTH_LOGOUT_REASON),
+        }),
+        selfName: c.name,
+        hubRole: c.role,
+        view: { name: 'projects' },
+        loginReason: null,
+        accessNotice: null,
+        showCompletedArchived: loadShowCompleted(c),
+        ...(cached
           ? {
-              ...s,
-              // An update that omits a flag leaves what we knew in place.
-              running: status.running ?? s.running,
-              agentRunning: status.agentRunning ?? s.agentRunning,
-              nextWake: status.nextWake,
-              completed: status.completed,
-              archived: status.archived,
-              hasOpenQuestion: status.hasOpenQuestion,
+              chambers: cached.chambers,
+              messagesByChamber: cached.messagesByChamber,
+              lastReadByChamber: cached.lastReadByChamber,
             }
-          : s
+          : {}),
+      })
+    },
+
+    logout: (reason) => {
+      const creds = get().creds
+      if (creds) clearCachedState(creds)
+      clearCredentials()
+      set({ ...initialData, loginReason: reason ?? null })
+    },
+
+    navigate: (v) => set({ view: v, accessNotice: null }),
+    setSettingsOpen: (open) => set({ settingsOpen: open }),
+    setUpdateAvailable: (v) => set({ updateAvailable: v }),
+
+    setChambers: (list) => {
+      // Clearing loadedChambers on every index read is what makes a re-register
+      // re-fetch histories over whatever the stream left behind.
+      set({ chambers: [...list].sort((a, b) => a.name.localeCompare(b.name)), loadedChambers: [] })
+      persist()
+    },
+
+    updateChamberStatus: (list) => {
+      const byId = new Map(list.map((c) => [c.id, c]))
+      set((state) => ({
+        chambers: state.chambers.map((c) => {
+          const fresh = byId.get(c.id)
+          // Only liveness: a status refresh must not reorder or replace rows.
+          return fresh
+            ? {
+                ...c,
+                running: fresh.running,
+                agentRunning: fresh.agentRunning,
+                nextWakeDisplay: fresh.nextWakeDisplay,
+                completed: fresh.completed,
+                archived: fresh.archived,
+                hasOpenQuestion: fresh.hasOpenQuestion,
+              }
+            : c
+        }),
+      }))
+    },
+
+    /** The mailbox fetch is the whole history: it replaces what we had, except
+     * live messages newer than anything fetched (they raced the fetch). */
+    setMessages: (chamberId, msgs) => {
+      set((state) => {
+        const newest = msgs.length ? messageKey(msgs[msgs.length - 1]) : ''
+        const raced = (state.messagesByChamber[chamberId] ?? []).filter(
+          (m) => messageKey(m) > newest,
+        )
+        return {
+          messagesByChamber: {
+            ...state.messagesByChamber,
+            [chamberId]: mergeMessages(msgs, raced),
+          },
+          loadedChambers: state.loadedChambers.includes(chamberId)
+            ? state.loadedChambers
+            : [...state.loadedChambers, chamberId],
+        }
+      })
+      persist()
+    },
+
+    applyMessage: (m) => {
+      set((state) => {
+        const list = state.messagesByChamber[m.chamberId] ?? []
+        const messagesByChamber = list.some((x) => x.id === m.id)
+          ? state.messagesByChamber
+          : { ...state.messagesByChamber, [m.chamberId]: mergeMessages(list, [m]) }
+        // The id the hub minted is the only correlation there is: someone else
+        // posting the same text can no longer retire our pending bubble.
+        const pending = state.outboxByChamber[m.chamberId]
+        const outboxByChamber = pending?.some((o) => o.serverId === m.id)
+          ? {
+              ...state.outboxByChamber,
+              [m.chamberId]: pending.filter((o) => o.serverId !== m.id),
+            }
+          : state.outboxByChamber
+        return { messagesByChamber, outboxByChamber }
+      })
+      persist()
+    },
+
+    markRead: (chamberId) => {
+      const msgs = get().messagesByChamber[chamberId] ?? []
+      if (msgs.length === 0) return
+      const newest = messageKey(msgs[msgs.length - 1])
+      // Monotonic: a stale render must never walk the watermark backwards.
+      if ((get().lastReadByChamber[chamberId] ?? '') >= newest) return
+      set((state) => ({ lastReadByChamber: { ...state.lastReadByChamber, [chamberId]: newest } }))
+      persist()
+    },
+
+    // Access was revoked: navigating away is not enough, because the chamber
+    // stays in the list, stays tappable, and fails again on every tap.
+    pruneChamber: (chamberId, notice) => {
+      set((state) => {
+        const messagesByChamber = { ...state.messagesByChamber }
+        const lastReadByChamber = { ...state.lastReadByChamber }
+        const outboxByChamber = { ...state.outboxByChamber }
+        delete messagesByChamber[chamberId]
+        delete lastReadByChamber[chamberId]
+        delete outboxByChamber[chamberId]
+        return {
+          chambers: state.chambers.filter((c) => c.id !== chamberId),
+          messagesByChamber,
+          lastReadByChamber,
+          outboxByChamber,
+          loadedChambers: state.loadedChambers.filter((id) => id !== chamberId),
+          view:
+            state.view.name === 'conversation' && state.view.chamberId === chamberId
+              ? { name: 'projects' as const }
+              : state.view,
+          accessNotice: notice ?? state.accessNotice,
+        }
+      })
+      persist()
+    },
+
+    setAccessNotice: (n) => set({ accessNotice: n }),
+
+    setShowCompletedArchived: (on) =>
+      set((state) => {
+        if (state.creds) {
+          try {
+            localStorage.setItem(showCompletedKey(state.creds), String(on))
+          } catch {
+            /* storage unavailable: the choice still applies for this session */
+          }
+        }
+        return { showCompletedArchived: on }
       }),
-    }))
-  },
 
-  setMessages: (streamId, msgs) => {
-    set((state) => {
-      let existing = state.messagesByStream[streamId] ?? []
-      // A fetch that fills its whole history window may not reach back to
-      // older locally-cached messages — merging would render a silent hole in
-      // the middle of the thread. Drop anything older than the window; "Load
-      // earlier" re-fetches it contiguously.
-      if (msgs.length >= HISTORY_FETCH_COUNT && existing.length > 0) {
-        const oldest = Math.min(...msgs.map((m) => m.id))
-        existing = existing.filter((m) => m.id >= oldest)
-      }
-      return {
-        messagesByStream: {
-          ...state.messagesByStream,
-          [streamId]: dedupeById([...existing, ...msgs]),
+    setConnection: (c) => set({ connection: c }),
+    setHubRole: (role) => set({ hubRole: role }),
+    setHubVersion: (v) => set({ hubVersion: v }),
+
+    enqueueOutbox: (chamberId, body) => {
+      const clientId = nextClientId
+      nextClientId += 1
+      set((state) => ({
+        outboxByChamber: {
+          ...state.outboxByChamber,
+          [chamberId]: [
+            ...(state.outboxByChamber[chamberId] ?? []),
+            { clientId, chamberId, body, state: 'sending' as const, serverId: null },
+          ],
         },
-        loadedStreams: state.loadedStreams.includes(streamId)
-          ? state.loadedStreams
-          : [...state.loadedStreams, streamId],
-      }
-    })
-    persist()
-  },
+      }))
+      return clientId
+    },
 
-  applyEvents: (events) => {
-    set((state) => {
-      const messagesByStream = { ...state.messagesByStream }
-      const unreadByStream = { ...state.unreadByStream }
-      const self = state.selfName
-      // Only what this batch delivered, so an outbox item is retired by its own
-      // echo rather than by an identical message from last week.
-      const arrived: Record<number, Message[]> = {}
-      for (const ev of events) {
-        if (isMessageEvent(ev)) {
-          const m = ev.message
-          arrived[m.stream_id] = [...(arrived[m.stream_id] ?? []), m]
-          const list = messagesByStream[m.stream_id]
-          // Always append message events — even for streams whose history was
-          // never fetched — so live messages can never be lost to a later
-          // setMessages overwrite. setMessages merges with whatever exists.
-          if (!list || !list.some((x) => x.id === m.id)) {
-            messagesByStream[m.stream_id] = [...(list ?? []), m]
-          }
-          if (m.sender_email !== self) {
-            const prev = unreadByStream[m.stream_id] ?? []
-            if (!prev.includes(m.id)) unreadByStream[m.stream_id] = [...prev, m.id]
-          }
-        } else if (isReadFlagsEvent(ev) && ev.op === 'add') {
-          const read = new Set(ev.messages)
-          for (const key of Object.keys(unreadByStream)) {
-            const sid = Number(key)
-            unreadByStream[sid] = unreadByStream[sid].filter((id) => !read.has(id))
-          }
+    /** The hub took it and named it. If that message already sits in the
+     * thread (the stream beat the response), the bubble is done now. */
+    markOutboxSent: (chamberId, clientId, serverId) =>
+      set((state) => {
+        const already = (state.messagesByChamber[chamberId] ?? []).some((m) => m.id === serverId)
+        const items = state.outboxByChamber[chamberId] ?? []
+        return {
+          outboxByChamber: {
+            ...state.outboxByChamber,
+            [chamberId]: already
+              ? items.filter((o) => o.clientId !== clientId)
+              : items.map((o) =>
+                  o.clientId === clientId ? { ...o, state: 'sent' as const, serverId } : o,
+                ),
+          },
         }
-        // 'subscription' and unknown event types are intentionally ignored in v1;
-        // stream list refreshes on the next register().
-      }
-      return {
-        messagesByStream,
-        unreadByStream,
-        outboxByStream: reconcileOutbox(state.outboxByStream, arrived),
-      }
-    })
-    persist()
-  },
+      }),
 
-  clearUnread: (streamId) =>
-    set((state) => ({ unreadByStream: { ...state.unreadByStream, [streamId]: [] } })),
+    failOutbox: (chamberId, clientId) => set(setOutboxState(chamberId, clientId, 'failed')),
+    retryOutbox: (chamberId, clientId) => set(setOutboxState(chamberId, clientId, 'sending')),
 
-  // Access was revoked: navigating away is not enough, because the project
-  // stays in the list, stays tappable, and fails again on every tap.
-  pruneStream: (streamId) => {
-    set((state) => {
-      const messagesByStream = { ...state.messagesByStream }
-      const unreadByStream = { ...state.unreadByStream }
-      delete messagesByStream[streamId]
-      delete unreadByStream[streamId]
-      return {
-        streams: state.streams.filter((s) => s.stream_id !== streamId),
-        messagesByStream,
-        unreadByStream,
-        loadedStreams: state.loadedStreams.filter((id) => id !== streamId),
-        view:
-          state.view.name === 'conversation' && state.view.streamId === streamId
-            ? { name: 'projects' as const }
-            : state.view,
-      }
-    })
-    persist()
-  },
-
-  setShowCompletedArchived: (on) =>
-    set((state) => {
-      if (state.creds) {
-        try {
-          localStorage.setItem(showCompletedKey(state.creds), String(on))
-        } catch {
-          /* storage unavailable: the choice still applies for this session */
-        }
-      }
-      return { showCompletedArchived: on }
-    }),
-
-  setConnection: (c) => set({ connection: c }),
-  setOwnUserId: (id) => set({ ownUserId: id }),
-  setUsers: (users) => set({ users }),
-  setHubRole: (role) => set({ hubRole: role }),
-  setHubVersion: (v) => set({ hubVersion: v }),
-
-  enqueueOutbox: (streamId, content) => {
-    const localId = nextLocalId
-    nextLocalId -= 1
-    set((state) => ({
-      outboxByStream: {
-        ...state.outboxByStream,
-        [streamId]: [
-          ...(state.outboxByStream[streamId] ?? []),
-          { localId, streamId, content, state: 'sending' as const },
-        ],
-      },
-    }))
-    return localId
-  },
-
-  // Resolving drops the pending bubble; by then the confirmed message has
-  // arrived through the event stream (or the fallback timer gave up waiting).
-  resolveOutbox: (streamId, localId) =>
-    set((state) => ({
-      outboxByStream: {
-        ...state.outboxByStream,
-        [streamId]: (state.outboxByStream[streamId] ?? []).filter((o) => o.localId !== localId),
-      },
-    })),
-
-  markOutboxSent: (streamId, localId) => set(setOutboxState(streamId, localId, 'sent')),
-  failOutbox: (streamId, localId) => set(setOutboxState(streamId, localId, 'failed')),
-  retryOutbox: (streamId, localId) => set(setOutboxState(streamId, localId, 'sending')),
+    resolveOutbox: (chamberId, clientId) =>
+      set((state) => ({
+        outboxByChamber: {
+          ...state.outboxByChamber,
+          [chamberId]: (state.outboxByChamber[chamberId] ?? []).filter(
+            (o) => o.clientId !== clientId,
+          ),
+        },
+      })),
   }
 })
 
@@ -451,6 +404,7 @@ export function useIsOwner(): boolean {
 
 export function resetAppStore(): void {
   resetChamberEvents()
+  nextClientId = 1
   try {
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith(CACHE_PREFIX)) localStorage.removeItem(key)

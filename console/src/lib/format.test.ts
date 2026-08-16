@@ -1,6 +1,7 @@
 import {
   initial,
   listTimeLabel,
+  messageSeconds,
   previewText,
   relativeTimeLabel,
   separatorLabel,
@@ -118,5 +119,18 @@ describe('relativeTimeLabel', () => {
 
   test('an unparseable timestamp is shown as-is rather than as NaN', () => {
     expect(relativeTimeLabel('not a date', now)).toBe('not a date')
+  })
+})
+
+describe('messageSeconds', () => {
+  test('converts a hub timestamp to epoch seconds', () => {
+    expect(messageSeconds({ timestamp: '2026-08-15T10:00:00' })).toBe(
+      Math.floor(Date.parse('2026-08-15T10:00:00') / 1000),
+    )
+  })
+
+  test('an unparseable stamp is 0, never NaN', () => {
+    expect(messageSeconds({ timestamp: 'nonsense' })).toBe(0)
+    expect(messageSeconds({ timestamp: '' })).toBe(0)
   })
 })

@@ -1,432 +1,270 @@
-import { act, renderHook } from '@testing-library/react'
-import { useAppStore, resetAppStore, showCompletedKey, useIsOwner, AUTH_LOGOUT_REASON } from './appStore'
-import { loadCredentials } from './auth'
-import { loadCachedState, saveCachedState } from './cache'
-import type { Credentials, InitialState, Message } from '../api/types'
+import { renderHook } from '@testing-library/react'
+import {
+  useAppStore,
+  resetAppStore,
+  unreadCount,
+  useIsOwner,
+  showCompletedKey,
+} from './appStore'
+import type { Chamber, ChamberMessage, Credentials } from '../api/types'
+import { cacheKey, loadCachedState } from './cache'
 
-const creds: Credentials = { token: 'k', name: 'me@b.c', role: 'owner' }
-const otherCreds: Credentials = { token: 'k2', name: 'Bob', role: 'invite' }
+const creds: Credentials = { token: 'k', name: 'me', role: 'owner' }
 
-const initial: InitialState = {
-  subscriptions: [
-    { stream_id: 2, name: 'beta', description: 'B' },
-    { stream_id: 1, name: 'alpha', description: 'A' },
-  ],
-  unread: [
-    { stream_id: 1, topic: '', unread_message_ids: [10] },
-    { stream_id: 1, topic: 'chat', unread_message_ids: [11] },
-  ],
+/** A reload: an empty store over a full cache. `resetAppStore` also wipes the
+ * cache (test hygiene between files), so the record is put back to stand for
+ * what a real reload would find on disk. */
+function reload(): void {
+  const record = localStorage.getItem(cacheKey(creds))
+  resetAppStore()
+  if (record !== null) localStorage.setItem(cacheKey(creds), record)
+  useAppStore.getState().setCreds(creds)
 }
 
-function makeMsg(id: number, sender = 'bot@b.c'): Message {
+const chamber = (id: string, name = id): Chamber => ({
+  id,
+  name,
+  running: true,
+  agentRunning: false,
+  nextWakeDisplay: null,
+  completed: false,
+  archived: false,
+  hasOpenQuestion: false,
+})
+
+function msg(n: number, sender = 'agent', dir: 'inbox' | 'outbox' = 'outbox'): ChamberMessage {
+  const ts = `2026-08-15T10:${String(n).padStart(2, '0')}:00`
   return {
-    id, sender_full_name: 'Bot', sender_email: sender,
-    timestamp: 1755100000 + id, content: `m${id}`, stream_id: 1, subject: '',
+    id: `${dir}/${n}.md`,
+    chamberId: 'a',
+    direction: dir,
+    sender,
+    subject: '',
+    body: `m${n}`,
+    timestamp: ts,
+    session: null,
+    isQuestion: false,
   }
 }
 
 beforeEach(() => {
-  // Per-account keys (hidden projects, drafts) outlive resetAppStore by design.
   localStorage.clear()
   resetAppStore()
 })
 
-test('setCreds stores creds, builds a client, navigates to projects', () => {
+test('setCreds stores creds, builds a client, sets selfName and role, navigates to projects', () => {
   useAppStore.getState().setCreds(creds)
   const s = useAppStore.getState()
   expect(s.creds).toEqual(creds)
   expect(s.client).not.toBeNull()
-  expect(s.view).toEqual({ name: 'projects' })
-  // The identity the hub answered with travels into the store: the name that
-  // makes a bubble "mine", and the role owner-only UI keys off.
-  expect(s.selfName).toBe('me@b.c')
+  expect(s.selfName).toBe('me')
   expect(s.hubRole).toBe('owner')
+  expect(s.view).toEqual({ name: 'projects' })
 })
 
-test('the client setCreds builds signs the app out on a 401, once', async () => {
-  // The app's single logout path: whichever call meets the revoked token.
-  const fetchMock = vi.fn(async () => new Response('', { status: 401 }))
-  vi.stubGlobal('fetch', fetchMock)
-  try {
-    useAppStore.getState().setCreds(creds)
-    const client = useAppStore.getState().client!
-    await expect(client.whoami()).rejects.toMatchObject({ status: 401 })
-    expect(useAppStore.getState().creds).toBeNull()
-    expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
-    // A second failing call must not log out again over the next session.
-    useAppStore.getState().setCreds(creds)
-    await expect(client.chamberStatus('x')).rejects.toMatchObject({ status: 401 })
-    expect(useAppStore.getState().creds).toEqual(creds)
-  } finally {
-    vi.unstubAllGlobals()
-  }
-})
-
-test('setHubVersion records what whoami reported', () => {
-  useAppStore.getState().setHubVersion('0.3.0')
-  expect(useAppStore.getState().hubVersion).toBe('0.3.0')
-  useAppStore.getState().setHubVersion(null)
-  expect(useAppStore.getState().hubVersion).toBeNull()
-})
-
-test('applyInitialState sorts streams and merges per-topic unreads', () => {
-  useAppStore.getState().applyInitialState(initial)
-  const s = useAppStore.getState()
-  expect(s.streams.map((x) => x.name)).toEqual(['alpha', 'beta'])
-  expect(s.unreadByStream[1]).toEqual([10, 11])
-})
-
-test('message events append to loaded streams and count unread for others only', () => {
+test('setChambers sorts by name and clears loadedChambers', () => {
   useAppStore.getState().setCreds(creds)
-  useAppStore.getState().setMessages(1, [makeMsg(1)])
-  useAppStore.getState().applyEvents([
-    { id: 1, type: 'message', message: makeMsg(2) },
-    { id: 2, type: 'message', message: makeMsg(3, 'me@b.c') },
+  useAppStore.getState().setMessages('a', [msg(1)])
+  expect(useAppStore.getState().loadedChambers).toEqual(['a'])
+  useAppStore.getState().setChambers([chamber('b', 'beta'), chamber('a', 'alpha')])
+  expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['alpha', 'beta'])
+  expect(useAppStore.getState().loadedChambers).toEqual([])
+})
+
+test('setMessages replaces history but keeps live messages newer than the fetch', () => {
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().applyMessage(msg(5))
+  useAppStore.getState().setMessages('a', [msg(1), msg(2)])
+  expect(useAppStore.getState().messagesByChamber.a.map((m) => m.id)).toEqual([
+    'outbox/1.md',
+    'outbox/2.md',
+    'outbox/5.md',
   ])
-  const s = useAppStore.getState()
-  expect(s.messagesByStream[1].map((m) => m.id)).toEqual([1, 2, 3])
-  expect(s.unreadByStream[1]).toEqual([2]) // own message never unread
-})
-
-test('read-flag events remove unreads', () => {
-  useAppStore.getState().applyInitialState(initial)
-  useAppStore.getState().applyEvents([
-    { id: 3, type: 'update_message_flags', flag: 'read', op: 'add', messages: [10] },
+  // an older cached-only message is NOT kept: the fetch is the whole history
+  useAppStore.getState().setMessages('a', [msg(2)])
+  expect(useAppStore.getState().messagesByChamber.a.map((m) => m.id)).toEqual([
+    'outbox/2.md',
+    'outbox/5.md',
   ])
-  expect(useAppStore.getState().unreadByStream[1]).toEqual([11])
 })
 
-test('duplicate message event ids do not double-count unread', () => {
+test('applyMessage dedupes by id and orders by messageKey across directions', () => {
   useAppStore.getState().setCreds(creds)
-  useAppStore.getState().applyEvents([
-    { id: 1, type: 'message', message: makeMsg(9) },
-    { id: 2, type: 'message', message: makeMsg(9) },
+  useAppStore.getState().applyMessage(msg(2, 'agent', 'outbox'))
+  useAppStore.getState().applyMessage(msg(1, 'human', 'inbox'))
+  useAppStore.getState().applyMessage(msg(2, 'agent', 'outbox'))
+  expect(useAppStore.getState().messagesByChamber.a.map((m) => m.id)).toEqual([
+    'inbox/1.md',
+    'outbox/2.md',
   ])
-  const s = useAppStore.getState()
-  expect(s.unreadByStream[1]).toEqual([9])
-  expect(s.messagesByStream[1].map((m) => m.id)).toEqual([9])
 })
 
-test('applyInitialState dedupes unread ids across topics', () => {
-  useAppStore.getState().applyInitialState({
-    ...initial,
-    unread: [
-      { stream_id: 1, topic: '', unread_message_ids: [10] },
-      { stream_id: 1, topic: 'chat', unread_message_ids: [10, 11] },
-    ],
-  })
-  expect(useAppStore.getState().unreadByStream[1]).toEqual([10, 11])
-})
-
-test('message event for an un-fetched stream creates the list', () => {
+test('updateChamberStatus refreshes liveness without disturbing the list', () => {
   useAppStore.getState().setCreds(creds)
-  useAppStore.getState().applyEvents([
-    { id: 1, type: 'message', message: makeMsg(5) },
-  ])
-  expect(useAppStore.getState().messagesByStream[1].map((m) => m.id)).toEqual([5])
-})
-
-test('setMessages merges, dedupes and sorts with pre-existing event messages, and marks the stream loaded', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().applyEvents([
-    { id: 1, type: 'message', message: makeMsg(3) },
-  ])
-  useAppStore.getState().setMessages(1, [makeMsg(3), makeMsg(2), makeMsg(1)])
-  const s = useAppStore.getState()
-  expect(s.messagesByStream[1].map((m) => m.id)).toEqual([1, 2, 3])
-  expect(s.loadedStreams).toEqual([1])
-})
-
-test('applyInitialState clears loadedStreams but keeps cached messages', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().setMessages(1, [makeMsg(1)])
-  useAppStore.getState().applyInitialState(initial)
-  const s = useAppStore.getState()
-  expect(s.loadedStreams).toEqual([])
-  expect(s.messagesByStream[1].map((m) => m.id)).toEqual([1])
-})
-
-test('logout clears everything including stored credentials', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().applyInitialState(initial)
-  useAppStore.getState().logout()
-  const s = useAppStore.getState()
-  expect(s.creds).toBeNull()
-  expect(s.client).toBeNull()
-  expect(s.streams).toEqual([])
-  expect(loadCredentials()).toBeNull()
-})
-
-test('setOwnUserId stores the id and logout resets it', () => {
-  useAppStore.getState().setOwnUserId(7)
-  expect(useAppStore.getState().ownUserId).toBe(7)
-  useAppStore.getState().logout()
-  expect(useAppStore.getState().ownUserId).toBeNull()
-})
-
-test('setUsers stores users and logout resets them to null', () => {
-  const list = [{ user_id: 1, full_name: 'Alice', email: 'a@b.c', is_bot: false }]
-  useAppStore.getState().setUsers(list)
-  expect(useAppStore.getState().users).toEqual(list)
-  useAppStore.getState().logout()
-  expect(useAppStore.getState().users).toBeNull()
-})
-
-test('setCreds hydrates streams and messages from the local cache', () => {
-  saveCachedState(creds, [{ stream_id: 1, name: 'alpha', description: 'A' }], { 1: [makeMsg(4)] })
-  useAppStore.getState().setCreds(creds)
-  const s = useAppStore.getState()
-  expect(s.streams.map((x) => x.name)).toEqual(['alpha'])
-  expect(s.messagesByStream[1].map((m) => m.id)).toEqual([4])
-  // Still not marked loaded: opening the conversation re-fetches fresh history.
-  expect(s.loadedStreams).toEqual([])
-})
-
-test('store mutations persist to the cache and logout clears it', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().applyInitialState(initial)
-  useAppStore.getState().setMessages(1, [makeMsg(1)])
-  const cached = loadCachedState(creds)
-  expect(cached?.streams.map((x) => x.name)).toEqual(['alpha', 'beta'])
-  expect(cached?.messagesByStream[1].map((m) => m.id)).toEqual([1])
-  useAppStore.getState().logout()
-  expect(loadCachedState(creds)).toBeNull()
-})
-
-test('a full history window replaces cached messages older than the window', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().setMessages(1, [makeMsg(1), makeMsg(2)])
-  // 50 fresh messages, none overlapping the cache: merging would fake
-  // contiguity across the (1,2)…(100…) gap.
-  const window50 = Array.from({ length: 50 }, (_, i) => makeMsg(100 + i))
-  useAppStore.getState().setMessages(1, window50)
-  const ids = useAppStore.getState().messagesByStream[1].map((m) => m.id)
-  expect(ids[0]).toBe(100)
-  expect(ids).toHaveLength(50)
-})
-
-test('a short history window merges with cached messages (no gap possible)', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().setMessages(1, [makeMsg(1)])
-  useAppStore.getState().setMessages(1, [makeMsg(2), makeMsg(3)])
-  expect(useAppStore.getState().messagesByStream[1].map((m) => m.id)).toEqual([1, 2, 3])
-})
-
-test('logout stores a reason and setCreds clears it', () => {
-  useAppStore.getState().setCreds(creds)
-  useAppStore.getState().logout('session expired')
-  expect(useAppStore.getState().loginReason).toBe('session expired')
-  useAppStore.getState().setCreds(creds)
-  expect(useAppStore.getState().loginReason).toBeNull()
-})
-
-describe('updateStreamStatus', () => {
-  test('merges liveness into the matching projects and touches nothing else', () => {
-    useAppStore.getState().setCreds(creds)
-    useAppStore.getState().applyInitialState(initial)
-    useAppStore.getState().updateStreamStatus([
-      { stream_id: 1, running: true, agentRunning: false, nextWake: 'in 2 h', completed: false, archived: false, hasOpenQuestion: false },
+  useAppStore.getState().setChambers([chamber('a'), chamber('b')])
+  useAppStore
+    .getState()
+    .updateChamberStatus([
+      { ...chamber('a'), agentRunning: true, nextWakeDisplay: 'in 2 h', hasOpenQuestion: true },
     ])
-    const [alpha, beta] = useAppStore.getState().streams
-    expect(alpha).toEqual({
-      stream_id: 1, name: 'alpha', description: 'A', running: true, agentRunning: false, nextWake: 'in 2 h',
-      completed: false, archived: false, hasOpenQuestion: false,
-    })
-    // Not in the update: left exactly as it was, not reset to "unknown".
-    expect(beta).toEqual({ stream_id: 2, name: 'beta', description: 'B' })
+  const s = useAppStore.getState()
+  expect(s.chambers.map((c) => c.id)).toEqual(['a', 'b'])
+  expect(s.chambers[0]).toMatchObject({
+    agentRunning: true,
+    nextWakeDisplay: 'in 2 h',
+    hasOpenQuestion: true,
   })
-
-  test('an update that omits the flags preserves what was known', () => {
-    useAppStore.getState().applyInitialState(initial)
-    useAppStore.getState().updateStreamStatus([
-      { stream_id: 1, running: true, agentRunning: false, nextWake: 'in 2 h', completed: false, archived: false, hasOpenQuestion: false },
-    ])
-    useAppStore.getState().updateStreamStatus([{ stream_id: 1, nextWake: null, completed: false, archived: false, hasOpenQuestion: false }])
-    expect(useAppStore.getState().streams[0]).toMatchObject({
-      running: true, agentRunning: false, nextWake: null,
-    })
-  })
-
-  test('a status for a project we do not have is ignored', () => {
-    useAppStore.getState().applyInitialState(initial)
-    useAppStore.getState().updateStreamStatus([
-      { stream_id: 99, running: true, agentRunning: true, nextWake: null, completed: false, archived: false, hasOpenQuestion: false },
-    ])
-    expect(useAppStore.getState().streams.map((s) => s.stream_id)).toEqual([1, 2])
-  })
+  // A chamber the refresh did not mention keeps what we knew.
+  expect(s.chambers[1].agentRunning).toBe(false)
 })
 
-describe('pruneStream', () => {
-  test('removes the project everywhere and leaves its open conversation', () => {
+describe('unread watermark', () => {
+  test('counts messages above the watermark from others only; markRead moves it to the newest key', () => {
     useAppStore.getState().setCreds(creds)
-    useAppStore.getState().applyInitialState(initial)
-    useAppStore.getState().setMessages(1, [makeMsg(1)])
-    useAppStore.getState().navigate({ name: 'conversation', streamId: 1 })
-
-    useAppStore.getState().pruneStream(1)
-
-    const s = useAppStore.getState()
-    expect(s.streams.map((x) => x.name)).toEqual(['beta'])
-    expect(s.messagesByStream[1]).toBeUndefined()
-    expect(s.unreadByStream[1]).toBeUndefined()
-    expect(s.loadedStreams).toEqual([])
-    expect(s.view).toEqual({ name: 'projects' })
-    // The cache follows, so a reload does not resurrect it.
-    expect(loadCachedState(creds)?.streams.map((x) => x.name)).toEqual(['beta'])
+    useAppStore.getState().setChambers([chamber('a')])
+    useAppStore.getState().applyMessage(msg(1))
+    useAppStore.getState().applyMessage(msg(2, 'me'))
+    useAppStore.getState().applyMessage(msg(3))
+    expect(unreadCount(useAppStore.getState(), 'a')).toBe(2)
+    useAppStore.getState().markRead('a')
+    expect(unreadCount(useAppStore.getState(), 'a')).toBe(0)
+    useAppStore.getState().applyMessage(msg(4))
+    expect(unreadCount(useAppStore.getState(), 'a')).toBe(1)
   })
 
-  test('pruning some other project leaves the current view alone', () => {
+  test('an inbox message newer in time than an outbox one counts as unread (ids do not sort by time)', () => {
     useAppStore.getState().setCreds(creds)
-    useAppStore.getState().applyInitialState(initial)
-    useAppStore.getState().navigate({ name: 'conversation', streamId: 1 })
-    useAppStore.getState().pruneStream(2)
-    expect(useAppStore.getState().view).toEqual({ name: 'conversation', streamId: 1 })
-    expect(useAppStore.getState().streams.map((x) => x.name)).toEqual(['alpha'])
+    useAppStore.getState().applyMessage(msg(1, 'agent', 'outbox'))
+    useAppStore.getState().markRead('a')
+    useAppStore.getState().applyMessage(msg(2, 'other', 'inbox'))
+    expect(unreadCount(useAppStore.getState(), 'a')).toBe(1)
+  })
+
+  test('survives setChambers (re-register) and reload from cache', () => {
+    useAppStore.getState().setCreds(creds)
+    useAppStore.getState().setChambers([chamber('a')])
+    useAppStore.getState().applyMessage(msg(1))
+    useAppStore.getState().setChambers([chamber('a')])
+    expect(unreadCount(useAppStore.getState(), 'a')).toBe(1)
+    useAppStore.getState().markRead('a')
+    useAppStore.getState().applyMessage(msg(2))
+    const cached = loadCachedState(creds)!
+    expect(cached.lastReadByChamber.a).toBe('2026-08-15T10:01:00 outbox/1.md')
+    reload()
+    expect(unreadCount(useAppStore.getState(), 'a')).toBe(1)
+  })
+
+  test('markRead on an empty conversation writes no watermark', () => {
+    useAppStore.getState().setCreds(creds)
+    useAppStore.getState().markRead('a')
+    expect(useAppStore.getState().lastReadByChamber.a).toBeUndefined()
   })
 })
 
 describe('outbox', () => {
-  test('lifecycle: enqueue → fail → retry → resolve', () => {
-    const id = useAppStore.getState().enqueueOutbox(1, 'hello')
-    expect(id).toBeLessThan(0)
-    expect(useAppStore.getState().outboxByStream[1][0]).toMatchObject({
-      localId: id, streamId: 1, content: 'hello', state: 'sending',
-    })
-    useAppStore.getState().failOutbox(1, id)
-    expect(useAppStore.getState().outboxByStream[1][0].state).toBe('failed')
-    useAppStore.getState().retryOutbox(1, id)
-    expect(useAppStore.getState().outboxByStream[1][0].state).toBe('sending')
-    useAppStore.getState().resolveOutbox(1, id)
-    expect(useAppStore.getState().outboxByStream[1]).toEqual([])
-  })
-
-  test('local ids are unique and negative, so they never collide with real ids', () => {
-    const a = useAppStore.getState().enqueueOutbox(1, 'a')
-    const b = useAppStore.getState().enqueueOutbox(1, 'b')
-    const c = useAppStore.getState().enqueueOutbox(2, 'c')
-    expect(new Set([a, b, c]).size).toBe(3)
-    for (const id of [a, b, c]) expect(id).toBeLessThan(0)
-    expect(useAppStore.getState().outboxByStream[1]).toHaveLength(2)
-    expect(useAppStore.getState().outboxByStream[2]).toHaveLength(1)
-  })
-
-  test('failing or resolving an unknown id is a no-op', () => {
-    const id = useAppStore.getState().enqueueOutbox(1, 'a')
-    useAppStore.getState().failOutbox(1, -9999)
-    useAppStore.getState().resolveOutbox(2, id)
-    expect(useAppStore.getState().outboxByStream[1][0].state).toBe('sending')
-  })
-
-  test('a sent item is retired by its own echo', () => {
+  test('sent item resolves when the message with its server id arrives', () => {
     useAppStore.getState().setCreds(creds)
-    const id = useAppStore.getState().enqueueOutbox(1, '  do the thing  ')
-    useAppStore.getState().markOutboxSent(1, id)
-    useAppStore.getState().applyEvents([
-      { id: 1, type: 'message', message: makeMsg(20, 'me@b.c') },
-    ])
-    // Not this one: different text.
-    expect(useAppStore.getState().outboxByStream[1]).toHaveLength(1)
-    useAppStore.getState().applyEvents([
-      {
-        id: 2,
-        type: 'message',
-        message: { ...makeMsg(21, 'me@b.c'), content: 'do the thing' },
-      },
-    ])
-    expect(useAppStore.getState().outboxByStream[1]).toEqual([])
+    const clientId = useAppStore.getState().enqueueOutbox('a', 'hello')
+    useAppStore.getState().markOutboxSent('a', clientId, 'inbox/9.md')
+    expect(useAppStore.getState().outboxByChamber.a[0].state).toBe('sent')
+    useAppStore.getState().applyMessage({ ...msg(9, 'me', 'inbox'), body: 'different text' })
+    expect(useAppStore.getState().outboxByChamber.a).toEqual([])
   })
 
-  test('an echo never retires an item that is still in flight or failed', () => {
+  test('identical text from someone else does not retire a pending item', () => {
     useAppStore.getState().setCreds(creds)
-    const sending = useAppStore.getState().enqueueOutbox(1, 'again')
-    const failed = useAppStore.getState().enqueueOutbox(1, 'again')
-    useAppStore.getState().failOutbox(1, failed)
-    useAppStore.getState().applyEvents([
-      { id: 1, type: 'message', message: { ...makeMsg(22, 'me@b.c'), content: 'again' } },
-    ])
-    expect(useAppStore.getState().outboxByStream[1].map((o) => o.localId)).toEqual([
-      sending,
-      failed,
-    ])
+    const clientId = useAppStore.getState().enqueueOutbox('a', 'hello')
+    useAppStore.getState().markOutboxSent('a', clientId, 'inbox/9.md')
+    useAppStore.getState().applyMessage({ ...msg(3, 'other', 'inbox'), body: 'hello' })
+    expect(useAppStore.getState().outboxByChamber.a).toHaveLength(1)
   })
 
-  test('an echo retires our bubble even when the sender name differs', () => {
-    // The hub stamps its own sender on what we send (`alice (invite)` for
-    // `Alice`), so matching on the address left every bubble stuck.
-    useAppStore.getState().setCreds({ ...creds, name: 'Alice' })
-    const id = useAppStore.getState().enqueueOutbox(1, 'ping')
-    useAppStore.getState().markOutboxSent(1, id)
-    useAppStore.getState().applyEvents([
-      { id: 1, type: 'message', message: { ...makeMsg(23, 'alice (invite)'), content: 'ping' } },
-    ])
-    expect(useAppStore.getState().outboxByStream[1]).toEqual([])
-  })
-
-  test('an unrelated new message leaves the bubble pending', () => {
-    useAppStore.getState().setCreds({ ...creds, name: 'Alice' })
-    const id = useAppStore.getState().enqueueOutbox(1, 'ping')
-    useAppStore.getState().markOutboxSent(1, id)
-    useAppStore.getState().applyEvents([
-      { id: 1, type: 'message', message: { ...makeMsg(24, 'alice (invite)'), content: 'pong' } },
-      // Same text, different project: not our echo either.
-      {
-        id: 2,
-        type: 'message',
-        message: { ...makeMsg(25, 'alice (invite)'), stream_id: 2, content: 'ping' },
-      },
-    ])
-    expect(useAppStore.getState().outboxByStream[1]).toHaveLength(1)
-  })
-
-  test('the outbox is session-local: never cached, cleared on logout', () => {
+  test('markOutboxSent resolves at once if the message is already in the thread', () => {
     useAppStore.getState().setCreds(creds)
-    useAppStore.getState().setMessages(1, [makeMsg(1)])
-    useAppStore.getState().enqueueOutbox(1, 'pending')
-    expect(JSON.stringify(loadCachedState(creds))).not.toContain('pending')
-    useAppStore.getState().logout()
-    expect(useAppStore.getState().outboxByStream).toEqual({})
+    useAppStore.getState().applyMessage(msg(9, 'me', 'inbox'))
+    const clientId = useAppStore.getState().enqueueOutbox('a', 'hello')
+    useAppStore.getState().markOutboxSent('a', clientId, 'inbox/9.md')
+    expect(useAppStore.getState().outboxByChamber.a).toEqual([])
+  })
+
+  test('failOutbox / retryOutbox toggle state', () => {
+    useAppStore.getState().setCreds(creds)
+    const id = useAppStore.getState().enqueueOutbox('a', 'x')
+    useAppStore.getState().failOutbox('a', id)
+    expect(useAppStore.getState().outboxByChamber.a[0].state).toBe('failed')
+    useAppStore.getState().retryOutbox('a', id)
+    expect(useAppStore.getState().outboxByChamber.a[0].state).toBe('sending')
+  })
+
+  test('resolveOutbox drops the item the fallback timer gave up on', () => {
+    useAppStore.getState().setCreds(creds)
+    const id = useAppStore.getState().enqueueOutbox('a', 'x')
+    useAppStore.getState().resolveOutbox('a', id)
+    expect(useAppStore.getState().outboxByChamber.a).toEqual([])
+  })
+
+  test('the outbox is session-local: it is never written to the cache', () => {
+    useAppStore.getState().setCreds(creds)
+    useAppStore.getState().applyMessage(msg(1))
+    useAppStore.getState().enqueueOutbox('a', 'unsent')
+    expect(JSON.stringify(loadCachedState(creds))).not.toContain('unsent')
   })
 })
 
-describe('useIsOwner', () => {
-  test('is true only for the owner role', () => {
-    const { result, rerender } = renderHook(() => useIsOwner())
-    expect(result.current).toBe(false) // role not known yet
-    act(() => useAppStore.setState({ hubRole: 'invite' }))
-    rerender()
-    expect(result.current).toBe(false)
-    act(() => useAppStore.setState({ hubRole: 'owner' }))
-    rerender()
-    expect(result.current).toBe(true)
-  })
+test('pruneChamber drops list, messages, watermark, and leaves the conversation with a notice', () => {
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().setChambers([chamber('a'), chamber('b')])
+  useAppStore.getState().applyMessage(msg(1))
+  useAppStore.getState().markRead('a')
+  useAppStore.getState().navigate({ name: 'conversation', chamberId: 'a' })
+  useAppStore.getState().pruneChamber('a', 'gone')
+  const s = useAppStore.getState()
+  expect(s.chambers.map((c) => c.id)).toEqual(['b'])
+  expect(s.messagesByChamber.a).toBeUndefined()
+  expect(s.lastReadByChamber.a).toBeUndefined()
+  expect(s.view).toEqual({ name: 'projects' })
+  expect(s.accessNotice).toBe('gone')
 })
 
-describe('show completed & archived', () => {
-  const creds: Credentials = { token: 'tok', name: 'Owner', role: 'owner' }
-
-  test('defaults off and persists per account', () => {
-    useAppStore.getState().setCreds(creds)
-    expect(useAppStore.getState().showCompletedArchived).toBe(false)
-    act(() => useAppStore.getState().setShowCompletedArchived(true))
-    expect(localStorage.getItem(showCompletedKey(creds))).toBe('true')
-  })
-
-  test("signing back in re-reads this account's own choice", () => {
-    useAppStore.getState().setCreds(creds)
-    act(() => useAppStore.getState().setShowCompletedArchived(true))
-    const other: Credentials = { ...creds, token: 'other-token' }
-    useAppStore.getState().setCreds(other)
-    expect(useAppStore.getState().showCompletedArchived).toBe(false)
-    useAppStore.getState().setCreds(creds)
-    expect(useAppStore.getState().showCompletedArchived).toBe(true)
-  })
+test('navigating clears the access notice', () => {
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().setAccessNotice('gone')
+  useAppStore.getState().navigate({ name: 'conversation', chamberId: 'b' })
+  expect(useAppStore.getState().accessNotice).toBeNull()
 })
 
-describe('updateAvailable', () => {
-  test('is transient state that starts false and toggles', () => {
-    resetAppStore()
-    expect(useAppStore.getState().updateAvailable).toBe(false)
-    useAppStore.getState().setUpdateAvailable(true)
-    expect(useAppStore.getState().updateAvailable).toBe(true)
-  })
+test('logout clears cache and returns to initial state', () => {
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().applyMessage(msg(1))
+  useAppStore.getState().logout('bye')
+  expect(useAppStore.getState().creds).toBeNull()
+  expect(useAppStore.getState().loginReason).toBe('bye')
+  expect(loadCachedState(creds)).toBeNull()
+})
+
+test('setCreds hydrates chambers, messages and watermarks from the cache', () => {
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().setChambers([chamber('a', 'alpha')])
+  useAppStore.getState().applyMessage(msg(1))
+  useAppStore.getState().markRead('a')
+  reload()
+  const s = useAppStore.getState()
+  expect(s.chambers.map((c) => c.name)).toEqual(['alpha'])
+  expect(s.messagesByChamber.a.map((m) => m.id)).toEqual(['outbox/1.md'])
+  expect(s.lastReadByChamber.a).toBe('2026-08-15T10:01:00 outbox/1.md')
+  // The cache is a first paint, not a fetch: every open conversation re-fetches.
+  expect(s.loadedChambers).toEqual([])
+})
+
+test('the update banner flag is transient and never persisted', () => {
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().setUpdateAvailable(true)
+  expect(useAppStore.getState().updateAvailable).toBe(true)
+  expect(JSON.stringify(loadCachedState(creds))).not.toContain('updateAvailable')
+})
+
+test('useIsOwner reflects role; showCompletedKey is per account', () => {
+  useAppStore.getState().setCreds(creds)
+  expect(renderHook(() => useIsOwner()).result.current).toBe(true)
+  expect(showCompletedKey(creds)).toContain('agent-console.show-archived.')
 })

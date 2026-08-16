@@ -36,12 +36,20 @@ function makeHub(invites: Invite[] = [ALICE, BOTH, GONE]): HubClient {
     }
     return new Response(JSON.stringify({ invites }), { status: 200 })
   })
-  const client = new HubClient({ token: creds.token, fetch: fetchFn as unknown as typeof fetch })
-  vi.spyOn(client, 'chamberIdFor').mockImplementation((sid) =>
-    sid === 1 ? 'cham-a' : sid === 2 ? 'cham-b' : undefined,
-  )
-  return client
+  return new HubClient({ token: creds.token, fetch: fetchFn as unknown as typeof fetch })
 }
+
+const chamber = (id: string, name = id) => ({
+  id,
+  name,
+  running: true,
+  agentRunning: false,
+  nextWakeDisplay: null,
+  completed: false,
+  archived: false,
+  hasOpenQuestion: false,
+})
+
 
 let writeText: ReturnType<typeof vi.fn>
 
@@ -51,10 +59,7 @@ beforeEach(() => {
     creds,
     client: makeHub(),
     hubRole: 'owner',
-    streams: [
-      { stream_id: 1, name: 'alpha', description: '' },
-      { stream_id: 2, name: 'beta', description: '' },
-    ],
+    chambers: [chamber('cham-a', 'alpha'), chamber('cham-b', 'beta')],
   })
   writeText = vi.fn(async () => {})
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })

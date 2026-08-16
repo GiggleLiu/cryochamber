@@ -1,158 +1,52 @@
-import { ApiError, isUnauthorized } from './types'
+import { ApiError, isUnauthorized, messageKey } from './types'
 import { readSse } from './sse'
-import { accountKey, fnv1a } from '../lib/account'
-import type { InitialState, Message, StreamSub, User } from './types'
+import type { Chamber, ChamberMessage } from './types'
 
-/** Stream ids are allocated from ONE map for every account on this hub, keyed
- * by account *and* chamber. The app shows the chambers of every token it
- * remembers in a single list, so two tokens numbering their own chambers from
- * 1 would collide — same number, different chamber, one message cache. */
-const IDS_KEY = 'agent-console.hub-ids.v2'
-
-/** The pre-merge, per-account id maps. Only read now, to carry a draft over to
- * the number its chamber was renumbered to. */
-const LEGACY_IDS_PREFIX = 'agent-console.hub-ids.'
-
-/** Message ids stay per account: they are local to one token's conversation
- * and never share a list. */
-const MSG_IDS_PREFIX = 'agent-console.hub-msgids.'
-
-/** History window size. The store's cache-merge logic keys off this: a fetch
- * that fills the whole window may not reach back to older cached messages. */
-export const HISTORY_FETCH_COUNT = 50
-
-/** Thrown by the client itself when a project name is not in its map yet
- * (register() has not run — offline cold boot). Not the hub's 404: only a 404
- * the hub actually answered with means the chamber is gone. */
-export class UnresolvedProjectError extends ApiError {
-  constructor(name: string) {
-    super(404, `unknown project ${name}`)
-    this.name = 'UnresolvedProjectError'
+/** Raw hub index row → `Chamber`. Absent flags are false: the hub only omits a
+ * flag when it has nothing to say, and the list must not paint "unknown". A
+ * stopped chamber's schedule is a stale leftover and never shown. */
+export function toChamber(raw: Record<string, unknown>): Chamber {
+  const running = raw.running === true
+  return {
+    id: String(raw.id ?? ''),
+    name: String(raw.name ?? raw.id ?? ''),
+    running,
+    agentRunning: raw.agent_running === true,
+    nextWakeDisplay:
+      running && typeof raw.next_wake_display === 'string' ? raw.next_wake_display : null,
+    completed: raw.completed === true,
+    archived: raw.archived === true,
+    hasOpenQuestion: raw.has_open_question === true,
   }
 }
 
-interface IdMap {
-  next: number
-  /** `<accountKey>\u0000<chamberId>` -> stream id. */
-  byKey: Record<string, number>
-}
-
-/** Shape of the per-account maps written before ids went global. */
-interface LegacyIdMap {
-  next: number
-  byChamber: Record<string, number>
-}
-
-/** `{ last }` is the highest number handed out so far, which is what makes a
- * fresh id after a same-millisecond arrival still land above its predecessor. */
-interface MessageIdMap {
-  last: number
-  byId: Record<string, number>
-}
-
-function load<T>(key: string, empty: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    if (raw) return JSON.parse(raw) as T
-  } catch {
-    /* storage unavailable or corrupt: start fresh */
-  }
-  return empty
-}
-
-function save(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    /* quota: ids stay session-local, which only costs a cache miss */
+/** Raw mailbox message (REST or SSE payload) → `ChamberMessage`. */
+export function toChamberMessage(
+  raw: Record<string, unknown>,
+  chamberId: string,
+): ChamberMessage {
+  return {
+    id: String(raw.id ?? ''),
+    chamberId,
+    direction: raw.direction === 'outbox' ? 'outbox' : 'inbox',
+    sender: typeof raw.from === 'string' ? raw.from : '',
+    subject: typeof raw.subject === 'string' ? raw.subject : '',
+    body: typeof raw.body === 'string' ? raw.body : '',
+    timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : '',
+    session: typeof raw.session === 'number' ? raw.session : null,
+    isQuestion: raw.is_question === true,
   }
 }
 
-/** Numeric stream id for a chamber. The store keys streams, the unread map and
- * the local message cache by number, so the mapping is persisted and ids are
- * handed out from 1 upward on first sight — stable across reloads, and unique
- * across every token this app remembers.
- */
-export function numericStreamId(chamberId: string, account: string): number {
-  const map = load<IdMap>(IDS_KEY, { next: 1, byKey: {} })
-  const key = `${account}\u0000${chamberId}`
-  const existing = map.byKey[key]
-  if (existing !== undefined) return existing
-  const id = map.next
-  map.byKey[key] = id
-  map.next = id + 1
-  save(IDS_KEY, map)
-  carryLegacyDraft(account, chamberId, id)
-  return id
-}
-
-/** Move an unsent draft onto the chamber's new number, once, when this build
- * first renumbers it. An unsent message is the one thing here a user would
- * miss; caches simply refetch. */
-function carryLegacyDraft(account: string, chamberId: string, newId: number): void {
-  try {
-    const legacy = localStorage.getItem(LEGACY_IDS_PREFIX + account)
-    if (!legacy) return
-    const oldId = (JSON.parse(legacy) as LegacyIdMap).byChamber?.[chamberId]
-    if (oldId === undefined || oldId === newId) return
-    const from = `agent-console.draft.${account}.${oldId}`
-    const draft = localStorage.getItem(from)
-    if (draft === null) return
-    localStorage.setItem(`agent-console.draft.${account}.${newId}`, draft)
-    localStorage.removeItem(from)
-  } catch {
-    /* storage unavailable: the draft stays where it was */
-  }
-}
-
-
-
-
-/**
- * Numeric surrogate for a mailbox message id, for a store that sorts and
- * dedupes by number.
- *
- * A hash of the id folded into the timestamp is not good enough: with 997
- * buckets two messages sharing a millisecond collide often (msg-55 and msg-108
- * do), and the store silently drops one of them. So the assignment is persisted
- * instead — an unseen id takes `max(timestamp, last + 1)`, which keeps ordinary
- * arrivals in timestamp order, guarantees distinctness, and stays stable across
- * reloads and client instances because it is written down.
- */
-export function numericMessageId(id: string, timestampMs: number, account: string): number {
-  const key = MSG_IDS_PREFIX + account
-  const map = load<MessageIdMap>(key, { last: 0, byId: {} })
-  const existing = map.byId[id]
-  if (existing !== undefined) return existing
-  const assigned = Math.max(timestampMs, map.last + 1)
-  map.byId[id] = assigned
-  map.last = assigned
-  save(key, map)
-  return assigned
-}
-
-interface ChamberMessage {
-  id: string
-  direction: string
-  from: string
-  subject: string
-  body: string
-  timestamp: string
-  session?: number | null
-  is_question: boolean
-}
-
-interface Chamber {
-  id: string
-  name: string
-  /** The chamber daemon holds its lock (the chamber is started). */
-  running?: boolean
-  /** A session is executing right now; implies `running`. */
-  agent_running?: boolean
-  next_wake_display?: string | null
-  completed?: boolean
-  archived?: boolean
-  has_open_question?: boolean
+/** Time order. Mailbox ids are `{inbox|outbox}/{filename}`, so sorting on the
+ * id alone interleaves the two directions wrongly — the timestamp leads and
+ * the id only breaks ties. */
+export function sortByKey(msgs: ChamberMessage[]): ChamberMessage[] {
+  return [...msgs].sort((a, b) => {
+    const ka = messageKey(a)
+    const kb = messageKey(b)
+    return ka < kb ? -1 : ka > kb ? 1 : 0
+  })
 }
 
 export interface Invite {
@@ -263,9 +157,13 @@ export interface WhoAmI {
 }
 
 /**
- * The app's only client: register/getMessages/sendMessage/… over the chamber
- * hub's REST API. Bearer token auth; every mutating call also carries the
- * `X-Cryo-CSRF` header the hub requires.
+ * The app's only client: listChambers/getMessages/sendMessage/… over the
+ * chamber hub's REST API. Bearer token auth; every mutating call also carries
+ * the `X-Cryo-CSRF` header the hub requires.
+ *
+ * Stateless with respect to identity: the hub's own ids are what the store
+ * keys on, so there is no name→id map to register, go stale, or disagree with
+ * the cache after a reload.
  */
 export class HubClient {
   private readonly token: string
@@ -280,15 +178,6 @@ export class HubClient {
     // (this.fetchFn(...) binds `this` to the client). Bind to undefined so
     // every call is the browser-legal bare invocation.
     this.fetchFn = (opts.fetch ?? fetch).bind(undefined)
-  }
-
-  /** stream name -> chamber id, refreshed by every register(). */
-  private byName = new Map<string, string>()
-  private byStreamId = new Map<number, string>()
-
-  /** Namespace for this token's persisted id maps. */
-  private get account(): string {
-    return accountKey({ token: this.token })
   }
 
   authHeaderValue(): string {
@@ -362,177 +251,53 @@ export class HubClient {
     }
   }
 
-  async register(): Promise<InitialState> {
-    const chambers = await this.chambers()
-    this.byName.clear()
-    this.byStreamId.clear()
-    const subscriptions: StreamSub[] = chambers.map((c) => {
-      const sid = numericStreamId(c.id, this.account)
-      this.byName.set(c.name, c.id)
-      this.byStreamId.set(sid, c.id)
-      return {
-        stream_id: sid,
-        name: c.name,
-        description: '',
-        // Absent flags stay undefined (a hub that says nothing about
-        // liveness must not paint every chamber as stopped).
-        running: typeof c.running === 'boolean' ? c.running : undefined,
-        agentRunning: typeof c.agent_running === 'boolean' ? c.agent_running : undefined,
-        // Only a started chamber has a real schedule; a stopped one reports
-        // whatever was pending when it died, which reads as nonsense.
-        nextWake: c.running === false ? null : (c.next_wake_display ?? null),
-        completed: c.completed === true,
-        archived: c.archived === true,
-        hasOpenQuestion: c.has_open_question === true,
-      }
-    })
-    // No server-side unread state on the hub: it is tracked client-side.
-    return { subscriptions, unread: [] }
+  async listChambers(): Promise<Chamber[]> {
+    const raw = await this.request<Record<string, unknown>[]>('/api/chambers')
+    return (Array.isArray(raw) ? raw : []).map(toChamber).filter((c) => c.id !== '')
   }
 
-  private async chambers(): Promise<Chamber[]> {
-    return this.request<Chamber[]>('/api/chambers')
-  }
-
-  /** Liveness only, for the `status` events the stream fires when a chamber
-   * wakes or falls asleep: the same index, re-read, without disturbing the
-   * projects the store already has. */
-  async chamberStatuses(): Promise<
-    Array<{
-      stream_id: number
-      running?: boolean
-      agentRunning?: boolean
-      nextWake: string | null
-      completed: boolean
-      archived: boolean
-      hasOpenQuestion: boolean
-    }>
-  > {
-    const chambers = await this.chambers()
-    // Same rule as register(): absent flags stay undefined — a hub that says
-    // nothing about liveness must not flip every project to "stopped".
-    return chambers.map((c) => ({
-      stream_id: numericStreamId(c.id, this.account),
-      running: typeof c.running === 'boolean' ? c.running : undefined,
-      agentRunning: typeof c.agent_running === 'boolean' ? c.agent_running : undefined,
-      nextWake: c.running === false ? null : (c.next_wake_display ?? null),
-      completed: c.completed === true,
-      archived: c.archived === true,
-      hasOpenQuestion: c.has_open_question === true,
-    }))
-  }
-
-  chamberIdFor(streamId: number): string | undefined {
-    return this.byStreamId.get(streamId)
-  }
-
-  /** Stream id for a chamber id — the inverse of `chamberIdFor`, for the paths
-   * that start from a hub id (a freshly created chamber) rather than a row. */
-  streamIdFor(chamberId: string): number | undefined {
-    for (const [streamId, id] of this.byStreamId) {
-      if (id === chamberId) return streamId
-    }
-    return undefined
-  }
-
-  private chamberByName(streamName: string): string {
-    const id = this.byName.get(streamName)
-    // 404 so a chamber that vanished from our scope is handled like any other
-    // "gone" resource rather than as a crash — but its own subclass, because
-    // the map is also empty before the first register() (offline cold boot),
-    // and that says nothing about whether the chamber still exists.
-    if (!id) throw new UnresolvedProjectError(streamName)
-    return id
-  }
-
-  toMessage(m: ChamberMessage, chamberId: string): Message {
-    const tsMs = Date.parse(m.timestamp) || 0
-    return {
-      id: numericMessageId(m.id, tsMs, this.account),
-      sender_full_name: m.from,
-      sender_email: m.from,
-      timestamp: Math.floor(tsMs / 1000),
-      content: m.body,
-      stream_id: numericStreamId(chamberId, this.account),
-      subject: m.subject,
-    }
-  }
-
-  /** Map an SSE message payload to a store message, or null if the chamber is
-   * unknown (e.g. scope changed since register). The hub sends the real mailbox
-   * id, which is what makes a live event and the same message re-fetched later
-   * collapse to one numeric id. Older hubs omit it; then the key is synthesized
-   * deterministically, so at least a redelivered event still dedupes. */
-  toChamberEventMessage(m: {
-    id?: string
-    chamber_id: string
-    from: string
-    subject: string
-    body: string
-    timestamp: string
-    is_question: boolean
-  }): Message | null {
-    if (!Array.from(this.byStreamId.values()).includes(m.chamber_id)) return null
-    return this.toMessage(
-      {
-        id: m.id ?? `${m.chamber_id}:${m.timestamp}:${m.from}:${fnv1a(m.body)}`,
-        direction: 'event',
-        from: m.from,
-        subject: m.subject,
-        body: m.body,
-        timestamp: m.timestamp,
-        is_question: m.is_question,
-      },
-      m.chamber_id,
-    )
-  }
-
-  async getMessages(streamName: string): Promise<Message[]> {
-    const chamberId = this.chamberByName(streamName)
-    const msgs = await this.request<ChamberMessage[]>(
+  /** The mailbox returns the whole history in one fetch — there is never an
+   * earlier window to ask for. */
+  async getMessages(chamberId: string): Promise<ChamberMessage[]> {
+    const raw = await this.request<Record<string, unknown>[]>(
       `/api/chambers/${encodeURIComponent(chamberId)}/messages`,
     )
-    // The mailbox returns the full history in one fetch, so there is never an
-    // earlier window to ask for.
-    return msgs.map((m) => this.toMessage(m, chamberId))
+    return sortByKey((Array.isArray(raw) ? raw : []).map((m) => toChamberMessage(m, chamberId)))
   }
 
-  async sendMessage(streamName: string, content: string): Promise<number> {
-    const chamberId = this.chamberByName(streamName)
-    await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: content }),
-    })
-    return Date.now()
+  /** SSE `message` payload → store message; null when it names no chamber.
+   * The store keys by chamber id, so a payload without one has nowhere to go. */
+  toEventMessage(payload: unknown): ChamberMessage | null {
+    if (!payload || typeof payload !== 'object') return null
+    const raw = payload as Record<string, unknown>
+    if (typeof raw.chamber_id !== 'string' || raw.chamber_id === '') return null
+    return toChamberMessage(raw, raw.chamber_id)
   }
 
-  async markStreamRead(_streamId: number): Promise<void> {
-    // Unread state is client-local on hub; nothing to sync.
+  /** The hub stamps the sender and answers with the mailbox id it minted;
+   * that id is what the outbox waits for. */
+  async sendMessage(chamberId: string, body: string): Promise<{ id: string }> {
+    const res = await this.request<{ id?: string }>(
+      `/api/chambers/${encodeURIComponent(chamberId)}/send`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      },
+    )
+    return { id: typeof res.id === 'string' ? res.id : '' }
   }
 
-  async getOwnUser(): Promise<{ user_id: number }> {
-    // Hub identities are names, not numeric ids; 0 never matches a mention's
-    // data-user-id, so own-mention highlighting simply stays off.
-    return { user_id: 0 }
-  }
-
-  async getUsers(): Promise<User[]> {
-    return [] // mention autocomplete falls back to senders seen in messages
-  }
-
-  async uploadFile(file: File, streamName?: string): Promise<string> {
-    if (!streamName) throw new ApiError(400, 'upload needs a project')
-    const chamberId = this.chamberByName(streamName)
+  async uploadFile(file: File, chamberId: string): Promise<string> {
     const form = new FormData()
     form.append('file', file)
     // No manual Content-Type: the browser must set the multipart boundary.
-    const body = await this.request<{ name: string; markdown: string }>(
+    const body = await this.request<{ name?: string; markdown?: string }>(
       `/api/chambers/${encodeURIComponent(chamberId)}/uploads`,
       { method: 'POST', body: form },
     )
-    const match = /\(([^)]+)\)$/.exec(body.markdown)
-    return match ? match[1] : `/api/chambers/${chamberId}/files/${body.name}`
+    const match = /\(([^)]+)\)$/.exec(body.markdown ?? '')
+    return match ? match[1] : `/api/chambers/${chamberId}/files/${body.name ?? ''}`
   }
 
   /** Owner-only chamber detail. Every id is encoded: a chamber id can carry a
