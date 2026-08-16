@@ -20,9 +20,12 @@
 //! Every served file carries an `ETag` and a `Cache-Control`: hashed output
 //! under `/assets/` is `immutable`, everything else is `no-cache`, so a deploy
 //! reaches an already-installed client on its next load. A matching
-//! `If-None-Match` answers `304` with no body. Only `GET` and `HEAD` reach any
-//! of this; other methods get `405` with `Allow: GET, HEAD`, because a page
-//! surface has nothing to write to.
+//! `If-None-Match` answers `304` with no body.
+//!
+//! Only `GET` and `HEAD` reach any of this; other methods get `405` with
+//! `Allow: GET, HEAD`, because a page surface has nothing to write to. Rule 1
+//! outranks that guard: `/api` is the hub API's for every method, so an
+//! unrouted API path is a `404` (a missing endpoint) rather than a `405`.
 //!
 //! An embedded lookup is a key lookup and cannot escape. A `console_dir`
 //! lookup gets the same containment discipline as chamber attachments:
@@ -194,6 +197,20 @@ fn serve_file(file: ConsoleFile, if_none_match: Option<&str>) -> Response {
 
 /// Router fallback: the console *is* the hub's page surface.
 pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
+    let raw = req.uri().path().to_string();
+    // Percent-decoding happens once, before containment and before the SPA
+    // decision, so `%2e%2e%2f` is judged as the `../` it is and `%2E` as a
+    // dot rather than as innocent literal characters.
+    let rel = urlencoding::decode(raw.trim_start_matches('/'))
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| raw.trim_start_matches('/').to_string());
+    let decoded = format!("/{rel}");
+    // API ownership is decided before the method guard: an unrouted `/api`
+    // path is a missing endpoint for every method, and answering it with a
+    // page-surface 405 would misreport the hub API's shape.
+    if is_api_path(&raw) || is_api_path(&decoded) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if !matches!(
         *req.method(),
         axum::http::Method::GET | axum::http::Method::HEAD
@@ -203,20 +220,6 @@ pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
             [(header::ALLOW, "GET, HEAD")],
         )
             .into_response();
-    }
-    let raw = req.uri().path().to_string();
-    if is_api_path(&raw) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    // Percent-decoding happens once, before containment and before the SPA
-    // decision, so `%2e%2e%2f` is judged as the `../` it is and `%2E` as a
-    // dot rather than as innocent literal characters.
-    let rel = urlencoding::decode(raw.trim_start_matches('/'))
-        .map(|s| s.into_owned())
-        .unwrap_or_else(|_| raw.trim_start_matches('/').to_string());
-    let decoded = format!("/{rel}");
-    if is_api_path(&decoded) {
-        return StatusCode::NOT_FOUND.into_response();
     }
     let if_none_match = req
         .headers()

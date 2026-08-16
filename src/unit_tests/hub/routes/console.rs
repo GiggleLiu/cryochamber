@@ -370,3 +370,34 @@ async fn spa_classification_uses_the_decoded_path() {
     let (status, _, _) = get(router, "/foo%2Ejs").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn api_ownership_outranks_the_method_guard() {
+    // `/api` belongs to the hub API for *every* method: an unrouted API path
+    // is a missing endpoint (404), not a page surface refusing to be written
+    // to (405). Only non-API paths answer 405.
+    let (_ws, _dist, router) = console_router();
+    let api = request(router.clone(), "POST", "/api/nope", &[]).await;
+    assert_eq!(api.status(), StatusCode::NOT_FOUND);
+    let encoded = request(router.clone(), "POST", "/%61pi/nope", &[]).await;
+    assert_eq!(encoded.status(), StatusCode::NOT_FOUND);
+    let page = request(router, "POST", "/c/alpha", &[]).await;
+    assert_eq!(page.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(header(&page, "allow"), "GET, HEAD");
+}
+
+#[test]
+fn if_none_match_accepts_the_wildcard_and_lists_in_either_strength() {
+    assert!(etag_matches("*", "\"abc\""));
+    assert!(etag_matches(" * ", "W/\"12-34\""));
+    // A browser revalidating several cached variants sends a list.
+    assert!(etag_matches("\"other\", \"abc\"", "\"abc\""));
+    assert!(etag_matches("W/\"other\", W/\"12-34\"", "W/\"12-34\""));
+    // Weak comparison: the `W/` prefix is not part of the identity, so a tag
+    // survives a proxy that added or dropped it.
+    assert!(etag_matches("W/\"abc\"", "\"abc\""));
+    assert!(etag_matches("\"12-34\"", "W/\"12-34\""));
+    assert!(!etag_matches("\"nope\"", "\"abc\""));
+    assert!(!etag_matches("\"nope\", \"neither\"", "\"abc\""));
+    assert!(!etag_matches("", "\"abc\""));
+}
