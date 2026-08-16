@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path as AxumPath, State},
     http::StatusCode,
-    response::Json,
+    response::{IntoResponse, Json, Response},
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -97,6 +97,12 @@ pub struct SendRequest {
 /// Open (loopback) mode has no role layer at all — the local user already has
 /// shell access to the chamber — so there `from` is still honored.
 ///
+/// Answers `{"ok":true,"id":<mailbox id>}` — the id the messages list and the
+/// SSE `message` frame use for the same file, so the client can reconcile an
+/// optimistic bubble on it. A write failure is a `500 {"error"}`: the client
+/// treats non-2xx as failure and shows the server's text, so a `200 ok:false`
+/// would be a lie it has to special-case.
+///
 /// Argument order matters: axum requires the `Json` body extractor last.
 pub async fn post_send(
     State(app): State<Arc<AppState>>,
@@ -104,8 +110,10 @@ pub async fn post_send(
     role: Option<axum::Extension<crate::hub::tokens::Role>>,
     owner_name: Option<axum::Extension<crate::hub::config::OwnerName>>,
     Json(req): Json<SendRequest>,
-) -> Result<Json<Value>, StatusCode> {
-    let (path, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+) -> Response {
+    let Some((path, entry)) = app.resolve(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let from = match role {
         Some(axum::Extension(crate::hub::tokens::Role::Invite { name, .. })) => name,
         Some(axum::Extension(crate::hub::tokens::Role::Owner)) => owner_name
@@ -124,8 +132,9 @@ pub async fn post_send(
     };
     match store.send_in(&msg) {
         Ok(written) => {
+            let id = crate::chamber_status::message_id_for_path("inbox", &written);
             let _ = app.tx.send(SseEvent::NewMessage {
-                id: crate::chamber_status::message_id_for_path("inbox", &written),
+                id: id.clone(),
                 chamber_id: entry.id,
                 direction: "inbox".into(),
                 from: msg.from.clone(),
@@ -134,11 +143,13 @@ pub async fn post_send(
                 timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 is_question: msg.is_question,
             });
-            Ok(Json(json!({"ok": true, "message": "Message sent"})))
+            (StatusCode::OK, Json(json!({"ok": true, "id": id}))).into_response()
         }
-        Err(e) => Ok(Json(
-            json!({"ok": false, "message": format!("Failed: {e}")}),
-        )),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed: {e}")})),
+        )
+            .into_response(),
     }
 }
 
