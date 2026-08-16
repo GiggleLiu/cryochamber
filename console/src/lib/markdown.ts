@@ -10,7 +10,15 @@ import katex from 'katex'
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 function renderTex(tex: string, displayMode: boolean): string {
-  return katex.renderToString(tex, { throwOnError: false, displayMode })
+  // maxSize/maxExpand bound what a hostile message can make the layout do:
+  // `\rule{100000em}{100000em}` would otherwise paint a page-sized block, and
+  // a self-referential `\def` would spin the renderer.
+  return katex.renderToString(tex, {
+    throwOnError: false,
+    displayMode,
+    maxSize: 500,
+    maxExpand: 1000,
+  })
 }
 
 // Display math: a paragraph-level $$…$$ block.

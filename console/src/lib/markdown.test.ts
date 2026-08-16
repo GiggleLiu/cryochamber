@@ -34,3 +34,15 @@ test('raw HTML in markdown is not passed through', () => {
 test('invalid TeX degrades instead of throwing', () => {
   expect(() => renderMarkdown('$\\frobnicate{$')).not.toThrow()
 })
+
+test('KaTeX size is bounded: a huge \\rule renders no dimension above 500em', () => {
+  const html = renderMarkdown('$\\rule{100000em}{100000em}$')
+  // The source TeX still echoes verbatim inside the MathML <annotation> (which
+  // the sanitizer drops); what must be bounded is every rendered dimension.
+  expect(html).not.toMatch(/[\w-]+\s*[:=]\s*"?100000em/)
+  expect(html).toContain('height:500em;')
+})
+
+test('KaTeX macro expansion is bounded and does not throw', () => {
+  expect(() => renderMarkdown('$\\def\\a{\\a\\a}\\a$')).not.toThrow()
+})

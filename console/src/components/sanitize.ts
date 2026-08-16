@@ -61,6 +61,15 @@ const KEYWORD_PROPS: Record<string, Set<string>> = {
 
 const LENGTH_UNITS = 'em|rem|ex|ch|px|pt|pc|in|cm|mm|%'
 const LENGTH_RE = new RegExp(`^[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:${LENGTH_UNITS})?$`)
+const MAX_LENGTH_MAGNITUDE = 100
+
+/** A length token within the magnitude KaTeX layout ever needs. */
+function isBoundedLength(token: string): boolean {
+  if (!LENGTH_RE.test(token)) return false
+  const magnitude = Math.abs(parseFloat(token))
+  return Number.isFinite(magnitude) && magnitude <= MAX_LENGTH_MAGNITUDE
+}
+
 const ANGLE_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:deg|rad|grad|turn)?$/
 const TRANSFORM_FNS = new Set([
   'scale', 'scalex', 'scaley', 'translate', 'translatex', 'translatey',
@@ -72,7 +81,7 @@ const TRANSFORM_CALL_RE = /([a-z]+)\(([^()]*)\)/gi
 function isLengthValue(value: string): boolean {
   const tokens = value.split(/\s+/).filter(Boolean)
   if (tokens.length === 0 || tokens.length > 4) return false
-  return tokens.every((t) => t === 'auto' || LENGTH_RE.test(t))
+  return tokens.every((t) => t === 'auto' || isBoundedLength(t))
 }
 
 /** `scale(-1)`, `translate(0,0.5em)` … with strictly numeric arguments. */
@@ -86,7 +95,7 @@ function isTransformValue(value: string): boolean {
     if (!TRANSFORM_FNS.has(match[1].toLowerCase())) return false
     const args = match[2].split(',').filter(Boolean)
     if (args.length === 0 || args.length > 6) return false
-    if (!args.every((a) => LENGTH_RE.test(a) || ANGLE_RE.test(a))) return false
+    if (!args.every((a) => isBoundedLength(a) || ANGLE_RE.test(a))) return false
     consumed += match[0].length
     calls += 1
   }

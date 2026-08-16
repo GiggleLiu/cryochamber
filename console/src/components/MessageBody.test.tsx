@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MessageBody, filenameFromHref, plainTextFallback, sanitizeHtml } from './MessageBody'
+import { filterStyleAttribute } from './sanitize'
 import { HubClient } from '../api/hubClient'
 import * as fx from '../test/fixtures/messageHtml'
 
@@ -158,6 +159,12 @@ describe('inline style filtering', () => {
   ])('rejects style: %s', (_name, style) => {
     const out = sanitizeHtml(`<span style="${style}">x</span>`)
     expect(out).not.toContain('style=')
+  })
+
+  test('style lengths above 100 units are rejected', () => {
+    expect(filterStyleAttribute('height:1000em;')).toBeNull()
+    expect(filterStyleAttribute('height:99.5em;')).toBe('height:99.5em;')
+    expect(filterStyleAttribute('margin:-0.5em 100px;')).toBe('margin:-0.5em 100px;')
   })
 
   test('strips url() paint references from SVG fill attributes', () => {
