@@ -17,6 +17,13 @@
 //!    command that fixes it rather than a bare 404 from a hub that otherwise
 //!    looks healthy.
 //!
+//! Every served file carries an `ETag` and a `Cache-Control`: hashed output
+//! under `/assets/` is `immutable`, everything else is `no-cache`, so a deploy
+//! reaches an already-installed client on its next load. A matching
+//! `If-None-Match` answers `304` with no body. Only `GET` and `HEAD` reach any
+//! of this; other methods get `405` with `Allow: GET, HEAD`, because a page
+//! surface has nothing to write to.
+//!
 //! An embedded lookup is a key lookup and cannot escape. A `console_dir`
 //! lookup gets the same containment discipline as chamber attachments:
 //! resolve first, then require the result to be under the canonicalized
@@ -138,9 +145,48 @@ fn is_spa_route(path: &str) -> bool {
     !path.rsplit('/').next().unwrap_or("").contains('.')
 }
 
-async fn serve_file(file: ConsoleFile) -> Response {
+/// Hashed build output may be cached forever; the entry points that name it
+/// (`index.html`, `sw.js`, the manifest, `precache.json`) must be revalidated
+/// on every load or a deploy would never reach an installed PWA.
+fn cache_control_for(rel: &str) -> &'static str {
+    if rel.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
+
+/// Does `if_none_match` (the raw header value) name `etag`? Handles the `*`
+/// wildcard and comma-separated lists; weak comparison, as GET allows.
+fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    let strip = |t: &str| t.trim().trim_start_matches("W/").to_string();
+    if if_none_match.trim() == "*" {
+        return true;
+    }
+    let want = strip(etag);
+    if_none_match.split(',').any(|t| strip(t) == want)
+}
+
+fn serve_file(file: ConsoleFile, if_none_match: Option<&str>) -> Response {
+    let cache = cache_control_for(&file.name);
+    if let Some(inm) = if_none_match {
+        if etag_matches(inm, &file.etag) {
+            return (
+                StatusCode::NOT_MODIFIED,
+                [
+                    (header::ETAG, file.etag.clone()),
+                    (header::CACHE_CONTROL, cache.to_string()),
+                ],
+            )
+                .into_response();
+        }
+    }
     (
-        [(header::CONTENT_TYPE, mime_for(&file.name))],
+        [
+            (header::CONTENT_TYPE, mime_for(&file.name).to_string()),
+            (header::CACHE_CONTROL, cache.to_string()),
+            (header::ETAG, file.etag.clone()),
+        ],
         file.bytes.into_owned(),
     )
         .into_response()
@@ -148,15 +194,35 @@ async fn serve_file(file: ConsoleFile) -> Response {
 
 /// Router fallback: the console *is* the hub's page surface.
 pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
-    let path = req.uri().path().to_string();
-    if is_api_path(&path) {
+    if !matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET, HEAD")],
+        )
+            .into_response();
+    }
+    let raw = req.uri().path().to_string();
+    if is_api_path(&raw) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    // Percent-decoding happens once, before containment, so `%2e%2e%2f` is
-    // judged as the `../` it is rather than as an innocent literal segment.
-    let rel = urlencoding::decode(path.trim_start_matches('/'))
+    // Percent-decoding happens once, before containment and before the SPA
+    // decision, so `%2e%2e%2f` is judged as the `../` it is and `%2E` as a
+    // dot rather than as innocent literal characters.
+    let rel = urlencoding::decode(raw.trim_start_matches('/'))
         .map(|s| s.into_owned())
-        .unwrap_or_else(|_| path.trim_start_matches('/').to_string());
+        .unwrap_or_else(|_| raw.trim_start_matches('/').to_string());
+    let decoded = format!("/{rel}");
+    if is_api_path(&decoded) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let if_none_match = req
+        .headers()
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
 
     let lookup = source.clone();
     let lookup_rel = rel.clone();
@@ -165,13 +231,13 @@ pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
         .ok()
         .flatten();
     if let Some(file) = found {
-        return serve_file(file).await;
+        return serve_file(file, if_none_match.as_deref());
     }
-    if !is_spa_route(&path) {
+    if !is_spa_route(&decoded) {
         return StatusCode::NOT_FOUND.into_response();
     }
     match source.get("index.html") {
-        Some(index) => serve_file(index).await,
+        Some(index) => serve_file(index, if_none_match.as_deref()),
         None => not_installed(&source),
     }
 }

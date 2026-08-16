@@ -271,6 +271,7 @@ fn spa_fallback_covers_extensionless_non_api_paths_only() {
     // A dotted last segment is a file request; a missing file must 404.
     assert!(!is_spa_route("/assets/index-abc123.js"));
     assert!(!is_spa_route("/favicon.ico"));
+    assert!(!is_spa_route("/foo.js"));
     // Hashed asset names contain dots only in the extension, but the guard
     // keys on `/assets` too so a directory listing can never become the SPA.
     assert!(!is_spa_route("/assets/nested"));
@@ -278,4 +279,94 @@ fn spa_fallback_covers_extensionless_non_api_paths_only() {
     assert!(!is_spa_route("/api/chambers"));
     // Segment-exact, like the auth classifier: `/apiary` is an ordinary path.
     assert!(is_spa_route("/apiary"));
+}
+
+/// Like [`get`], but keeps the whole response so a test can read its headers
+/// and send request headers of its own.
+async fn request(
+    router: axum::Router,
+    method: &str,
+    uri: &str,
+    extra: &[(&str, &str)],
+) -> axum::http::Response<Body> {
+    let mut req = Request::builder().method(method).uri(uri);
+    for (k, v) in extra {
+        req = req.header(*k, *v);
+    }
+    router
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+fn header<'a>(resp: &'a axum::http::Response<Body>, name: &str) -> &'a str {
+    resp.headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+}
+
+#[tokio::test]
+async fn hashed_assets_are_immutable_and_everything_else_is_no_cache() {
+    let (_ws, _dist, router) = console_router();
+    let asset = request(router.clone(), "GET", "/assets/index-abc123.js", &[]).await;
+    assert_eq!(
+        header(&asset, "cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+    for uri in ["/", "/c/alpha", "/sw.js", "/manifest.webmanifest"] {
+        let resp = request(router.clone(), "GET", uri, &[]).await;
+        assert_eq!(header(&resp, "cache-control"), "no-cache", "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn a_matching_if_none_match_answers_304_without_a_body() {
+    let (_ws, _dist, router) = console_router();
+    let first = request(router.clone(), "GET", "/assets/index-abc123.js", &[]).await;
+    let etag = header(&first, "etag").to_string();
+    assert!(!etag.is_empty(), "served files carry an ETag");
+    let second = request(
+        router.clone(),
+        "GET",
+        "/assets/index-abc123.js",
+        &[("if-none-match", etag.as_str())],
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(header(&second, "etag"), etag);
+    let bytes = axum::body::to_bytes(second.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(bytes.is_empty());
+    let stale = request(
+        router,
+        "GET",
+        "/assets/index-abc123.js",
+        &[("if-none-match", "\"nope\"")],
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn non_get_methods_are_405_on_the_page_surface() {
+    for method in ["POST", "PUT", "DELETE"] {
+        let (_ws, _dist, router) = console_router();
+        let resp = request(router, method, "/", &[]).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "{method}");
+        assert_eq!(header(&resp, "allow"), "GET, HEAD");
+    }
+    let (_ws, _dist, router) = console_router();
+    let resp = request(router, "HEAD", "/", &[]).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn spa_classification_uses_the_decoded_path() {
+    // `%2E` is a dot: this names a file, and a missing file is a 404, not the
+    // SPA entry (which would break a module loader asking for a script).
+    let (_ws, _dist, router) = console_router();
+    let (status, _, _) = get(router, "/foo%2Ejs").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
