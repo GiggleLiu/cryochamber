@@ -97,3 +97,23 @@ export function isReadFlagsEvent(ev: AppEvent): ev is FlagsEvent {
     Array.isArray((ev as FlagsEvent).messages)
   )
 }
+
+/** Every failed hub call, whatever the transport said: `status` is the HTTP
+ * status (200 when the hub answered `{ok:false}`), `message` is the hub's own
+ * sentence when it gave one. */
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+/** A revoked or foreign token. The client has already run `onAuthFailure`
+ * (logout) by the time a caller sees this; callers use it only to skip their
+ * inline error path. */
+export function isUnauthorized(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401
+}

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer, filterUsers, mentionQueryAt } from './Composer'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import type { HubClient } from '../api/hubClient'
 import type { User } from '../api/types'
 
@@ -32,7 +32,7 @@ beforeEach(() => {
 
 test('401 send triggers logout with the auth reason', async () => {
   const client = fakeClient({
-    sendMessage: vi.fn().mockRejectedValue(new ApiError('HTTP 401', 401)),
+    sendMessage: vi.fn().mockRejectedValue(new ApiError(401, 'HTTP 401')),
   })
   useAppStore.setState({ client })
   render(<Composer streamName="alpha" streamId={1} />)
@@ -282,7 +282,7 @@ describe('file upload', () => {
 
   test('failed upload shows the server message and leaves text unchanged', async () => {
     const client = fakeClient({
-      uploadFile: vi.fn().mockRejectedValue(new ApiError('File too large', 400)),
+      uploadFile: vi.fn().mockRejectedValue(new ApiError(400, 'File too large')),
     })
     useAppStore.setState({ client })
     render(<Composer streamName="alpha" streamId={1} />)

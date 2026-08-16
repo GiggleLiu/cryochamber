@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
 import { draftKey, sendViaOutbox } from '../lib/outbox'
 import { accountKey } from '../lib/account'
-import { isAuthError } from '../api/errors'
+import { isUnauthorized } from '../api/types'
 import { AlertCircle, ArrowUp, Paperclip } from './Icon'
 import type { User } from '../api/types'
 
@@ -168,7 +168,7 @@ export function Composer({ streamName, streamId }: { streamName: string; streamI
       const uri = await client.uploadFile(file, streamName)
       insertLink(file.name, uri)
     } catch (err) {
-      if (isAuthError(err)) {
+      if (isUnauthorized(err)) {
         useAppStore.getState().logout(AUTH_LOGOUT_REASON)
         return
       }

@@ -3,7 +3,7 @@ import { TodosTab, sortTodos } from './TodosTab'
 import { HubClient, type TodoItem } from '../../api/hubClient'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../../store/appStore'
 import { emitChamberEvent } from '../../store/chamberEvents'
-import { ApiError } from '../../api/errors'
+import { ApiError } from '../../api/types'
 import type { Credentials } from '../../api/types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
@@ -83,7 +83,7 @@ test('a status event re-reads the todos', async () => {
 
 test('a failed load stays inline', async () => {
   const hub = makeHub([])
-  vi.mocked(hub.chamberTodos).mockRejectedValue(new ApiError('HTTP 500', 500))
+  vi.mocked(hub.chamberTodos).mockRejectedValue(new ApiError(500, 'HTTP 500'))
   useAppStore.setState({ client: hub })
   render(<TodosTab chamberId="cham-a" />)
   expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -93,7 +93,7 @@ test('a failed load stays inline', async () => {
 
 test('a 401 signs out', async () => {
   const hub = makeHub([])
-  vi.mocked(hub.chamberTodos).mockRejectedValue(new ApiError('HTTP 401', 401))
+  vi.mocked(hub.chamberTodos).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   useAppStore.setState({ client: hub })
   render(<TodosTab chamberId="cham-a" />)
   await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
@@ -105,7 +105,7 @@ test('a failed refresh keeps the loaded list on screen beside the error', async 
   useAppStore.setState({ client: hub })
   render(<TodosTab chamberId="cham-a" />)
   await screen.findByText('task-1')
-  vi.mocked(hub.chamberTodos).mockRejectedValueOnce(new ApiError('HTTP 500', 500))
+  vi.mocked(hub.chamberTodos).mockRejectedValueOnce(new ApiError(500, 'HTTP 500'))
   emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
   expect(await screen.findByRole('alert')).toHaveTextContent(/could not load todos/i)
   expect(screen.getByText('task-1')).toBeInTheDocument()

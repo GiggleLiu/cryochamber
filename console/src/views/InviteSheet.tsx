@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HubClient, type Invite } from '../api/hubClient'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import { useAppStore } from '../store/appStore'
 import { logoutIfAuthError } from '../lib/authGuard'
 import { relativeTimeLabel } from '../lib/format'
@@ -33,15 +33,15 @@ export const OPEN_MODE_MESSAGE =
   'Sharing needs public mode. Restart the hub with `cryohub start --public` (after `cryohub token owner`).'
 
 function isOpenMode(e: unknown): boolean {
-  return e instanceof ApiError && e.httpStatus === 503
+  return e instanceof ApiError && e.status === 503
 }
 
 function mintErrorMessage(e: unknown): string {
   if (isOpenMode(e)) return OPEN_MODE_MESSAGE
-  if (e instanceof ApiError && e.httpStatus >= 400 && e.httpStatus < 500) {
+  if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
     const said = e.message.trim()
-    if (said && said !== `HTTP ${e.httpStatus}`) return said
-    return e.httpStatus === 400
+    if (said && said !== `HTTP ${e.status}`) return said
+    return e.status === 400
       ? 'That label is already in use — pick another.'
       : 'The hub refused to create this invite link.'
   }

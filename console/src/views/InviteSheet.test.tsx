@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { InviteSheet, defaultInviteLabel } from './InviteSheet'
 import { HubClient, type Invite } from '../api/hubClient'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
@@ -195,7 +195,7 @@ test('cancelling the confirm leaves the invite alone', async () => {
 describe('errors', () => {
   test('a 401 signs out instead of showing an inline error', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.spyOn(hub, 'listInvites').mockRejectedValue(new ApiError('HTTP 401', 401))
+    vi.spyOn(hub, 'listInvites').mockRejectedValue(new ApiError(401, 'HTTP 401'))
     renderSheet()
     await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
     expect(useAppStore.getState().loginReason).toBe(AUTH_LOGOUT_REASON)
@@ -206,7 +206,7 @@ describe('errors', () => {
 
   test('a failed list load says so instead of loading for ever', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.spyOn(hub, 'listInvites').mockRejectedValue(new ApiError('HTTP 500', 500))
+    vi.spyOn(hub, 'listInvites').mockRejectedValue(new ApiError(500, 'HTTP 500'))
     renderSheet()
     expect(
       await screen.findByText('Could not load who has access. Check your connection and try again.'),
@@ -218,7 +218,7 @@ describe('errors', () => {
 
   test('a failed remove says so and leaves the person on the list', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.spyOn(hub, 'revokeInvite').mockRejectedValue(new ApiError('HTTP 500', 500))
+    vi.spyOn(hub, 'revokeInvite').mockRejectedValue(new ApiError(500, 'HTTP 500'))
     renderSheet()
     const rows = await screen.findAllByRole('listitem')
     const alice = rows.find((r) => r.textContent?.includes('Alice'))!
@@ -233,7 +233,7 @@ describe('errors', () => {
   test('a name the hub already has is reported as that, not as a network problem', async () => {
     const hub = useAppStore.getState().client as HubClient
     // The hub answers a duplicate with a bare 400 — no words of its own.
-    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError('HTTP 400', 400))
+    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError(400, 'HTTP 400'))
     renderSheet()
     await screen.findAllByRole('listitem')
     await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
@@ -245,7 +245,7 @@ describe('errors', () => {
   test('a silent 4xx that is not a 400 is not blamed on the label', async () => {
     const hub = useAppStore.getState().client as HubClient
     // Owner rights lost mid-session: the hub answers 403, with no words.
-    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError('HTTP 403', 403))
+    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError(403, 'HTTP 403'))
     renderSheet()
     await screen.findAllByRole('listitem')
     await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
@@ -257,7 +257,7 @@ describe('errors', () => {
   test('a 4xx the hub explains is quoted in the hub\'s own words', async () => {
     const hub = useAppStore.getState().client as HubClient
     vi.spyOn(hub, 'createInvite').mockRejectedValue(
-      new ApiError("an active invite named 'Bob' already exists", 400),
+      new ApiError(400, "an active invite named 'Bob' already exists"),
     )
     renderSheet()
     await screen.findAllByRole('listitem')
@@ -270,7 +270,7 @@ describe('errors', () => {
 
   test('a failed mint stays in the sheet and re-enables the button', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError('HTTP 500', 500))
+    vi.spyOn(hub, 'createInvite').mockRejectedValue(new ApiError(500, 'HTTP 500'))
     renderSheet()
     await screen.findAllByRole('listitem')
     await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))

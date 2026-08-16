@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { isAuthError } from '../api/errors'
+import { isUnauthorized } from '../api/types'
 import { HubClient } from '../api/hubClient'
 import { readSse } from '../api/sse'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
@@ -94,7 +94,7 @@ export function useEventLoop(): void {
                     .chamberStatuses()
                     .then((l) => store.getState().updateStreamStatus(l))
                     .catch((e) => {
-                      if (isAuthError(e)) store.getState().logout(AUTH_LOGOUT_REASON)
+                      if (isUnauthorized(e)) store.getState().logout(AUTH_LOGOUT_REASON)
                     })
                   return
                 }
@@ -149,7 +149,7 @@ export function useEventLoop(): void {
         } catch (e) {
           if (stopped) return
           if (e instanceof ReregisterSignal) continue
-          if (isAuthError(e)) {
+          if (isUnauthorized(e)) {
             store.getState().logout(AUTH_LOGOUT_REASON)
             return
           }

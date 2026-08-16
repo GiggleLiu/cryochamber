@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { NewChamberSheet, buildNewChamberPayload } from './NewChamberSheet'
 import { HubClient } from '../api/hubClient'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import type { Credentials, InitialState } from '../api/types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
@@ -84,7 +84,7 @@ test('buildNewChamberPayload covers every branch', () => {
 
 test('the hub error is shown verbatim and the form stays open', async () => {
   const hub = useAppStore.getState().client as HubClient
-  vi.mocked(hub.createChamber).mockRejectedValue(new ApiError('chamber already exists', 400))
+  vi.mocked(hub.createChamber).mockRejectedValue(new ApiError(400, 'chamber already exists'))
   const onClose = vi.fn()
   render(<NewChamberSheet onClose={onClose} />)
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
@@ -96,7 +96,7 @@ test('the hub error is shown verbatim and the form stays open', async () => {
 
 test('a 401 signs out', async () => {
   const hub = useAppStore.getState().client as HubClient
-  vi.mocked(hub.createChamber).mockRejectedValue(new ApiError('HTTP 401', 401))
+  vi.mocked(hub.createChamber).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   render(<NewChamberSheet onClose={() => {}} />)
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
   await userEvent.click(screen.getByRole('button', { name: 'Create' }))
@@ -114,7 +114,7 @@ test('closing while a create is in flight waits for the outcome', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Create' }))
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).not.toHaveBeenCalled()
-  reject(new ApiError('chamber already exists', 400))
+  reject(new ApiError(400, 'chamber already exists'))
   expect(await screen.findByRole('alert')).toHaveTextContent('chamber already exists')
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)

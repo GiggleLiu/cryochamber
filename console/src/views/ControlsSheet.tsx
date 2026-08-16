@@ -7,6 +7,7 @@ import {
 } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
 import { subscribeChamberEvents } from '../store/chamberEvents'
+import { ApiError } from '../api/types'
 import { logoutIfAuthError } from '../lib/authGuard'
 import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
@@ -120,12 +121,17 @@ export function ControlsSheet({
       // The refetch comes first and the verdict after it: no optimistic UI, so
       // the pill only moves once `GET /status` says it moved.
       await load()
-      const message = result.message || FALLBACK_MESSAGE[action]
-      if (result.ok) setNotice(message)
-      else setActionError(message)
+      setNotice(result.message || FALLBACK_MESSAGE[action])
     } catch (e) {
       if (logoutIfAuthError(e)) return
-      setActionError(`Could not ${action} ${chamberName}. Check your connection and try again.`)
+      // A refusal reaches here too now (the client throws on `{ok:false}`), so
+      // the pill must still be refreshed before the hub's own words are shown.
+      await load().catch(() => {})
+      setActionError(
+        e instanceof ApiError
+          ? e.message || FALLBACK_MESSAGE[action]
+          : `Could not ${action} ${chamberName}. Check your connection and try again.`,
+      )
     } finally {
       setPending(false)
     }

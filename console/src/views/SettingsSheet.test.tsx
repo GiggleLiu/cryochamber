@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SettingsSheet } from './SettingsSheet'
 import { HubClient } from '../api/hubClient'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import type { Credentials, InitialState } from '../api/types'
 
@@ -135,7 +135,7 @@ describe('owner-only rows', () => {
 
   test('a 401 while refreshing signs out', async () => {
     const client = ownerHub()
-    vi.mocked(client.refreshIndex).mockRejectedValue(new ApiError('HTTP 401', 401))
+    vi.mocked(client.refreshIndex).mockRejectedValue(new ApiError(401, 'HTTP 401'))
     useAppStore.setState({ hubRole: 'owner', client })
     render(<SettingsSheet />)
     await userEvent.click(screen.getByRole('button', { name: 'Refresh chambers' }))

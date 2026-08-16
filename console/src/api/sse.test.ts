@@ -25,7 +25,7 @@ test('non-2xx rejects with the status', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
   await expect(
     readSse('/api/events', {}, () => {}, new AbortController().signal),
-  ).rejects.toMatchObject({ httpStatus: 401 })
+  ).rejects.toMatchObject({ status: 401 })
 })
 
 test('joins multi-line data, tolerates CRLF, and ignores comment lines', async () => {

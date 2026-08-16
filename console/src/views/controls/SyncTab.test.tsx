@@ -4,7 +4,7 @@ import { SyncTab } from './SyncTab'
 import { HubClient, type SyncSummary } from '../../api/hubClient'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../../store/appStore'
 import { emitChamberEvent } from '../../store/chamberEvents'
-import { ApiError } from '../../api/errors'
+import { ApiError } from '../../api/types'
 import type { Credentials } from '../../api/types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
@@ -72,7 +72,7 @@ test('a running backend offers Stop', async () => {
 
 test('an ok:false action is reported inline and the button comes back', async () => {
   const hub = makeHub([summary()])
-  vi.mocked(hub.syncAction).mockResolvedValue({ ok: false, message: 'cryo-zulip not found' })
+  vi.mocked(hub.syncAction).mockRejectedValue(new ApiError(200, 'cryo-zulip not found'))
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
   await userEvent.click(await screen.findByRole('button', { name: 'Start zulip sync' }))
@@ -82,7 +82,7 @@ test('an ok:false action is reported inline and the button comes back', async ()
 
 test('a 401 signs out', async () => {
   const hub = makeHub([])
-  vi.mocked(hub.chamberSync).mockRejectedValue(new ApiError('HTTP 401', 401))
+  vi.mocked(hub.chamberSync).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
   await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
@@ -91,7 +91,7 @@ test('a 401 signs out', async () => {
 
 test('a refusal outlives the status event that follows it', async () => {
   const hub = makeHub([summary()])
-  vi.mocked(hub.syncAction).mockResolvedValue({ ok: false, message: 'cryo-zulip not found' })
+  vi.mocked(hub.syncAction).mockRejectedValue(new ApiError(200, 'cryo-zulip not found'))
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
   await userEvent.click(await screen.findByRole('button', { name: 'Start zulip sync' }))
@@ -106,7 +106,7 @@ test('a failed refresh keeps the loaded cards on screen beside the error', async
   useAppStore.setState({ client: hub })
   render(<SyncTab chamberId="cham-a" />)
   await screen.findByText('zulip')
-  vi.mocked(hub.chamberSync).mockRejectedValueOnce(new ApiError('HTTP 500', 500))
+  vi.mocked(hub.chamberSync).mockRejectedValueOnce(new ApiError(500, 'HTTP 500'))
   emitChamberEvent({ type: 'status', chamberId: 'cham-a' })
   expect(await screen.findByRole('alert')).toHaveTextContent(/could not load message sync/i)
   expect(screen.getByText('zulip')).toBeInTheDocument()

@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore, useIsOwner, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ApiError, isAuthError } from '../api/errors'
-import { CLIENT_UNRESOLVED } from '../api/hubClient'
+import { ApiError, isUnauthorized } from '../api/types'
+import { UnresolvedProjectError } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
@@ -146,9 +146,9 @@ export function ConversationView({ streamId }: { streamId: number }) {
       .getMessages(name)
       .then((msgs) => useAppStore.getState().setMessages(streamId, msgs))
       .catch((e) => {
-        if (isAuthError(e)) {
+        if (isUnauthorized(e)) {
           logout(AUTH_LOGOUT_REASON)
-        } else if (e instanceof ApiError && e.httpStatus === 404 && e.code !== CLIENT_UNRESOLVED) {
+        } else if (e instanceof ApiError && e.status === 404 && !(e instanceof UnresolvedProjectError)) {
           // Scope was revoked while we were looking at it: leave quietly — and
           // take the project with us, or it stays in the list and fails again
           // on every tap. Only the hub's own 404 says that; a name the client
@@ -171,7 +171,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
       .getOwnUser()
       .then((me) => setOwnUserId(me.user_id))
       .catch((e) => {
-        if (isAuthError(e)) logout(AUTH_LOGOUT_REASON)
+        if (isUnauthorized(e)) logout(AUTH_LOGOUT_REASON)
       })
   }, [client, ownUserId, setOwnUserId, logout])
 
@@ -184,7 +184,7 @@ export function ConversationView({ streamId }: { streamId: number }) {
       attempts += 1
       client.markStreamRead(streamId).catch((e) => {
         if (cancelled) return
-        if (isAuthError(e)) {
+        if (isUnauthorized(e)) {
           logout(AUTH_LOGOUT_REASON)
           return
         }

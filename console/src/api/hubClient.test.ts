@@ -1,4 +1,5 @@
-import { CLIENT_UNRESOLVED, HubClient, numericMessageId, numericStreamId } from './hubClient'
+import { HubClient, numericMessageId, numericStreamId, UnresolvedProjectError } from './hubClient'
+import { ApiError } from './types'
 import type { Credentials } from './types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'Alice', apiKey: 'tok123', sendTopic: '' }
@@ -197,7 +198,7 @@ test('sendMessage posts body with CSRF header and 401 throws an auth error', asy
   await c.sendMessage('alpha', 'do it')
 
   const denied = new HubClient(creds, mockFetch(() => new Response('', { status: 401 })))
-  await expect(denied.register()).rejects.toMatchObject({ httpStatus: 401 })
+  await expect(denied.register()).rejects.toMatchObject({ status: 401 })
 })
 
 test('an unresolvable project name is marked as a client-side 404, not a server one', async () => {
@@ -205,10 +206,8 @@ test('an unresolvable project name is marked as a client-side 404, not a server 
   // map is empty. The marker is what stops callers treating this like a chamber
   // the hub says is gone.
   const c = new HubClient(creds, mockFetch(() => new Response('', { status: 500 })))
-  await expect(c.getMessages('alpha')).rejects.toMatchObject({
-    httpStatus: 404,
-    code: CLIENT_UNRESOLVED,
-  })
+  await expect(c.getMessages('alpha')).rejects.toBeInstanceOf(UnresolvedProjectError)
+  await expect(c.getMessages('alpha')).rejects.toMatchObject({ status: 404 })
 
   const registered = new HubClient(
     creds,
@@ -219,11 +218,11 @@ test('an unresolvable project name is marked as a client-side 404, not a server 
     ),
   )
   await registered.register()
-  // A real server 404 carries no marker.
-  await expect(registered.getMessages('alpha')).rejects.toMatchObject({
-    httpStatus: 404,
-    code: undefined,
-  })
+  // A real server 404 is the plain ApiError, not the client-side marker.
+  const err = await registered.getMessages('alpha').catch((e: unknown) => e)
+  expect(err).toBeInstanceOf(ApiError)
+  expect(err).not.toBeInstanceOf(UnresolvedProjectError)
+  expect(err).toMatchObject({ status: 404 })
 })
 
 test('uploadFile posts multipart and returns the files URL', async () => {
@@ -367,11 +366,9 @@ describe('owner chamber routes', () => {
   })
 
   test('lifecycle POSTs the action and returns the hub ok/message verbatim', async () => {
-    const fetchFn = mockFetch(() => ({ ok: false, message: 'Unarchive the chamber before launching it' }))
+    const fetchFn = mockFetch(() => ({ ok: true, message: 'Chamber started' }))
     const c = new HubClient(creds, fetchFn)
-    expect(await c.lifecycle('cham-a', 'start')).toEqual({
-      ok: false, message: 'Unarchive the chamber before launching it',
-    })
+    expect(await c.lifecycle('cham-a', 'start')).toEqual({ ok: true, message: 'Chamber started' })
     const [url, init] = vi.mocked(fetchFn).mock.calls[0]
     expect(String(url)).toBe('/api/chambers/cham-a/start')
     expect(init?.method).toBe('POST')
@@ -449,5 +446,33 @@ describe('owner chamber routes', () => {
     expect((await c.chamberStatuses())[0]).toMatchObject({
       completed: false, archived: true, hasOpenQuestion: false,
     })
+  })
+})
+
+describe('request<T> error funnel', () => {
+  test('non-2xx with {error} surfaces the hub text', async () => {
+    const fetchFn = mockFetch(() => new Response(JSON.stringify({ error: 'no such chamber' }), { status: 404 }))
+    const c = new HubClient(creds, fetchFn)
+    await expect(c.chamberStatus('x')).rejects.toMatchObject({ status: 404, message: 'no such chamber' })
+  })
+
+  test('non-2xx without a body falls back to HTTP N', async () => {
+    const fetchFn = mockFetch(() => new Response('', { status: 502 }))
+    const c = new HubClient(creds, fetchFn)
+    await expect(c.chamberStatus('x')).rejects.toMatchObject({ status: 502, message: 'HTTP 502' })
+  })
+
+  test('200 with ok:false throws ApiError carrying message', async () => {
+    const fetchFn = mockFetch(() => ({ ok: false, message: 'already running' }))
+    const c = new HubClient(creds, fetchFn)
+    await expect(c.lifecycle('x', 'start')).rejects.toBeInstanceOf(ApiError)
+    await expect(c.lifecycle('x', 'start')).rejects.toMatchObject({ status: 200, message: 'already running' })
+  })
+
+  test('createChamber and createInvite go through the same funnel', async () => {
+    const fetchFn = mockFetch(() => new Response(JSON.stringify({ error: 'bad name' }), { status: 400 }))
+    const c = new HubClient(creds, fetchFn)
+    await expect(c.createChamber({ name: 'x' })).rejects.toMatchObject({ status: 400, message: 'bad name' })
+    await expect(c.createInvite('x', ['a'])).rejects.toMatchObject({ status: 400, message: 'bad name' })
   })
 })

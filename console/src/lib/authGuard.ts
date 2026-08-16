@@ -1,4 +1,4 @@
-import { isAuthError } from '../api/errors'
+import { isUnauthorized } from '../api/types'
 import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
 
 /**
@@ -13,7 +13,7 @@ import { useAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
  * Returns true when it logged out, so callers can skip their inline error path.
  */
 export function logoutIfAuthError(e: unknown, reason: string = AUTH_LOGOUT_REASON): boolean {
-  if (!isAuthError(e)) return false
+  if (!isUnauthorized(e)) return false
   useAppStore.getState().logout(reason)
   return true
 }

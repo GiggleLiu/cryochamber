@@ -4,7 +4,7 @@ import { ControlsSheet, digestLine, statePillLabel } from './ControlsSheet'
 import { HubClient, type ChamberStatus } from '../api/hubClient'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
 import { emitChamberEvent } from '../store/chamberEvents'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
 
 const creds: Credentials = { kind: 'hub', prefix: '', email: 'Owner', apiKey: 'k', sendTopic: '' }
@@ -164,9 +164,9 @@ describe('lifecycle row', () => {
 
   test('an ok:false response is shown as an error and the buttons come back', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.mocked(hub.lifecycle).mockResolvedValue({
-      ok: false, message: 'Unarchive the chamber before launching it',
-    })
+    vi.mocked(hub.lifecycle).mockRejectedValue(
+      new ApiError(200, 'Unarchive the chamber before launching it'),
+    )
     renderSheet()
     await screen.findByText('Stopped')
     await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
@@ -178,9 +178,9 @@ describe('lifecycle row', () => {
 
   test('a refusal outlives the status events that keep arriving', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.mocked(hub.lifecycle).mockResolvedValue({
-      ok: false, message: 'Unarchive the chamber before launching it',
-    })
+    vi.mocked(hub.lifecycle).mockRejectedValue(
+      new ApiError(200, 'Unarchive the chamber before launching it'),
+    )
     renderSheet()
     await screen.findByText('Stopped')
     await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
@@ -222,7 +222,7 @@ describe('lifecycle row', () => {
 
   test('a 401 from an action signs out', async () => {
     const hub = useAppStore.getState().client as HubClient
-    vi.mocked(hub.lifecycle).mockRejectedValue(new ApiError('HTTP 401', 401))
+    vi.mocked(hub.lifecycle).mockRejectedValue(new ApiError(401, 'HTTP 401'))
     renderSheet()
     await screen.findByText('Stopped')
     await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
@@ -289,7 +289,7 @@ test('digestLine pluralises the session count', () => {
 
 test('a failed status load stays inline in the sheet', async () => {
   const hub = useAppStore.getState().client as HubClient
-  vi.mocked(hub.chamberStatus).mockRejectedValue(new ApiError('HTTP 500', 500))
+  vi.mocked(hub.chamberStatus).mockRejectedValue(new ApiError(500, 'HTTP 500'))
   renderSheet()
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Could not load alpha. Check your connection and try again.',

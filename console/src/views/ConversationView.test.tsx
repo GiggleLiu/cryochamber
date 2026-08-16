@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ConversationView, isRichMessage } from './ConversationView'
 import { useAppStore, resetAppStore, AUTH_LOGOUT_REASON } from '../store/appStore'
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 import { HubClient } from '../api/hubClient'
 import { ECHO_TIMEOUT_MS, sendViaOutbox } from '../lib/outbox'
 import type { Credentials, Message } from '../api/types'
@@ -155,7 +155,7 @@ test('does not refetch own user once known', async () => {
 
 test('auth error while fetching own user logs out', async () => {
   const client = fakeClient({
-    getOwnUser: vi.fn().mockRejectedValue(new ApiError('HTTP 401', 401)),
+    getOwnUser: vi.fn().mockRejectedValue(new ApiError(401, 'HTTP 401')),
   })
   useAppStore.setState({ client })
   render(<ConversationView streamId={1} />)
@@ -446,7 +446,7 @@ describe('message loading', () => {
 
   test('a non-404 failure shows the retryable error panel', async () => {
     const client = fakeClient({
-      getMessages: vi.fn().mockRejectedValue(new ApiError('HTTP 500', 500)),
+      getMessages: vi.fn().mockRejectedValue(new ApiError(500, 'HTTP 500')),
     })
     useAppStore.setState({ client, view: { name: 'conversation', streamId: 1 } })
     render(<ConversationView streamId={1} />)

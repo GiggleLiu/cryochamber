@@ -1,4 +1,4 @@
-import { ApiError } from './errors'
+import { ApiError } from './types'
 
 /** Minimal SSE reader over fetch streaming — EventSource cannot send an
  * Authorization header, and the token must never ride in a query string. */
@@ -9,7 +9,7 @@ export async function readSse(
   signal: AbortSignal,
 ): Promise<void> {
   const res = await fetch(url, { headers, signal })
-  if (!res.ok || !res.body) throw new ApiError(`HTTP ${res.status}`, res.status)
+  if (!res.ok || !res.body) throw new ApiError(res.status, `HTTP ${res.status}`)
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''

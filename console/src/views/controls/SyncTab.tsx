@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { HubClient, type SyncSummary } from '../../api/hubClient'
 import { useAppStore } from '../../store/appStore'
 import { subscribeChamberEvents } from '../../store/chamberEvents'
+import { ApiError } from '../../api/types'
 import { logoutIfAuthError } from '../../lib/authGuard'
 import { AlertCircle } from '../../components/Icon'
 
@@ -51,13 +52,16 @@ export function SyncTab({ chamberId }: { chamberId: string }) {
     setPending(item.backend)
     setActionError(null)
     try {
-      const result = await hub.syncAction(chamberId, item.backend, item.running ? 'stop' : 'start')
+      await hub.syncAction(chamberId, item.backend, item.running ? 'stop' : 'start')
       // No optimistic flip: the card moves when the hub says the daemon did.
-      if (!result.ok) setActionError(result.message)
       await load()
     } catch (e) {
       if (logoutIfAuthError(e)) return
-      setActionError(`Could not change ${item.backend} sync. Check your connection and try again.`)
+      // A refusal reaches here too now (the client throws on `{ok:false}`), so
+      // the cards are refreshed before the hub's own words are shown.
+      await load().catch(() => {})
+      const fallback = `Could not change ${item.backend} sync. Check your connection and try again.`
+      setActionError(e instanceof ApiError ? e.message || fallback : fallback)
     } finally {
       setPending(null)
     }

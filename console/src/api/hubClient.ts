@@ -1,4 +1,4 @@
-import { ApiError } from './errors'
+import { ApiError } from './types'
 import { accountKey, fnv1a } from '../lib/account'
 import type { Credentials, InitialState, Message, StreamSub, User } from './types'
 
@@ -20,10 +20,15 @@ const MSG_IDS_PREFIX = 'agent-console.hub-msgids.'
  * that fills the whole window may not reach back to older cached messages. */
 export const HISTORY_FETCH_COUNT = 50
 
-/** `code` on a 404 this client raised itself because it could not resolve a
- * project name locally — as opposed to a 404 the hub actually answered with.
- * Only the latter means the chamber is gone. */
-export const CLIENT_UNRESOLVED = 'CLIENT_UNRESOLVED'
+/** Thrown by the client itself when a project name is not in its map yet
+ * (register() has not run — offline cold boot). Not the hub's 404: only a 404
+ * the hub actually answered with means the chamber is gone. */
+export class UnresolvedProjectError extends ApiError {
+  constructor(name: string) {
+    super(404, `unknown project ${name}`)
+    this.name = 'UnresolvedProjectError'
+  }
+}
 
 interface IdMap {
   next: number
@@ -225,6 +230,20 @@ export interface NewChamberPayload {
   model?: string
 }
 
+/** The hub's own words for a failure, from either error shape. */
+function apiMessage(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined
+  const b = body as { error?: unknown; message?: unknown }
+  if (typeof b.error === 'string' && b.error) return b.error
+  if (typeof b.message === 'string' && b.message) return b.message
+  return undefined
+}
+
+/** A 200 the hub used to say no: `{ok:false, message}` on lifecycle/sync. */
+function isRefusal(body: unknown): boolean {
+  return !!body && typeof body === 'object' && (body as { ok?: unknown }).ok === false
+}
+
 /**
  * The app's only client: register/getMessages/sendMessage/… over the chamber
  * hub's REST API. Bearer token auth; every mutating call also carries the
@@ -266,15 +285,19 @@ export class HubClient {
     return this.fetchFn(`${this.creds.prefix}${path}`, { ...init, headers })
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async request(path: string, init: RequestInit = {}): Promise<any> {
+  /** Every JSON call goes through here. Two failure shapes exist on the hub —
+   * a non-2xx `{error}` and a 200 `{ok:false, message}` — and both become one
+   * `ApiError` carrying the hub's own words, so no caller reads a body twice. */
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await this.send(path, init)
-    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
-    return res.json()
+    const body: unknown = await res.json().catch(() => null)
+    if (!res.ok) throw new ApiError(res.status, apiMessage(body) ?? `HTTP ${res.status}`)
+    if (isRefusal(body)) throw new ApiError(res.status, apiMessage(body) ?? 'Request refused')
+    return body as T
   }
 
   async whoami(): Promise<{ role: 'owner' | 'invite'; name?: string }> {
-    return this.request('/api/whoami')
+    return this.request<{ role: 'owner' | 'invite'; name?: string }>('/api/whoami')
   }
 
   async register(): Promise<InitialState> {
@@ -306,7 +329,7 @@ export class HubClient {
   }
 
   private async chambers(): Promise<Chamber[]> {
-    return (await this.request('/api/chambers')) as Chamber[]
+    return this.request<Chamber[]>('/api/chambers')
   }
 
   /** Liveness only, for the `status` events the stream fires when a chamber
@@ -353,10 +376,10 @@ export class HubClient {
   private chamberByName(streamName: string): string {
     const id = this.byName.get(streamName)
     // 404 so a chamber that vanished from our scope is handled like any other
-    // "gone" resource rather than as a crash — but marked, because the map is
-    // also empty before the first register() (offline cold boot), and that says
-    // nothing about whether the chamber still exists.
-    if (!id) throw new ApiError(`unknown project ${streamName}`, 404, CLIENT_UNRESOLVED)
+    // "gone" resource rather than as a crash — but its own subclass, because
+    // the map is also empty before the first register() (offline cold boot),
+    // and that says nothing about whether the chamber still exists.
+    if (!id) throw new UnresolvedProjectError(streamName)
     return id
   }
 
@@ -404,9 +427,9 @@ export class HubClient {
 
   async getMessages(streamName: string): Promise<Message[]> {
     const chamberId = this.chamberByName(streamName)
-    const msgs = (await this.request(
+    const msgs = await this.request<ChamberMessage[]>(
       `/api/chambers/${encodeURIComponent(chamberId)}/messages`,
-    )) as ChamberMessage[]
+    )
     // The mailbox returns the full history in one fetch, so there is never an
     // earlier window to ask for.
     return msgs.map((m) => this.toMessage(m, chamberId))
@@ -437,37 +460,31 @@ export class HubClient {
   }
 
   async uploadFile(file: File, streamName?: string): Promise<string> {
-    if (!streamName) throw new ApiError('upload needs a project', 400)
+    if (!streamName) throw new ApiError(400, 'upload needs a project')
     const chamberId = this.chamberByName(streamName)
     const form = new FormData()
     form.append('file', file)
     // No manual Content-Type: the browser must set the multipart boundary.
-    const body = await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/uploads`, {
-      method: 'POST',
-      body: form,
-    })
-    const match = /\(([^)]+)\)$/.exec(body.markdown as string)
+    const body = await this.request<{ name: string; markdown: string }>(
+      `/api/chambers/${encodeURIComponent(chamberId)}/uploads`,
+      { method: 'POST', body: form },
+    )
+    const match = /\(([^)]+)\)$/.exec(body.markdown)
     return match ? match[1] : `/api/chambers/${chamberId}/files/${body.name}`
   }
 
   /** Owner-only chamber detail. Every id is encoded: a chamber id can carry a
    * path separator, and an unencoded one would address a different route. */
   async chamberStatus(chamberId: string): Promise<ChamberStatus> {
-    return (await this.request(
-      `/api/chambers/${encodeURIComponent(chamberId)}/status`,
-    )) as ChamberStatus
+    return this.request<ChamberStatus>(`/api/chambers/${encodeURIComponent(chamberId)}/status`)
   }
 
   async chamberTodos(chamberId: string): Promise<TodoItem[]> {
-    return (await this.request(
-      `/api/chambers/${encodeURIComponent(chamberId)}/todos`,
-    )) as TodoItem[]
+    return this.request<TodoItem[]>(`/api/chambers/${encodeURIComponent(chamberId)}/todos`)
   }
 
   async chamberSync(chamberId: string): Promise<SyncSummary[]> {
-    return (await this.request(
-      `/api/chambers/${encodeURIComponent(chamberId)}/sync`,
-    )) as SyncSummary[]
+    return this.request<SyncSummary[]>(`/api/chambers/${encodeURIComponent(chamberId)}/sync`)
   }
 
   async syncAction(
@@ -475,38 +492,34 @@ export class HubClient {
     backend: string,
     verb: 'start' | 'stop',
   ): Promise<ActionResult> {
-    return (await this.request(
+    return this.request<ActionResult>(
       `/api/chambers/${encodeURIComponent(chamberId)}/sync/${encodeURIComponent(backend)}/${verb}`,
       { method: 'POST' },
-    )) as ActionResult
+    )
   }
 
-  /** The hub answers 200 with `{ok:false, message}` for a refused action, so
-   * the caller shows `message` rather than treating it as a transport error. */
+  /** The hub answers 200 with `{ok:false, message}` for a refused action;
+   * `request` raises that as an `ApiError` carrying `message`, so a refusal and
+   * a transport failure reach the caller's catch by the same door. */
   async lifecycle(chamberId: string, action: LifecycleAction): Promise<ActionResult> {
-    return (await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/${action}`, {
+    return this.request<ActionResult>(`/api/chambers/${encodeURIComponent(chamberId)}/${action}`, {
       method: 'POST',
-    })) as ActionResult
+    })
   }
 
   /** 201 → the new chamber id. A rejected name answers 400 with `{error}`,
-   * which is the sentence the operator needs — so this reads the body instead
-   * of letting `request` collapse it to "HTTP 400". */
+   * which `request` already turns into that sentence. */
   async createChamber(payload: NewChamberPayload): Promise<{ id: string }> {
-    const res = await this.send('/api/chambers/new', {
+    const body = await this.request<{ id?: string }>('/api/chambers/new', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    const body = (await res.json().catch(() => ({}))) as { id?: string; error?: string }
-    if (!res.ok) {
-      throw new ApiError(body.error ?? `HTTP ${res.status}`, res.status)
-    }
     // The hub answers 201 with an empty id when the new chamber is missing
-    // from its refreshed index (`post_new` falls back to default). Reporting
-    // that as success would hand the caller a chamber it cannot open.
+    // from its refreshed index (`post_new` falls back to default). A 201 with
+    // an empty id is a chamber the caller cannot open.
     if (typeof body.id !== 'string' || body.id === '') {
-      throw new ApiError('Chamber was created but the hub did not report its id', res.status)
+      throw new ApiError(201, 'Chamber was created but the hub did not report its id')
     }
     return { id: body.id }
   }
@@ -518,26 +531,24 @@ export class HubClient {
   }
 
   async listInvites(): Promise<Invite[]> {
-    const body = await this.request('/api/tokens')
-    return body.invites as Invite[]
+    const body = await this.request<{ invites: Invite[] }>('/api/tokens')
+    return body.invites
   }
 
   /** Mints an invite. A rejected name (the hub refuses a duplicate among active
    * invites) comes back as a 400, sometimes with words of its own and sometimes
-   * bare — same contract as `createChamber`: the hub's text when there is any,
-   * the bare status when there is not, so the caller can tell the two apart. */
+   * bare; `request` gives the caller the hub's text when there is any and
+   * `HTTP 400` when there is not, so the sheet can tell the two apart. */
   async createInvite(name: string, chambers: string[]): Promise<{ token: string }> {
-    const res = await this.send('/api/tokens', {
+    const body = await this.request<{ token?: string }>('/api/tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, chambers }),
     })
-    const body = (await res.json().catch(() => ({}))) as { token?: string; error?: string }
-    if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, res.status)
     // A 200 without a token would become an `#invite=` link the sheet says
     // it copied and can never show again — fail loudly instead.
     if (typeof body.token !== 'string' || body.token === '') {
-      throw new ApiError('The hub did not return an invite token', res.status)
+      throw new ApiError(200, 'The hub did not return an invite token')
     }
     return { token: body.token }
   }

@@ -1,4 +1,4 @@
-import { isAuthError } from '../api/errors'
+import { isUnauthorized } from '../api/types'
 import { useAppStore, AUTH_LOGOUT_REASON, type OutboxItem } from '../store/appStore'
 
 /** Draft storage key for a project's composer, namespaced per account — two
@@ -30,7 +30,7 @@ function attempt(streamId: number, streamName: string, content: string, localId:
       setTimeout(() => useAppStore.getState().resolveOutbox(streamId, localId), ECHO_TIMEOUT_MS)
     },
     (e: unknown) => {
-      if (isAuthError(e)) {
+      if (isUnauthorized(e)) {
         useAppStore.getState().logout(AUTH_LOGOUT_REASON)
         return
       }

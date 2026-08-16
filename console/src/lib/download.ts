@@ -1,5 +1,5 @@
 /** Shared authenticated-attachment helpers. */
-import { ApiError } from '../api/errors'
+import { ApiError } from '../api/types'
 
 /** Chamber attachment routes: /api/chambers/{id}/files/{name}. They need the
  * Authorization header, so a plain navigation would 401. */
@@ -7,10 +7,10 @@ export const HUB_FILES_RE = /^\/api\/chambers\/[^/]+\/files\//
 
 /** Throws ApiError, not a bare Error: an attachment that comes back 401 is
  * the same revoked-credentials signal as any other request, and callers route
- * it through isAuthError to the one logout path. */
+ * it through isUnauthorized to the one logout path. */
 export function fetchBlob(url: string, authHeader: string): Promise<Blob> {
   return fetch(url, { headers: { Authorization: authHeader } }).then((res) => {
-    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.blob()
   })
 }
