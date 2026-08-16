@@ -957,3 +957,60 @@ async fn the_console_is_reachable_without_a_token_in_public_mode() {
         "the API must still require a token when the console is served"
     );
 }
+
+#[tokio::test]
+async fn a_guest_who_floods_send_is_throttled_with_retry_after() {
+    // Every accepted send wakes an agent on the owner's bill; an invite must
+    // run out of tokens, and be told when to try again.
+    let m = setup();
+    let alpha_send = format!("/api/chambers/{}/send", m.alpha);
+    let body = Some(r#"{"body":"hi"}"#);
+
+    for i in 0..5 {
+        let (status, text) = m.call(As::Invite, "POST", &alpha_send, body).await;
+        assert_eq!(status, StatusCode::OK, "burst send {i}: {text}");
+    }
+    let (status, text) = m.call(As::Invite, "POST", &alpha_send, body).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "sixth send: {text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["error"], "rate limited");
+    assert_eq!(
+        m.inbox("alpha").len(),
+        5,
+        "the refused send must not be written"
+    );
+
+    // Uploads draw from the same bucket.
+    let (status, _) = m.upload(As::Invite, &m.alpha, "x.txt", b"hello").await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "upload after the burst"
+    );
+
+    // The owner has a bucket of their own — unaffected by the guest's flood.
+    let (status, text) = m.call(As::Owner, "POST", &alpha_send, body).await;
+    assert_eq!(status, StatusCode::OK, "owner send: {text}");
+}
+
+#[tokio::test]
+async fn throttled_send_carries_a_whole_second_retry_after_header() {
+    let m = setup();
+    let alpha_send = format!("/api/chambers/{}/send", m.alpha);
+    for _ in 0..5 {
+        m.call(As::Invite, "POST", &alpha_send, Some(r#"{"body":"hi"}"#))
+            .await;
+    }
+    let req = m.request(As::Invite, "POST", &alpha_send, Some(r#"{"body":"hi"}"#));
+    let resp = m.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry: u64 = resp
+        .headers()
+        .get(axum::http::header::RETRY_AFTER)
+        .expect("Retry-After present")
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=6).contains(&retry), "got Retry-After {retry}");
+}

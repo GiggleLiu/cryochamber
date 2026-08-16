@@ -102,8 +102,11 @@ pub fn write_key(role: Option<&Role>) -> Option<String> {
 }
 
 /// `429` with a whole-second `Retry-After` and the shared `{error}` body shape.
+///
+/// The header is never `0`: a sub-second wait rounds up to one second, because
+/// telling a client to retry immediately is an invitation to spin.
 pub fn too_many_requests(retry_after: Duration) -> Response {
-    let secs = retry_after.as_secs_f64().ceil() as u64;
+    let secs = (retry_after.as_secs_f64().ceil() as u64).max(1);
     (
         StatusCode::TOO_MANY_REQUESTS,
         [(header::RETRY_AFTER, secs.to_string())],

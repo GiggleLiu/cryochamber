@@ -167,28 +167,39 @@ fn sha12(bytes: &[u8]) -> String {
 pub async fn post_upload(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    role: Option<axum::Extension<crate::hub::tokens::Role>>,
     mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let (chamber, entry) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+) -> Result<Json<serde_json::Value>, Response> {
+    let (chamber, entry) = app
+        .resolve(&id)
+        .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
+    // Same bucket as `send`: an upload is the other way a guest writes to the
+    // owner's disk, so a flood of either must run the credential dry.
+    if let Some(key) = crate::hub::ratelimit::write_key(role.as_ref().map(|e| &e.0)) {
+        if let crate::hub::ratelimit::Decision::Deny { retry_after } = app.write_limiter.check(&key)
+        {
+            return Err(crate::hub::ratelimit::too_many_requests(retry_after));
+        }
+    }
     let _slot = upload_slots()
         .acquire()
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
 
     // Quota before the body: no point buffering 25 MB that will be refused.
     let quota_chamber = chamber.clone();
     let used =
         tokio::task::spawn_blocking(move || attachments_bytes(&attachments_dir(&quota_chamber)))
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     if used >= MAX_ATTACHMENTS_DIR_BYTES {
-        return Err(StatusCode::INSUFFICIENT_STORAGE);
+        return Err(StatusCode::INSUFFICIENT_STORAGE.into_response());
     }
 
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .map_err(|_| StatusCode::BAD_REQUEST.into_response())?
     {
         if field.name() != Some("file") {
             continue;
@@ -197,9 +208,9 @@ pub async fn post_upload(
         let bytes = field
             .bytes()
             .await
-            .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+            .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
         if bytes.len() > MAX_ATTACHMENT_BYTES {
-            return Err(StatusCode::PAYLOAD_TOO_LARGE);
+            return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
         }
         let stored = format!("{}_{}", sha12(&bytes), safe_name(&original));
         let write_chamber = chamber.clone();
@@ -208,7 +219,8 @@ pub async fn post_upload(
             store_attachment(&write_chamber, &write_stored, &bytes)
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
+        .map_err(IntoResponse::into_response)?;
         let url = format!("/api/chambers/{}/files/{}", entry.id, stored);
         return Ok(Json(json!({
             "ok": true,
@@ -216,7 +228,7 @@ pub async fn post_upload(
             "markdown": format!("[{original}]({url})"),
         })));
     }
-    Err(StatusCode::BAD_REQUEST)
+    Err(StatusCode::BAD_REQUEST.into_response())
 }
 
 /// Attachments are downloads, never documents: anything a browser could run

@@ -21,11 +21,15 @@ fn burst_then_deny_then_refill() {
     let d = rl.check_at("k", t0);
     assert_eq!(deny_secs(&d), 6, "an empty bucket needs one refill period");
 
-    // 5 s later: still short of one token.
-    assert!(matches!(
-        rl.check_at("k", t0 + Duration::from_secs(5)),
-        Decision::Deny { .. }
-    ));
+    // 5 s later: still short of one token — and short by exactly the second
+    // that has not yet accrued, which pins the accrual as continuous rather
+    // than a whole-period step.
+    let d = rl.check_at("k", t0 + Duration::from_secs(5));
+    assert_eq!(
+        deny_secs(&d),
+        1,
+        "credit accrues every instant, not in steps"
+    );
     // 6 s later: exactly one token back.
     assert!(matches!(
         rl.check_at("k", t0 + Duration::from_secs(6)),
@@ -87,4 +91,20 @@ async fn too_many_requests_carries_retry_after_and_error_body() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["error"], "rate limited");
+}
+
+#[test]
+fn retry_after_never_tells_a_client_to_retry_immediately() {
+    // A sub-second wait rounds up to 1, never to 0: `Retry-After: 0` invites a
+    // client to spin, which is the behavior the limiter exists to stop.
+    let resp = too_many_requests(Duration::from_millis(1));
+    assert_eq!(
+        resp.headers().get(axum::http::header::RETRY_AFTER).unwrap(),
+        "1"
+    );
+    let resp = too_many_requests(Duration::ZERO);
+    assert_eq!(
+        resp.headers().get(axum::http::header::RETRY_AFTER).unwrap(),
+        "1"
+    );
 }

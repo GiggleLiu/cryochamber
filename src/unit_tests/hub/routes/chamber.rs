@@ -734,3 +734,25 @@ fn lifecycle_status_json_reports_error_message() {
         })
     );
 }
+
+#[tokio::test]
+async fn open_mode_send_is_never_throttled() {
+    // No role layer = loopback operator with shell access; the limiter is for
+    // public mode's guests, not for the owner talking to their own machine.
+    let (_workspace, app, id, _dir) = chamber_app("alpha");
+    for i in 0..20 {
+        let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+        let (status, _) = json_of(
+            post_send(
+                State(app.clone()),
+                AxumPath(id.clone()),
+                None,
+                None,
+                Json(payload),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "send {i}");
+    }
+}
