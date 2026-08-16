@@ -19,13 +19,15 @@ cargo clippy --all-targets -- -D warnings  # lint (warnings are errors)
 ## Make Targets
 
 ```bash
-make check          # fmt-check + clippy + test in sequence
+make check          # fmt-check + clippy + test + console-check in sequence
 make build          # cargo build
 make test           # cargo test
 make fmt            # cargo fmt
 make clippy         # cargo clippy (warnings are errors)
+make console-check  # type-check and unit-test the Agent Console (npm ci, tsc, vitest)
 make coverage       # generate coverage report (auto-installs cargo-llvm-cov)
 make cli            # cargo install --path .
+make console-build  # build the Agent Console (embedded into cryohub on the next cargo build)
 make logo           # compile logo with typst
 make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)
 make example-start-all # start all example chambers (AGENT=opencode|claude)
