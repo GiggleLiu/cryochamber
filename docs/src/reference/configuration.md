@@ -75,9 +75,12 @@ chamber_root = "/Users/alice/.cryo/chambers"
 public = false
 owner_name = "human"
 public_hosts = []
+# console_dir = "/absolute/path/to/console/dist"   # optional override, see below
 ```
 
 For project-owned chamber collections, set `chamber_root` to a project path such as `/path/to/project/.cryo/chambers`.
+
+Unknown keys are rejected: a typo such as `console-dir` fails `cryohub start` with an error naming the key rather than being silently ignored.
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -87,23 +90,15 @@ For project-owned chamber collections, set `chamber_root` to a project path such
 | `public` | `false` | Whether bearer-token auth is enforced on every `/api` route. Set by `cryohub start --public`, cleared only by `cryohub start --no-public` — a plain `cryohub start` keeps whatever is saved here. |
 | `owner_name` | `"human"` | Sender name stamped on messages the owner sends in public mode. A client-supplied `from` is ignored. |
 | `public_hosts` | `[]` | Extra `Host` header values to accept, on top of loopback and `host`. Needed when a reverse proxy forwards the public hostname. |
-| `console_dir` | `~/.cryo/console` | Where the built [Agent Console](https://github.com/GiggleLiu/cryochamber/tree/main/console) lives. The default is where `make console-install` puts it, so the usual install needs no configuration; set this only to serve a build from somewhere else. |
-
-Unknown keys are rejected: a misspelled key makes `cryohub start` fail with an error naming it, rather than being silently ignored.
+| `console_dir` | *(unset — embedded)* | Serve the [Agent Console](../agent-console.md) from this directory instead of the build embedded in the `cryohub` binary. Must be an absolute path to a vite `dist/`. Development and custom builds only. |
 
 ### Serving the Agent Console
 
-The console is the hub's web surface — there is no other dashboard. Install it once:
+The [Agent Console](../agent-console.md) is the hub's web surface — there is no other dashboard — and it is **embedded in the binary**: `cryohub start` serves it with no configuration.
 
-```bash
-make console-install     # builds and installs to ~/.cryo/console
-```
+The hub answers `/` and any client-side route with the console's `index.html`, serves hashed assets from `/assets/` with immutable caching, and keeps `/api` untouched. Nothing outside the console source is reachable — a `../` path or a symlink pointing out of an override directory is a 404. The console's own pages stay unauthenticated even under `--public`, because they are the login screen; every `/api` route stays behind the bearer token.
 
-The hub answers `/` and any client-side route with the console's `index.html`, serves its build output from that directory, and keeps `/api` untouched. Nothing outside the console directory is reachable — a `../` path or a symlink pointing out of it is a 404. The console's own pages stay unauthenticated even under `--public`, because they are the login screen; every `/api` route stays behind the bearer token.
-
-A hub with no console installed where it is looking answers pages with a short setup page (HTTP 503) naming the directory and the command, rather than a bare 404 — the API keeps working throughout.
-
-If you do set `console_dir`, make it **absolute**. The hub canonicalizes it from the service process's working directory, which launchd/systemd choose, and pointing it inside a git checkout means a `git clean` or a moved worktree silently takes the site down.
+Set `console_dir` only to serve a different build (`make console-build` writes `console/dist/`). Make it **absolute**: the hub canonicalizes it from the service process's working directory, which launchd/systemd choose. `cryohub status` reports which source is live. A hub whose override directory has no `index.html` — or a binary built without the console and no override — answers pages with a short setup page (HTTP 503) rather than a bare 404; the API keeps working throughout.
 
 ### Behind a reverse proxy
 

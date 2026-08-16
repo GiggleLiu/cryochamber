@@ -54,15 +54,43 @@ Cryohub 设置位于 `$XDG_CONFIG_HOME/cryo/cryohub.toml`；若未设置 `XDG_CO
 host = "127.0.0.1"
 port = 8765
 chamber_root = "/Users/alice/.cryo/chambers"
+public = false
+owner_name = "human"
+public_hosts = []
+# console_dir = "/absolute/path/to/console/dist"   # 可选覆盖，见下文
 ```
 
 对于项目自有的 chamber 集合，把 `chamber_root` 设为项目路径，例如 `/path/to/project/.cryo/chambers`。
+
+未知的键会被拒绝：像 `console-dir` 这样的拼写错误会让 `cryohub start` 报错并指出该键，而不是被静默忽略。
 
 | 字段 | 默认值 | 说明 |
 |-------|---------|-------------|
 | `host` | `"127.0.0.1"` | 全局仪表盘服务的绑定地址。 |
 | `port` | `8765` | 全局仪表盘服务的 TCP 端口。 |
 | `chamber_root` | `~/.cryo/chambers` | 从仪表盘 UI 创建的 chamber 的默认位置。 |
+| `public` | `false` | 是否对每个 `/api` 路由强制 bearer token 鉴权。由 `cryohub start --public` 设置，只有 `cryohub start --no-public` 会清除——普通的 `cryohub start` 保持这里保存的值。 |
+| `owner_name` | `"human"` | 公开模式下 owner 发送的消息所标记的发送者名字。客户端提供的 `from` 会被忽略。 |
+| `public_hosts` | `[]` | 在回环地址和 `host` 之外额外接受的 `Host` 头值。当反向代理转发公网主机名时需要设置。 |
+| `console_dir` | *（未设置——使用内嵌版本）* | 从此目录提供 [Agent Console](../agent-console.md)，而不是使用 `cryohub` 二进制中内嵌的构建。必须是指向 vite `dist/` 的绝对路径。仅用于开发和自定义构建。 |
+
+### 提供 Agent Console
+
+[Agent Console](../agent-console.md) 是 hub 的网页界面——没有其他仪表盘——并且它**内嵌在二进制中**：`cryohub start` 无需任何配置即可提供它。
+
+hub 对 `/` 和任何客户端路由返回控制台的 `index.html`，从 `/assets/` 提供带不可变缓存的哈希资源，并保持 `/api` 不受影响。控制台来源之外的任何内容都不可访问——`../` 路径或指向覆盖目录之外的符号链接都会得到 404。即使在 `--public` 下，控制台自身的页面也不需要鉴权，因为它们就是登录页；每个 `/api` 路由都在 bearer token 之后。
+
+只有在需要提供不同构建时才设置 `console_dir`（`make console-build` 会生成 `console/dist/`）。它必须是**绝对路径**：hub 会基于服务进程的工作目录规范化它，而工作目录由 launchd/systemd 决定。`cryohub status` 会报告当前生效的来源。如果覆盖目录中没有 `index.html`——或者二进制在构建时没有内嵌控制台且没有覆盖——hub 会对页面返回一个简短的设置页（HTTP 503），而不是空白的 404；API 全程正常工作。
+
+### 反向代理之后
+
+hub 会拒绝 `Host` 头既不是回环地址也不是已配置主机的请求——这正是阻止恶意页面通过 DNS 重绑定操控回环服务的机制。保留公网主机名的代理（Caddy 的默认行为）因此需要放行该名字：
+
+```toml
+public_hosts = ["agents.example.com"]
+```
+
+另一种做法是让代理改写它——在 Caddy 中，在 `reverse_proxy` 块内加 `header_up Host 127.0.0.1`。
 
 ## 从命令行覆盖配置
 
