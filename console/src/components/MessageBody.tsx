@@ -16,10 +16,18 @@ let markdownModule: MarkdownModule | null = null
 let markdownPending: Promise<MarkdownModule> | null = null
 
 function loadMarkdown(): Promise<MarkdownModule> {
-  markdownPending ??= import('../lib/markdown').then((mod) => {
-    markdownModule = mod
-    return mod
-  })
+  markdownPending ??= import('../lib/markdown')
+    .then((mod) => {
+      markdownModule = mod
+      return mod
+    })
+    .catch((err: unknown) => {
+      // A chunk that 404s (typically: a new build deployed under this page)
+      // must not poison every later message. Forget the attempt so the next
+      // mount tries again; the caller keeps showing the plain-text fallback.
+      markdownPending = null
+      throw err
+    })
   return markdownPending
 }
 
@@ -60,9 +68,13 @@ export function MessageBody({
   useEffect(() => {
     if (markdownModule) return
     let alive = true
-    void loadMarkdown().then(() => {
-      if (alive) setMarkdownLoaded(true)
-    })
+    loadMarkdown()
+      .then(() => {
+        if (alive) setMarkdownLoaded(true)
+      })
+      .catch(() => {
+        // Stay on the fallback; a later mount retries.
+      })
     return () => {
       alive = false
     }

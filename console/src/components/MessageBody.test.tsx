@@ -565,3 +565,29 @@ describe('code block copy button', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+describe('markdown chunk loading', () => {
+  test('a rejected import is retried on a later mount instead of being memoised', async () => {
+    // Fresh module instance so `markdownModule`/`markdownPending` start empty.
+    vi.resetModules()
+    let attempts = 0
+    vi.doMock('../lib/markdown', async () => {
+      attempts++
+      if (attempts === 1) throw new Error('chunk 404 after deploy')
+      return await vi.importActual<typeof import('../lib/markdown')>('../lib/markdown')
+    })
+    const { MessageBody: FreshBody } = await import('./MessageBody')
+
+    const first = render(<FreshBody source="**bold**" prefix={PREFIX} />)
+    // First mount: import rejected → stays on the plain-text fallback.
+    await waitFor(() => expect(attempts).toBe(1))
+    expect(first.container.querySelector('strong')).toBeNull()
+    first.unmount()
+
+    // Second mount: a fresh attempt succeeds and the markdown renders.
+    render(<FreshBody source="**bold**" prefix={PREFIX} />)
+    await waitFor(() => expect(attempts).toBe(2))
+    await waitFor(() => expect(document.querySelector('strong')).toHaveTextContent('bold'))
+    vi.doUnmock('../lib/markdown')
+  })
+})
