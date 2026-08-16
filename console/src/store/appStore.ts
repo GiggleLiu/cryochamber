@@ -45,6 +45,10 @@ export interface OutboxItem {
   body: string
   state: 'sending' | 'sent' | 'failed'
   serverId: string | null
+  /** Why the last attempt failed, in the hub's own words — `null` when it
+   * never failed, or failed with nothing worth showing (a synthesized
+   * `HTTP 502` tells the user less than "Failed" already does). */
+  error: string | null
 }
 
 function byKey(a: ChamberMessage, b: ChamberMessage): number {
@@ -129,7 +133,9 @@ export interface AppState {
   enqueueOutbox(chamberId: string, body: string): number
   /** The hub took it and named it; the bubble now waits for that id. */
   markOutboxSent(chamberId: string, clientId: number, serverId: string): void
-  failOutbox(chamberId: string, clientId: number): void
+  /** `error` is the hub's own sentence when it gave one, so the failed bubble
+   *  can say *why* (a 429 reads "rate limited"). */
+  failOutbox(chamberId: string, clientId: number, error?: string | null): void
   retryOutbox(chamberId: string, clientId: number): void
   resolveOutbox(chamberId: string, clientId: number): void
 }
@@ -154,13 +160,19 @@ const initialData = {
   outboxByChamber: {} as Record<string, OutboxItem[]>,
 }
 
-/** Shared by failOutbox/retryOutbox: the only difference is the target state. */
-function setOutboxState(chamberId: string, clientId: number, next: OutboxItem['state']) {
+/** Shared by failOutbox/retryOutbox: the target state and the reason to carry
+ * with it (a retry is a fresh attempt, so it clears the old reason). */
+function setOutboxState(
+  chamberId: string,
+  clientId: number,
+  next: OutboxItem['state'],
+  error: string | null,
+) {
   return (state: AppState) => ({
     outboxByChamber: {
       ...state.outboxByChamber,
       [chamberId]: (state.outboxByChamber[chamberId] ?? []).map((o) =>
-        o.clientId === clientId ? { ...o, state: next } : o,
+        o.clientId === clientId ? { ...o, state: next, error } : o,
       ),
     },
   })
@@ -379,7 +391,7 @@ export const useAppStore = create<AppState>()((set, get) => {
           ...state.outboxByChamber,
           [chamberId]: [
             ...(state.outboxByChamber[chamberId] ?? []),
-            { clientId, chamberId, body, state: 'sending' as const, serverId: null },
+            { clientId, chamberId, body, state: 'sending' as const, serverId: null, error: null },
           ],
         },
       }))
@@ -404,8 +416,10 @@ export const useAppStore = create<AppState>()((set, get) => {
         }
       }),
 
-    failOutbox: (chamberId, clientId) => set(setOutboxState(chamberId, clientId, 'failed')),
-    retryOutbox: (chamberId, clientId) => set(setOutboxState(chamberId, clientId, 'sending')),
+    failOutbox: (chamberId, clientId, error = null) =>
+      set(setOutboxState(chamberId, clientId, 'failed', error)),
+    retryOutbox: (chamberId, clientId) =>
+      set(setOutboxState(chamberId, clientId, 'sending', null)),
 
     resolveOutbox: (chamberId, clientId) =>
       set((state) => ({

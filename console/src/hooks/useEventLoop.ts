@@ -13,6 +13,12 @@ class ReregisterSignal extends Error {}
  * counts as healthy enough to reset the backoff. */
 const SSE_HEALTHY_MS = 10_000
 
+/** Floor between a re-register and the index read that follows it. A hub that
+ * answers every connection with `resync` (or an `index` the client keeps
+ * lagging behind) would otherwise spin the loop as fast as the network
+ * answers; half a second is invisible to a person and fatal to a tight loop. */
+const REREGISTER_FLOOR_MS = 500
+
 /**
  * Wait `ms` — but return early when the page becomes visible (a phone coming
  * back to the foreground should not sit out the rest of a 30 s backoff) or
@@ -155,7 +161,12 @@ export function useEventLoop(): void {
           if (!healthy) backoff = Math.min(backoff * 2, 30000)
         } catch (e) {
           if (stopped) return
-          if (e instanceof ReregisterSignal) continue
+          if (e instanceof ReregisterSignal) {
+            // Pace the re-read (see REREGISTER_FLOOR_MS); teardown cuts it short.
+            await sleep(REREGISTER_FLOOR_MS, abort.signal)
+            if (stopped) return
+            continue
+          }
           if (isSseStall(e)) {
             // A half-open connection: nothing arrived for SSE_STALL_MS but the
             // socket never closed. The hub is not known to be down, so this is

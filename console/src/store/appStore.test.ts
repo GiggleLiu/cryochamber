@@ -199,6 +199,15 @@ describe('outbox', () => {
     expect(useAppStore.getState().outboxByChamber.a[0].state).toBe('sending')
   })
 
+  test('failOutbox keeps the reason, and a retry drops it', () => {
+    useAppStore.getState().setCreds(creds)
+    const id = useAppStore.getState().enqueueOutbox('a', 'x')
+    useAppStore.getState().failOutbox('a', id, 'rate limited')
+    expect(useAppStore.getState().outboxByChamber.a[0].error).toBe('rate limited')
+    useAppStore.getState().retryOutbox('a', id)
+    expect(useAppStore.getState().outboxByChamber.a[0].error).toBeNull()
+  })
+
   test('resolveOutbox drops the item the fallback timer gave up on', () => {
     useAppStore.getState().setCreds(creds)
     const id = useAppStore.getState().enqueueOutbox('a', 'x')

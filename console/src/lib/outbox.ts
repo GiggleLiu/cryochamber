@@ -1,4 +1,4 @@
-import { isUnauthorized } from '../api/types'
+import { ApiError, isUnauthorized } from '../api/types'
 import { useAppStore, type OutboxItem } from '../store/appStore'
 
 /** Draft storage key for a chamber's composer, namespaced per account. */
@@ -31,7 +31,10 @@ function attempt(chamberId: string, body: string, clientId: number): void {
     },
     (e: unknown) => {
       if (isUnauthorized(e)) return
-      useAppStore.getState().failOutbox(chamberId, clientId)
+      // Keep the hub's own sentence — "rate limited" on a 429 tells the user
+      // what to do; a synthesized `HTTP 502` does not, so it is dropped.
+      const said = e instanceof ApiError && e.hubSaid ? e.message : null
+      useAppStore.getState().failOutbox(chamberId, clientId, said)
     },
   )
 }

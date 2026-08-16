@@ -303,7 +303,9 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                   className="send-state send-failed"
                   onClick={() => retryOutboxItem(o)}
                 >
-                  Failed — tap to retry
+                  {/* The hub's own sentence when it gave one: "rate limited"
+                      is the difference between retrying now and waiting. */}
+                  Failed — tap to retry{o.error ? ` · ${o.error}` : ''}
                 </button>
               )}
             </div>

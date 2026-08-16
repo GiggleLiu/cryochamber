@@ -680,15 +680,6 @@ input, select, textarea { font: inherit; color: inherit; }
   text-align: center;
 }
 
-/* @-mentions carried in a message body. */
-.message-body .user-mention, .message-body .user-group-mention {
-  padding: 0 0.2em;
-  color: var(--link);
-  background: rgba(87, 107, 149, 0.1);
-  border-radius: var(--r-xs);
-  font-weight: 500;
-}
-
 /* A standing note above the composer, not a toast: it stays for as long as the
    agent sleeps, so it reads as part of the chrome rather than as an alert. */
 .asleep-note {

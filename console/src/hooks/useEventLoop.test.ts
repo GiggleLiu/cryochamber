@@ -201,6 +201,40 @@ test.each(['index', 'resync'])(
   },
 )
 
+test('a hub that keeps asking for a re-read cannot tight-loop the client', async () => {
+  vi.useFakeTimers()
+  try {
+    let reads = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      // The first three connections immediately ask for a re-read; the fourth
+      // stays open. Without a floor the loop would burn through all of them in
+      // one microtask drain, which is exactly the spin being guarded against.
+      if (String(url).includes('/api/events')) {
+        return reads <= 3 ? liveStream(['event: resync\ndata: changed\n\n']) : liveStream([])
+      }
+      reads += 1
+      return new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    useAppStore.setState({ client: new HubClient({ token: creds.token }) })
+    const { unmount } = renderHook(() => useEventLoop())
+
+    // Drain everything that does not need the clock: one registration, one
+    // resync, and then the loop parks on the floor.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads).toBe(1)
+    await vi.advanceTimersByTimeAsync(499)
+    expect(reads).toBe(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(reads).toBe(2)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(reads).toBe(3)
+    unmount()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('an immediately-closed stream backs off instead of spinning', async () => {
   let reads = 0
   const fetchMock = vi.fn(async (url: string) => {

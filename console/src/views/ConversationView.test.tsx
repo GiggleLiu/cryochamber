@@ -596,6 +596,19 @@ describe('outbox bubbles', () => {
     expect(client.sendMessage).toHaveBeenCalledTimes(1)
   })
 
+  test("a failed item shows the hub's reason next to the retry prompt", async () => {
+    useAppStore.setState({ client: fakeClient() })
+    render(<ConversationView chamberId="cham-a" />)
+    await screen.findByText('msg-1')
+    act(() => {
+      const id = useAppStore.getState().enqueueOutbox('cham-a', 'too fast')
+      useAppStore.getState().failOutbox('cham-a', id, 'rate limited')
+    })
+    expect(
+      await screen.findByRole('button', { name: /failed — tap to retry · rate limited/i }),
+    ).toBeInTheDocument()
+  })
+
   test('a sent item says Sent and clears when the thread echoes it back', async () => {
     const client = fakeClient()
     useAppStore.setState({ client })
