@@ -192,13 +192,38 @@ async fn api_routes_still_work_when_the_console_is_served() {
 }
 
 #[test]
-fn an_unset_console_dir_means_the_global_install_path() {
-    // The usual install configures nothing at all: `make console-install` puts
-    // the build where the hub already looks.
-    assert_eq!(
-        HubConfig::default().console_root(),
-        crate::hub::paths::global_console_dir()
-    );
+fn an_unset_console_dir_means_the_embedded_console() {
+    // The usual install configures nothing: the console ships inside the binary.
+    assert!(matches!(
+        HubConfig::default().console_source(),
+        ConsoleSource::Embedded
+    ));
+}
+
+#[test]
+fn a_set_console_dir_is_the_single_override() {
+    let dir = std::path::PathBuf::from("/srv/console");
+    let cfg = HubConfig {
+        console_dir: Some(dir.clone()),
+        ..HubConfig::default()
+    };
+    assert!(matches!(cfg.console_source(), ConsoleSource::Dir(p) if p == dir));
+}
+
+#[test]
+fn a_dir_source_reads_contained_files_and_reports_its_index() {
+    let dist = tempfile::tempdir().unwrap();
+    fake_dist(dist.path());
+    let source = ConsoleSource::Dir(dist.path().to_path_buf());
+    assert!(source.has_index());
+    let file = source.get("assets/index-abc123.js").unwrap();
+    assert_eq!(&*file.bytes, b"export const x = 1;");
+    assert_eq!(file.name, "assets/index-abc123.js");
+    assert!(!file.etag.is_empty());
+    assert!(source.get("assets/index-gone.js").is_none());
+    assert!(source.get("../secret.txt").is_none());
+    let empty = tempfile::tempdir().unwrap();
+    assert!(!ConsoleSource::Dir(empty.path().to_path_buf()).has_index());
 }
 
 #[tokio::test]

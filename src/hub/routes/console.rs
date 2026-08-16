@@ -1,11 +1,12 @@
-//! Serve the built Agent Console (a vite `dist/`) from disk.
+//! Serve the built Agent Console (a vite `dist/`) — embedded in the binary,
+//! or read from an operator-configured `console_dir`.
 //!
 //! Wired as the router's only fallback, so it sees every request no hub route
 //! claimed — the console *is* the hub's page surface. Four rules, in order:
 //!
 //! 1. `/api` and `/api/...` never touch the filesystem — the hub API owns that
 //!    prefix, and its 404 must not depend on what a build happened to emit.
-//! 2. A real file under the console root is served with its content type.
+//! 2. A real file in the console source is served with its content type.
 //! 3. Anything else that could be a client-side route (no extension on the
 //!    last segment, outside `/assets`) gets `index.html`, so a deep link into
 //!    `/c/...` or `/user_uploads/...` survives a reload. A *missing file*
@@ -16,11 +17,14 @@
 //!    command that fixes it rather than a bare 404 from a hub that otherwise
 //!    looks healthy.
 //!
-//! Containment is the same discipline as chamber attachments: resolve first,
-//! then require the result to be under the canonicalized root, so neither
-//! `../` nor a planted symlink can name a file outside the console directory.
+//! An embedded lookup is a key lookup and cannot escape. A `console_dir`
+//! lookup gets the same containment discipline as chamber attachments:
+//! resolve first, then require the result to be under the canonicalized
+//! root, so neither `../` nor a planted symlink can name a file outside it.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use axum::{
     extract::Request,
@@ -30,8 +34,83 @@ use axum::{
 
 use crate::hub::mime::mime_for;
 
+/// The built console compiled into the binary. `console/dist/` is created by
+/// `build.rs` when absent, so a checkout without Node still compiles; the
+/// release pipeline builds the console first so the published crate embeds it.
+#[derive(rust_embed::Embed)]
+#[folder = "console/dist/"]
+struct ConsoleDist;
+
+/// Where the console comes from: the binary, or an operator-supplied build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsoleSource {
+    Embedded,
+    Dir(PathBuf),
+}
+
+/// One file the console route can answer with.
+pub struct ConsoleFile {
+    pub bytes: Cow<'static, [u8]>,
+    /// A strong tag for embedded files (content sha256); a weak
+    /// `W/"len-mtime"` tag for on-disk files.
+    pub etag: String,
+    /// The URL-relative name, used for the content type.
+    pub name: String,
+}
+
+impl ConsoleSource {
+    /// `rel` is a URL path with the leading `/` stripped and percent-decoded.
+    pub fn get(&self, rel: &str) -> Option<ConsoleFile> {
+        match self {
+            Self::Embedded => {
+                let file = ConsoleDist::get(rel)?;
+                let etag = format!(
+                    "\"{}\"",
+                    file.metadata
+                        .sha256_hash()
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                );
+                Some(ConsoleFile {
+                    bytes: file.data,
+                    etag,
+                    name: rel.to_string(),
+                })
+            }
+            Self::Dir(root) => {
+                let path = contained_file(root, rel)?;
+                let meta = std::fs::metadata(&path).ok()?;
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let bytes = std::fs::read(&path).ok()?;
+                Some(ConsoleFile {
+                    etag: format!("W/\"{}-{mtime}\"", bytes.len()),
+                    bytes: Cow::Owned(bytes),
+                    name: rel.to_string(),
+                })
+            }
+        }
+    }
+
+    /// Is there a console here at all? Decided per request so an operator can
+    /// drop a build into `console_dir` without restarting the hub.
+    pub fn has_index(&self) -> bool {
+        match self {
+            Self::Embedded => ConsoleDist::get("index.html").is_some(),
+            Self::Dir(root) => contained_file(root, "index.html").is_some(),
+        }
+    }
+}
+
 /// The canonical path of `rel` inside `root`, if it really is a regular file
-/// inside it. `rel` is a URL path with the leading `/` already stripped.
+/// inside it. Resolve first, then require the result to be under the
+/// canonicalized root, so neither `../` nor a planted symlink can name a file
+/// outside the console directory.
 fn contained_file(root: &Path, rel: &str) -> Option<PathBuf> {
     let root = root.canonicalize().ok()?;
     let resolved = root.join(rel).canonicalize().ok()?;
@@ -59,18 +138,16 @@ fn is_spa_route(path: &str) -> bool {
     !path.rsplit('/').next().unwrap_or("").contains('.')
 }
 
-/// Read a file and answer with it, or 404 if it vanished between the
-/// containment check and the read.
-async fn serve_file(path: PathBuf, name: String) -> Response {
-    let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || std::fs::read(&path).ok()).await
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    ([(header::CONTENT_TYPE, mime_for(&name))], bytes).into_response()
+async fn serve_file(file: ConsoleFile) -> Response {
+    (
+        [(header::CONTENT_TYPE, mime_for(&file.name))],
+        file.bytes.into_owned(),
+    )
+        .into_response()
 }
 
-/// Router fallback for a configured console directory.
-pub async fn serve(root: PathBuf, req: Request) -> Response {
+/// Router fallback: the console *is* the hub's page surface.
+pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
     let path = req.uri().path().to_string();
     if is_api_path(&path) {
         return StatusCode::NOT_FOUND.into_response();
@@ -81,28 +158,32 @@ pub async fn serve(root: PathBuf, req: Request) -> Response {
         .map(|s| s.into_owned())
         .unwrap_or_else(|_| path.trim_start_matches('/').to_string());
 
-    let lookup_root = root.clone();
+    let lookup = source.clone();
     let lookup_rel = rel.clone();
-    let found = tokio::task::spawn_blocking(move || contained_file(&lookup_root, &lookup_rel))
+    let found = tokio::task::spawn_blocking(move || lookup.get(&lookup_rel))
         .await
         .ok()
         .flatten();
     if let Some(file) = found {
-        return serve_file(file, rel).await;
+        return serve_file(file).await;
     }
     if !is_spa_route(&path) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match contained_file(&root, "index.html") {
-        Some(index) => serve_file(index, "index.html".to_string()).await,
-        None => not_installed(&root),
+    match source.get("index.html") {
+        Some(index) => serve_file(index).await,
+        None => not_installed(&source),
     }
 }
 
 /// The page a hub shows when no console is installed where it is looking.
 /// Deliberately self-contained — no stylesheet, no script, nothing to fetch —
 /// because everything that would serve those is the thing that is missing.
-fn not_installed(root: &Path) -> Response {
+fn not_installed(source: &ConsoleSource) -> Response {
+    let looked_in = match source {
+        ConsoleSource::Embedded => "the binary".to_string(),
+        ConsoleSource::Dir(root) => root.display().to_string(),
+    };
     let body = format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
@@ -120,7 +201,7 @@ fn not_installed(root: &Path) -> Response {
          <p style=\"margin:1rem 0 0;color:#5f646a;font-size:.875rem\">The API is \
          unaffected — <code>/api/...</code> answers normally.</p>\n\
          </main>\n</body>\n</html>\n",
-        html_escape(&root.display().to_string()),
+        html_escape(&looked_in),
     );
     (
         StatusCode::SERVICE_UNAVAILABLE,

@@ -25,25 +25,23 @@ pub struct HubConfig {
     /// open mode while a proxy is still publishing it to the internet.
     #[serde(default)]
     pub public: bool,
-    /// Where the built Agent Console lives. Unset means
-    /// [`crate::hub::paths::global_console_dir`] (`~/.cryo/console`), which is
-    /// where `make console-install` puts it — so the usual install needs no
-    /// configuration at all. Set this only to serve a build from somewhere
-    /// else, and make it absolute: the hub canonicalizes it from the service
-    /// process's working directory, which launchd/systemd choose.
+    /// Overrides the console embedded in the binary. Set this only to serve a
+    /// build from somewhere else, and make it absolute: the hub canonicalizes
+    /// it from the service process's working directory, which launchd/systemd
+    /// choose.
     #[serde(default)]
     pub console_dir: Option<PathBuf>,
 }
 
 impl HubConfig {
-    /// The directory the console is served from — the configured one, or the
-    /// global install path. Always answers; whether a build is actually there
-    /// is decided per request, so installing the console does not require
-    /// restarting the hub.
-    pub fn console_root(&self) -> PathBuf {
-        self.console_dir
-            .clone()
-            .unwrap_or_else(crate::hub::paths::global_console_dir)
+    /// Where the console is served from: an operator override, else the build
+    /// embedded in the binary. Whether a build is actually there is decided
+    /// per request, so an override directory may be filled without restarting.
+    pub fn console_source(&self) -> crate::hub::routes::console::ConsoleSource {
+        match &self.console_dir {
+            Some(dir) => crate::hub::routes::console::ConsoleSource::Dir(dir.clone()),
+            None => crate::hub::routes::console::ConsoleSource::Embedded,
+        }
     }
 }
 

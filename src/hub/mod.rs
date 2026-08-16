@@ -143,9 +143,9 @@ pub fn build_router_with_config(
         .with_state(app);
     // The console fallback needs no `AppState`, so it is attached after
     // `with_state` and only ever sees paths no hub route claimed.
-    let console_root = config.console_root();
+    let console = Arc::new(config.console_source());
     let router =
-        router.fallback(move |req| crate::hub::routes::console::serve(console_root.clone(), req));
+        router.fallback(move |req| crate::hub::routes::console::serve(console.clone(), req));
     let router = router
         // Bound the buffered body so the 25 MB attachment cap binds before an
         // unbounded upload is read into memory. The slack covers multipart
