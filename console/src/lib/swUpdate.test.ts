@@ -97,3 +97,16 @@ test('controllerchange reloads the page exactly once', () => {
   swListeners.controllerchange()
   expect(reload).toHaveBeenCalledTimes(1)
 })
+
+test('the initial claim on a first install does not reload', () => {
+  // No controller at wire time: this page was uncontrolled, so the
+  // controllerchange that follows is the new worker's clients.claim(), not an
+  // update taking over. Reloading here would make every first visit blink.
+  stubServiceWorker(null)
+  const reload = vi.fn()
+  vi.stubGlobal('location', { reload })
+  const { reg } = fakeRegistration()
+  wireUpdateFlow(reg as unknown as ServiceWorkerRegistration, () => {})
+  swListeners.controllerchange()
+  expect(reload).not.toHaveBeenCalled()
+})

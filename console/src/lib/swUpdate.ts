@@ -4,7 +4,9 @@
  * reaching `installed` while an old one is still controlling the page — that
  * is "an update is available" — and, once the user asks, tells the waiting
  * worker to take over. The resulting `controllerchange` reloads the page once,
- * so the new HTML and the new hashed chunks are picked up together.
+ * so the new HTML and the new hashed chunks are picked up together — but only
+ * for a page that already had a controller, since the first install claims an
+ * uncontrolled page and that is not an update.
  */
 
 let waiting: ServiceWorker | null = null
@@ -39,8 +41,13 @@ export function wireUpdateFlow(reg: ServiceWorkerRegistration, onAvailable: () =
     onAvailable()
   }
   reg.addEventListener('updatefound', () => noteInstalled(reg, onAvailable))
+  // Only a page that was already controlled can be *taken over*. On a first
+  // install the page starts uncontrolled and activate's `clients.claim()`
+  // fires controllerchange too — reloading on that would make every first
+  // visit blink once for no reason.
+  const hadController = !!navigator.serviceWorker.controller
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return
+    if (!hadController || refreshing) return
     refreshing = true
     location.reload()
   })
