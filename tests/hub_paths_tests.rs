@@ -209,9 +209,11 @@ fn a_relative_console_dir_is_refused_with_the_key_named() {
 }
 
 #[test]
-fn hub_config_with_an_unknown_key_fails_to_load_naming_the_key() {
+fn hub_config_with_an_unknown_key_fails_to_load_naming_the_key_and_the_file() {
     // A typo like `console-dir` used to be silently ignored — and then erased
-    // by the next save. Refusing to load is the only way the operator finds out.
+    // by the next save. Refusing to load is the only way the operator finds out,
+    // and the message has to name the file as well as the key: `cryohub.toml`
+    // is not where most operators would think to look first.
     let config_home = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
     let path = config_home.path().join("cryo/cryohub.toml");
@@ -220,9 +222,14 @@ fn hub_config_with_an_unknown_key_fails_to_load_naming_the_key() {
 
     let err = cryochamber::hub::config::load_config().unwrap_err();
 
+    let report = format!("{err:#}");
     assert!(
-        err.to_string().contains("console-dir"),
-        "error must name the unknown key: {err}"
+        report.contains("console-dir"),
+        "error must name the unknown key: {report}"
+    );
+    assert!(
+        report.contains(&path.display().to_string()),
+        "error must name the file it was reading: {report}"
     );
 }
 

@@ -236,6 +236,17 @@ fn serve_file(file: ConsoleFile, if_none_match: Option<&str>) -> Response {
     resp
 }
 
+/// One [`ConsoleSource::get`] off the async runtime. A join failure reads as
+/// "no such file", which lands on the SPA entry or the not-installed page —
+/// the same answer a genuinely missing file gets.
+async fn blocking_get(source: &Arc<ConsoleSource>, rel: String) -> Option<ConsoleFile> {
+    let source = source.clone();
+    tokio::task::spawn_blocking(move || source.get(&rel))
+        .await
+        .ok()
+        .flatten()
+}
+
 /// Router fallback: the console *is* the hub's page surface.
 pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
     let raw = req.uri().path().to_string();
@@ -268,19 +279,16 @@ pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
 
-    let lookup = source.clone();
-    let lookup_rel = rel.clone();
-    let found = tokio::task::spawn_blocking(move || lookup.get(&lookup_rel))
-        .await
-        .ok()
-        .flatten();
+    // A `Dir` source reads from disk, so every lookup — the file the URL names
+    // and the SPA entry it falls back to — goes off the async runtime.
+    let found = blocking_get(&source, rel.clone()).await;
     if let Some(file) = found {
         return serve_file(file, if_none_match.as_deref());
     }
     if !is_spa_route(&decoded) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match source.get("index.html") {
+    match blocking_get(&source, "index.html".to_string()).await {
         Some(index) => serve_file(index, if_none_match.as_deref()),
         None => not_installed(&source),
     }

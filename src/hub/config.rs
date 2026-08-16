@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -107,8 +107,12 @@ pub fn load_config() -> Result<HubConfig> {
     if !path.exists() {
         return Ok(HubConfig::default());
     }
-    let text = std::fs::read_to_string(&path)?;
-    Ok(toml::from_str(&text)?)
+    // Name the file in every failure: a rejected unknown key says which key,
+    // but `cryohub.toml` is not somewhere an operator would think to look
+    // without being told where it is.
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    toml::from_str(&text).with_context(|| format!("reading {}", path.display()))
 }
 
 /// Write the config atomically: the whole file lands under a temporary name
