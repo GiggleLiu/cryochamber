@@ -249,8 +249,16 @@ fn print_legacy_installed() {
     println!("(These are from older Cryohub versions; remove them from their listed directories.)");
 }
 
+/// The service-unit entry point. Reads the config and honours the unit's flags
+/// in memory only — a boot is not a configuration act, and re-saving here is
+/// how an older binary once dropped a key it did not know.
 fn cmd_daemon(host: Option<String>, port: Option<u16>, public: Option<bool>) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port, public)?;
+    let config = cryochamber::hub::config::overlay_config(
+        cryochamber::hub::config::load_config()?,
+        host,
+        port,
+        public,
+    );
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(cryochamber::hub::serve(
         &config.host,

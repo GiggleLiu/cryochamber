@@ -111,12 +111,17 @@ pub fn load_config() -> Result<HubConfig> {
     Ok(toml::from_str(&text)?)
 }
 
+/// Write the config atomically: the whole file lands under a temporary name
+/// and is renamed into place, so a crash mid-write (or a concurrent reader)
+/// never sees a truncated `cryohub.toml`.
 pub fn save_config(config: &HubConfig) -> Result<()> {
     let path = crate::hub::paths::hub_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, toml::to_string_pretty(config)?)?;
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, toml::to_string_pretty(config)?)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -128,31 +133,40 @@ pub fn load_or_create_config() -> Result<HubConfig> {
     Ok(config)
 }
 
-/// Load the hub config, apply any CLI overrides, and persist them.
+/// Apply CLI overrides to a loaded config, in memory only.
 ///
 /// `public` is `None` when neither `--public` nor `--no-public` was given, in
 /// which case the saved mode stands: turning auth *off* has to be an explicit
 /// act, never a side effect of restarting without the flag.
+pub fn overlay_config(
+    mut config: HubConfig,
+    host: Option<String>,
+    port: Option<u16>,
+    public: Option<bool>,
+) -> HubConfig {
+    if let Some(host) = host {
+        config.host = host;
+    }
+    if let Some(port) = port {
+        config.port = port;
+    }
+    if let Some(public) = public {
+        config.public = public;
+    }
+    config
+}
+
+/// Load the hub config, apply any CLI overrides, and persist them. This is the
+/// `cryohub start` path — the one place flags become configuration. The
+/// service unit's `cryohub daemon` uses [`overlay_config`] without saving.
 pub fn effective_config(
     host: Option<String>,
     port: Option<u16>,
     public: Option<bool>,
 ) -> Result<HubConfig> {
-    let mut config = load_or_create_config()?;
-    let mut changed = false;
-    if let Some(host) = host {
-        config.host = host;
-        changed = true;
-    }
-    if let Some(port) = port {
-        config.port = port;
-        changed = true;
-    }
-    if let Some(public) = public {
-        config.public = public;
-        changed = true;
-    }
-    if changed {
+    let base = load_or_create_config()?;
+    let config = overlay_config(base.clone(), host, port, public);
+    if config != base {
         save_config(&config)?;
     }
     Ok(config)

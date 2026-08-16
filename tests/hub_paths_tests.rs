@@ -225,3 +225,55 @@ fn hub_config_with_an_unknown_key_fails_to_load_naming_the_key() {
         "error must name the unknown key: {err}"
     );
 }
+
+#[test]
+fn hub_config_save_is_atomic_and_leaves_no_temp_file() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let cfg = cryochamber::hub::config::HubConfig {
+        port: 9001,
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+
+    cryochamber::hub::config::save_config(&cfg).unwrap();
+
+    let path = cryochamber::hub::paths::hub_config_path();
+    assert!(path.exists());
+    let tmp = path.with_extension("toml.tmp");
+    assert!(
+        !tmp.exists(),
+        "temp file must be renamed away: {}",
+        tmp.display()
+    );
+    assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+#[test]
+fn hub_overlay_config_applies_flags_without_touching_disk() {
+    // The service unit re-invokes `cryohub daemon --public` on every boot. That
+    // path must not rewrite cryohub.toml: a re-save from an older binary once
+    // dropped a key it did not know, and a boot is not a configuration act.
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let base = cryochamber::hub::config::HubConfig::default();
+
+    let cfg = cryochamber::hub::config::overlay_config(
+        base.clone(),
+        Some("0.0.0.0".to_string()),
+        Some(9900),
+        Some(true),
+    );
+
+    assert_eq!(cfg.host, "0.0.0.0");
+    assert_eq!(cfg.port, 9900);
+    assert!(cfg.public);
+    assert!(
+        !cryochamber::hub::paths::hub_config_path().exists(),
+        "overlay must never write the config file"
+    );
+    // Absent flags leave the base untouched.
+    assert_eq!(
+        cryochamber::hub::config::overlay_config(base.clone(), None, None, None),
+        base
+    );
+}
