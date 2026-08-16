@@ -2,7 +2,14 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Persisted hub configuration (`cryohub.toml`).
+///
+/// Unknown keys are an error, not a warning: a misspelled key that loads
+/// silently is worse than one that refuses, because the next `save_config`
+/// would erase it and the operator would never learn why the setting had no
+/// effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HubConfig {
     #[serde(default = "default_host")]
     pub host: String,

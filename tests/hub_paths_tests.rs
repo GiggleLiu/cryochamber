@@ -207,3 +207,21 @@ fn a_relative_console_dir_is_refused_with_the_key_named() {
         .validate_console_dir()
         .unwrap();
 }
+
+#[test]
+fn hub_config_with_an_unknown_key_fails_to_load_naming_the_key() {
+    // A typo like `console-dir` used to be silently ignored — and then erased
+    // by the next save. Refusing to load is the only way the operator finds out.
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "host = \"127.0.0.1\"\nconsole-dir = \"/x\"\n").unwrap();
+
+    let err = cryochamber::hub::config::load_config().unwrap_err();
+
+    assert!(
+        err.to_string().contains("console-dir"),
+        "error must name the unknown key: {err}"
+    );
+}

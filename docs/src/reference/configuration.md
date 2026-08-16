@@ -89,6 +89,8 @@ For project-owned chamber collections, set `chamber_root` to a project path such
 | `public_hosts` | `[]` | Extra `Host` header values to accept, on top of loopback and `host`. Needed when a reverse proxy forwards the public hostname. |
 | `console_dir` | `~/.cryo/console` | Where the built [Agent Console](https://github.com/GiggleLiu/cryochamber/tree/main/console) lives. The default is where `make console-install` puts it, so the usual install needs no configuration; set this only to serve a build from somewhere else. |
 
+Unknown keys are rejected: a misspelled key makes `cryohub start` fail with an error naming it, rather than being silently ignored.
+
 ### Serving the Agent Console
 
 The console is the hub's web surface — there is no other dashboard. Install it once:
