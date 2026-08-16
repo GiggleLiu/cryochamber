@@ -43,15 +43,25 @@ function cacheName() {
 }
 
 /**
- * Read `req` from *this build's* cache — never from a stale one left behind by
- * an activate that could not resolve the manifest. If the name is still
- * unavailable, degrade to the global lookup: serving a possibly-old shell beats
- * serving nothing when the network is down.
+ * Read `req` from *this build's* cache first, then from any cache.
+ *
+ * Preferring the named cache keeps `/index.html` matched to the running build:
+ * the global lookup scans oldest-first, so it would hand back a stale shell left
+ * behind by an activate that could not resolve the manifest.
+ *
+ * Falling back on a miss matters because the name is derived from the *live*
+ * manifest, not from the bytes this worker shipped. Once a new build is
+ * installed and waiting, a restarted old controller resolves the new hash and
+ * would miss its own `/assets/*` chunks, which still live under the old one.
+ * Hashed asset names are content-addressed, so whichever cache holds them the
+ * bytes are right. Same fallback when the name cannot be resolved at all:
+ * offline, a possibly-old shell beats nothing.
  */
 function matchCurrent(req) {
   return cacheName()
     .then(({ name }) => caches.open(name).then((c) => c.match(req)))
-    .catch(() => caches.match(req))
+    .catch(() => undefined)
+    .then((hit) => hit || caches.match(req))
 }
 
 self.addEventListener('install', (e) => {

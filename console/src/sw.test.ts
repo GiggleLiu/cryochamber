@@ -30,26 +30,52 @@ interface FetchEvent {
   respondWith: ReturnType<typeof vi.fn>
 }
 
+const key = (req: { url: string } | string) => (typeof req === 'string' ? req : req.url)
+
 function loadWorker(opts: {
   existingCaches?: string[]
   network?: (input: unknown) => Promise<FakeResponse>
   precache?: () => Promise<FakeResponse>
+  /** Contents of the current build's cache. */
   cached?: Record<string, FakeResponse>
+  /** Every cache, oldest first — what the global `caches.match` scans. */
+  stores?: Record<string, Record<string, FakeResponse>>
 } = {}) {
   const listeners: Record<string, (e: unknown) => void> = {}
-  const cached = { ...(opts.cached ?? {}) }
-  const entry = {
-    put: vi.fn(async (req: { url: string } | string, r: FakeResponse) => {
-      cached[typeof req === 'string' ? req : req.url] = r
-    }),
-    addAll: vi.fn(async () => {}),
-    match: vi.fn(async (req: { url: string } | string) => cached[typeof req === 'string' ? req : req.url]),
+  // One store per cache name, so a read can be attributed to the cache it came
+  // from — the whole point of name-scoping reads.
+  const stores: Record<string, Record<string, FakeResponse>> =
+    opts.stores ?? { [CACHE]: { ...(opts.cached ?? {}) } }
+  const entries: Record<string, ReturnType<typeof makeEntry>> = {}
+  function makeEntry(name: string) {
+    return {
+      put: vi.fn(async (req: { url: string } | string, r: FakeResponse) => {
+        stores[name][key(req)] = r
+      }),
+      addAll: vi.fn(async () => {}),
+      match: vi.fn(async (req: { url: string } | string) => stores[name][key(req)]),
+    }
   }
+  function open(name: string) {
+    stores[name] ??= {}
+    entries[name] ??= makeEntry(name)
+    return entries[name]
+  }
+  const entry = open(CACHE)
   const caches = {
-    open: vi.fn(async () => entry),
-    match: vi.fn(async (req: { url: string } | string) => cached[typeof req === 'string' ? req : req.url]),
-    keys: vi.fn(async () => opts.existingCaches ?? ['agent-console-old', 'other']),
-    delete: vi.fn(async () => true),
+    open: vi.fn(async (name: string) => open(name)),
+    match: vi.fn(async (req: { url: string } | string) => {
+      for (const name of Object.keys(stores)) {
+        const hit = stores[name][key(req)]
+        if (hit) return hit
+      }
+      return undefined
+    }),
+    keys: vi.fn(async () => opts.existingCaches ?? Object.keys(stores)),
+    delete: vi.fn(async (name: string) => {
+      delete stores[name]
+      return true
+    }),
   }
   // `opts.network` models how the *app's* requests are answered (offline, 404).
   // /precache.json is written by the build and served by default, so a test's
@@ -87,7 +113,7 @@ function loadWorker(opts: {
     { error: () => ({ error: true }) },
     Request,
   )
-  return { listeners, caches, entry, network, self, cached }
+  return { listeners, caches, entry, entryFor: open, network, self, stores }
 }
 
 function fetchEvent(url: string, method = 'GET', mode = 'cors'): FetchEvent {
@@ -218,6 +244,48 @@ describe('never caches a response that is not ok', () => {
     expect(out.status).toBe(status)
     await Promise.resolve()
     expect(entry.put).not.toHaveBeenCalled()
+  })
+})
+
+describe('a waiting build does not strand the running one', () => {
+  // v2 is installed and waiting by design, so its cache exists and /precache.json
+  // already advertises h2 — but the page still running v1 asks for v1's chunks.
+  // A restarted v1 worker re-derives the name from the live manifest, so a
+  // name-scoped read alone would miss its own hashed assets.
+  const H1 = 'agent-console-h1'
+
+  test('offline: a hashed asset missing from the current cache is found in the older one', async () => {
+    const chunk = res(200, 'lazy chunk')
+    const { listeners, caches, entryFor } = loadWorker({
+      stores: { [H1]: { 'https://app.example/assets/x.js': chunk }, [CACHE]: {} },
+      network: async () => {
+        throw new TypeError('offline')
+      },
+    })
+    const e = fetchEvent('https://app.example/assets/x.js')
+    listeners.fetch(e)
+    // Hashed names are content-addressed: whichever cache holds them, the bytes
+    // are right, so a miss falls through to the global lookup.
+    expect(await e.respondWith.mock.calls[0][0]).toBe(chunk)
+    expect(entryFor(CACHE).match).toHaveBeenCalled()
+    expect(caches.match).toHaveBeenCalled()
+  })
+
+  test('the shell is taken from the current build when both caches have one', async () => {
+    const oldShell = res(200, 'old shell')
+    const newShell = res(200, 'new shell')
+    const { listeners, caches } = loadWorker({
+      stores: { [H1]: { '/index.html': oldShell }, [CACHE]: { '/index.html': newShell } },
+      network: async () => {
+        throw new TypeError('offline')
+      },
+    })
+    const e = fetchEvent('https://app.example/c/cham-a', 'GET', 'navigate')
+    listeners.fetch(e)
+    // /index.html is not content-addressed; the global scan is oldest-first, so
+    // only a name-scoped read gets the shell that matches the running build.
+    expect(await e.respondWith.mock.calls[0][0]).toBe(newShell)
+    expect(caches.match).not.toHaveBeenCalled()
   })
 })
 
