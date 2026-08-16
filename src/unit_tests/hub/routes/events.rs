@@ -219,3 +219,28 @@ async fn broadcast_multiplexes_by_chamber_id() {
         _ => panic!("expected StatusChange"),
     }
 }
+
+#[tokio::test]
+async fn a_lagging_client_is_told_to_resync_instead_of_losing_events_silently() {
+    // The broadcast channel holds 256 events. A slow phone behind a chatty log
+    // tail gets `Lagged` on its receiver; dropping that error would silently
+    // discard whatever was evicted (possibly a NewMessage). The client must be
+    // told, so it can refetch.
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
+
+    // Subscribe first (get_events subscribes at call time), then overflow.
+    let response = get_events(State(app.clone()), None, None, None)
+        .await
+        .into_response();
+    for i in 0..300 {
+        app.tx.send(new_message("mine", &format!("m{i}"))).unwrap();
+    }
+
+    let text = drain(response, 1).await;
+    assert!(
+        text.starts_with("event: resync\ndata: {}"),
+        "first frame after an overflow must be resync, got: {}",
+        &text[..text.len().min(120)]
+    );
+}

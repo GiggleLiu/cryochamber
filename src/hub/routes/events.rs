@@ -1,5 +1,6 @@
 //! GET /api/events — one SSE stream for the entire UI. Every event carries
-//! `chamber_id` (except `IndexChanged`, which applies to the whole index).
+//! `chamber_id` (except `IndexChanged`, which applies to the whole index, and
+//! `resync`, which tells a client whose receiver overflowed to refetch).
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -84,11 +85,16 @@ impl StreamScope {
     }
 }
 
-/// One item of the merged stream: a broadcast event, or a periodic tick that
-/// exists only to re-run the authorization check on an otherwise idle stream.
+/// One item of the merged stream: a broadcast event, a periodic tick that
+/// exists only to re-run the authorization check on an otherwise idle stream,
+/// or the receiver's report that it fell behind and events were evicted.
 enum Tick {
     Event(SseEvent),
     Reauth,
+    /// The broadcast buffer overflowed for this connection. Whatever was
+    /// evicted is gone; the client is told to refetch rather than left
+    /// believing it is current.
+    Resync,
 }
 
 /// One SSE stream per client. An invite only sees events for the chambers its
@@ -114,8 +120,10 @@ pub async fn get_events(
         _ => StreamScope::Unfiltered,
     };
     let rx = app.tx.subscribe();
-    let events = BroadcastStream::new(rx)
-        .filter_map(|result: Result<SseEvent, _>| result.ok().map(Tick::Event));
+    let events = BroadcastStream::new(rx).map(|result| match result {
+        Ok(event) => Tick::Event(event),
+        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => Tick::Resync,
+    });
     let mut interval = tokio::time::interval(REAUTH_INTERVAL);
     // The first tick of `interval` fires immediately; skipping it here keeps
     // the initial connect free of an extra check that the guard just did.
@@ -133,6 +141,9 @@ pub async fn get_events(
             let event = match tick {
                 Tick::Event(event) => event,
                 Tick::Reauth => return None,
+                Tick::Resync => {
+                    return Some(Ok(Event::default().event("resync").data("{}")));
+                }
             };
             let chamber_id = match &event {
                 SseEvent::NewMessage { chamber_id, .. }
