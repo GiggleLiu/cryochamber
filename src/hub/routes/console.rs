@@ -128,6 +128,24 @@ impl ConsoleSource {
             Self::Dir(root) => contained_file(root, "index.html").is_some(),
         }
     }
+
+    /// One line for `cryohub start`/`status`. An override says whether a build
+    /// is actually there, so the operator learns about a mistyped or emptied
+    /// `console_dir` from the terminal instead of from a 503 in the browser.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Embedded => "embedded".to_string(),
+            Self::Dir(root) => format!(
+                "{} ({})",
+                root.display(),
+                if self.has_index() {
+                    "present"
+                } else {
+                    "missing"
+                }
+            ),
+        }
+    }
 }
 
 /// The canonical path of `rel` inside `root`, if it really is a regular file
@@ -268,38 +286,47 @@ pub async fn serve(source: Arc<ConsoleSource>, req: Request) -> Response {
     }
 }
 
-/// The page a hub shows when no console is installed where it is looking.
+/// The page a hub shows when there is no console where it is looking.
 /// Deliberately self-contained — no stylesheet, no script, nothing to fetch —
 /// because everything that would serve those is the thing that is missing.
+///
+/// The two sources fail for different reasons and take different fixes, so the
+/// copy names the one that applies: a binary built without the console needs a
+/// console build and a reinstall, while an override that came up empty needs
+/// the operator to look at the directory the page names.
 fn not_installed(source: &ConsoleSource) -> Response {
-    let looked_in = match source {
-        ConsoleSource::Embedded => "the binary".to_string(),
-        ConsoleSource::Dir(root) => root.display().to_string(),
+    let where_ = match source {
+        ConsoleSource::Embedded => "This cryohub was built without the Agent Console.".to_string(),
+        ConsoleSource::Dir(root) => format!(
+            "The hub is serving its console from <code>{}</code>, and there is no build there.",
+            html_escape(&root.display().to_string())
+        ),
     };
     let body = format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>Agent Console not installed</title>\n</head>\n\
+         <title>Agent Console not available</title>\n</head>\n\
          <body style=\"margin:0;display:grid;place-items:center;min-height:100vh;\
          font:16px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\
          color:#16171a;background:#f5f5f6\">\n\
          <main style=\"max-width:32rem;padding:2rem\">\n\
          <h1 style=\"font-size:1.25rem;margin:0 0 .5rem\">No Agent Console here</h1>\n\
-         <p style=\"margin:0 0 1rem;color:#43474d\">The hub is running. It serves its \
-         dashboard from <code>{}</code>, and there is no build there yet.</p>\n\
-         <p style=\"margin:0 0 1rem;color:#43474d\">From a cryochamber checkout:</p>\n\
+         <p style=\"margin:0 0 1rem;color:#43474d\">{where_}</p>\n\
+         <p style=\"margin:0 0 1rem;color:#43474d\">Build it and rebuild the binary:</p>\n\
          <pre style=\"padding:.75rem 1rem;background:#fff;border:1px solid #e3e4e6;\
-         border-radius:8px;overflow-x:auto\">make console-install</pre>\n\
+         border-radius:8px;overflow-x:auto\">make console-build &amp;&amp; cargo install --path .</pre>\n\
+         <p style=\"margin:0 0 1rem;color:#43474d\">Or point <code>console_dir</code> in \
+         <code>cryohub.toml</code> at a built console (an absolute path).</p>\n\
          <p style=\"margin:1rem 0 0;color:#5f646a;font-size:.875rem\">The API is \
          unaffected — <code>/api/...</code> answers normally.</p>\n\
-         </main>\n</body>\n</html>\n",
-        html_escape(&looked_in),
+         </main>\n</body>\n</html>\n"
     );
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CONTENT_SECURITY_POLICY, CONSOLE_CSP),
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+            (header::CACHE_CONTROL, "no-cache".to_string()),
+            (header::CONTENT_SECURITY_POLICY, CONSOLE_CSP.to_string()),
         ],
         body,
     )

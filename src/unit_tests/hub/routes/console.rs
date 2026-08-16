@@ -226,6 +226,47 @@ fn a_dir_source_reads_contained_files_and_reports_its_index() {
     assert!(!ConsoleSource::Dir(empty.path().to_path_buf()).has_index());
 }
 
+#[test]
+fn describe_names_the_source_and_whether_a_build_is_there() {
+    assert_eq!(ConsoleSource::Embedded.describe(), "embedded");
+    let dist = tempfile::tempdir().unwrap();
+    fake_dist(dist.path());
+    assert_eq!(
+        ConsoleSource::Dir(dist.path().to_path_buf()).describe(),
+        format!("{} (present)", dist.path().display())
+    );
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(
+        ConsoleSource::Dir(empty.path().to_path_buf()).describe(),
+        format!("{} (missing)", empty.path().display())
+    );
+}
+
+/// The other half of the per-source copy. A binary built without the console
+/// has no directory to name and a stale `console_dir` is not the cause, so the
+/// page must blame the build rather than send the operator hunting in a path.
+#[tokio::test]
+async fn the_embedded_setup_page_blames_the_build_not_a_directory() {
+    let resp = not_installed(&ConsoleSource::Embedded);
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        body.contains("built without the Agent Console"),
+        "the embedded page must blame the build; body was {body}"
+    );
+    assert!(
+        body.contains("make console-build"),
+        "the embedded page must name the fix; body was {body}"
+    );
+    assert!(
+        !body.contains("serving its console from"),
+        "the embedded page must not claim to be reading a directory; body was {body}"
+    );
+}
+
 #[tokio::test]
 async fn a_hub_with_no_console_installed_says_so_instead_of_404ing() {
     // The failure this replaces: a hub serving a console directory that was
@@ -245,12 +286,12 @@ async fn a_hub_with_no_console_installed_says_so_instead_of_404ing() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(ctype.starts_with("text/html"), "content-type was {ctype}");
     assert!(
-        body.contains("make console-install"),
-        "the page must name the command that fixes it; body was {body}"
+        body.contains("make console-build") && body.contains("console_dir"),
+        "the page must name both fixes; body was {body}"
     );
     assert!(
         body.contains(&empty.path().display().to_string()),
-        "the page must name the directory it looked in; body was {body}"
+        "an override page must name the directory it looked in; body was {body}"
     );
 
     // A missing hashed asset stays a 404: answering it with HTML would break

@@ -185,3 +185,25 @@ fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
     assert!(!effective_config(None, None, Some(false)).unwrap().public);
     assert!(!cryochamber::hub::config::load_config().unwrap().public);
 }
+
+/// A relative `console_dir` resolves from whatever working directory
+/// launchd/systemd gave the service — refuse it while the operator is still
+/// at a terminal rather than 503ing after the next reboot.
+#[test]
+fn a_relative_console_dir_is_refused_with_the_key_named() {
+    let cfg = cryochamber::hub::config::HubConfig {
+        console_dir: Some(std::path::PathBuf::from("console/dist")),
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+    let err = cfg.validate_console_dir().unwrap_err().to_string();
+    assert!(err.contains("console_dir"), "{err}");
+    assert!(err.contains("absolute"), "{err}");
+    let ok = cryochamber::hub::config::HubConfig {
+        console_dir: Some(std::path::PathBuf::from("/srv/console")),
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+    ok.validate_console_dir().unwrap();
+    cryochamber::hub::config::HubConfig::default()
+        .validate_console_dir()
+        .unwrap();
+}

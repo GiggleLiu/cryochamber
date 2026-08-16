@@ -43,6 +43,21 @@ impl HubConfig {
             None => crate::hub::routes::console::ConsoleSource::Embedded,
         }
     }
+
+    /// A relative `console_dir` would be resolved from the service process's
+    /// working directory, which launchd/systemd choose — so it is refused
+    /// before a service is installed rather than 503ing after a reboot.
+    pub fn validate_console_dir(&self) -> anyhow::Result<()> {
+        if let Some(dir) = &self.console_dir {
+            anyhow::ensure!(
+                dir.is_absolute(),
+                "console_dir in {} must be an absolute path (got {})",
+                crate::hub::paths::hub_config_path().display(),
+                dir.display()
+            );
+        }
+        Ok(())
+    }
 }
 
 fn default_host() -> String {

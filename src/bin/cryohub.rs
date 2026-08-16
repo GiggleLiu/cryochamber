@@ -117,6 +117,7 @@ fn cmd_start(
     public: Option<bool>,
 ) -> Result<()> {
     let config = cryochamber::hub::config::effective_config(host, port, public)?;
+    config.validate_console_dir()?;
     std::fs::create_dir_all(&config.chamber_root)?;
 
     // Before binding a socket AND before installing a service: a public hub
@@ -159,6 +160,7 @@ fn cmd_start(
         println!("Mode: PUBLIC (bearer auth enforced on every /api route)");
     }
     println!("Chamber root: {}", config.chamber_root.display());
+    println!("Console: {}", config.console_source().describe());
     println!(
         "Config: {}",
         cryochamber::hub::paths::hub_config_path().display()
@@ -216,6 +218,7 @@ fn cmd_status() -> Result<()> {
         }
     );
     println!("Chamber root: {}", config.chamber_root.display());
+    println!("Console: {}", config.console_source().describe());
     println!(
         "Config: {}",
         cryochamber::hub::paths::hub_config_path().display()
