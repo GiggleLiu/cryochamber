@@ -300,6 +300,19 @@ describe('file upload', () => {
     expect(client.uploadFile).toHaveBeenCalledTimes(1)
   })
 
+  test('an uploaded image is inserted as an embed so it previews inline', async () => {
+    const client = fakeClient({
+      uploadFile: vi.fn(async () => '/api/chambers/cham-a/files/ab_photo.png'),
+    })
+    useAppStore.setState({ client })
+    render(<Composer chamberId="cham-a" />)
+    const box = screen.getByRole('textbox')
+    await userEvent.upload(attach(), new File(['png'], 'photo.png', { type: 'image/png' }))
+    await waitFor(() =>
+      expect(box).toHaveValue('![photo.png](/api/chambers/cham-a/files/ab_photo.png)'),
+    )
+  })
+
   test('failed upload shows the server message and leaves text unchanged', async () => {
     const client = fakeClient({
       uploadFile: vi.fn().mockRejectedValue(new ApiError(400, 'File too large')),

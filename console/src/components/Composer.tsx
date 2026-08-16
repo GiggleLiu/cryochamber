@@ -3,6 +3,7 @@ import { useAppStore } from '../store/appStore'
 import { draftKey, sendViaOutbox } from '../lib/outbox'
 import { accountKey } from '../lib/account'
 import { isUnauthorized } from '../api/types'
+import { IMAGE_EXT_RE } from '../lib/images'
 import { AlertCircle, ArrowUp, Paperclip } from './Icon'
 
 /**
@@ -104,7 +105,9 @@ export function Composer({ chamberId }: { chamberId: string }) {
     setMentionIndex(0)
   }
 
-  /** Insert `[name](uri)` at the caret, space-separated from surrounding text.
+  /** Insert `[name](uri)` at the caret, space-separated from surrounding text —
+   * or `![name](uri)` for a picture, so the recipient sees it inline instead of
+   * a filename they have to click.
    * Reads the CURRENT value via functional setState — the upload that calls
    * this resolves asynchronously, and text typed while it was pending must
    * survive. */
@@ -114,7 +117,7 @@ export function Composer({ chamberId }: { chamberId: string }) {
       const caret = ta ? Math.min(ta.selectionStart, current.length) : current.length
       const before = current.slice(0, caret)
       const after = current.slice(caret)
-      const link = `[${name}](${uri})`
+      const link = `${IMAGE_EXT_RE.test(name) ? '!' : ''}[${name}](${uri})`
       const full =
         (before.length > 0 && !/\s$/.test(before) ? ' ' : '') +
         link +

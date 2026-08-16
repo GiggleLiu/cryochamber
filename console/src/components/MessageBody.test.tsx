@@ -350,6 +350,28 @@ describe('chamber attachments', () => {
     }
   })
 
+  test('a plain link to an attachment image previews inline and zooms on click', async () => {
+    const { fetchBlob, fetchFn } = fetcher(okBlobResponse)
+    const { container } = await renderBody(
+      { source: `[ab_plot.png](${IMAGE_PATH})`, fetchBlob },
+      'img',
+    )
+    const img = container.querySelector('img')!
+    expect(img.closest('a')!.getAttribute('href')).toBe(IMAGE_PATH)
+    await waitFor(() => expect(img.getAttribute('src')).toBe('blob:mock-1'))
+    expect(fetchFn).toHaveBeenCalledWith(IMAGE_PATH, AUTH_GET)
+    await userEvent.click(img)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('img')!.getAttribute('src')).toBe('blob:mock-1')
+  })
+
+  test('a plain link to a non-image attachment stays a link', async () => {
+    const { fetchBlob } = fetcher(okBlobResponse)
+    const { container } = await renderBody({ source: `[report.pdf](${FILE_PATH})`, fetchBlob }, 'a')
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('report.pdf')).toBeTruthy()
+  })
+
   test('clicking a plain (non-attachment) message image zooms it', async () => {
     const { fetchBlob } = fetcher(okBlobResponse)
     const { container } = await renderBody(
@@ -404,8 +426,11 @@ describe('a 401 on an attachment is a revoked session, not a broken file', () =>
       { source: `[shot.png](/api/chambers/cham-a/files/shot.png)`, fetchBlob },
       'a',
     )
-    await userEvent.click(screen.getByText('shot.png'))
-    await waitFor(() => expect(onAuthFailure).toHaveBeenCalledTimes(1))
+    // The link renders as a thumbnail, whose own authenticated fetch is denied
+    // first; clicking it asks again for the lightbox and must stay just as
+    // quiet.
+    await userEvent.click(await screen.findByAltText('shot.png'))
+    await waitFor(() => expect(onAuthFailure).toHaveBeenCalled())
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })

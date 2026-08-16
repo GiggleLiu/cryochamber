@@ -576,6 +576,17 @@ input, select, textarea { font: inherit; color: inherit; }
   background: var(--surface-2);
 }
 
+/* A thumbnail the body substituted for an image attachment's link text. It
+   sits inside the anchor, so it needs the anchor's underline off and its own
+   block box — an inline image would sit on the text baseline with a gap. */
+.message-body .msg-thumb {
+  display: block;
+}
+
+.message-body a:has(> .msg-thumb) {
+  text-decoration: none;
+}
+
 /* Code — inline chips stay in the text colour so they do not compete with
    links; blocks scroll horizontally rather than wrapping mid-token. */
 .message-body code {

@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { sanitizeHtml } from './sanitize'
 import { filenameFromHref, triggerBlobDownload, HUB_FILES_RE } from '../lib/download'
+import { IMAGE_EXT_RE, inlineImageLinks } from '../lib/images'
 import { isUnauthorized } from '../api/types'
 
 export { sanitizeHtml } from './sanitize'
 export { filenameFromHref } from '../lib/download'
-
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
 
 /** The markdown renderer pulls in markdown-it and KaTeX — a third of the
  * bundle. It is imported on first need and cached at module scope, so the whole
@@ -83,7 +82,10 @@ export function MessageBody({
   const rendered = markdownModule
     ? markdownModule.renderMarkdown(source)
     : plainTextFallback(source)
-  const sanitized = sanitizeHtml(rendered)
+  // A plain link to an image attachment becomes an inline thumbnail; this runs
+  // after the sanitizer so nothing it inserts can widen what the sanitizer let
+  // through.
+  const sanitized = inlineImageLinks(sanitizeHtml(rendered))
 
   // Authenticated image loading. React re-sets this div's innerHTML whenever
   // the rendered HTML changes (and dev StrictMode/remounts can do it too);
