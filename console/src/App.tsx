@@ -10,6 +10,7 @@ import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
+import { UpdateBar } from './components/UpdateBar'
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
  * usable token — the caller says so on the login screen rather than dropping
@@ -135,6 +136,7 @@ export default function App() {
       {connection !== 'live' && (
         <div className="banner" role="status">Reconnecting</div>
       )}
+      <UpdateBar />
       {downloadNote && (
         <div className="banner banner-info" role="status">{downloadNote}</div>
       )}

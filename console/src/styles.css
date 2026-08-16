@@ -1303,6 +1303,25 @@ input, select, textarea { font: inherit; color: inherit; }
   border-color: rgba(87, 107, 149, 0.2);
 }
 
+/* Update bar: same floating pill, informational tint, with an inline action. */
+.banner-update {
+  color: var(--link);
+  background: var(--info-tint);
+  border-color: rgba(87, 107, 149, 0.2);
+}
+.banner-update::before { animation: none; }
+.banner-action {
+  margin-left: var(--sp-1);
+  padding: 0 var(--sp-2);
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--r-full);
+  cursor: pointer;
+}
+
 
 
 /* ==========================================================================
