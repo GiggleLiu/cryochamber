@@ -94,6 +94,8 @@ export interface AppState {
   client: HubClient | null
   view: View
   settingsOpen: boolean
+  /** A newer console build is installed and waiting; the UpdateBar offers a reload. Transient. */
+  updateAvailable: boolean
   streams: StreamSub[]
   unreadByStream: Record<number, number[]>
   messagesByStream: Record<number, Message[]>
@@ -119,6 +121,7 @@ export interface AppState {
   logout(reason?: string): void
   navigate(v: View): void
   setSettingsOpen(open: boolean): void
+  setUpdateAvailable(v: boolean): void
   applyInitialState(s: InitialState): void
   /** Merge fresh liveness into the projects already on screen. */
   updateStreamStatus(
@@ -181,6 +184,7 @@ const initialData = {
   client: null as HubClient | null,
   view: { name: 'projects' } as View,
   settingsOpen: false,
+  updateAvailable: false,
   streams: [] as StreamSub[],
   unreadByStream: {} as Record<number, number[]>,
   messagesByStream: {} as Record<number, Message[]>,
@@ -234,6 +238,7 @@ export const useAppStore = create<AppState>()((set, get) => {
 
   navigate: (v) => set({ view: v }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setUpdateAvailable: (v) => set({ updateAvailable: v }),
 
   applyInitialState: (s) => {
     const unreadByStream: Record<number, number[]> = {}

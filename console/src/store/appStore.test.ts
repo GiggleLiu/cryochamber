@@ -391,3 +391,12 @@ describe('show completed & archived', () => {
     expect(useAppStore.getState().showCompletedArchived).toBe(true)
   })
 })
+
+describe('updateAvailable', () => {
+  test('is transient state that starts false and toggles', () => {
+    resetAppStore()
+    expect(useAppStore.getState().updateAvailable).toBe(false)
+    useAppStore.getState().setUpdateAvailable(true)
+    expect(useAppStore.getState().updateAvailable).toBe(true)
+  })
+})
