@@ -219,6 +219,22 @@ pub async fn post_upload(
     Err(StatusCode::BAD_REQUEST)
 }
 
+/// Attachments are downloads, never documents: anything a browser could run
+/// or render as markup goes out as an opaque byte stream, on top of the
+/// `Content-Disposition: attachment` every attachment already carries.
+fn attachment_content_type(name: &str) -> &'static str {
+    match name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "html" | "htm" | "xhtml" | "js" | "mjs" | "svg" => "application/octet-stream",
+        _ => mime_for(name),
+    }
+}
+
 /// `GET /api/chambers/{id}/files/{name}` — serve a stored attachment.
 ///
 /// `{name}` must be exactly one already-sanitized segment. Anything that
@@ -252,7 +268,10 @@ pub async fn get_file(
     .ok_or(StatusCode::NOT_FOUND)?;
     Ok((
         [
-            (header::CONTENT_TYPE, mime_for(&name).to_string()),
+            (
+                header::CONTENT_TYPE,
+                attachment_content_type(&name).to_string(),
+            ),
             (
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{name}\""),

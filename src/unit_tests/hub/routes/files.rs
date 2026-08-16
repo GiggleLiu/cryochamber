@@ -281,3 +281,23 @@ fn safe_name_sanitizes_and_falls_back() {
     assert_eq!(safe_name("..."), "attachment");
     assert_eq!(safe_name(""), "attachment");
 }
+
+#[test]
+fn active_content_types_are_downgraded_to_octet_stream_for_attachments() {
+    for name in [
+        "page.html",
+        "page.htm",
+        "page.xhtml",
+        "app.js",
+        "app.mjs",
+        "pic.svg",
+    ] {
+        assert_eq!(
+            attachment_content_type(name),
+            "application/octet-stream",
+            "{name}"
+        );
+    }
+    assert_eq!(attachment_content_type("pic.png"), "image/png");
+    assert_eq!(attachment_content_type("doc.pdf"), "application/pdf");
+}
