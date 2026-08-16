@@ -114,11 +114,8 @@ pub async fn post_send(
     let Some((path, entry)) = app.resolve(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if let Some(key) = crate::hub::ratelimit::write_key(role.as_ref().map(|e| &e.0)) {
-        if let crate::hub::ratelimit::Decision::Deny { retry_after } = app.write_limiter.check(&key)
-        {
-            return crate::hub::ratelimit::too_many_requests(retry_after);
-        }
+    if let Some(throttled) = app.write_limiter.refuse(role.as_ref().map(|e| &e.0)) {
+        return throttled;
     }
     let from = match role {
         Some(axum::Extension(crate::hub::tokens::Role::Invite { name, .. })) => name,

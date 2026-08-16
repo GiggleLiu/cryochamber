@@ -175,11 +175,8 @@ pub async fn post_upload(
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
     // Same bucket as `send`: an upload is the other way a guest writes to the
     // owner's disk, so a flood of either must run the credential dry.
-    if let Some(key) = crate::hub::ratelimit::write_key(role.as_ref().map(|e| &e.0)) {
-        if let crate::hub::ratelimit::Decision::Deny { retry_after } = app.write_limiter.check(&key)
-        {
-            return Err(crate::hub::ratelimit::too_many_requests(retry_after));
-        }
+    if let Some(throttled) = app.write_limiter.refuse(role.as_ref().map(|e| &e.0)) {
+        return Err(throttled);
     }
     let _slot = upload_slots()
         .acquire()

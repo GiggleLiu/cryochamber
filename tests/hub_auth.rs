@@ -1014,3 +1014,73 @@ async fn throttled_send_carries_a_whole_second_retry_after_header() {
         .unwrap();
     assert!((1..=6).contains(&retry), "got Retry-After {retry}");
 }
+
+#[tokio::test]
+async fn an_exhausted_bucket_never_speaks_before_the_authorization_decision() {
+    // The throttle answers only for requests that were going to be served.
+    // If it ran first, a spent credential would learn "429" where it should
+    // have learned "404" — turning the limiter into the chamber-enumeration
+    // oracle the whole scope design exists to deny — and would mask the
+    // owner-only 403 rows for anyone who happened to be out of tokens.
+    let m = setup();
+    let body = Some(r#"{"body":"hi"}"#);
+    let missing = "/api/chambers/definitely-not-a-chamber/send".to_string();
+    let beta_send = format!("/api/chambers/{}/send", m.beta);
+
+    // Spend the invite's bucket, then probe past it.
+    let alpha_send = format!("/api/chambers/{}/send", m.alpha);
+    for _ in 0..5 {
+        m.call(As::Invite, "POST", &alpha_send, body).await;
+    }
+    assert_eq!(
+        m.call(As::Invite, "POST", &alpha_send, body).await.0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the invite's bucket must be empty for the rest of this test to mean anything"
+    );
+    assert_eq!(
+        m.call(As::Invite, "POST", &beta_send, body).await.0,
+        StatusCode::NOT_FOUND,
+        "out-of-scope send stays 404 even with an empty bucket"
+    );
+    assert!(m.inbox("beta").is_empty(), "nothing may reach beta");
+    assert_eq!(
+        m.call(As::Invite, "POST", &missing, body).await.0,
+        StatusCode::NOT_FOUND,
+        "nonexistent chamber stays 404 even with an empty bucket"
+    );
+    assert_eq!(
+        m.status(
+            As::Invite,
+            "GET",
+            &format!("/api/chambers/{}/status", m.alpha)
+        )
+        .await,
+        StatusCode::FORBIDDEN,
+        "an owner-only route stays 403 for a throttled invite"
+    );
+
+    // The owner clears the scope guard, so their probe reaches the handler:
+    // this is the row that pins `resolve` *inside* `post_send` running before
+    // the gate, not merely the guard running before the router.
+    for _ in 0..5 {
+        m.call(As::Owner, "POST", &alpha_send, body).await;
+    }
+    assert_eq!(
+        m.call(As::Owner, "POST", &alpha_send, body).await.0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the owner's bucket must be empty too"
+    );
+    assert_eq!(
+        m.call(As::Owner, "POST", &missing, body).await.0,
+        StatusCode::NOT_FOUND,
+        "an unresolvable id is 404 from the handler, never 429"
+    );
+    let (status, _) = m
+        .upload(As::Owner, "definitely-not-a-chamber", "x.txt", b"hi")
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "same ordering in the upload handler"
+    );
+}

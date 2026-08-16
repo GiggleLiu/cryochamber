@@ -65,6 +65,17 @@ impl RateLimiter {
         }
     }
 
+    /// The gate the write routes share: spend one token for `role` and return
+    /// `None`, or return the `429` the handler must answer with. Roleless
+    /// (open-mode) callers have no bucket and are never refused — see
+    /// [`write_key`].
+    pub fn refuse(&self, role: Option<&Role>) -> Option<Response> {
+        match self.check(&write_key(role)?) {
+            Decision::Allow => None,
+            Decision::Deny { retry_after } => Some(too_many_requests(retry_after)),
+        }
+    }
+
     /// Take one token for `key` now.
     pub fn check(&self, key: &str) -> Decision {
         self.check_at(key, Instant::now())
