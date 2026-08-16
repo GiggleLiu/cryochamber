@@ -17,6 +17,17 @@ import { resetChamberEvents } from './chamberEvents'
  * the token like every other per-account store. */
 const SHOW_COMPLETED_PREFIX = 'agent-console.show-archived.'
 
+/** The fields a status refresh is allowed to carry: liveness only. Name and
+ * ordering belong to the index read, not to a status event. */
+const LIVENESS_FIELDS = [
+  'running',
+  'agentRunning',
+  'nextWakeDisplay',
+  'completed',
+  'archived',
+  'hasOpenQuestion',
+] as const satisfies ReadonlyArray<keyof Chamber>
+
 export const AUTH_LOGOUT_REASON = 'Your session is no longer valid — please sign in again.'
 export const ACCESS_REVOKED_NOTICE = 'You no longer have access to this chamber.'
 
@@ -236,23 +247,33 @@ export const useAppStore = create<AppState>()((set, get) => {
 
     updateChamberStatus: (list) => {
       const byId = new Map(list.map((c) => [c.id, c]))
-      set((state) => ({
-        chambers: state.chambers.map((c) => {
+      set((state) => {
+        let touched = false
+        const chambers = state.chambers.map((c) => {
           const fresh = byId.get(c.id)
+          if (!fresh) return c
           // Only liveness: a status refresh must not reorder or replace rows.
-          return fresh
-            ? {
-                ...c,
-                running: fresh.running,
-                agentRunning: fresh.agentRunning,
-                nextWakeDisplay: fresh.nextWakeDisplay,
-                completed: fresh.completed,
-                archived: fresh.archived,
-                hasOpenQuestion: fresh.hasOpenQuestion,
-              }
-            : c
-        }),
-      }))
+          // A field the refresh left undefined leaves what we knew in place.
+          const patch: Partial<Chamber> = {}
+          let changed = false
+          for (const k of LIVENESS_FIELDS) {
+            const v = fresh[k]
+            if (v === undefined || Object.is(v, c[k])) continue
+            Object.assign(patch, { [k]: v })
+            changed = true
+          }
+          if (!changed) return c
+          touched = true
+          return { ...c, ...patch }
+        })
+        // Returning the state object itself is Zustand's "nothing happened":
+        // no listener fires and every selector keeps its reference. Status
+        // events arrive several times a session and mostly say the same thing;
+        // a fresh array would re-render every consumer for nothing — and, with
+        // the sheet's focus effect behind it, yank focus from whatever the
+        // owner is typing.
+        return touched ? { chambers } : state
+      })
     },
 
     /** The mailbox fetch is the whole history: it replaces what we had, except

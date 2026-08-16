@@ -283,3 +283,45 @@ test('useIsOwner reflects role; showCompletedKey is per account', () => {
   expect(renderHook(() => useIsOwner()).result.current).toBe(true)
   expect(showCompletedKey(creds)).toContain('agent-console.show-archived.')
 })
+
+describe('updateChamberStatus identity', () => {
+  test('a refresh that changes nothing leaves the chambers array untouched and wakes no subscriber', () => {
+    useAppStore.setState({ chambers: [chamber('a'), chamber('b')] })
+    const before = useAppStore.getState().chambers
+    const listener = vi.fn()
+    const unsubscribe = useAppStore.subscribe(listener)
+    useAppStore.getState().updateChamberStatus([chamber('a'), chamber('b')])
+    unsubscribe()
+    // Status events arrive several times a session and mostly say the same
+    // thing; a new array would re-render every consumer for nothing.
+    expect(Object.is(useAppStore.getState().chambers, before)).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  test('a differing refresh replaces only the chamber that changed', () => {
+    useAppStore.setState({ chambers: [chamber('a'), chamber('b')] })
+    const [, beforeB] = useAppStore.getState().chambers
+    useAppStore.getState().updateChamberStatus([{ ...chamber('a'), agentRunning: true }])
+    const [afterA, afterB] = useAppStore.getState().chambers
+    expect(afterA.agentRunning).toBe(true)
+    expect(Object.is(afterB, beforeB)).toBe(true)
+  })
+
+  test('a refresh naming only chambers we do not have changes nothing', () => {
+    useAppStore.setState({ chambers: [chamber('a')] })
+    const before = useAppStore.getState().chambers
+    useAppStore.getState().updateChamberStatus([{ ...chamber('nope'), running: false }])
+    expect(Object.is(useAppStore.getState().chambers, before)).toBe(true)
+  })
+
+  test('an undefined field in the refresh does not erase what was known', () => {
+    useAppStore.setState({ chambers: [{ ...chamber('a'), nextWakeDisplay: 'in 2 h' }] })
+    useAppStore.getState().updateChamberStatus([
+      { ...chamber('a'), nextWakeDisplay: undefined as unknown as string | null, running: false },
+    ])
+    expect(useAppStore.getState().chambers[0]).toMatchObject({
+      nextWakeDisplay: 'in 2 h',
+      running: false,
+    })
+  })
+})
