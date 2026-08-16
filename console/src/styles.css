@@ -583,6 +583,16 @@ input, select, textarea { font: inherit; color: inherit; }
   display: block;
 }
 
+/* A hub image whose authenticated bytes have not arrived yet has no `src` at
+   all (see `deferHubImages`), so it holds a quiet box of its own instead of
+   collapsing to its alt text or — worse — a broken-image glyph. */
+.message-body img[data-upload-src]:not([src]) {
+  display: block;
+  width: min(100%, 240px);
+  min-height: 120px;
+  color: transparent;
+}
+
 .message-body a:has(> .msg-thumb) {
   text-decoration: none;
 }
