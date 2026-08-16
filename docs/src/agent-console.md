@@ -16,21 +16,29 @@ cryohub start        # http://127.0.0.1:8765
 
 ## Signing in
 
-On loopback (`cryohub start` without `--public`) there is no login — the hub is
-open to whoever can reach `127.0.0.1`.
+`cryohub start` runs in **public mode**: every `/api` route needs a bearer
+token, and the console shows a login screen. The first run creates the owner
+token and prints it — that line is your login, so keep it:
 
-Once the hub runs in **public mode** every `/api` route needs a bearer token,
-and the console shows a login screen. Two kinds of token open it:
+```
+Owner token (shown once — paste it into the console to sign in):
+3f9c…
+```
 
-- **The owner token.** `cryohub token owner` prints it (once — it is created on
-  first use and the same secret is printed on later runs). Paste it into
-  *Access token*. This is you: full control of every chamber.
+Two kinds of token open the console:
+
+- **The owner token.** Printed by the first `cryohub start`, and reprintable
+  any time with `cryohub token owner` (idempotent — the same secret). Paste it
+  into *Access token*. This is you: full control of every chamber.
 - **An invite link.** Someone with the owner token mints a link scoped to one
   chamber and sends it to you. Opening the link *is* signing in — the token
   rides in the `#invite=` fragment, is stored, and is stripped from the address
   bar before anything else runs.
 
 There are no accounts, passwords or e-mail. A token is the identity.
+
+`cryohub start --no-public` opts out: no login, and the hub is open to whoever
+can reach `127.0.0.1`. Sharing and invite links do not work in open mode.
 
 ## Owner surface vs. guest surface
 
@@ -92,11 +100,12 @@ It is a console you check, not a pager.
 ## Public deployment (phone outside your network)
 
 `cryohub` stays bound to loopback. To reach it from a phone on the go, put a
-TLS-terminating reverse proxy in front of it and turn on public mode.
+TLS-terminating reverse proxy in front of it. Public mode is already on, so
+there is nothing to switch — just make sure you have the owner token.
 
 ```bash
-cryohub token owner          # keep the printed token — it is your login
-cryohub start --public       # bearer auth on every /api route; persisted in cryohub.toml
+cryohub start                # bearer auth on every /api route; prints the owner token on first run
+cryohub token owner          # or reprint it later — it is your login
 ```
 
 Caddy is the documented proxy. Copy this to `/etc/caddy/Caddyfile`, replace

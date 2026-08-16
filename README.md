@@ -36,8 +36,11 @@ If your AI agent supports custom skills, you can skip the manual `plan.md` step:
 
 Start Cryohub to monitor the chamber in your browser:
 ```bash
-cryohub start
+cryohub start      # copy the owner token it prints on first run
 ```
+
+Open the URL it shows and paste that token to sign in — bearer auth is on by
+default (`--no-public` opts out, but then sharing does not work).
 
 Cryohub runs once per user, discovers chambers on this machine, and serves the
 **Agent Console** — a browser UI for status, logs, messages, TODOs, notes, and
@@ -54,15 +57,15 @@ app (Android + iOS) for reading and steering your chambers from anywhere over
 the same authenticated `/api`. One chamber is one flat conversation; a friend
 gets in through an invite link scoped to the one chamber you minted it from.
 
-To reach it beyond loopback, mint an owner token and start the hub with auth
-enforced, then put a TLS proxy in front:
+To reach it beyond loopback, just put a TLS proxy in front — auth is already
+enforced:
 
 ```bash
-cryohub token owner     # prints the token once — this is your login
-cryohub start --public
+cryohub start           # prints the owner token on first run — this is your login
+cryohub token owner     # reprints it any time
 ```
 
-`--public` puts every `/api` route behind a bearer token; the console's own
+Public mode puts every `/api` route behind a bearer token; the console's own
 pages stay public — they are the login screen. Sign-in, invites, PWA install
 and the Caddy deployment are in the
 [Agent Console guide](https://giggleliu.github.io/cryochamber/agent-console.html);

@@ -87,7 +87,7 @@ Unknown keys are rejected: a typo such as `console-dir` fails `cryohub start` wi
 | `host` | `"127.0.0.1"` | Bind address for the global dashboard service. |
 | `port` | `8765` | TCP port for the global dashboard service. |
 | `chamber_root` | `~/.cryo/chambers` | Default location for chambers created from the dashboard UI. |
-| `public` | `false` | Whether bearer-token auth is enforced on every `/api` route. Set by `cryohub start --public`, cleared only by `cryohub start --no-public` — a plain `cryohub start` keeps whatever is saved here. |
+| `public` | `true` | Whether bearer-token auth is enforced on every `/api` route. On by default; a config file written before this default that omits the key also loads as `true`, while an explicit `public = false` stays open. Cleared only by `cryohub start --no-public` — a plain `cryohub start` keeps whatever is saved here. |
 | `owner_name` | `"human"` | Sender name stamped on messages the owner sends in public mode. A client-supplied `from` is ignored. |
 | `public_hosts` | `[]` | Extra `Host` header values to accept, on top of loopback and `host`. Needed when a reverse proxy forwards the public hostname. |
 | `console_dir` | *(unset — embedded)* | Serve the [Agent Console](../agent-console.md) from this directory instead of the build embedded in the `cryohub` binary. Must be an absolute path to a vite `dist/`. Development and custom builds only. |

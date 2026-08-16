@@ -6,6 +6,14 @@ Security and reliability hardening.
 
 ### Cryohub
 
+- **Public mode (bearer auth) is now the default** (breaking). `cryohub start`
+  enforces the bearer token on every `/api` route and prints the owner token on
+  first run — copy it and paste it into the console to sign in; it is the only
+  time it is shown, and `cryohub token owner` reprints it. A missing owner
+  token is no longer a startup error. `cryohub start --no-public` opts out into
+  the old open (loopback-only) mode, where sharing and invite links do not
+  work. An existing `cryohub.toml` keeps whatever `public` value it already
+  spells out.
 - **The Agent Console replaces the bundled dashboard** (breaking). `cryohub`
   no longer serves the old `web_shell.html` panel; its only web surface is the
   Agent Console — a phone-first, installable app with one flat conversation

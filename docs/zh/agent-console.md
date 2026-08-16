@@ -12,14 +12,21 @@ cryohub start        # http://127.0.0.1:8765
 
 ## 登录
 
-在回环地址上（不带 `--public` 的 `cryohub start`）没有登录环节——能访问 `127.0.0.1` 的人就能使用 hub。
+`cryohub start` 默认以**公开模式**运行：每个 `/api` 路由都需要 bearer token，控制台会显示登录页。首次启动会创建 owner token 并打印出来——这一行就是你的登录凭据，请保存好：
 
-一旦 hub 以**公开模式**运行，每个 `/api` 路由都需要 bearer token，控制台会显示登录页。两种 token 可以打开它：
+```
+Owner token (shown once — paste it into the console to sign in):
+3f9c…
+```
 
-- **Owner token。** `cryohub token owner` 会打印它（首次使用时创建，之后重复运行打印同一个密钥）。粘贴到 *Access token* 中。这就是你本人：对每个 chamber 拥有完全控制权。
+两种 token 可以打开控制台：
+
+- **Owner token。** 由首次 `cryohub start` 打印，之后随时可用 `cryohub token owner` 再次打印（幂等——始终是同一个密钥）。粘贴到 *Access token* 中。这就是你本人：对每个 chamber 拥有完全控制权。
 - **邀请链接。** 持有 owner token 的人铸造一条仅限某个 chamber 的链接发给你。打开链接*就是*登录——token 位于 `#invite=` 片段中，被存储后会在任何其他代码运行之前从地址栏中抹去。
 
 没有账户、密码或邮箱。token 即身份。
+
+`cryohub start --no-public` 可以退出公开模式：没有登录环节，能访问 `127.0.0.1` 的人就能使用 hub。开放模式下分享与邀请链接无法工作。
 
 ## Owner 视图与访客视图
 
@@ -64,11 +71,11 @@ cryohub token revoke alice
 
 ## 公网部署（在外用手机访问）
 
-`cryohub` 始终只绑定回环地址。要在外面用手机访问，需要在前面放一个终止 TLS 的反向代理，并开启公开模式。
+`cryohub` 始终只绑定回环地址。要在外面用手机访问，需要在前面放一个终止 TLS 的反向代理。公开模式本来就是默认的，无需切换——只要确认你手里有 owner token。
 
 ```bash
-cryohub token owner          # 保存打印出的 token——这就是你的登录凭据
-cryohub start --public       # 所有 /api 路由启用 bearer 鉴权；写入 cryohub.toml 持久保存
+cryohub start                # 所有 /api 路由启用 bearer 鉴权；首次运行会打印 owner token
+cryohub token owner          # 也可以事后再打印一次——这就是你的登录凭据
 ```
 
 文档采用 Caddy 作为代理。把下面内容复制到 `/etc/caddy/Caddyfile`，替换主机名（在 reload 之前它必须已有指向此主机的 A/AAAA 记录，否则无法签发证书），然后 `systemctl reload caddy`：

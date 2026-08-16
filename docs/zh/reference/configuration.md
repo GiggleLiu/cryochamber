@@ -69,7 +69,7 @@ public_hosts = []
 | `host` | `"127.0.0.1"` | 全局仪表盘服务的绑定地址。 |
 | `port` | `8765` | 全局仪表盘服务的 TCP 端口。 |
 | `chamber_root` | `~/.cryo/chambers` | 从仪表盘 UI 创建的 chamber 的默认位置。 |
-| `public` | `false` | 是否对每个 `/api` 路由强制 bearer token 鉴权。由 `cryohub start --public` 设置，只有 `cryohub start --no-public` 会清除——普通的 `cryohub start` 保持这里保存的值。 |
+| `public` | `true` | 是否对每个 `/api` 路由强制 bearer token 鉴权。默认开启；在此默认之前写下的、缺少该键的配置文件同样按 `true` 加载，而显式的 `public = false` 会保持开放模式。只有 `cryohub start --no-public` 会清除——普通的 `cryohub start` 保持这里保存的值。 |
 | `owner_name` | `"human"` | 公开模式下 owner 发送的消息所标记的发送者名字。客户端提供的 `from` 会被忽略。 |
 | `public_hosts` | `[]` | 在回环地址和 `host` 之外额外接受的 `Host` 头值。当反向代理转发公网主机名时需要设置。 |
 | `console_dir` | *（未设置——使用内嵌版本）* | 从此目录提供 [Agent Console](../agent-console.md)，而不是使用 `cryohub` 二进制中内嵌的构建。必须是指向 vite `dist/` 的绝对路径。仅用于开发和自定义构建。 |
