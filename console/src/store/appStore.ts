@@ -2,7 +2,13 @@ import { create } from 'zustand'
 import { HubClient } from '../api/hubClient'
 import { messageKey, type Chamber, type ChamberMessage, type Credentials } from '../api/types'
 import { saveCredentials, clearCredentials } from './auth'
-import { loadCachedState, saveCachedState, clearCachedState, CACHE_PREFIX } from './cache'
+import {
+  loadCachedState,
+  saveCachedStateDebounced,
+  cancelPendingCachedState,
+  clearCachedState,
+  CACHE_PREFIX,
+} from './cache'
 import { accountKey } from '../lib/account'
 import { resetChamberEvents } from './chamberEvents'
 
@@ -167,7 +173,7 @@ export const useAppStore = create<AppState>()((set, get) => {
   const persist = () => {
     const s = get()
     if (s.creds) {
-      saveCachedState(s.creds, {
+      saveCachedStateDebounced(s.creds, {
         chambers: s.chambers,
         messagesByChamber: s.messagesByChamber,
         lastReadByChamber: s.lastReadByChamber,
@@ -210,6 +216,8 @@ export const useAppStore = create<AppState>()((set, get) => {
 
     logout: (reason) => {
       const creds = get().creds
+      // Order matters: a pending write would otherwise land after the clear.
+      cancelPendingCachedState()
       if (creds) clearCachedState(creds)
       clearCredentials()
       set({ ...initialData, loginReason: reason ?? null })
@@ -404,6 +412,7 @@ export function useIsOwner(): boolean {
 
 export function resetAppStore(): void {
   resetChamberEvents()
+  cancelPendingCachedState()
   nextClientId = 1
   try {
     for (const key of Object.keys(localStorage)) {

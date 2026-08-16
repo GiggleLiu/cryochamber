@@ -71,6 +71,44 @@ export function saveCachedState(creds: { token: string }, state: CachedState): v
   }
 }
 
+/** A stream can land a dozen messages a second, and every store mutation asks
+ * to persist; localStorage writes are synchronous, so they are coalesced. */
+export const PERSIST_DEBOUNCE_MS = 250
+
+let pending: { creds: { token: string }; state: CachedState } | null = null
+let timer: ReturnType<typeof setTimeout> | null = null
+
+/** Coalesce a burst of store mutations (a chatty stream) into one write. */
+export function saveCachedStateDebounced(creds: { token: string }, state: CachedState): void {
+  pending = { creds, state }
+  if (timer) return
+  timer = setTimeout(() => {
+    timer = null
+    flushCachedState()
+  }, PERSIST_DEBOUNCE_MS)
+}
+
+/** Write whatever is pending now — before the page hides, before logout. */
+export function flushCachedState(): void {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+  if (!pending) return
+  const { creds, state } = pending
+  pending = null
+  saveCachedState(creds, state)
+}
+
+/** Drop a pending write without saving (logout must not resurrect a cache). */
+export function cancelPendingCachedState(): void {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+  pending = null
+}
+
 export function clearCachedState(creds: { token: string }): void {
   try {
     localStorage.removeItem(cacheKey(creds))

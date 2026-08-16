@@ -1,6 +1,9 @@
 import {
   loadCachedState,
   saveCachedState,
+  saveCachedStateDebounced,
+  flushCachedState,
+  cancelPendingCachedState,
   clearCachedState,
   purgeLegacyStorage,
   cacheKey,
@@ -69,4 +72,32 @@ test('clearCachedState removes the entry', () => {
   saveCachedState(creds, { chambers: [], messagesByChamber: {}, lastReadByChamber: {} })
   clearCachedState(creds)
   expect(loadCachedState(creds)).toBeNull()
+})
+
+test('debounced save writes once after the delay and flush writes immediately', () => {
+  vi.useFakeTimers()
+  const state = { chambers: [], messagesByChamber: {}, lastReadByChamber: { a: '1' } }
+  saveCachedStateDebounced(creds, state)
+  saveCachedStateDebounced(creds, { ...state, lastReadByChamber: { a: '2' } })
+  expect(loadCachedState(creds)).toBeNull()
+  vi.advanceTimersByTime(250)
+  expect(loadCachedState(creds)!.lastReadByChamber).toEqual({ a: '2' })
+  saveCachedStateDebounced(creds, { ...state, lastReadByChamber: { a: '3' } })
+  flushCachedState()
+  expect(loadCachedState(creds)!.lastReadByChamber).toEqual({ a: '3' })
+  vi.useRealTimers()
+})
+
+test('a cancelled write never lands, and flush after it is a no-op', () => {
+  vi.useFakeTimers()
+  saveCachedStateDebounced(creds, {
+    chambers: [],
+    messagesByChamber: {},
+    lastReadByChamber: { a: '1' },
+  })
+  cancelPendingCachedState()
+  vi.advanceTimersByTime(1000)
+  flushCachedState()
+  expect(loadCachedState(creds)).toBeNull()
+  vi.useRealTimers()
 })

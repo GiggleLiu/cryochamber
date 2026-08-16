@@ -7,7 +7,7 @@ import {
   showCompletedKey,
 } from './appStore'
 import type { Chamber, ChamberMessage, Credentials } from '../api/types'
-import { cacheKey, loadCachedState } from './cache'
+import { cacheKey, loadCachedState, flushCachedState } from './cache'
 
 const creds: Credentials = { token: 'k', name: 'me', role: 'owner' }
 
@@ -15,6 +15,8 @@ const creds: Credentials = { token: 'k', name: 'me', role: 'owner' }
  * cache (test hygiene between files), so the record is put back to stand for
  * what a real reload would find on disk. */
 function reload(): void {
+  // A real reload is preceded by `pagehide`, which flushes the debounced write.
+  flushCachedState()
   const record = localStorage.getItem(cacheKey(creds))
   resetAppStore()
   if (record !== null) localStorage.setItem(cacheKey(creds), record)
@@ -148,6 +150,7 @@ describe('unread watermark', () => {
     expect(unreadCount(useAppStore.getState(), 'a')).toBe(1)
     useAppStore.getState().markRead('a')
     useAppStore.getState().applyMessage(msg(2))
+    flushCachedState()
     const cached = loadCachedState(creds)!
     expect(cached.lastReadByChamber.a).toBe('2026-08-15T10:01:00 outbox/1.md')
     reload()
@@ -207,6 +210,7 @@ describe('outbox', () => {
     useAppStore.getState().setCreds(creds)
     useAppStore.getState().applyMessage(msg(1))
     useAppStore.getState().enqueueOutbox('a', 'unsent')
+    flushCachedState()
     expect(JSON.stringify(loadCachedState(creds))).not.toContain('unsent')
   })
 })
@@ -242,6 +246,16 @@ test('logout clears cache and returns to initial state', () => {
   expect(loadCachedState(creds)).toBeNull()
 })
 
+test('logout leaves nothing behind even with a debounced write still pending', () => {
+  vi.useFakeTimers()
+  useAppStore.getState().setCreds(creds)
+  useAppStore.getState().applyMessage(msg(1))
+  useAppStore.getState().logout('bye')
+  vi.advanceTimersByTime(300)
+  expect(loadCachedState(creds)).toBeNull()
+  vi.useRealTimers()
+})
+
 test('setCreds hydrates chambers, messages and watermarks from the cache', () => {
   useAppStore.getState().setCreds(creds)
   useAppStore.getState().setChambers([chamber('a', 'alpha')])
@@ -260,6 +274,7 @@ test('the update banner flag is transient and never persisted', () => {
   useAppStore.getState().setCreds(creds)
   useAppStore.getState().setUpdateAvailable(true)
   expect(useAppStore.getState().updateAvailable).toBe(true)
+  flushCachedState()
   expect(JSON.stringify(loadCachedState(creds))).not.toContain('updateAvailable')
 })
 

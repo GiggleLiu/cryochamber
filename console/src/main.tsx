@@ -6,6 +6,7 @@ import App from './App'
 import { applyStoredTheme } from './lib/theme'
 import { wireUpdateFlow } from './lib/swUpdate'
 import { useAppStore } from './store/appStore'
+import { flushCachedState } from './store/cache'
 
 // Before the first paint: a dark-mode user must never see a white flash.
 applyStoredTheme()
@@ -15,6 +16,10 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+// The last chance to persist: on mobile a hidden page is often never unloaded,
+// and `pagehide` is the only event that reliably fires before it is frozen.
+window.addEventListener('pagehide', flushCachedState)
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   navigator.serviceWorker
