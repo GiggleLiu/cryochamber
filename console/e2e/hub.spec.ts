@@ -32,6 +32,11 @@ const MESSAGE = {
  * show it verbatim. */
 const SERVER_STAMPED_SENDER = 'alice (invite)'
 
+/** The mailbox id `POST /send` mints. The SSE echo carries the same id,
+ * because it is the same message coming back: that id is the only correlation
+ * the client has for retiring the pending bubble. */
+const SENT_ID = 'inbox/2026-08-16T10-00-00_human_1.md'
+
 interface HubMock {
   /** Bodies POSTed to /send, in order. */
   sent: unknown[]
@@ -96,7 +101,7 @@ async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
   await page.route('**/api/chambers/cham-a/send', (r) => {
     mock.sent.push(JSON.parse(r.request().postData() ?? 'null'))
     releaseStream()
-    return r.fulfill({ json: { ok: true, id: 'inbox/2026-08-16T10-00-00_human_1.md' } })
+    return r.fulfill({ json: { ok: true, id: SENT_ID } })
   })
 
   await page.route('**/api/tokens', (r) => {
@@ -149,7 +154,7 @@ async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
     if (streams === 1 && opts.echoSends) {
       await sendHappened
       const echo = {
-        id: 'msg-2',
+        id: SENT_ID,
         chamber_id: 'cham-a',
         // Server's word on who spoke — the client asked to be "Alice".
         from: SERVER_STAMPED_SENDER,
@@ -182,16 +187,10 @@ test('invite link → scoped project → markdown thread → send', async ({ pag
   await page.goto(`/#invite=${TOKEN}`)
 
   // No form, no account: the link itself is the sign-in, and it takes the token
-  // out of the address bar on the way through.
-  await expect(page.getByRole('button', { name: /autoresearch/ })).toBeVisible()
+  // out of the address bar on the way through. A link scoped to one chamber
+  // lands in that conversation, not in a list of one.
+  await expect(page.getByRole('heading', { name: /autoresearch/ })).toBeVisible()
   expect(page.url()).not.toContain(TOKEN)
-
-  // Scope is exactly what the hub handed this token — the other chamber exists
-  // on the server and must not be listed here.
-  await expect(page.locator('.stream-list li')).toHaveCount(1)
-  await expect(page.getByRole('button', { name: /private-lab/ })).toHaveCount(0)
-
-  await page.getByRole('button', { name: /autoresearch/ }).click()
 
   // Markdown and math are rendered client-side for hub messages.
   await expect(page.locator('.message-body strong')).toHaveText('done')
@@ -199,6 +198,13 @@ test('invite link → scoped project → markdown thread → send', async ({ pag
   // History carries the server's sender, and that is what the thread shows.
   await expect(page.locator('.sender-label').first()).toHaveText('autoresearch-agent')
 
+  // Scope is exactly what the hub handed this token — the other chamber exists
+  // on the server and must not be listed on the way back out.
+  await page.getByRole('button', { name: 'Back' }).click()
+  await expect(page.locator('.stream-list li')).toHaveCount(1)
+  await expect(page.getByRole('button', { name: /private-lab/ })).toHaveCount(0)
+
+  await page.getByRole('button', { name: /autoresearch/ }).click()
   await page.getByRole('textbox').fill('continue')
   await page.keyboard.press('Enter')
   await expect.poll(() => hub.sent).toEqual([{ body: 'continue' }])
@@ -209,7 +215,6 @@ test('a message pushed over SSE appears without a reload, as the server named it
 }) => {
   const hub = await mockHub(page, { echoSends: true })
   await page.goto(`/#invite=${TOKEN}`)
-  await page.getByRole('button', { name: /autoresearch/ }).click()
   await expect(page.locator('.message-body strong')).toHaveText('done')
 
   await page.getByRole('textbox').fill('continue')
@@ -229,7 +234,7 @@ test('a message pushed over SSE appears without a reload, as the server named it
 test('a token revoked mid-session ends up back on login with a reason', async ({ page }) => {
   await mockHub(page, { echoSends: true, revokeAfterFirstStream: true })
   await page.goto(`/#invite=${TOKEN}`)
-  await page.getByRole('button', { name: /autoresearch/ }).click()
+  await expect(page.locator('.message-body strong')).toHaveText('done')
 
   await page.getByRole('textbox').fill('continue')
   await page.keyboard.press('Enter')
@@ -238,7 +243,9 @@ test('a token revoked mid-session ends up back on login with a reason', async ({
   // Staying signed in on cached messages would be the wrong answer.
   await expect(page.getByRole('alert')).toContainText(/no longer valid|sign in again/i)
   await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible()
-  await expect(page.getByRole('button', { name: /autoresearch/ })).toHaveCount(0)
+  // Cached messages are not a session: the conversation goes with the token.
+  await expect(page.getByRole('heading', { name: /autoresearch/ })).toHaveCount(0)
+  await expect(page.locator('.message-body')).toHaveCount(0)
 })
 
 test('a revoked invite link shows login with a reason', async ({ page }) => {
@@ -291,12 +298,18 @@ test('an owner launches a chamber from Controls and sees it working', async ({ p
   await expect.poll(() => hub.actions).toEqual(['cham-a/start'])
   // The pill moves because the refetched status says so, not because we clicked.
   await expect(page.getByText('Working')).toBeVisible()
-  await expect(page.getByText('Session #7')).toBeVisible()
+  // Label and value are separate nodes in the status row, hence the row-level
+  // assertion rather than a "Session #7" text match.
+  await expect(page.locator('.row').filter({ hasText: /^Session#\d+$/ })).toHaveText('Session#7')
 
-  // The tabs read the same status payload.
-  await page.getByRole('tab', { name: 'Plan' }).click()
-  await expect(page.getByText('the plan')).toBeVisible()
-  await page.getByRole('tab', { name: 'Log' }).click()
+  // The detail sheets read the same status payload. Each opens over the
+  // controls list and is closed again, the way the stack is meant to be used.
+  await page.getByRole('button', { name: 'Plan' }).click()
+  const plan = page.locator('.sheet[role="dialog"]').last()
+  await expect(plan).toContainText('the plan')
+  await plan.getByRole('button', { name: 'Close' }).click()
+
+  await page.getByRole('button', { name: 'Log' }).click()
   await expect(page.getByRole('log')).toContainText('session 7 started')
 })
 
@@ -319,18 +332,19 @@ test('an invited user sees no owner controls anywhere', async ({ page }) => {
   await mockHub(page, { role: 'invite' })
   await page.goto(`/#invite=${TOKEN}`)
 
-  // Projects list: no way to create a chamber.
+  // The invite lands in its one conversation. Header: chat only.
+  await expect(page.getByRole('heading', { name: /autoresearch/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Invite' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Chamber controls' })).toHaveCount(0)
+
+  // Projects list, one step back: no way to create a chamber, and Settings
+  // offers signing out and nothing an owner would use.
+  await page.getByRole('button', { name: 'Back' }).click()
   await expect(page.getByRole('button', { name: 'New chamber' })).toHaveCount(0)
   await page.getByRole('button', { name: /settings/i }).click()
   await expect(page.getByRole('button', { name: /log out/i })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: 'Show completed & archived' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Refresh chambers' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Close' }).click()
-
-  // Conversation header: chat only.
-  await page.getByRole('button', { name: /autoresearch/ }).click()
-  await expect(page.getByRole('button', { name: 'Invite' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Chamber controls' })).toHaveCount(0)
 })
 
 test('removing someone from People with access revokes their link', async ({ page }) => {
