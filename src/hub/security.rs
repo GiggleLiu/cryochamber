@@ -1,6 +1,6 @@
 //! Security middleware for the hub web server.
 //!
-//! Two guards are applied to the whole router in `build_router_with_state`:
+//! Three guards are applied to the whole router in `build_router_with_state`:
 //!
 //! 1. **Host-header allowlist** — the hub binds loopback by default and can
 //!    start/stop chambers and surface provider config. A malicious web page can
@@ -14,6 +14,14 @@
 //!    same-origin / direct-navigation `Sec-Fetch-Site`) on non-GET/HEAD
 //!    requests blocks drive-by state changes while the hub's own `fetch` calls
 //!    (which set the header) still work.
+//! 3. **Response headers** — `X-Content-Type-Options: nosniff` and
+//!    `Referrer-Policy: no-referrer` on *every* response, including the 403s
+//!    the guards above write. `nosniff` keeps a chamber attachment or a
+//!    mistyped asset from being reinterpreted as HTML and run as a
+//!    same-origin page; `no-referrer` keeps hub URLs, which name chambers and
+//!    files, out of the `Referer` any outbound link would send. The
+//!    per-document policy (a CSP) belongs to the HTML that carries it, so it
+//!    lives with the console route rather than here.
 
 use std::sync::Arc;
 
@@ -28,18 +36,40 @@ use axum::{
 /// Loopback hosts that are always allowed, independent of configuration.
 const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
 
-/// Wrap `router` with the host + CSRF guard. `configured_hosts` are the host
+/// Wrap `router` with the host guard, the CSRF guard, and the response
+/// headers every answer carries. `configured_hosts` are the host
 /// names from `HubConfig` — the bind host (so non-default binds keep working)
 /// plus `public_hosts` (so a reverse proxy may forward the public hostname
 /// rather than rewriting it to loopback).
 pub fn apply(router: Router, configured_hosts: Vec<String>) -> Router {
     let allowed = Arc::new(build_allowlist(configured_hosts));
-    router.layer(axum::middleware::from_fn(
-        move |req: Request, next: Next| {
-            let allowed = allowed.clone();
-            async move { guard(&allowed, req, next).await }
-        },
-    ))
+    router
+        .layer(axum::middleware::from_fn(
+            move |req: Request, next: Next| {
+                let allowed = allowed.clone();
+                async move { guard(&allowed, req, next).await }
+            },
+        ))
+        // Outermost, so the guard's own 403s carry the headers too: "every
+        // response" has no exception for the ones security writes itself.
+        .layer(axum::middleware::from_fn(response_headers))
+}
+
+/// Headers every response carries: no MIME sniffing (a chamber attachment or
+/// a mistyped asset must never be reinterpreted as HTML) and no referrer (the
+/// console's URLs may carry chamber ids that need not leak to linked hosts).
+async fn response_headers(req: Request, next: Next) -> Response {
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        header::REFERRER_POLICY,
+        header::HeaderValue::from_static("no-referrer"),
+    );
+    resp
 }
 
 /// Build the set of allowed host-parts: loopback plus the configured hosts.

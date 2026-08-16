@@ -148,3 +148,33 @@ fn csrf_ok_requires_custom_header_or_same_origin_fetch_metadata() {
         &[("sec-fetch-site", "cross-site")]
     )));
 }
+
+#[tokio::test]
+async fn the_guards_own_rejections_also_carry_the_response_headers() {
+    // "Every response" includes the ones the host/CSRF guard writes itself:
+    // the header middleware has to sit *outside* the guard, not behind it.
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    let router = apply(
+        axum::Router::new().route("/api/chambers", get(|| async { "[]" })),
+        vec![],
+    );
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/chambers")
+        .header("host", "evil.example.com")
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(header("referrer-policy"), "no-referrer");
+}

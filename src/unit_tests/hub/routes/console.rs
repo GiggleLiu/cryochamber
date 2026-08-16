@@ -401,3 +401,41 @@ fn if_none_match_accepts_the_wildcard_and_lists_in_either_strength() {
     assert!(!etag_matches("\"nope\", \"neither\"", "\"abc\""));
     assert!(!etag_matches("", "\"abc\""));
 }
+
+#[tokio::test]
+async fn every_response_carries_nosniff_and_a_no_referrer_policy() {
+    let (_ws, _dist, router) = console_router();
+    for uri in ["/", "/assets/index-abc123.js", "/api/chambers", "/nope.png"] {
+        let resp = request(router.clone(), "GET", uri, &[]).await;
+        assert_eq!(header(&resp, "x-content-type-options"), "nosniff", "{uri}");
+        assert_eq!(header(&resp, "referrer-policy"), "no-referrer", "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn console_html_carries_the_csp_and_assets_do_not() {
+    let (_ws, _dist, router) = console_router();
+    for uri in ["/", "/c/alpha"] {
+        let resp = request(router.clone(), "GET", uri, &[]).await;
+        assert_eq!(
+            header(&resp, "content-security-policy"),
+            CONSOLE_CSP,
+            "{uri}"
+        );
+    }
+    let asset = request(router.clone(), "GET", "/assets/index-abc123.js", &[]).await;
+    assert_eq!(header(&asset, "content-security-policy"), "");
+
+    // The setup page is HTML too.
+    let workspace = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    let config = HubConfig {
+        console_dir: Some(empty.path().to_path_buf()),
+        ..HubConfig::default()
+    };
+    let router = crate::hub::build_router_with_config(app, config);
+    let resp = request(router, "GET", "/", &[]).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(header(&resp, "content-security-policy"), CONSOLE_CSP);
+}

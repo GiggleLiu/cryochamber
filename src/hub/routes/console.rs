@@ -22,6 +22,12 @@
 //! reaches an already-installed client on its next load. A matching
 //! `If-None-Match` answers `304` with no body.
 //!
+//! Every HTML this route emits — the SPA entry and the not-installed page —
+//! carries [`CONSOLE_CSP`]. HTML is the only thing a browser executes, so it
+//! is the only thing worth constraining; assets and JSON get the global
+//! `nosniff` / `Referrer-Policy` from [`crate::hub::security`] and nothing
+//! more.
+//!
 //! Only `GET` and `HEAD` reach any of this; other methods get `405` with
 //! `Allow: GET, HEAD`, because a page surface has nothing to write to. Rule 1
 //! outranks that guard: `/api` is the hub API's for every method, so an
@@ -43,6 +49,13 @@ use axum::{
 };
 
 use crate::hub::mime::mime_for;
+
+/// Applied to every HTML the console route emits. Same-origin everything;
+/// `unsafe-inline` styles because KaTeX emits inline `style=`; models.dev is
+/// the provider catalog the New Chamber sheet fetches.
+pub const CONSOLE_CSP: &str = "default-src 'self'; img-src 'self' data: blob:; \
+    connect-src 'self' https://models.dev; style-src 'self' 'unsafe-inline'; \
+    font-src 'self'; frame-ancestors 'none'; base-uri 'none'";
 
 /// The built console compiled into the binary. `console/dist/` is created by
 /// `build.rs` when absent, so a checkout without Node still compiles; the
@@ -184,15 +197,25 @@ fn serve_file(file: ConsoleFile, if_none_match: Option<&str>) -> Response {
                 .into_response();
         }
     }
-    (
+    let content_type = mime_for(&file.name);
+    let mut resp = (
         [
-            (header::CONTENT_TYPE, mime_for(&file.name).to_string()),
+            (header::CONTENT_TYPE, content_type.to_string()),
             (header::CACHE_CONTROL, cache.to_string()),
             (header::ETAG, file.etag.clone()),
         ],
         file.bytes.into_owned(),
     )
-        .into_response()
+        .into_response();
+    // Only HTML executes anything, so only HTML needs the policy — putting it
+    // on a script or an image would be noise the browser ignores.
+    if content_type.starts_with("text/html") {
+        resp.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            header::HeaderValue::from_static(CONSOLE_CSP),
+        );
+    }
+    resp
 }
 
 /// Router fallback: the console *is* the hub's page surface.
@@ -274,7 +297,10 @@ fn not_installed(source: &ConsoleSource) -> Response {
     );
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CONTENT_SECURITY_POLICY, CONSOLE_CSP),
+        ],
         body,
     )
         .into_response()
