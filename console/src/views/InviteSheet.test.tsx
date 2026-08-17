@@ -1,10 +1,17 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import QRCode from 'qrcode'
 import { InviteSheet, defaultInviteLabel } from './InviteSheet'
 import { HubClient, type Invite } from '../api/hubClient'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
+
+// jsdom has no canvas 2d context, so the QR library can never render there —
+// stub it and assert on the call instead of the pixels.
+vi.mock('qrcode', () => ({
+  default: { toCanvas: vi.fn(async () => {}) },
+}))
 
 const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 const NEW_TOKEN = 'ff'.repeat(16)
@@ -294,4 +301,68 @@ test('a hub in open mode blames open mode, not "check your connection"', async (
   expect(alert).toHaveTextContent(/open mode/)
   expect(alert).toHaveTextContent(/cryohub start/)
   expect(alert).not.toHaveTextContent(/connection/)
+})
+
+describe('QR code for the invite link', () => {
+  beforeEach(() => {
+    // The qrcode module mock is file-scoped; its call history accumulates
+    // across tests, so each test starts from zero.
+    vi.mocked(QRCode.toCanvas).mockClear()
+  })
+
+  test('minting a link renders its QR code on a canvas', async () => {
+    renderSheet()
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+
+    const canvas = await screen.findByRole('img', { name: 'QR code for the invite link' })
+    expect(canvas.tagName).toBe('CANVAS')
+    expect(QRCode.toCanvas).toHaveBeenCalledWith(
+      canvas,
+      `${window.location.origin}/#invite=${NEW_TOKEN}`,
+      expect.objectContaining({ width: 176, errorCorrectionLevel: 'M' }),
+    )
+    expect(screen.getByText('Scan to open on your phone')).toBeInTheDocument()
+  })
+
+  test('a QR render failure keeps the link usable and says so', async () => {
+    vi.mocked(QRCode.toCanvas).mockRejectedValueOnce(new Error('no canvas'))
+    renderSheet()
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+
+    expect(
+      await screen.findByText('Could not render the QR code — the link above still works.'),
+    ).toBeInTheDocument()
+    // The link itself is untouched.
+    const field = (await screen.findByLabelText('Invite link')) as HTMLInputElement
+    expect(field).toHaveValue(`${window.location.origin}/#invite=${NEW_TOKEN}`)
+  })
+
+  test('re-minting replaces the QR canvas (a stale draw can never win)', async () => {
+    renderSheet()
+    await screen.findAllByRole('listitem')
+    const hub = useAppStore.getState().client as HubClient
+    const create = vi
+      .spyOn(hub, 'createInvite')
+      .mockResolvedValueOnce({ token: 'aa' } as never)
+      .mockResolvedValueOnce({ token: 'bb' } as never)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+    const first = await screen.findByRole('img', { name: 'QR code for the invite link' })
+    expect(QRCode.toCanvas).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+    const second = await screen.findByRole('img', { name: 'QR code for the invite link' })
+    // A fresh canvas element for the fresh link, so a slow first render has no
+    // canvas left to draw on.
+    expect(second).not.toBe(first)
+    expect(QRCode.toCanvas).toHaveBeenCalledTimes(2)
+    expect(QRCode.toCanvas).toHaveBeenLastCalledWith(
+      second,
+      `${window.location.origin}/#invite=bb`,
+      expect.objectContaining({ width: 176 }),
+    )
+    create.mockRestore()
+  })
 })

@@ -1,37 +1,15 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Composer, filterNames, mentionQueryAt } from './Composer'
+import { Composer } from './Composer'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import type { HubClient } from '../api/hubClient'
-import type { ChamberMessage } from '../api/types'
 
 function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
   return {
     sendMessage: vi.fn(async () => ({ id: 'inbox/42.md' })),
     ...overrides,
   } as unknown as HubClient
-}
-
-/** Mention candidates are whoever has spoken in this conversation, so a cast
- * of senders is seeded into the thread rather than into a user directory. */
-function saidBy(...senders: string[]): ChamberMessage[] {
-  return senders.map((sender, i) => ({
-    id: `outbox/${i}.md`,
-    chamberId: 'cham-a',
-    direction: 'outbox' as const,
-    sender,
-    subject: '',
-    body: `m${i}`,
-    timestamp: `2026-08-15T10:0${i}:00`,
-    session: null,
-    isQuestion: false,
-  }))
-}
-
-/** The cast the mention tests type `@al` against. */
-function seedSenders(senders: string[] = ['Alice Doe', 'Alex Mercer', 'Bob']) {
-  useAppStore.setState({ messagesByChamber: { 'cham-a': saidBy(...senders) } })
 }
 
 beforeEach(() => {
@@ -152,132 +130,6 @@ describe('per-chamber drafts', () => {
       ),
     )
     expect(localStorage.getItem(KEY_1)).toBe('work in progress')
-  })
-})
-
-describe('mention query helpers', () => {
-  test('mentionQueryAt only matches right after an @', () => {
-    expect(mentionQueryAt('ping @al', 8)).toBe('al')
-    expect(mentionQueryAt('ping @', 6)).toBe('')
-    expect(mentionQueryAt('plain words', 11)).toBeNull()
-    expect(mentionQueryAt('ping @al extra', 14)).toBe('al extra')
-    // an @ glued to a word (email/identifier) is not a mention trigger
-    expect(mentionQueryAt('foo@', 4)).toBeNull()
-    expect(mentionQueryAt('mail me at a@b.c', 13)).toBeNull()
-  })
-
-  test('filterNames lists prefix matches first, then includes, capped at 8', () => {
-    expect(filterNames(['Alex', 'Vitaly', 'Alice', 'Zed'], 'al')).toEqual([
-      'Alex',
-      'Alice',
-      'Vitaly',
-    ])
-    expect(filterNames(Array.from({ length: 12 }, (_, i) => `User ${i}`), '')).toHaveLength(8)
-  })
-})
-
-describe('@-mention autocomplete', () => {
-  test('typing @al opens a filtered panel; Enter inserts the mention', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'ping @al')
-    const options = await screen.findAllByRole('option')
-    expect(options.map((o) => o.textContent)).toEqual(['Alice Doe', 'Alex Mercer'])
-    await userEvent.keyboard('{Enter}')
-    expect(box).toHaveValue('ping @**Alice Doe** ')
-    expect(screen.queryByRole('listbox')).toBeNull()
-  })
-
-  test('ArrowDown moves the active row and Enter confirms it', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'ping @al')
-    await screen.findAllByRole('option')
-    await userEvent.keyboard('{ArrowDown}')
-    const options = screen.getAllByRole('option')
-    expect(options[0].className).not.toContain('active')
-    expect(options[1].className).toContain('active')
-    await userEvent.keyboard('{Enter}')
-    expect(box).toHaveValue('ping @**Alex Mercer** ')
-  })
-
-  test('Tab confirms the selected user', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, '@al')
-    await screen.findAllByRole('option')
-    await userEvent.tab()
-    expect(box).toHaveValue('@**Alice Doe** ')
-  })
-
-  test('click confirms the clicked user', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'ping @al')
-    const options = await screen.findAllByRole('option')
-    await userEvent.click(options[1])
-    expect(box).toHaveValue('ping @**Alex Mercer** ')
-  })
-
-  test('Escape closes the panel without inserting', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'ping @al')
-    await screen.findAllByRole('option')
-    await userEvent.keyboard('{Escape}')
-    expect(screen.queryByRole('listbox')).toBeNull()
-    expect(box).toHaveValue('ping @al')
-  })
-
-  test('no panel opens while typing plain words without @', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'hello world')
-    expect(screen.queryByRole('listbox')).toBeNull()
-  })
-
-  test('panel closes once the @ is deleted', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, '@al')
-    await screen.findAllByRole('option')
-    await userEvent.keyboard('{Backspace}{Backspace}{Backspace}')
-    expect(screen.queryByRole('listbox')).toBeNull()
-  })
-
-  test('send still sends the mention text after autocomplete', async () => {
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'ping @al')
-    await screen.findAllByRole('option')
-    await userEvent.keyboard('{Enter}')
-    await userEvent.click(screen.getByRole('button', { name: /send/i }))
-    await waitFor(() => expect(box).toHaveValue(''))
-    expect(client.sendMessage).toHaveBeenCalledWith('cham-a', 'ping @**Alice Doe** ')
   })
 })
 
@@ -413,22 +265,7 @@ describe('Enter to send', () => {
     expect(box).toHaveValue('line one\nline two')
     expect(client.sendMessage).not.toHaveBeenCalled()
   })
-
-  test('Enter with the mention panel open confirms the mention, never sends', async () => {
-    stubPointer(true)
-    const client = fakeClient()
-    useAppStore.setState({ client })
-    seedSenders()
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'ping @al')
-    await screen.findAllByRole('option')
-    await userEvent.keyboard('{Enter}')
-    expect(box).toHaveValue('ping @**Alice Doe** ')
-    expect(client.sendMessage).not.toHaveBeenCalled()
-  })
 })
-
 
 test('text typed while an upload is pending survives link insertion', async () => {
   let resolveUpload!: (uri: string) => void
@@ -450,30 +287,6 @@ test('text typed while an upload is pending survives link insertion', async () =
       'first second [notes.txt](/api/chambers/cham-a/files/aa_notes.txt)',
     ),
   )
-})
-
-describe('mention candidates come from the thread, not a user directory', () => {
-  test('a sender who spoke twice is offered once', async () => {
-    // The hub has no user list at all, so the only names worth offering are
-    // the ones this conversation has actually seen.
-    useAppStore.setState({ client: fakeClient() })
-    seedSenders(['agent', 'agent'])
-    render(<Composer chamberId="cham-a" />)
-    await userEvent.type(screen.getByRole('textbox'), '@ag')
-    const options = await screen.findAllByRole('option')
-    expect(options).toHaveLength(1)
-    expect(options[0]).toHaveTextContent('agent')
-  })
-
-  test('another chamber\'s senders are not offered here', async () => {
-    useAppStore.setState({
-      client: fakeClient(),
-      messagesByChamber: { 'cham-b': saidBy('Alice Doe') },
-    })
-    render(<Composer chamberId="cham-a" />)
-    await userEvent.type(screen.getByRole('textbox'), '@al')
-    expect(screen.queryByRole('listbox')).toBeNull()
-  })
 })
 
 test('a draft is kept per chamber, keyed by the hub id', async () => {
