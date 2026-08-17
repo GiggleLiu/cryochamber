@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
-    extract::{Multipart, Path as AxumPath, State},
+    extract::{Multipart, Path as AxumPath, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Json, Response},
 };
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::hub::mime::mime_for;
@@ -271,6 +272,107 @@ pub async fn get_file(
     let bytes = tokio::task::spawn_blocking(move || {
         let root = contained_attachments_dir(&chamber)?;
         std::fs::read(contained_file(&root, &read_name)?).ok()
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                attachment_content_type(&name).to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\""),
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+/// Top-level directories whose files may be shared through the console.
+/// These are the research artifacts the agent produces on disk (reports in
+/// `articles/`, references in `.knowledge/`) and links from messages. The
+/// mailbox, `.cryo/` credentials/state, config and notes stay off the wire
+/// even though they are chamber-contained.
+const SHAREABLE_DIRS: &[&str] = &["articles", ".knowledge"];
+
+/// Validate a chamber-relative path for the share endpoint: not absolute, no
+/// backslashes, no NUL, and no `.`/`..`/empty path components. Containment is
+/// still re-checked against the canonicalized chamber root before serving, so
+/// this is the cheap first gate, not the boundary.
+fn safe_rel_path(rel: &str) -> bool {
+    if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') || rel.contains('\0') {
+        return false;
+    }
+    rel.split('/')
+        .all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// Filename safe to interpolate into a quoted `Content-Disposition` header:
+/// quotes and control characters are dropped (they could otherwise break out
+/// of the quoted-string or smuggle header lines). Chamber-file names are not
+/// sanitized like attachment names, so this is the boundary for them.
+fn disposition_filename(name: &str) -> String {
+    name.chars()
+        .filter(|c| *c != '"' && !c.is_control())
+        .collect()
+}
+
+#[derive(Deserialize)]
+pub struct ChamberFileQuery {
+    path: String,
+}
+
+/// `GET /api/chambers/{id}/file?path=articles/review.pdf` — serve a
+/// chamber-local research artifact (a report or reference the agent linked in
+/// a message). Unlike attachments, these are produced on disk by the agent
+/// (e.g. a Typst PDF) rather than uploaded through the console, so they live
+/// outside `messages/attachments/`.
+///
+/// The `path` is chamber-relative. It is validated component-wise, resolved
+/// against the canonical chamber root, and must still be contained inside it
+/// and under a shareable top-level directory. A symlink that resolves outside
+/// the chamber — or a path that escapes `articles/`/`.knowledge/` — 404s.
+pub async fn get_chamber_file(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<ChamberFileQuery>,
+) -> Result<Response, StatusCode> {
+    let path = query.path;
+    let (chamber, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    if !safe_rel_path(&path) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let read_path = path.clone();
+    let name = disposition_filename(path.rsplit('/').next().unwrap_or(&path));
+    let bytes = tokio::task::spawn_blocking(move || {
+        let root = chamber.canonicalize().ok()?;
+        let resolved = root.join(&read_path).canonicalize().ok()?;
+        if !resolved.starts_with(&root) {
+            return None;
+        }
+        let top = resolved
+            .strip_prefix(&root)
+            .ok()?
+            .components()
+            .next()?
+            .as_os_str()
+            .to_str()?
+            .to_string();
+        if !SHAREABLE_DIRS.contains(&top.as_str()) {
+            return None;
+        }
+        // Only regular files. Note: a *hard link* inside a shareable dir to a
+        // file elsewhere in the chamber is indistinguishable by path and would
+        // be served. That requires local write access to the chamber — the
+        // same privilege that can read any chamber file directly — so it is
+        // accepted; the remote-reachable vector (a symlink planted over HTTP)
+        // is rejected by the canonicalize+containment check above.
+        std::fs::metadata(&resolved).ok().filter(|m| m.is_file())?;
+        std::fs::read(&resolved).ok()
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

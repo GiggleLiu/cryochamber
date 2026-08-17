@@ -356,3 +356,104 @@ async fn served_attachments_never_carry_an_active_content_type() {
         );
     }
 }
+
+/// The share route serves a real chamber-local artifact (a report the agent
+/// produced on disk), with a safe content type and attachment disposition.
+#[tokio::test]
+async fn chamber_file_serves_an_articles_pdf() {
+    let (tmp, router, id) = setup();
+    let chamber = tmp.path().join("alpha");
+    std::fs::create_dir_all(chamber.join("articles")).unwrap();
+    std::fs::write(chamber.join("articles/review.pdf"), b"%PDF-fake").unwrap();
+
+    let resp = get(
+        &router,
+        &format!("/api/chambers/{id}/file?path=articles/review.pdf"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/pdf")
+    );
+    assert!(
+        resp.headers()
+            .get("content-disposition")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .contains("attachment"),
+        "chamber files are downloads"
+    );
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body.to_vec(), b"%PDF-fake");
+}
+
+/// Traversal must not work: `..` components, absolute paths and escapes
+/// outside the chamber all 404, as does anything outside the shareable
+/// directories (config, notes, the mailbox).
+#[tokio::test]
+async fn chamber_file_rejects_escape_and_non_shareable_paths() {
+    let (tmp, router, id) = setup();
+    let chamber = tmp.path().join("alpha");
+    std::fs::create_dir_all(chamber.join("articles")).unwrap();
+    std::fs::write(chamber.join("articles/review.pdf"), b"%PDF").unwrap();
+    std::fs::write(chamber.join("cryo.toml"), b"agent = \"pi\"").unwrap();
+    std::fs::create_dir_all(chamber.join("messages/inbox")).unwrap();
+    std::fs::write(chamber.join("messages/inbox/secret.md"), b"nope").unwrap();
+
+    for bad in [
+        "articles/../cryo.toml",
+        "articles/..%2Fcryo.toml",
+        "..%2Fcryo.toml",
+        "/etc/passwd",
+        "cryo.toml",
+        "messages/inbox/secret.md",
+        "articles", // a directory, not a file
+        "articles/missing.pdf",
+        "", // empty path
+    ] {
+        let resp = get(&router, &format!("/api/chambers/{id}/file?path={bad}")).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "path {bad:?}");
+    }
+
+    // A symlink inside articles pointing outside the chamber is not served.
+    #[cfg(unix)]
+    {
+        let outside = tmp.path().join("outside.pdf");
+        std::fs::write(&outside, b"secret").unwrap();
+        std::os::unix::fs::symlink(&outside, chamber.join("articles/link.pdf")).unwrap();
+        let resp = get(
+            &router,
+            &format!("/api/chambers/{id}/file?path=articles/link.pdf"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "symlink escape");
+    }
+}
+
+/// The disposition filename is sanitized: quotes and control characters from
+/// the on-disk name must not leak into the header.
+#[tokio::test]
+async fn chamber_file_sanitizes_the_disposition_filename() {
+    let (tmp, router, id) = setup();
+    let chamber = tmp.path().join("alpha");
+    std::fs::create_dir_all(chamber.join("articles")).unwrap();
+    std::fs::write(chamber.join("articles/a\"b\nc.pdf"), b"%PDF").unwrap();
+
+    let resp = get(
+        &router,
+        &format!("/api/chambers/{id}/file?path=articles/a%22b%0Ac.pdf"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap();
+    assert_eq!(cd, "attachment; filename=\"abc.pdf\"", "header: {cd:?}");
+}

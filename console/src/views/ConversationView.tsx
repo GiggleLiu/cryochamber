@@ -275,7 +275,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                 <div className="msg-col">
                   {!isSelf && !grouped && <div className="sender-label">{m.sender}</div>}
                   <div className="bubble">
-                    <MessageBody source={m.body} fetchBlob={fetchBlob} />
+                    <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={chamberId} />
                   </div>
                 </div>
               </div>
@@ -291,7 +291,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
               <div className="bubble">
                 {/* Rendering the raw text approximates what the thread will
                     show back; it disappears the moment it does. */}
-                <MessageBody source={o.body} />
+                <MessageBody source={o.body} chamberId={chamberId} />
               </div>
               {o.state === 'sending' ? (
                 <div className="send-state">Sending…</div>

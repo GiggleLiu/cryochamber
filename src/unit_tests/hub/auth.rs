@@ -27,6 +27,8 @@ fn classification_matches_spec_matrix() {
             "/api/chambers/x1/files/a.pdf",
             Chamber("x1".into()),
         ),
+        // Chamber-local artifacts are guest-visible like attachments.
+        (Method::GET, "/api/chambers/x1/file", Chamber("x1".into())),
         // owner-only by default
         (Method::POST, "/api/chambers/refresh", OwnerOnly),
         (Method::POST, "/api/chambers/new", OwnerOnly),
@@ -345,4 +347,41 @@ async fn guard_leaves_non_api_paths_public_even_when_they_start_with_api() {
         status_for(&router, "GET", "/api", None).await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+#[tokio::test]
+async fn an_in_scope_invite_can_fetch_a_chamber_file() {
+    // The guest sees the conversation, and the conversation links chamber-local
+    // artifacts (articles/, .knowledge/) — so the guest must be able to fetch
+    // them through the chamber-file route, not just the owner.
+    let tmp = tempfile::tempdir().unwrap();
+    let id = chamber_id(&tmp, "alpha");
+    let (router, _owner, invite) = router_with_scope(&tmp, vec![id.clone()]);
+    let chamber = tmp.path().join("alpha");
+    std::fs::create_dir_all(chamber.join("articles")).unwrap();
+    std::fs::write(chamber.join("articles/review.pdf"), b"%PDF-fake").unwrap();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/chambers/{id}/file?path=articles/review.pdf"))
+        .header("authorization", format!("Bearer {invite}"))
+        .header("host", "127.0.0.1")
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "guest fetch of a chamber file"
+    );
+    assert_eq!(
+        resp.headers()
+            .get("content-disposition")
+            .and_then(|v| v.to_str().ok()),
+        Some("attachment; filename=\"review.pdf\"")
+    );
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body.to_vec(), b"%PDF-fake");
 }

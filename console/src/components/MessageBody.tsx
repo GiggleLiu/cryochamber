@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { sanitizeHtml } from './sanitize'
-import { filenameFromHref, triggerBlobDownload, HUB_FILES_RE } from '../lib/download'
+import {
+  chamberFileHref,
+  filenameFromHref,
+  triggerBlobDownload,
+  CHAMBER_FILE_RE,
+  HUB_FILES_RE,
+} from '../lib/download'
 import { IMAGE_EXT_RE, deferHubImages, inlineImageLinks } from '../lib/images'
 import { isUnauthorized } from '../api/types'
 
 export { sanitizeHtml } from './sanitize'
-export { filenameFromHref } from '../lib/download'
+export { chamberFileUrl, filenameFromHref, isChamberRelativePath } from '../lib/download'
 
 /** The markdown renderer pulls in markdown-it and KaTeX — a third of the
  * bundle. It is imported on first need and cached at module scope, so the whole
@@ -44,12 +50,17 @@ export function plainTextFallback(source: string): string {
 export function MessageBody({
   source,
   fetchBlob,
+  chamberId,
 }: {
   /** Raw markdown, rendered and then sanitized below. */
   source: string
   /** Authenticated fetcher for chamber attachments (the signed-in client's).
    * Absent for a bubble with no session behind it — a pending send. */
   fetchBlob?: (url: string) => Promise<Blob>
+  /** Hub id of the chamber the message belongs to; chamber-relative links
+   * (e.g. `articles/review.pdf`) resolve against it. Absent (older call
+   * sites), relative links keep their default navigation. */
+  chamberId?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   // Upload path -> live object URL. Cached so innerHTML replacements and the
@@ -90,8 +101,8 @@ export function MessageBody({
   // through. With a fetcher in hand, hub images then lose their `src` before
   // they reach the DOM: the browser must not request them unauthenticated
   // (a 401 and a broken-image glyph until the swap below lands).
-  const inlined = inlineImageLinks(sanitizeHtml(rendered))
-  const sanitized = fetchBlob ? deferHubImages(inlined) : inlined
+  const inlined = inlineImageLinks(sanitizeHtml(rendered), chamberId)
+  const sanitized = fetchBlob ? deferHubImages(inlined, chamberId) : inlined
 
   // Authenticated image loading. React re-sets this div's innerHTML whenever
   // the rendered HTML changes (and dev StrictMode/remounts can do it too);
@@ -128,7 +139,7 @@ export function MessageBody({
         // Deferred by `deferHubImages` (the usual case) or still carrying a
         // plain hub src (HTML that reached the DOM some other way).
         const src = img.dataset.uploadSrc ?? img.getAttribute('src') ?? ''
-        if (!HUB_FILES_RE.test(src)) continue
+        if (!HUB_FILES_RE.test(src) && !CHAMBER_FILE_RE.test(src)) continue
         const cached = blobCache.current.get(src)
         if (cached) {
           img.dataset.uploadSrc = src
@@ -282,16 +293,37 @@ export function MessageBody({
     const anchor = target.closest('a')
     if (anchor && root?.contains(anchor)) {
       const href = anchor.getAttribute('href') ?? ''
-      if (!HUB_FILES_RE.test(href)) return // external link: default new tab
-      e.preventDefault()
-      const name = filenameFromHref(href)
-      const innerImg = anchor.querySelector('img')
-      if (innerImg || IMAGE_EXT_RE.test(name)) {
-        openLightbox(href, name, innerImg)
-      } else {
-        void download(href, name)
+      // Chamber attachments: authenticated download / lightbox.
+      if (HUB_FILES_RE.test(href)) {
+        e.preventDefault()
+        const name = filenameFromHref(href)
+        const innerImg = anchor.querySelector('img')
+        if (innerImg || IMAGE_EXT_RE.test(name)) {
+          openLightbox(href, name, innerImg)
+        } else {
+          void download(href, name)
+        }
+        return
       }
-      return
+      // Chamber-relative link (a file the agent produced on disk, e.g.
+      // articles/review.pdf): same authenticated path, resolved against this
+      // chamber. A plain navigation would 404 on the SPA route.
+      // Chamber-relative link (a file the agent produced on disk, e.g.
+      // articles/review.pdf): same authenticated path, resolved against this
+      // chamber. A plain navigation would 404 on the SPA route.
+      const localUrl = chamberFileHref(href, chamberId)
+      if (localUrl) {
+        e.preventDefault()
+        const name = filenameFromHref(href)
+        const innerImg = anchor.querySelector('img')
+        if (innerImg || IMAGE_EXT_RE.test(name)) {
+          openLightbox(localUrl, name, innerImg)
+        } else {
+          void download(localUrl, name)
+        }
+        return
+      }
+      return // external link: default new tab
     }
     const img = target.closest('img')
     if (img && root?.contains(img)) {

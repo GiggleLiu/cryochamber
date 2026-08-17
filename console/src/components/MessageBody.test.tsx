@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MessageBody, filenameFromHref, plainTextFallback, sanitizeHtml } from './MessageBody'
+import { chamberFileUrl, isChamberRelativePath } from './MessageBody'
 import { filterStyleAttribute } from './sanitize'
 import { HubClient } from '../api/hubClient'
 import * as fx from '../test/fixtures/messageHtml'
@@ -444,6 +445,88 @@ test('filenameFromHref takes the last URL-decoded path segment', () => {
   expect(filenameFromHref(FILE_PATH)).toBe('ab_report.pdf')
   expect(filenameFromHref('/api/chambers/cham-a/files/my%20file.pdf')).toBe('my file.pdf')
   expect(filenameFromHref(`${FILE_PATH}?download=1#x`)).toBe('ab_report.pdf')
+})
+
+describe('chamber-relative links (files the agent produced on disk)', () => {
+  test('clicking articles/review.pdf downloads it via the chamber-file route', async () => {
+    const { fetchBlob, fetchFn } = fetcher(okBlobResponse)
+    const { container } = await renderBody(
+      { source: '[📄 调研报告 PDF](articles/review.pdf)', fetchBlob, chamberId: 'cham-a' },
+      'a',
+    )
+    const anchor = container.querySelector('a')!
+    expect(anchor.getAttribute('href')).toBe('articles/review.pdf')
+    await userEvent.click(screen.getByText(/调研报告 PDF/))
+    await waitFor(() =>
+      expect(fetchFn).toHaveBeenCalledWith(
+        '/api/chambers/cham-a/file?path=articles%2Freview.pdf',
+        AUTH_GET,
+      ),
+    )
+  })
+
+  test('a relative link without a chamberId keeps default navigation', async () => {
+    const { fetchBlob, fetchFn } = fetcher(okBlobResponse)
+    await renderBody({ source: '[x](articles/review.pdf)', fetchBlob }, 'a')
+    await userEvent.click(screen.getByText('x'))
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+
+  test('failed chamber-file download surfaces the same visible error', async () => {
+    const { fetchBlob } = fetcher(() => new Response('nope', { status: 503 }))
+    await renderBody(
+      { source: '[调研报告 PDF](articles/review.pdf)', fetchBlob, chamberId: 'cham-a' },
+      'a',
+    )
+    await userEvent.click(screen.getByText(/调研报告 PDF/))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /could not download review\.pdf/i,
+    )
+  })
+
+  test('a relative image goes through the authenticated chamber-file flow', async () => {
+    const { fetchBlob, fetchFn } = fetcher(okBlobResponse)
+    const { container } = await renderBody(
+      { source: '![plot](articles/plot.png)', fetchBlob, chamberId: 'cham-a' },
+      'img',
+    )
+    const img = container.querySelector('img')!
+    // Deferred to the authenticated URL: the browser never requests the raw
+    // relative path, and the swap below is what sets `src`.
+    expect(img.getAttribute('data-upload-src')).toBe(
+      '/api/chambers/cham-a/file?path=articles%2Fplot.png',
+    )
+    await waitFor(() => expect(img.getAttribute('src')).toBe('blob:mock-1'))
+    expect(fetchFn).toHaveBeenCalledWith(
+      '/api/chambers/cham-a/file?path=articles%2Fplot.png',
+      AUTH_GET,
+    )
+  })
+})
+
+test('isChamberRelativePath / chamberFileUrl resolve only chamber-local paths', () => {
+  expect(isChamberRelativePath('articles/review.pdf')).toBe(true)
+  expect(isChamberRelativePath('a/b/c.pdf')).toBe(true)
+  expect(isChamberRelativePath('https://example.com/x.pdf')).toBe(false)
+  expect(isChamberRelativePath('/api/chambers/c/files/x.pdf')).toBe(false)
+  expect(isChamberRelativePath('/static/x')).toBe(false)
+  expect(isChamberRelativePath('#top')).toBe(false)
+  expect(isChamberRelativePath('')).toBe(false)
+  expect(chamberFileUrl('cham-a', 'articles/review.pdf')).toBe(
+    '/api/chambers/cham-a/file?path=articles%2Freview.pdf',
+  )
+  // A space (raw or already encoded) reaches the hub once-decoded as the real
+  // on-disk name — never double-encoded.
+  expect(chamberFileUrl('cham-a', 'articles/my file.pdf')).toBe(
+    '/api/chambers/cham-a/file?path=articles%2Fmy%20file.pdf',
+  )
+  expect(chamberFileUrl('cham-a', 'articles/my%20file.pdf')).toBe(
+    '/api/chambers/cham-a/file?path=articles%2Fmy%20file.pdf',
+  )
+  // Query/fragment on the link are not part of the path.
+  expect(chamberFileUrl('cham-a', 'articles/review.pdf?dl=1#x')).toBe(
+    '/api/chambers/cham-a/file?path=articles%2Freview.pdf',
+  )
 })
 
 test('sanitize strips CSS-escaped url() smuggled into SVG paint attributes', () => {
