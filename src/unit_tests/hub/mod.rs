@@ -42,7 +42,8 @@ mod router_security {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt; // for `oneshot`
 
-    use crate::hub::build_router_with_state;
+    use crate::hub::build_router_with_config;
+    use crate::hub::config::HubConfig;
     use crate::hub::state::AppState;
 
     fn router() -> axum::Router {
@@ -50,7 +51,7 @@ mod router_security {
         let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));
         // The tempdir may drop here: the chamber index starts empty, so these
         // tests never read the workspace path (handlers 403 / 404 / list-empty).
-        build_router_with_state(app)
+        build_router_with_config(app, HubConfig::default())
     }
 
     #[tokio::test]

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Cryochamber</title>
+  <!-- The cryochamber mark (docs/logo/mark.svg), full-bleed on its own outer
+       colour: platforms apply their own mask, so the glyph is scaled to the
+       maskable safe zone (the central 80%) and the rim is the ground. -->
+  <rect width="512" height="512" fill="#1a2744"/>
+  <g transform="translate(51.2 51.2) scale(4.096)">
+    <circle cx="50" cy="50"    r="45"    fill="#1a2744"/>
+    <circle cx="50" cy="48.75" r="40.5"  fill="#ffffff"/>
+    <circle cx="50" cy="47.5"  r="37"    fill="#2d5a8e"/>
+    <circle cx="50" cy="43.75" r="26.25" fill="#5ba3d9"/>
+    <circle cx="50" cy="41.25" r="15"    fill="#a8d8ea"/>
+    <circle cx="50" cy="40.5"  r="6.25"  fill="#e0f0f8"/>
+  </g>
+</svg>

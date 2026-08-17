@@ -32,9 +32,9 @@ Then edit `plan.md` to describe the agent's goal and tasks. Runnable example cha
 cryohub start    # prints the local dashboard URL — open it in your browser
 ```
 
-![The cryohub dashboard showing a chamber's status, messages, and log tail](images/cryohub-dashboard.png)
+![The Agent Console showing a chamber's conversation, with an agent report, a table and a plot](images/agent-console.png)
 
-[Cryohub](./reference/cli.md#hub-cryohub) is the local web dashboard: chamber status, message history, TODOs, notes, log tail, and lifecycle controls, plus a send widget to talk to the agent. For remote messaging from the web or your phone, bridge the chamber to Zulip with [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip).
+[Cryohub](./reference/cli.md#hub-cryohub) serves the **[Agent Console](./agent-console.md)**: one flat conversation per chamber, with the chamber's status, TODOs, notes, log tail and lifecycle controls a tap away, on a phone or a desktop browser. It is embedded in the `cryohub` binary — nothing to install. Share a single chamber with someone through an invite link, or bridge it to Zulip with [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip).
 
 ## What a chamber guarantees
 
@@ -46,5 +46,6 @@ cryohub start    # prints the local dashboard URL — open it in your browser
 ## Next
 
 - [How it works](./how-it-works.md) — a five-minute walkthrough: the chamber files and the session loop.
+- [Agent Console](./agent-console.md) — the web and phone UI: sign-in, invites, public deployment.
 - [CLI reference](./reference/cli.md) — every `cryo`, `cryohub`, `cryo-agent`, and `cryo-zulip` command.
 - [Configuration](./reference/configuration.md) — every `cryo.toml` and `cryohub.toml` field.

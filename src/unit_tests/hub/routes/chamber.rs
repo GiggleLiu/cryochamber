@@ -1,5 +1,20 @@
 use super::*;
 
+/// Status + JSON body of a handler `Response`, for handlers that answer with
+/// `(StatusCode, Json)` rather than `Result<Json, StatusCode>`.
+async fn json_of(resp: axum::response::Response) -> (StatusCode, Value) {
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, v)
+}
+
 #[test]
 fn status_json_for_missing_state_has_zero_session() {
     let dir = tempfile::tempdir().unwrap();
@@ -492,15 +507,18 @@ async fn send_stamps_invite_name_ignoring_client_from() {
     let payload: SendRequest =
         serde_json::from_value(json!({"body": "hi", "from": "owner-imposter"})).unwrap();
 
-    let Json(v) = post_send(
-        State(app),
-        AxumPath(id),
-        Some(axum::Extension(role)),
-        None,
-        Json(payload),
+    let (status, v) = json_of(
+        post_send(
+            State(app),
+            AxumPath(id),
+            Some(axum::Extension(role)),
+            None,
+            Json(payload),
+        )
+        .await,
     )
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(v["ok"], true);
 
     let inbox = crate::message::read_inbox(&dir).unwrap();
@@ -515,9 +533,9 @@ async fn send_without_role_keeps_default_human() {
     let (_workspace, app, id, dir) = chamber_app("alpha");
     let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
 
-    let Json(v) = post_send(State(app), AxumPath(id), None, None, Json(payload))
-        .await
-        .unwrap();
+    let (status, v) =
+        json_of(post_send(State(app), AxumPath(id), None, None, Json(payload)).await).await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(v["ok"], true);
 
     let inbox = crate::message::read_inbox(&dir).unwrap();
@@ -534,9 +552,9 @@ async fn send_broadcasts_the_mailbox_id_of_the_written_message() {
     let mut rx = app.tx.subscribe();
     let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
 
-    let Json(v) = post_send(State(app.clone()), AxumPath(id), None, None, Json(payload))
-        .await
-        .unwrap();
+    let (status, v) =
+        json_of(post_send(State(app.clone()), AxumPath(id), None, None, Json(payload)).await).await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(v["ok"], true);
 
     let expected = messages_json(&dir)[0]["id"].as_str().unwrap().to_string();
@@ -548,6 +566,65 @@ async fn send_broadcasts_the_mailbox_id_of_the_written_message() {
 }
 
 #[tokio::test]
+async fn send_returns_the_mailbox_id_of_the_written_message() {
+    // The console reconciles its optimistic bubble on this id, so it must be
+    // the exact id the messages list (and the SSE frame) will use.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let (status, v) =
+        json_of(post_send(State(app), AxumPath(id), None, None, Json(payload)).await).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["ok"], true);
+    let expected = messages_json(&dir)[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(v["id"].as_str().unwrap(), expected);
+    assert!(
+        v.get("message").is_none(),
+        "the old `message` string is gone: {v}"
+    );
+}
+
+#[tokio::test]
+async fn send_to_unknown_chamber_is_404() {
+    let (_workspace, app, _id, _dir) = chamber_app("alpha");
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let (status, _) = json_of(
+        post_send(
+            State(app),
+            AxumPath("nope".into()),
+            None,
+            None,
+            Json(payload),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn send_that_cannot_write_is_500_with_an_error_body() {
+    // A chamber whose inbox directory is a *file* cannot accept a message;
+    // the client must see a real error, not a 200 with ok:false.
+    let (_workspace, app, id, dir) = chamber_app("alpha");
+    std::fs::create_dir_all(dir.join("messages")).unwrap();
+    std::fs::write(dir.join("messages/inbox"), b"not a directory").unwrap();
+    let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+
+    let (status, v) =
+        json_of(post_send(State(app), AxumPath(id), None, None, Json(payload)).await).await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        v["error"].as_str().unwrap().starts_with("Failed: "),
+        "got {v}"
+    );
+}
+
+#[tokio::test]
 async fn send_as_owner_stamps_the_configured_owner_name() {
     // In public mode the owner's identity is the server's to decide. Honoring
     // the client's `from` would let anyone holding the owner token sign a
@@ -556,17 +633,20 @@ async fn send_as_owner_stamps_the_configured_owner_name() {
     let payload: SendRequest =
         serde_json::from_value(json!({"body": "hi", "from": "Mallory"})).unwrap();
 
-    let Json(v) = post_send(
-        State(app),
-        AxumPath(id),
-        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
-        Some(axum::Extension(crate::hub::config::OwnerName(
-            "ops-desk".into(),
-        ))),
-        Json(payload),
+    let (status, v) = json_of(
+        post_send(
+            State(app),
+            AxumPath(id),
+            Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+            Some(axum::Extension(crate::hub::config::OwnerName(
+                "ops-desk".into(),
+            ))),
+            Json(payload),
+        )
+        .await,
     )
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(v["ok"], true);
 
     let inbox = crate::message::read_inbox(&dir).unwrap();
@@ -582,15 +662,18 @@ async fn send_as_owner_falls_back_to_human_without_a_configured_name() {
     let payload: SendRequest =
         serde_json::from_value(json!({"body": "hi", "from": "Mallory"})).unwrap();
 
-    let Json(v) = post_send(
-        State(app),
-        AxumPath(id),
-        Some(axum::Extension(crate::hub::tokens::Role::Owner)),
-        None,
-        Json(payload),
+    let (status, v) = json_of(
+        post_send(
+            State(app),
+            AxumPath(id),
+            Some(axum::Extension(crate::hub::tokens::Role::Owner)),
+            None,
+            Json(payload),
+        )
+        .await,
     )
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(v["ok"], true);
 
     let inbox = crate::message::read_inbox(&dir).unwrap();
@@ -606,17 +689,20 @@ async fn send_in_open_mode_still_honors_client_supplied_from() {
     let payload: SendRequest =
         serde_json::from_value(json!({"body": "hi", "from": "operator"})).unwrap();
 
-    let Json(v) = post_send(
-        State(app),
-        AxumPath(id),
-        None,
-        Some(axum::Extension(crate::hub::config::OwnerName(
-            "ops-desk".into(),
-        ))),
-        Json(payload),
+    let (status, v) = json_of(
+        post_send(
+            State(app),
+            AxumPath(id),
+            None,
+            Some(axum::Extension(crate::hub::config::OwnerName(
+                "ops-desk".into(),
+            ))),
+            Json(payload),
+        )
+        .await,
     )
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(v["ok"], true);
 
     let inbox = crate::message::read_inbox(&dir).unwrap();
@@ -647,4 +733,26 @@ fn lifecycle_status_json_reports_error_message() {
             "message": "start failed",
         })
     );
+}
+
+#[tokio::test]
+async fn open_mode_send_is_never_throttled() {
+    // No role layer = loopback operator with shell access; the limiter is for
+    // public mode's guests, not for the owner talking to their own machine.
+    let (_workspace, app, id, _dir) = chamber_app("alpha");
+    for i in 0..20 {
+        let payload: SendRequest = serde_json::from_value(json!({"body": "hi"})).unwrap();
+        let (status, _) = json_of(
+            post_send(
+                State(app.clone()),
+                AxumPath(id.clone()),
+                None,
+                None,
+                Json(payload),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "send {i}");
+    }
 }

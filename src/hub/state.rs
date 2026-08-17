@@ -41,6 +41,8 @@ pub struct AppState {
     pub chambers: Arc<RwLock<ChamberIndex>>,
     pub tx: tokio::sync::broadcast::Sender<SseEvent>,
     pub watchers: crate::hub::watchers::WatcherRegistry,
+    /// Per-credential throttle for the two routes a guest may write through.
+    pub write_limiter: crate::hub::ratelimit::RateLimiter,
 }
 
 fn watcher_targets(idx: &ChamberIndex) -> (BTreeSet<PathBuf>, Vec<(String, PathBuf)>) {
@@ -80,6 +82,10 @@ impl AppState {
             chambers: Arc::new(RwLock::new(ChamberIndex::new())),
             tx,
             watchers: crate::hub::watchers::WatcherRegistry::new(),
+            write_limiter: crate::hub::ratelimit::RateLimiter::new(
+                crate::hub::ratelimit::WRITE_BURST,
+                crate::hub::ratelimit::WRITE_REFILL_PER_MIN,
+            ),
         }
     }
 

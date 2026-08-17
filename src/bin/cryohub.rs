@@ -30,13 +30,13 @@ enum Commands {
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
-        /// Enforce bearer-token auth on every /api route (required before
-        /// exposing the hub beyond loopback). Needs `cryohub token owner`.
-        /// Saved to cryohub.toml, so later starts stay public.
+        /// Enforce bearer auth (the default). Saved to cryohub.toml.
         #[arg(long)]
         public: bool,
-        /// Turn public mode back off. Disabling auth is never implicit: a
-        /// plain `cryohub start` keeps whatever mode is saved.
+        /// Run without authentication (open mode, loopback only). Sharing and
+        /// invites do not work in open mode. Saved to cryohub.toml, so
+        /// disabling auth is never implicit: a plain `cryohub start` keeps
+        /// whatever mode is saved.
         #[arg(long, conflicts_with = "public")]
         no_public: bool,
     },
@@ -117,13 +117,17 @@ fn cmd_start(
     public: Option<bool>,
 ) -> Result<()> {
     let config = cryochamber::hub::config::effective_config(host, port, public)?;
+    config.validate_console_dir()?;
     std::fs::create_dir_all(&config.chamber_root)?;
 
     // Before binding a socket AND before installing a service: a public hub
-    // with no owner token can never be administered, and an installed unit
-    // would just crash-loop under KeepAlive.
+    // needs an owner token to be administrable at all, and the operator has to
+    // see it while they are still at the terminal — a service start would
+    // otherwise print it into a log file nobody reads.
     if config.public {
-        cryochamber::hub::require_owner_token()?;
+        if let Some(token) = cryochamber::hub::ensure_owner_token()? {
+            cryochamber::hub::announce_owner_token(&token);
+        }
     }
 
     if foreground {
@@ -159,6 +163,7 @@ fn cmd_start(
         println!("Mode: PUBLIC (bearer auth enforced on every /api route)");
     }
     println!("Chamber root: {}", config.chamber_root.display());
+    println!("Console: {}", config.console_source().describe());
     println!(
         "Config: {}",
         cryochamber::hub::paths::hub_config_path().display()
@@ -216,6 +221,7 @@ fn cmd_status() -> Result<()> {
         }
     );
     println!("Chamber root: {}", config.chamber_root.display());
+    println!("Console: {}", config.console_source().describe());
     println!(
         "Config: {}",
         cryochamber::hub::paths::hub_config_path().display()
@@ -246,8 +252,16 @@ fn print_legacy_installed() {
     println!("(These are from older Cryohub versions; remove them from their listed directories.)");
 }
 
+/// The service-unit entry point. Reads the config and honours the unit's flags
+/// in memory only — a boot is not a configuration act, and re-saving here is
+/// how an older binary once dropped a key it did not know.
 fn cmd_daemon(host: Option<String>, port: Option<u16>, public: Option<bool>) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port, public)?;
+    let config = cryochamber::hub::config::overlay_config(
+        cryochamber::hub::config::load_config()?,
+        host,
+        port,
+        public,
+    );
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(cryochamber::hub::serve(
         &config.host,

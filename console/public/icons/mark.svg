@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <title>Cryochamber</title>
+  <!-- The bare mark, transparent ground: this is the browser-tab favicon,
+       where a filled square would read as a black tile. The home-screen icons
+       (icon.svg / icon-*.png) are deliberately full-bleed instead — iOS
+       composites a transparent app icon onto black. -->
+  <circle cx="50" cy="50"    r="45"    fill="#1a2744"/>
+  <circle cx="50" cy="48.75" r="40.5"  fill="#ffffff"/>
+  <circle cx="50" cy="47.5"  r="37"    fill="#2d5a8e"/>
+  <circle cx="50" cy="43.75" r="26.25" fill="#5ba3d9"/>
+  <circle cx="50" cy="41.25" r="15"    fill="#a8d8ea"/>
+  <circle cx="50" cy="40.5"  r="6.25"  fill="#e0f0f8"/>
+</svg>

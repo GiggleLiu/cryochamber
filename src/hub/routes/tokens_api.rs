@@ -22,15 +22,28 @@ fn mutate_status(err: MutateError, rejected: StatusCode) -> StatusCode {
     }
 }
 
-/// Who am I? Drives the UI's owner-vs-guest chrome. In open (loopback) mode no
-/// auth layer runs, so there is no `Role` extension and the local user — who
-/// already has shell access to the machine — is the owner.
-pub async fn get_whoami(role: Option<Extension<Role>>) -> Json<Value> {
+/// Who am I? Drives the UI's owner-vs-guest chrome and tells the console
+/// which hub version it is talking to (the console ships inside the binary,
+/// so this is also the console's version). In open (loopback) mode no auth
+/// layer runs, so there is no `Role` extension and the local user — who
+/// already has shell access to the machine — is the owner. The owner's `name`
+/// is the server-decided sender name, so the client can tell its own messages
+/// apart without guessing.
+pub async fn get_whoami(
+    role: Option<Extension<Role>>,
+    owner_name: Option<Extension<crate::hub::config::OwnerName>>,
+) -> Json<Value> {
+    let version = env!("CARGO_PKG_VERSION");
     match role {
-        Some(Extension(Role::Invite { name, chambers })) => {
-            Json(json!({ "role": "invite", "name": name, "chambers": chambers }))
+        Some(Extension(Role::Invite { name, chambers })) => Json(json!({
+            "role": "invite", "name": name, "chambers": chambers, "hub_version": version
+        })),
+        _ => {
+            let name = owner_name
+                .map(|Extension(crate::hub::config::OwnerName(n))| n)
+                .unwrap_or_else(|| "human".into());
+            Json(json!({ "role": "owner", "name": name, "hub_version": version }))
         }
-        _ => Json(json!({ "role": "owner" })),
     }
 }
 

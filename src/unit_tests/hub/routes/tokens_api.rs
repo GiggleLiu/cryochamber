@@ -21,7 +21,11 @@ fn public_router(tmp: &tempfile::TempDir) -> (axum::Router, String, String, Path
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
     (
-        crate::hub::build_router_public(app, ctx),
+        crate::hub::build_router_public_with_config(
+            app,
+            ctx,
+            crate::hub::config::HubConfig::default(),
+        ),
         owner,
         alice.token,
         path,
@@ -32,7 +36,7 @@ fn public_router(tmp: &tempfile::TempDir) -> (axum::Router, String, String, Path
 fn open_router(tmp: &tempfile::TempDir) -> axum::Router {
     let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
     app.refresh();
-    crate::hub::build_router_with_state(app)
+    crate::hub::build_router_with_config(app, crate::hub::config::HubConfig::default())
 }
 
 async fn send(
@@ -77,6 +81,12 @@ async fn whoami_reports_role() {
     let (status, body) = send(&router, "GET", "/api/whoami", Some(&owner), None).await;
     assert_eq!(status, StatusCode::OK, "owner whoami: {body}");
     assert_eq!(json_of(&body)["role"], "owner");
+    let v = json_of(&body);
+    assert_eq!(
+        v["name"], "human",
+        "owner name defaults to the configured owner_name"
+    );
+    assert_eq!(v["hub_version"], env!("CARGO_PKG_VERSION"));
 
     let (status, body) = send(&router, "GET", "/api/whoami", Some(&alice), None).await;
     assert_eq!(status, StatusCode::OK, "invite whoami: {body}");
@@ -84,6 +94,7 @@ async fn whoami_reports_role() {
     assert_eq!(v["role"], "invite");
     assert_eq!(v["name"], "Alice");
     assert_eq!(v["chambers"], serde_json::json!(["c1"]));
+    assert_eq!(v["hub_version"], env!("CARGO_PKG_VERSION"));
 
     // No token at all: whoami is AnyToken-classified, so the guard 401s.
     let (status, _) = send(&router, "GET", "/api/whoami", None, None).await;
@@ -98,6 +109,26 @@ async fn whoami_in_open_mode_reports_owner() {
     let (status, body) = send(&router, "GET", "/api/whoami", None, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(json_of(&body)["role"], "owner");
+    assert_eq!(json_of(&body)["name"], "human");
+}
+
+#[tokio::test]
+async fn whoami_owner_name_follows_the_configured_owner_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut tf = TokenFile::default();
+    let owner = tf.ensure_owner().unwrap();
+    let path = tmp.path().join("tokens.json");
+    save_tokens(&path, &tf).unwrap();
+    let ctx = AuthCtx::load(&path).unwrap();
+    let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
+    let config = crate::hub::config::HubConfig {
+        owner_name: "jinguo".into(),
+        ..crate::hub::config::HubConfig::default()
+    };
+    let router = crate::hub::build_router_public_with_config(app, ctx, config);
+    let (status, body) = send(&router, "GET", "/api/whoami", Some(&owner), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(json_of(&body)["name"], "jinguo");
 }
 
 #[tokio::test]

@@ -1,0 +1,43 @@
+# Chamber Hub deployment: Caddy terminates TLS, cryohub does everything else.
+#
+# With `console_dir` set in cryohub.toml the hub serves both this app and its
+# /api from one process, so there is nothing to split here — proxy the whole
+# site and let the hub decide what is a page and what is an endpoint.
+#
+# Replace agents.example.com with your own name. It needs an A/AAAA record
+# pointing at this host *before* you reload Caddy, or no certificate can be
+# issued. cryohub itself stays bound to 127.0.0.1; Caddy is the only way in.
+#
+# The hub rejects any request whose Host header is neither loopback nor a
+# configured name, which is what stops DNS rebinding. Caddy forwards the public
+# hostname by default, so allow it in cryohub.toml:
+#
+#     public_hosts = ["agents.example.com"]
+#
+# The alternative is `header_up Host 127.0.0.1` inside the block below.
+agents.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8765
+}
+
+# ---------------------------------------------------------------------------
+# Alternative: serve the static build from disk instead of from the hub.
+#
+# Use this when `console_dir` is deliberately left unset — an older cryohub, a
+# CDN-fronted build, or a host where the app and the hub are updated on
+# different schedules. Caddy then owns the SPA fallback that the hub would
+# otherwise do.
+#
+# agents.example.com {
+# 	encode zstd gzip
+#
+# 	handle /api/* {
+# 		reverse_proxy 127.0.0.1:8765
+# 	}
+#
+# 	handle {
+# 		root * /srv/agent-console
+# 		try_files {path} /index.html
+# 		file_server
+# 	}
+# }

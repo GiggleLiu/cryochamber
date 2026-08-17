@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cryochamber::config;
-use cryochamber::hub::{build_router_with_state, discovery, state::AppState};
+use cryochamber::hub::config::HubConfig;
+use cryochamber::hub::{build_router_with_config, discovery, state::AppState};
 use tower::ServiceExt;
 
 /// Global lock serializing env-var mutation so parallel tests don't race on
@@ -57,7 +58,7 @@ fn setup_app(tmp: &tempfile::TempDir) -> Arc<AppState> {
 async fn list_chambers_returns_both() {
     let tmp = tempfile::tempdir().unwrap();
     let app = setup_app(&tmp);
-    let router = build_router_with_state(app);
+    let router = build_router_with_config(app, HubConfig::default());
 
     let resp = router
         .oneshot(
@@ -78,38 +79,6 @@ async fn list_chambers_returns_both() {
 }
 
 #[tokio::test]
-async fn logo_asset_route_serves_svg() {
-    let tmp = tempfile::tempdir().unwrap();
-    let app = setup_app(&tmp);
-    let router = build_router_with_state(app);
-
-    let resp = router
-        .oneshot(
-            Request::builder()
-                .uri("/assets/logo.svg")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(
-        resp.headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok()),
-        Some("image/svg+xml; charset=utf-8")
-    );
-
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert!(
-        bytes.starts_with(b"<svg"),
-        "logo route should serve SVG bytes"
-    );
-}
-
-#[tokio::test]
 async fn send_message_writes_to_correct_chamber() {
     let tmp = tempfile::tempdir().unwrap();
     let app = setup_app(&tmp);
@@ -119,7 +88,7 @@ async fn send_message_writes_to_correct_chamber() {
         idx.values().find(|e| e.name == "alpha").unwrap().id.clone()
     };
 
-    let router = build_router_with_state(app);
+    let router = build_router_with_config(app, HubConfig::default());
     let body = serde_json::json!({"body": "hello alpha"}).to_string();
     let resp = router
         .oneshot(
@@ -148,7 +117,7 @@ async fn send_message_writes_to_correct_chamber() {
 async fn unknown_chamber_id_returns_404() {
     let tmp = tempfile::tempdir().unwrap();
     let app = setup_app(&tmp);
-    let router = build_router_with_state(app);
+    let router = build_router_with_config(app, HubConfig::default());
 
     let resp = router
         .oneshot(
@@ -189,7 +158,7 @@ async fn start_chamber_via_api_creates_background_daemon() {
         idx.values().find(|e| e.name == "alpha").unwrap().id.clone()
     };
 
-    let router = build_router_with_state(app.clone());
+    let router = build_router_with_config(app.clone(), HubConfig::default());
     let resp = router
         .oneshot(
             Request::builder()

@@ -1,0 +1,15 @@
+import { useMemo } from 'react'
+import { sanitizeHtml } from '../../components/sanitize'
+
+/**
+ * `plan_html` / `notes_html` — markdown the *server* already rendered and
+ * neutralized. It is sanitized again here anyway: chamber files are written by
+ * an agent, i.e. untrusted, and one escaping layer is one bug away from none.
+ */
+export function HtmlTab({ html, empty }: { html: string; empty: string }) {
+  const clean = useMemo(() => sanitizeHtml(html), [html])
+  // Judged after sanitizing: markup that reduces to nothing is as empty as
+  // no markup, and an empty styled block says less than the copy does.
+  if (clean.trim() === '') return <p className="tab-empty">{empty}</p>
+  return <div className="tab-html" dangerouslySetInnerHTML={{ __html: clean }} />
+}

@@ -106,6 +106,7 @@ fn hub_config_save_round_trips_config_file() {
         owner_name: "ops-desk".to_string(),
         public_hosts: vec!["agents.example.com".to_string()],
         public: true,
+        console_dir: Some(custom_root.path().join("console/dist")),
     };
 
     cryochamber::hub::config::save_config(&cfg).unwrap();
@@ -113,6 +114,21 @@ fn hub_config_save_round_trips_config_file() {
     let path = cryochamber::hub::paths::hub_config_path();
     assert!(path.exists());
     assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+/// A config file written before `console_dir` existed must keep loading, and
+/// must keep meaning "serve the bundled shell" rather than failing to parse.
+#[test]
+fn hub_config_without_console_dir_loads_as_none() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "host = \"127.0.0.1\"\nport = 8765\n").unwrap();
+
+    let cfg = cryochamber::hub::config::load_config().unwrap();
+
+    assert_eq!(cfg.console_dir, None);
 }
 
 #[test]
@@ -143,23 +159,18 @@ fn hub_effective_config_persists_host_and_port_overrides() {
 
 #[test]
 fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
-    // Public mode is a security posture, not a command-line detail: once set it
-    // must survive a plain restart (and a reboot), and only an explicit
-    // `--no-public` may clear it. Otherwise a `cryohub start` typed from muscle
-    // memory silently un-authenticates a hub a reverse proxy is publishing.
+    // Public mode is a security posture, not a command-line detail: it is on by
+    // default, and only an explicit `--no-public` may clear it — and that
+    // choice, too, must survive a plain restart in both directions. Otherwise a
+    // `cryohub start` typed from muscle memory silently un-authenticates a hub
+    // a reverse proxy is publishing.
     let config_home = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
     use cryochamber::hub::config::effective_config;
 
     assert!(
-        !effective_config(None, None, None).unwrap().public,
-        "a fresh config defaults to open mode"
-    );
-
-    assert!(effective_config(None, None, Some(true)).unwrap().public);
-    assert!(
         effective_config(None, None, None).unwrap().public,
-        "a plain start must not drop public mode"
+        "a fresh config defaults to public (bearer auth)"
     );
     assert!(
         cryochamber::hub::config::load_config().unwrap().public,
@@ -167,5 +178,135 @@ fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
     );
 
     assert!(!effective_config(None, None, Some(false)).unwrap().public);
+    assert!(
+        !effective_config(None, None, None).unwrap().public,
+        "a plain start must not re-enable auth behind the operator's back"
+    );
     assert!(!cryochamber::hub::config::load_config().unwrap().public);
+
+    assert!(effective_config(None, None, Some(true)).unwrap().public);
+    assert!(
+        effective_config(None, None, None).unwrap().public,
+        "a plain start must not drop public mode"
+    );
+    assert!(cryochamber::hub::config::load_config().unwrap().public);
+}
+
+/// Configs written before public mode was the default carry no `public` key;
+/// they must come back as public, while a file that explicitly says
+/// `public = false` keeps the open mode its operator chose.
+#[test]
+fn hub_config_without_a_public_key_loads_as_public() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "host = \"127.0.0.1\"\nport = 8765\n").unwrap();
+
+    assert!(cryochamber::hub::config::load_config().unwrap().public);
+
+    std::fs::write(&path, "host = \"127.0.0.1\"\nport = 8765\npublic = false\n").unwrap();
+    assert!(
+        !cryochamber::hub::config::load_config().unwrap().public,
+        "an explicit `public = false` must stay open"
+    );
+}
+
+/// A relative `console_dir` resolves from whatever working directory
+/// launchd/systemd gave the service — refuse it while the operator is still
+/// at a terminal rather than 503ing after the next reboot.
+#[test]
+fn a_relative_console_dir_is_refused_with_the_key_named() {
+    let cfg = cryochamber::hub::config::HubConfig {
+        console_dir: Some(std::path::PathBuf::from("console/dist")),
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+    let err = cfg.validate_console_dir().unwrap_err().to_string();
+    assert!(err.contains("console_dir"), "{err}");
+    assert!(err.contains("absolute"), "{err}");
+    let ok = cryochamber::hub::config::HubConfig {
+        console_dir: Some(std::path::PathBuf::from("/srv/console")),
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+    ok.validate_console_dir().unwrap();
+    cryochamber::hub::config::HubConfig::default()
+        .validate_console_dir()
+        .unwrap();
+}
+
+#[test]
+fn hub_config_with_an_unknown_key_fails_to_load_naming_the_key_and_the_file() {
+    // A typo like `console-dir` used to be silently ignored — and then erased
+    // by the next save. Refusing to load is the only way the operator finds out,
+    // and the message has to name the file as well as the key: `cryohub.toml`
+    // is not where most operators would think to look first.
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let path = config_home.path().join("cryo/cryohub.toml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "host = \"127.0.0.1\"\nconsole-dir = \"/x\"\n").unwrap();
+
+    let err = cryochamber::hub::config::load_config().unwrap_err();
+
+    let report = format!("{err:#}");
+    assert!(
+        report.contains("console-dir"),
+        "error must name the unknown key: {report}"
+    );
+    assert!(
+        report.contains(&path.display().to_string()),
+        "error must name the file it was reading: {report}"
+    );
+}
+
+#[test]
+fn hub_config_save_is_atomic_and_leaves_no_temp_file() {
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let cfg = cryochamber::hub::config::HubConfig {
+        port: 9001,
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+
+    cryochamber::hub::config::save_config(&cfg).unwrap();
+
+    let path = cryochamber::hub::paths::hub_config_path();
+    assert!(path.exists());
+    let tmp = path.with_extension("toml.tmp");
+    assert!(
+        !tmp.exists(),
+        "temp file must be renamed away: {}",
+        tmp.display()
+    );
+    assert_eq!(cryochamber::hub::config::load_config().unwrap(), cfg);
+}
+
+#[test]
+fn hub_overlay_config_applies_flags_without_touching_disk() {
+    // The service unit re-invokes `cryohub daemon --public` on every boot. That
+    // path must not rewrite cryohub.toml: a re-save from an older binary once
+    // dropped a key it did not know, and a boot is not a configuration act.
+    let config_home = tempfile::tempdir().unwrap();
+    let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
+    let base = cryochamber::hub::config::HubConfig::default();
+
+    let cfg = cryochamber::hub::config::overlay_config(
+        base.clone(),
+        Some("0.0.0.0".to_string()),
+        Some(9900),
+        Some(true),
+    );
+
+    assert_eq!(cfg.host, "0.0.0.0");
+    assert_eq!(cfg.port, 9900);
+    assert!(cfg.public);
+    assert!(
+        !cryochamber::hub::paths::hub_config_path().exists(),
+        "overlay must never write the config file"
+    );
+    // Absent flags leave the base untouched.
+    assert_eq!(
+        cryochamber::hub::config::overlay_config(base.clone(), None, None, None),
+        base
+    );
 }

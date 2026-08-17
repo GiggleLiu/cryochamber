@@ -2,7 +2,9 @@ pub mod auth;
 pub mod config;
 pub mod discovery;
 pub mod lifecycle;
+pub mod mime;
 pub mod paths;
+pub mod ratelimit;
 pub mod routes;
 pub mod security;
 pub mod state;
@@ -34,20 +36,29 @@ pub fn build_router_local_only(workspace_dir: PathBuf) -> Router {
 }
 
 /// Separate entry point so integration tests can inject their own `AppState`.
+///
+/// Reads the hub config once. The security layer needs the bind host and any
+/// reverse-proxy hostnames; `post_send` needs the owner sender name. Falling
+/// back to defaults if the config is unreadable is safe — the default bind
+/// is loopback and the default owner name is `human`.
 pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
-    // Read the hub config once. The security layer needs the bind host and any
-    // reverse-proxy hostnames; `post_send` needs the owner sender name. Falling
-    // back to defaults if the config is unreadable is safe — the default bind
-    // is loopback and the default owner name is `human`.
-    let config = crate::hub::config::load_config().unwrap_or_default();
+    build_router_with_config(app, crate::hub::config::load_config().unwrap_or_default())
+}
+
+/// As [`build_router_with_state`], with the config supplied rather than read
+/// from disk, so tests can exercise a configuration without installing one on
+/// the machine running them.
+pub fn build_router_with_config(
+    app: Arc<WebAppState>,
+    config: crate::hub::config::HubConfig,
+) -> Router {
     let mut configured_hosts = vec![config.host.clone()];
     configured_hosts.extend(config.public_hosts.iter().cloned());
+    // The page surface belongs entirely to the console, which is served from
+    // disk by the fallback below. The hub registers no page routes of its own:
+    // a Vite build emits its own `/`, `/assets` and everything under them, and
+    // a second dashboard registered here would shadow them.
     let router = Router::new()
-        .route("/", get(crate::hub::routes::pages::get_index))
-        .route("/c/{id}", get(crate::hub::routes::pages::get_index))
-        .route("/assets/web.css", get(crate::hub::routes::pages::get_css))
-        .route("/assets/logo.svg", get(crate::hub::routes::pages::get_logo))
-        .route("/assets/mark.svg", get(crate::hub::routes::pages::get_mark))
         .route(
             "/api/chambers",
             get(crate::hub::routes::chambers::get_chambers),
@@ -130,7 +141,13 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
             "/api/tokens/{name}/revoke",
             post(crate::hub::routes::tokens_api::post_revoke),
         )
-        .with_state(app)
+        .with_state(app);
+    // The console fallback needs no `AppState`, so it is attached after
+    // `with_state` and only ever sees paths no hub route claimed.
+    let console = Arc::new(config.console_source());
+    let router =
+        router.fallback(move |req| crate::hub::routes::console::serve(console.clone(), req));
+    let router = router
         // Bound the buffered body so the 25 MB attachment cap binds before an
         // unbounded upload is read into memory. The slack covers multipart
         // framing overhead; the exact cap is enforced in `post_upload`.
@@ -150,39 +167,88 @@ pub fn build_router_with_state(app: Arc<WebAppState>) -> Router {
 /// and the live token store. Open (loopback) mode builds the router without it,
 /// which is how the token-management handlers know to answer 503.
 pub fn build_router_public(app: Arc<WebAppState>, ctx: Arc<crate::hub::auth::AuthCtx>) -> Router {
-    let router = build_router_with_state(app.clone()).layer(axum::Extension(ctx.clone()));
+    build_router_public_with_config(
+        app,
+        ctx,
+        crate::hub::config::load_config().unwrap_or_default(),
+    )
+}
+
+/// As [`build_router_public`], with the config supplied rather than read from
+/// disk. See [`build_router_with_config`].
+pub fn build_router_public_with_config(
+    app: Arc<WebAppState>,
+    ctx: Arc<crate::hub::auth::AuthCtx>,
+    config: crate::hub::config::HubConfig,
+) -> Router {
+    let router = build_router_with_config(app.clone(), config).layer(axum::Extension(ctx.clone()));
     crate::hub::auth::apply_auth(router, app, ctx)
 }
 
-/// Refuse public mode unless an owner token exists.
+/// Make sure a public hub has an owner token, creating one on first run.
 ///
-/// A public hub without one could never be administered — no invites, no
-/// revocation — so starting is worse than not starting. Both entry points
-/// check it: `serve` before binding a socket, and `cryohub start` before
-/// *installing a service*, since a KeepAlive unit that fails on boot would
-/// otherwise restart forever.
-pub fn require_owner_token() -> anyhow::Result<()> {
-    let path = crate::hub::tokens::default_tokens_path();
-    if crate::hub::tokens::load_tokens(&path)?.owner.is_none() {
-        anyhow::bail!(
-            "public mode requires an owner token — run `cryohub token owner` first \
-             (store: {})",
-            path.display()
-        );
+/// Public mode is the default, so a missing owner token is the normal state of
+/// a brand-new hub, not an operator error: the hub mints one instead of
+/// refusing to start (a hub nobody can administer *is* the failure this used
+/// to prevent, and creating the token prevents it just as well).
+///
+/// Returns `Some(token)` only when it had to create it, so a caller at a
+/// terminal can show it. An existing token is never re-read out of the store
+/// here; `cryohub token owner` is how it is printed again.
+pub fn ensure_owner_token() -> anyhow::Result<Option<String>> {
+    ensure_owner_token_at(&crate::hub::tokens::default_tokens_path())
+}
+
+/// [`ensure_owner_token`] against an explicit store path.
+pub fn ensure_owner_token_at(path: &std::path::Path) -> anyhow::Result<Option<String>> {
+    if crate::hub::tokens::load_tokens(path)?.owner.is_some() {
+        return Ok(None);
     }
-    Ok(())
+    // Through `AuthCtx` so the CLI, the API, and startup all share one
+    // transaction: the token is on disk before it is considered to exist.
+    let ctx = crate::hub::auth::AuthCtx::load(path)?;
+    let token = ctx
+        .mutate(|store| store.ensure_owner())
+        .map_err(|e| match e {
+            crate::hub::auth::MutateError::Rejected(e) => e,
+            crate::hub::auth::MutateError::Persist(e) => {
+                e.context("owner token could not be written; no change was made")
+            }
+        })?;
+    Ok(Some(token))
+}
+
+/// Print a freshly created owner token, for `cryohub start` at a terminal.
+///
+/// Stdout carries the secret so it can be piped; the explanation and the store
+/// path go to stderr, matching `cryohub token owner`. Only call this where the
+/// output is a terminal the operator is looking at — a service start writes its
+/// stdout to a world-readable log, which is exactly what `save_tokens`' 0600
+/// mode exists to avoid.
+pub fn announce_owner_token(token: &str) {
+    println!("Owner token (save it — or reprint later with `cryohub token owner`):\n{token}");
+    eprintln!(
+        "Stored in {}",
+        crate::hub::tokens::default_tokens_path().display()
+    );
 }
 
 /// Serve the hub. In `public` mode every `/api` route is behind the bearer
 /// guard; otherwise the hub is the loopback-only dashboard it has always been.
 ///
-/// The owner-token precondition is checked *first*, before any workspace scan
-/// or socket bind: a public hub without an owner token could never be
-/// administered, and failing after the port is open would be worse than not
-/// starting at all.
+/// The owner token is settled *first*, before any workspace scan or socket
+/// bind: a public hub without an owner token could never be administered, and
+/// discovering that after the port is open would be worse than not starting at
+/// all. `cryohub start` normally creates it a moment earlier; this call is what
+/// covers `cryohub daemon` after someone deletes the store.
 pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
     let ctx = if public {
-        require_owner_token()?;
+        // Mint but do not print: this path is normally a launchd/systemd unit
+        // whose stdout is a 0644 log file. The token is recoverable from the
+        // store, so there is nothing to gain by leaking it into a log.
+        if ensure_owner_token()?.is_some() {
+            eprintln!("Created a new owner token — run `cryohub token owner` to print it.");
+        }
         Some(crate::hub::auth::AuthCtx::load(
             &crate::hub::tokens::default_tokens_path(),
         )?)

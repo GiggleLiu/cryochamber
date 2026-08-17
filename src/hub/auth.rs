@@ -166,9 +166,11 @@ pub fn classify(method: &Method, path: &str) -> Access {
         ("GET", ["api", "chambers"]) => Access::AnyToken,
         ("GET", ["api", "events"]) => Access::AnyToken,
         ("GET", ["api", "whoami"]) => Access::AnyToken,
-        ("GET", ["api", "chambers", id, "messages" | "status" | "todos"]) => {
-            Access::Chamber((*id).to_string())
-        }
+        // A guest gets the conversation and its files — nothing else. `status`
+        // (log tail, plan, notes, settings, session summaries) and `todos` are
+        // the chamber's working state and stay with the owner; the console
+        // never asks for them on a guest's behalf.
+        ("GET", ["api", "chambers", id, "messages"]) => Access::Chamber((*id).to_string()),
         ("POST", ["api", "chambers", id, "send" | "uploads"]) => Access::Chamber((*id).to_string()),
         ("GET", ["api", "chambers", id, "files", _name]) => Access::Chamber((*id).to_string()),
         _ => Access::OwnerOnly,

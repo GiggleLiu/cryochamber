@@ -32,12 +32,13 @@
 
 | 命令 | 作用 |
 |---------|--------------|
-| `cryohub start [--host <ip>] [--port <n>]` | 安装一个重启后依然存活的服务。`--host` 和 `--port` 同时更新已保存的 hub 配置。 |
+| `cryohub start [--host <ip>] [--port <n>]` | 安装一个重启后依然存活的服务。默认强制 bearer 鉴权，并在首次运行时打印 owner token（之后可用 `cryohub token owner` 再次打印）。`--host` 和 `--port` 同时更新已保存的 hub 配置。 |
 | `cryohub start --foreground` | 在当前终端运行 hub，而不是安装服务。 |
 | `cryohub stop` | 卸载全局 hub 服务。 |
 | `cryohub restart` | 重启已安装的全局 hub 服务，无需重新安装。 |
-| `cryohub status` | 显示全局 hub 的 URL、chamber 根目录、配置文件路径、日志路径和服务状态。同时列出旧版本遗留的、以当前目录为作用域的 hub 服务。 |
-| `cryohub start --public` | 对所有 `/api` 路由强制启用 bearer token 鉴权。没有 owner token 时拒绝启动。该标志会写入安装的服务单元，因此重启后依然保持鉴权。 |
+| `cryohub status` | 显示全局 hub 的 URL、模式（`public (bearer auth)` 或 `open (loopback)`）、chamber 根目录、配置文件路径、日志路径、控制台来源（`embedded`，或 `console_dir` 覆盖路径及构建是否存在）和服务状态。同时列出旧版本遗留的、以当前目录为作用域的 hub 服务。 |
+| `cryohub start --public` | 对所有 `/api` 路由强制启用 bearer token 鉴权——这是默认行为。若尚无 owner token 则创建并打印。该值写入 `cryohub.toml`，因此之后的普通 `cryohub start`、重启或重新开机都保持鉴权。 |
+| `cryohub start --no-public` | 以无鉴权的开放模式运行（仅限回环地址）。开放模式下分享与邀请无法工作。必须显式指定：关闭鉴权绝不隐式发生，之后的普通 `cryohub start` 也会保持已保存的开放模式。 |
 | `cryohub token owner` | 打印 owner token，首次运行时创建。幂等——重复运行打印同一个密钥。 |
 | `cryohub token create --name <名称> --chambers <id,...>` | 创建一个限定到这些 chamber id 的具名邀请。打印 token 及其 `#invite=` 链接片段；这是密钥唯一一次显示的时机。 |
 | `cryohub token list` | 列出邀请及其作用域、创建时间和吊销状态。绝不打印 token 字符串。 |

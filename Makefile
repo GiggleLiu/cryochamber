@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build console-check book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -14,7 +14,8 @@ help:
 	@echo "  fmt          - Format code with rustfmt"
 	@echo "  fmt-check    - Check code formatting"
 	@echo "  clippy       - Run clippy lints"
-	@echo "  check        - Quick check (fmt + clippy + test)"
+	@echo "  check        - Quick check (fmt + clippy + test + console-check)"
+	@echo "  console-check - Type-check and unit-test the Agent Console (npm ci, tsc, vitest)"
 	@echo "  coverage     - Generate coverage report (requires cargo-llvm-cov)"
 	@echo "  clean        - Clean build artifacts (cargo clean)"
 	@echo "  example-clean - Remove auto-generated files from examples"
@@ -30,6 +31,7 @@ help:
 	@echo "  check-service - Verify OS service install/uninstall (launchd/systemd)"
 	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
+	@echo "  console-build  - Build the Agent Console (embedded into cryohub on the next cargo build)"
 	@echo "  book         - Build mdbook documentation (en + zh)"
 	@echo "  book-serve   - Build and serve the full book (en + zh) at :3000"
 	@echo "  book-serve-live - mdbook serve with live reload (English book only; zh links 404 here)"
@@ -62,8 +64,13 @@ clippy:
 	cargo clippy --all-targets -- -D warnings
 
 # Quick check before commit
-check: fmt-check clippy test
+check: fmt-check clippy test console-check
 	@echo "All checks passed!"
+
+# Type-check and unit-test the Agent Console. Uses `npm ci` so the lockfile is
+# never rewritten by a local run.
+console-check:
+	cd console && npm ci && npx tsc --noEmit && npx vitest run
 
 # Generate coverage report (requires: cargo install cargo-llvm-cov)
 coverage:
@@ -123,6 +130,12 @@ run-plan:
 # Install the cryo CLI
 cli:
 	cargo install --path .
+
+# Build the Agent Console into console/dist/. The next `cargo build` embeds it
+# into the cryohub binary; `console_dir` in cryohub.toml can override that with
+# any built directory (absolute path).
+console-build:
+	cd console && npm ci && npm run build
 
 # Run an example
 # Usage: make example DIR=examples/chambers/mr-lazy
@@ -367,7 +380,7 @@ book-deploy: book
 
 # Tag and push a release (triggers CI publish to crates.io)
 # Usage: make release V=x.y.z
-release:
+release: console-build
 ifndef V
 	$(error Usage: make release V=x.y.z)
 endif

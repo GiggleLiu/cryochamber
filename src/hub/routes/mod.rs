@@ -2,8 +2,8 @@
 
 pub mod chamber;
 pub mod chambers;
+pub mod console;
 pub mod events;
 pub mod files;
-pub mod pages;
 pub mod sync;
 pub mod tokens_api;

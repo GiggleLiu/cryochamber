@@ -21,9 +21,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cryochamber::config;
 use cryochamber::hub::auth::AuthCtx;
+use cryochamber::hub::config::HubConfig;
 use cryochamber::hub::state::{AppState, SseEvent};
 use cryochamber::hub::tokens::{save_tokens, TokenFile};
-use cryochamber::hub::{build_router_public, discovery};
+use cryochamber::hub::{build_router_public_with_config, discovery};
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
@@ -78,7 +79,23 @@ fn setup_with_scope(scope_of: impl Fn(&str) -> String) -> Matrix {
     save_tokens(&tokens_path, &tf).unwrap();
     let ctx = AuthCtx::load(&tokens_path).unwrap();
 
-    let router = build_router_public(app.clone(), ctx);
+    // A minimal installed console, so the public page surface is the same on
+    // every machine: the embedded source is populated only if the developer
+    // built the console, so `console_dir` is pinned to make the test
+    // deterministic either way.
+    let console = tmp.path().join("console");
+    std::fs::create_dir_all(console.join("assets")).unwrap();
+    std::fs::write(
+        console.join("index.html"),
+        "<!doctype html><h1>console</h1>",
+    )
+    .unwrap();
+    std::fs::write(console.join("assets/app.js"), "export const x = 1;").unwrap();
+    let config = HubConfig {
+        console_dir: Some(console),
+        ..HubConfig::default()
+    };
+    let router = build_router_public_with_config(app.clone(), ctx, config);
     Matrix {
         workspace: tmp.path().to_path_buf(),
         _tmp: tmp,
@@ -283,7 +300,9 @@ async fn drain(stream: &mut axum::body::BodyDataStream, frames: usize, ms: u64) 
 async fn matrix_chamber_routes() {
     let m = setup();
 
-    for verb in ["messages", "status", "todos"] {
+    // Only `messages` is chamber-scoped: `status`/`todos` are working state
+    // and belong to the owner-only matrix below.
+    for verb in ["messages"] {
         let alpha = format!("/api/chambers/{}/{verb}", m.alpha);
         let beta = format!("/api/chambers/{}/{verb}", m.beta);
 
@@ -468,6 +487,37 @@ async fn matrix_list_and_events() {
         "out-of-scope chamber leaked into the invite's stream: {invite_text}"
     );
 
+    // Log lines never reach a guest, even for a chamber in scope: the owner
+    // stream proves they are broadcast, the invite stream proves they are
+    // filtered by *kind*, not only by chamber.
+    let mut owner_log_stream = m.events(As::Owner).await;
+    let mut invite_log_stream = m.events(As::Invite).await;
+    m.app
+        .tx
+        .send(SseEvent::LogLine {
+            chamber_id: m.alpha.clone(),
+            line: "LOG-SENTINEL sk-secret".into(),
+        })
+        .unwrap();
+    m.app
+        .tx
+        .send(new_message(&m.alpha, "ALPHA-AFTER-LOG"))
+        .unwrap();
+    let owner_log_text = drain(&mut owner_log_stream, 2, 2000).await;
+    assert!(
+        owner_log_text.contains("LOG-SENTINEL"),
+        "owner must receive log lines: {owner_log_text}"
+    );
+    let invite_log_text = drain(&mut invite_log_stream, 1, 2000).await;
+    assert!(
+        invite_log_text.contains("ALPHA-AFTER-LOG"),
+        "the invite stream is live (message delivered): {invite_log_text}"
+    );
+    assert!(
+        !invite_log_text.contains("LOG-SENTINEL"),
+        "an in-scope log line leaked to a guest: {invite_log_text}"
+    );
+
     assert_eq!(
         m.status(As::Anonymous, "GET", "/api/events").await,
         StatusCode::UNAUTHORIZED,
@@ -585,6 +635,10 @@ const OWNER_ONLY: &[(&str, &str)] = &[
     ("POST", "/api/chambers/{id}/archive"),
     ("POST", "/api/chambers/{id}/unarchive"),
     ("GET", "/api/chambers/{id}/sync"),
+    // Working state — log tail, plan/notes, settings, todos — is the owner's,
+    // even for a chamber the invite can chat in.
+    ("GET", "/api/chambers/{id}/status"),
+    ("GET", "/api/chambers/{id}/todos"),
     ("POST", "/api/chambers/refresh"),
     ("POST", "/api/chambers/new"),
     ("GET", "/api/tokens"),
@@ -678,14 +732,10 @@ async fn matrix_unknown_api_routes_are_owner_only_by_default() {
 async fn matrix_public_surface() {
     let m = setup();
 
-    for uri in [
-        "/",
-        "/c/anything",
-        &format!("/c/{}", m.alpha),
-        "/assets/web.css",
-        "/assets/logo.svg",
-        "/assets/mark.svg",
-    ] {
+    // `/c/{chamber-id}` is deliberately absent: that was the retired
+    // dashboard's per-chamber URL. The console has no page routes of its own —
+    // any non-file path is the app shell, which then asks for a token.
+    for uri in ["/", "/c/anything", "/assets/app.js"] {
         assert_eq!(
             m.status(As::Anonymous, "GET", uri).await,
             StatusCode::OK,
@@ -760,6 +810,15 @@ async fn a_revoked_stream_is_not_resurrected_by_a_same_named_replacement_invite(
         !tail.contains("AFTER-REVOKE"),
         "a revoked stream was resurrected by a same-named replacement invite: {tail}"
     );
+    // ...and the stream has ENDED, not merely fallen silent: a silent stream
+    // would keep the guest's console looking signed in on cached data until
+    // its next request. EOF makes the client reconnect and learn about the
+    // 401 right away.
+    let ended = tokio::time::timeout(std::time::Duration::from_millis(500), stream.next()).await;
+    assert!(
+        matches!(ended, Ok(None)),
+        "a revoked stream must end (EOF), got {ended:?}"
+    );
 
     // ...and the revoked token is dead on ordinary routes too.
     assert_eq!(
@@ -830,5 +889,224 @@ async fn a_decoded_form_scope_is_honored_by_guard_list_and_stream() {
     assert!(
         !text.contains("BETA-SECRET"),
         "out-of-scope chamber leaked: {text}"
+    );
+}
+
+/// The console is the *login page* of a public hub: it has to load before the
+/// visitor has a token to load it with. `classify` calls every non-`/api` path
+/// Public, so this is really a check that serving the console from disk did
+/// not accidentally move it behind the guard.
+#[tokio::test]
+async fn the_console_is_reachable_without_a_token_in_public_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dist = tmp.path().join("dist");
+    std::fs::create_dir_all(dist.join("assets")).unwrap();
+    std::fs::write(dist.join("index.html"), "<!doctype html><h1>console</h1>").unwrap();
+    std::fs::write(dist.join("assets/index-abc123.js"), "export const x = 1;").unwrap();
+
+    let mut tf = TokenFile::default();
+    tf.ensure_owner().unwrap();
+    let tokens_path = tmp.path().join("tokens.json");
+    save_tokens(&tokens_path, &tf).unwrap();
+    let ctx = AuthCtx::load(&tokens_path).unwrap();
+
+    let app = Arc::new(AppState::local_only(tmp.path().to_path_buf()));
+    let config = cryochamber::hub::config::HubConfig {
+        console_dir: Some(dist.clone()),
+        ..cryochamber::hub::config::HubConfig::default()
+    };
+    let router = cryochamber::hub::build_router_public_with_config(app, ctx, config);
+
+    // Entry point, a client-side route, and a build asset — the three requests
+    // a cold browser makes before it can present any credential at all.
+    for (uri, needle) in [
+        ("/", "<h1>console</h1>"),
+        ("/c/anything", "<h1>console</h1>"),
+        ("/assets/index-abc123.js", "export const x = 1;"),
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header("host", "127.0.0.1")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "{uri} must be served without an Authorization header"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains(needle), "{uri} body was {body}");
+    }
+
+    // The API is still guarded — serving static files must not have widened
+    // the Public class beyond the pages themselves.
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/chambers")
+        .header("host", "127.0.0.1")
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "the API must still require a token when the console is served"
+    );
+}
+
+#[tokio::test]
+async fn a_guest_who_floods_send_is_throttled_with_retry_after() {
+    // Every accepted send wakes an agent on the owner's bill; an invite must
+    // run out of tokens, and be told when to try again.
+    let m = setup();
+    let alpha_send = format!("/api/chambers/{}/send", m.alpha);
+    let body = Some(r#"{"body":"hi"}"#);
+
+    for i in 0..5 {
+        let (status, text) = m.call(As::Invite, "POST", &alpha_send, body).await;
+        assert_eq!(status, StatusCode::OK, "burst send {i}: {text}");
+    }
+    let (status, text) = m.call(As::Invite, "POST", &alpha_send, body).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "sixth send: {text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["error"], "rate limited");
+    assert_eq!(
+        m.inbox("alpha").len(),
+        5,
+        "the refused send must not be written"
+    );
+
+    // Uploads draw from the same bucket.
+    let (status, _) = m.upload(As::Invite, &m.alpha, "x.txt", b"hello").await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "upload after the burst"
+    );
+
+    // The owner has a bucket of their own — unaffected by the guest's flood.
+    let (status, text) = m.call(As::Owner, "POST", &alpha_send, body).await;
+    assert_eq!(status, StatusCode::OK, "owner send: {text}");
+}
+
+#[tokio::test]
+async fn throttled_send_carries_a_whole_second_retry_after_header() {
+    let m = setup();
+    let alpha_send = format!("/api/chambers/{}/send", m.alpha);
+    for _ in 0..5 {
+        m.call(As::Invite, "POST", &alpha_send, Some(r#"{"body":"hi"}"#))
+            .await;
+    }
+    let req = m.request(As::Invite, "POST", &alpha_send, Some(r#"{"body":"hi"}"#));
+    let resp = m.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry: u64 = resp
+        .headers()
+        .get(axum::http::header::RETRY_AFTER)
+        .expect("Retry-After present")
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=6).contains(&retry), "got Retry-After {retry}");
+}
+
+#[tokio::test]
+async fn an_exhausted_bucket_never_speaks_before_the_authorization_decision() {
+    // The throttle answers only for requests that were going to be served.
+    // If it ran first, a spent credential would learn "429" where it should
+    // have learned "404" — turning the limiter into the chamber-enumeration
+    // oracle the whole scope design exists to deny — and would mask the
+    // owner-only 403 rows for anyone who happened to be out of tokens.
+    let m = setup();
+    let body = Some(r#"{"body":"hi"}"#);
+    let missing = "/api/chambers/definitely-not-a-chamber/send".to_string();
+    let beta_send = format!("/api/chambers/{}/send", m.beta);
+
+    // Spend the invite's bucket, then probe past it.
+    let alpha_send = format!("/api/chambers/{}/send", m.alpha);
+    for _ in 0..5 {
+        m.call(As::Invite, "POST", &alpha_send, body).await;
+    }
+    assert_eq!(
+        m.call(As::Invite, "POST", &alpha_send, body).await.0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the invite's bucket must be empty for the rest of this test to mean anything"
+    );
+    assert_eq!(
+        m.call(As::Invite, "POST", &beta_send, body).await.0,
+        StatusCode::NOT_FOUND,
+        "out-of-scope send stays 404 even with an empty bucket"
+    );
+    assert!(m.inbox("beta").is_empty(), "nothing may reach beta");
+    assert_eq!(
+        m.call(As::Invite, "POST", &missing, body).await.0,
+        StatusCode::NOT_FOUND,
+        "nonexistent chamber stays 404 even with an empty bucket"
+    );
+    assert_eq!(
+        m.status(
+            As::Invite,
+            "GET",
+            &format!("/api/chambers/{}/status", m.alpha)
+        )
+        .await,
+        StatusCode::FORBIDDEN,
+        "an owner-only route stays 403 for a throttled invite"
+    );
+
+    // The owner clears the scope guard, so their probe reaches the handler:
+    // this is the row that pins `resolve` *inside* `post_send` running before
+    // the gate, not merely the guard running before the router.
+    for _ in 0..5 {
+        m.call(As::Owner, "POST", &alpha_send, body).await;
+    }
+    assert_eq!(
+        m.call(As::Owner, "POST", &alpha_send, body).await.0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the owner's bucket must be empty too"
+    );
+    assert_eq!(
+        m.call(As::Owner, "POST", &missing, body).await.0,
+        StatusCode::NOT_FOUND,
+        "an unresolvable id is 404 from the handler, never 429"
+    );
+    let (status, _) = m
+        .upload(As::Owner, "definitely-not-a-chamber", "x.txt", b"hi")
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "same ordering in the upload handler"
+    );
+}
+
+#[tokio::test]
+async fn an_owner_stream_ends_when_the_owner_token_is_replaced() {
+    let m = setup();
+    let mut stream = m.events(As::Owner).await;
+    m.app.tx.send(new_message(&m.alpha, "BEFORE")).unwrap();
+    let first = drain(&mut stream, 1, 2000).await;
+    assert!(first.contains("BEFORE"), "got {first}");
+
+    // Rotate through the same store the guard reads from.
+    let tokens_path = m.workspace.join("tokens.json");
+    let mut tf = cryochamber::hub::tokens::load_tokens(&tokens_path).unwrap();
+    tf.owner = Some(cryochamber::hub::tokens::generate_token().unwrap());
+    cryochamber::hub::tokens::save_tokens(&tokens_path, &tf).unwrap();
+
+    m.app
+        .tx
+        .send(new_message(&m.alpha, "AFTER-ROTATE"))
+        .unwrap();
+    let tail = drain(&mut stream, 1, 500).await;
+    assert!(
+        !tail.contains("AFTER-ROTATE"),
+        "old owner token kept receiving: {tail}"
     );
 }
