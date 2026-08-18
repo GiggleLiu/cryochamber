@@ -28,6 +28,25 @@ fn parse_frontmatter_fields_keeps_metadata_and_invalid_timestamp_fallback() {
 }
 
 #[test]
+fn parse_frontmatter_fields_accepts_legacy_dash_timestamp() {
+    // The legacy Zulip bridge wrote `2026-08-14T15-20-19` (dashes). It must
+    // keep that time instead of falling back to `now`, which would make the
+    // message resurface as "new" at the bottom on every refetch.
+    let fallback =
+        NaiveDateTime::parse_from_str("2026-03-01T12:00:00", "%Y-%m-%dT%H:%M:%S").unwrap();
+
+    let fields = parse_frontmatter_fields(
+        "\nfrom: zulip:flash-bot@example.com\nsubject: test\ntimestamp: 2026-08-14T15-20-19\n",
+        fallback,
+    );
+
+    assert_eq!(
+        fields.timestamp,
+        NaiveDateTime::parse_from_str("2026-08-14T15:20:19", "%Y-%m-%dT%H:%M:%S").unwrap()
+    );
+}
+
+#[test]
 fn message_filename_base_uses_slug_when_subject_has_alphanumeric_text() {
     let msg = test_message("human", "Hello, World!", "Body", "2026-03-01T12:00:00");
 

@@ -338,7 +338,14 @@ fn parse_frontmatter_fields(
             FrontmatterLine::From(value) => fields.from = value,
             FrontmatterLine::Subject(value) => fields.subject = value,
             FrontmatterLine::Timestamp(value) => {
+                // Canonical form is `%Y-%m-%dT%H:%M:%S`, but the legacy Zulip
+                // bridge wrote `%Y-%m-%dT%H-%M-%S` (dashes, matching the
+                // filename style). Accept both, so old archive messages keep
+                // their true time instead of falling back to `now` and
+                // resurfacing as "new" on every refetch.
                 if let Ok(ts) = NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S") {
+                    fields.timestamp = ts;
+                } else if let Ok(ts) = NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H-%M-%S") {
                     fields.timestamp = ts;
                 }
             }
