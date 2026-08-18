@@ -378,3 +378,37 @@ fn message_round_trip_preserves_is_question() {
     assert_eq!(parsed.subject, msg.subject);
     assert_eq!(parsed.body, msg.body);
 }
+
+#[test]
+fn parse_message_file_falls_back_to_file_mtime_not_now() {
+    // A message whose frontmatter timestamp cannot be parsed must display at
+    // its file's mtime — stable across reads — not at whatever time the parse
+    // happened to run (which would resurface old mail as new on every
+    // refetch).
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("legacy.md");
+    std::fs::write(
+        &path,
+        "---\nfrom: zulip:flash-bot@example.com\nsubject: test\ntimestamp: not-a-time\n---\n\n@flash status\n",
+    )
+    .unwrap();
+    let target = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    std::fs::File::open(&path)
+        .unwrap()
+        .set_modified(target)
+        .unwrap();
+
+    let msg = parse_message_file(&path).unwrap();
+    let expected: chrono::DateTime<Local> = target.into();
+    assert_eq!(msg.timestamp, expected.naive_local());
+    assert_ne!(msg.timestamp, Local::now().naive_local());
+}
+
+#[test]
+fn parse_message_without_file_uses_stable_fallback_not_now() {
+    // Content-only parsing has no file to ask; the fallback must still be
+    // stable (a fixed epoch), never "now".
+    let msg = parse_message("---\nfrom: x\nsubject: y\ntimestamp: garbage\n---\n\nbody\n").unwrap();
+    assert_eq!(msg.timestamp, NaiveDateTime::default());
+    assert_ne!(msg.timestamp, Local::now().naive_local());
+}
