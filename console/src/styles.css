@@ -812,35 +812,6 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--danger);
 }
 
-/* Tracks the field it completes: left/right pin it to the dock on a phone, and
-   the max-width plus auto margins park it over the column on a wide screen. */
-.mention-panel {
-  position: absolute;
-  left: var(--sp-2);
-  right: var(--sp-2);
-  max-width: calc(var(--col-max) - var(--sp-4));
-  margin-inline: auto;
-  bottom: calc(100% + var(--sp-1));
-  z-index: 25;
-  max-height: 15rem;
-  padding: var(--sp-1);
-  overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-2);
-  animation: drop-in var(--dur-1) var(--ease);
-}
-.mention-option {
-  display: flex;
-  align-items: center;
-  min-height: var(--tap);
-  padding: 0 var(--sp-3);
-  font-size: var(--fs-md);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-.mention-option.active { color: var(--brand-press); background: var(--brand-tint); }
 
 /* ==========================================================================
    Login
@@ -1093,6 +1064,27 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 
 .invite-copy { margin-bottom: var(--sp-4); }
+
+/* The QR code under a freshly minted invite link: centred, framed in the
+   surface colour so it reads as one tappable unit on a phone camera. */
+.invite-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 0;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.invite-qr canvas {
+  display: block;
+  width: 176px;
+  height: 176px;
+  border-radius: var(--r-sm);
+}
+.invite-qr figcaption { text-align: center; }
 .invite-scope {
   font-size: var(--fs-xs);
   color: var(--ink-3);

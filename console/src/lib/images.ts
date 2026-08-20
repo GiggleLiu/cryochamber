@@ -2,7 +2,7 @@
  * is inserted as an embed) and the message body (a plain link to an image is
  * upgraded to a thumbnail), so the two ends of the round trip cannot drift. */
 
-import { HUB_FILES_RE, filenameFromHref } from './download'
+import { CHAMBER_FILE_RE, HUB_FILES_RE, chamberFileHref, filenameFromHref } from './download'
 
 export const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
 
@@ -18,18 +18,21 @@ export const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
  * that already wrap an image (`[![…](…)](…)`) are left alone, which also makes
  * it idempotent.
  */
-export function inlineImageLinks(html: string): string {
+export function inlineImageLinks(html: string, chamberId?: string): string {
   if (!html.includes('<a')) return html
   const doc = new DOMParser().parseFromString(html, 'text/html')
   let changed = false
   for (const a of Array.from(doc.querySelectorAll('a[href]'))) {
     const href = a.getAttribute('href') ?? ''
-    if (!HUB_FILES_RE.test(href)) continue
-    const name = filenameFromHref(href)
+    // Either a hub attachment, or a chamber-relative path the chamber id
+    // resolves onto the authenticated chamber-file route.
+    const fileHref = HUB_FILES_RE.test(href) ? href : chamberFileHref(href, chamberId)
+    if (!fileHref) continue
+    const name = filenameFromHref(fileHref)
     if (!IMAGE_EXT_RE.test(name)) continue
     if (a.querySelector('img')) continue
     const img = doc.createElement('img')
-    img.setAttribute('src', href)
+    img.setAttribute('src', fileHref)
     img.setAttribute('alt', a.textContent?.trim() || name)
     img.setAttribute('class', 'msg-thumb')
     a.textContent = ''
@@ -52,14 +55,15 @@ export function inlineImageLinks(html: string): string {
  * apply it when they have a fetcher — with none, the plain `src` is the only
  * way the image can load at all (open mode).
  */
-export function deferHubImages(html: string): string {
+export function deferHubImages(html: string, chamberId?: string): string {
   if (!html.includes('<img')) return html
   const doc = new DOMParser().parseFromString(html, 'text/html')
   let changed = false
   for (const img of Array.from(doc.querySelectorAll('img[src]'))) {
     const src = img.getAttribute('src') ?? ''
-    if (!HUB_FILES_RE.test(src)) continue
-    img.setAttribute('data-upload-src', src)
+    const fileSrc = HUB_FILES_RE.test(src) ? src : chamberFileHref(src, chamberId)
+    if (!fileSrc) continue
+    img.setAttribute('data-upload-src', fileSrc)
     img.removeAttribute('src')
     changed = true
   }

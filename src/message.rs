@@ -154,9 +154,7 @@ fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
 fn read_message_dir(message_dir: &Path, malformed_label: &str) -> Result<Vec<(String, Message)>> {
     let mut messages = Vec::new();
     for file in list_message_files(message_dir)? {
-        let content = std::fs::read_to_string(&file.path)
-            .with_context(|| format!("Failed to read {}", file.path.display()))?;
-        match parse_message(&content) {
+        match parse_message_file(&file.path) {
             Ok(message) => messages.push((file.filename, message)),
             Err(e) => {
                 eprintln!(
@@ -275,9 +273,40 @@ pub fn message_to_markdown(msg: &Message) -> String {
 
 /// Parse a markdown message with frontmatter.
 pub fn parse_message(content: &str) -> Result<Message> {
+    // Content-only helper: no file context, so the timestamp fallback is a
+    // fixed epoch — stable across reads, never "now" (a per-read value would
+    // make an old message resurface as new on every refetch). File-based
+    // readers must use [`parse_message_file`], whose fallback is the file's
+    // mtime.
+    parse_message_with_fallback(content, NaiveDateTime::default())
+}
+
+/// Parse a message file, falling back to the file's modification time when
+/// the frontmatter lacks a timestamp or its format is unrecognized. The
+/// fallback is stable per file, so the same message always displays at the
+/// same time — unlike [`parse_message`], which has no file to ask.
+pub fn parse_message_file(path: &Path) -> Result<Message> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    parse_message_with_fallback(&content, file_mtime_fallback(path))
+}
+
+/// The file's modification time as the message timestamp fallback; the UNIX
+/// epoch if even the metadata is unavailable. Never "now".
+fn file_mtime_fallback(path: &Path) -> NaiveDateTime {
+    match std::fs::metadata(path).and_then(|m| m.modified()) {
+        Ok(time) => {
+            let dt: chrono::DateTime<Local> = time.into();
+            dt.naive_local()
+        }
+        Err(_) => NaiveDateTime::default(),
+    }
+}
+
+fn parse_message_with_fallback(content: &str, fallback: NaiveDateTime) -> Result<Message> {
     let content = content.trim();
     let sections = split_message_markdown(content)?;
-    let fields = parse_frontmatter_fields(sections.frontmatter, Local::now().naive_local());
+    let fields = parse_frontmatter_fields(sections.frontmatter, fallback);
 
     Ok(Message {
         from: fields.from,
@@ -338,7 +367,14 @@ fn parse_frontmatter_fields(
             FrontmatterLine::From(value) => fields.from = value,
             FrontmatterLine::Subject(value) => fields.subject = value,
             FrontmatterLine::Timestamp(value) => {
+                // Canonical form is `%Y-%m-%dT%H:%M:%S`, but the legacy Zulip
+                // bridge wrote `%Y-%m-%dT%H-%M-%S` (dashes, matching the
+                // filename style). Accept both, so old archive messages keep
+                // their true time instead of falling back to `now` and
+                // resurfacing as "new" on every refetch.
                 if let Ok(ts) = NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S") {
+                    fields.timestamp = ts;
+                } else if let Ok(ts) = NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H-%M-%S") {
                     fields.timestamp = ts;
                 }
             }

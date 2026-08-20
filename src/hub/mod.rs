@@ -127,6 +127,10 @@ pub fn build_router_with_config(
             "/api/chambers/{id}/files/{name}",
             get(crate::hub::routes::files::get_file),
         )
+        .route(
+            "/api/chambers/{id}/file",
+            get(crate::hub::routes::files::get_chamber_file),
+        )
         .route("/api/events", get(crate::hub::routes::events::get_events))
         .route(
             "/api/whoami",

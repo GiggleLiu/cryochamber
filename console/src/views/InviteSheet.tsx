@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import QRCode from 'qrcode'
 import { HubClient, type Invite } from '../api/hubClient'
 import { ApiError, isUnauthorized } from '../api/types'
 import { useAppStore } from '../store/appStore'
@@ -74,6 +75,8 @@ export function InviteSheet({
   const [link, setLink] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
+  const [qrFailed, setQrFailed] = useState(false)
+  const qrCanvasRef = useRef<HTMLCanvasElement>(null)
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -128,6 +131,7 @@ export function InviteSheet({
       const { token } = await hub.createInvite(name, [chamberId])
       const minted = `${window.location.origin}/#invite=${token}`
       setLink(minted)
+      setQrFailed(false)
       setLabel('')
       refresh()
       // "Copied" is a promise that the string is on the clipboard, so it waits
@@ -160,6 +164,25 @@ export function InviteSheet({
         setError(`Could not remove ${invite.name}. Check your connection and try again.`)
       })
   }
+
+  /** Render the invite link as a QR code, so a phone can open the console and
+   * sign in by scanning instead of typing a long token. The link is the same
+   * one that was copied — the QR is just a carrier for it, so it inherits the
+   * same trust model and the same one-time visibility. */
+  useEffect(() => {
+    const canvas = qrCanvasRef.current
+    if (!link || !canvas) return
+    let cancelled = false
+    setQrFailed(false)
+    QRCode.toCanvas(canvas, link, { width: 176, margin: 2, errorCorrectionLevel: 'M' }).catch(
+      () => {
+        if (!cancelled) setQrFailed(true)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [link])
 
   return (
     <Sheet title={`Invite to ${chamberName}`} label="Invite" onClose={onClose}>
@@ -206,6 +229,21 @@ export function InviteSheet({
           <p className="group-hint" role="status">
             {copied ? 'Copied' : copyFailed ? 'Copy failed — select and copy' : ''}
           </p>
+          {qrFailed ? (
+            <p className="group-hint">Could not render the QR code — the link above still works.</p>
+          ) : (
+            <figure className="invite-qr">
+              {/* keyed by link: a re-mint remounts the canvas, so a slow
+                  earlier render can never draw over the new code */}
+              <canvas
+                key={link}
+                ref={qrCanvasRef}
+                role="img"
+                aria-label="QR code for the invite link"
+              />
+              <figcaption className="group-hint">Scan to open on your phone</figcaption>
+            </figure>
+          )}
           <p className="group-hint">
             Shown once — the hub keeps only a hash, so it cannot be shown again. Lost
             link, new link.

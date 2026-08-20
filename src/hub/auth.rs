@@ -173,6 +173,9 @@ pub fn classify(method: &Method, path: &str) -> Access {
         ("GET", ["api", "chambers", id, "messages"]) => Access::Chamber((*id).to_string()),
         ("POST", ["api", "chambers", id, "send" | "uploads"]) => Access::Chamber((*id).to_string()),
         ("GET", ["api", "chambers", id, "files", _name]) => Access::Chamber((*id).to_string()),
+        // Chamber-local artifacts (articles/, .knowledge/) — the same guest
+        // surface as attachments: the conversation shows links to them.
+        ("GET", ["api", "chambers", id, "file"]) => Access::Chamber((*id).to_string()),
         _ => Access::OwnerOnly,
     }
 }

@@ -94,7 +94,7 @@ test('conversation error', async ({ page }) => {
   await shot(page, '11-conversation-error')
 })
 
-test('composer with text and mention panel', async ({ page }) => {
+test('composer with multiline and mention-like text', async ({ page }) => {
   await mockHub(page)
   await signIn(page)
   await openConversation(page)
@@ -102,8 +102,8 @@ test('composer with text and mention panel', async ({ page }) => {
   await box.fill('Go ahead with distance 9 tonight, and ping me when the first round lands.')
   await shot(page, '12-composer-multiline')
   await box.fill('Looping in @M')
-  await expect(page.getByRole('listbox')).toBeVisible()
-  await shot(page, '13-composer-mentions')
+  await expect(page.getByRole('listbox')).toHaveCount(0)
+  await shot(page, '13-composer-plain-at-text')
 })
 
 test('reconnecting banner', async ({ page }) => {

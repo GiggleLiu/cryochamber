@@ -28,6 +28,25 @@ fn parse_frontmatter_fields_keeps_metadata_and_invalid_timestamp_fallback() {
 }
 
 #[test]
+fn parse_frontmatter_fields_accepts_legacy_dash_timestamp() {
+    // The legacy Zulip bridge wrote `2026-08-14T15-20-19` (dashes). It must
+    // keep that time instead of falling back to `now`, which would make the
+    // message resurface as "new" at the bottom on every refetch.
+    let fallback =
+        NaiveDateTime::parse_from_str("2026-03-01T12:00:00", "%Y-%m-%dT%H:%M:%S").unwrap();
+
+    let fields = parse_frontmatter_fields(
+        "\nfrom: zulip:flash-bot@example.com\nsubject: test\ntimestamp: 2026-08-14T15-20-19\n",
+        fallback,
+    );
+
+    assert_eq!(
+        fields.timestamp,
+        NaiveDateTime::parse_from_str("2026-08-14T15:20:19", "%Y-%m-%dT%H:%M:%S").unwrap()
+    );
+}
+
+#[test]
 fn message_filename_base_uses_slug_when_subject_has_alphanumeric_text() {
     let msg = test_message("human", "Hello, World!", "Body", "2026-03-01T12:00:00");
 
@@ -358,4 +377,46 @@ fn message_round_trip_preserves_is_question() {
     assert_eq!(parsed.from, msg.from);
     assert_eq!(parsed.subject, msg.subject);
     assert_eq!(parsed.body, msg.body);
+}
+
+#[test]
+fn parse_message_file_falls_back_to_file_mtime_not_now() {
+    // A message whose frontmatter timestamp cannot be parsed must display at
+    // its file's mtime — stable across reads — not at whatever time the parse
+    // happened to run (which would resurface old mail as new on every
+    // refetch).
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("legacy.md");
+    std::fs::write(
+        &path,
+        "---\nfrom: zulip:flash-bot@example.com\nsubject: test\ntimestamp: not-a-time\n---\n\n@flash status\n",
+    )
+    .unwrap();
+    let target = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    std::fs::File::open(&path)
+        .unwrap()
+        .set_modified(target)
+        .unwrap();
+
+    let msg = parse_message_file(&path).unwrap();
+    let expected: chrono::DateTime<Local> = target.into();
+    assert_eq!(msg.timestamp, expected.naive_local());
+    assert_ne!(msg.timestamp, Local::now().naive_local());
+}
+
+#[test]
+fn file_mtime_fallback_uses_epoch_when_metadata_is_unavailable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("missing.md");
+
+    assert_eq!(file_mtime_fallback(&missing), NaiveDateTime::default());
+}
+
+#[test]
+fn parse_message_without_file_uses_stable_fallback_not_now() {
+    // Content-only parsing has no file to ask; the fallback must still be
+    // stable (a fixed epoch), never "now".
+    let msg = parse_message("---\nfrom: x\nsubject: y\ntimestamp: garbage\n---\n\nbody\n").unwrap();
+    assert_eq!(msg.timestamp, NaiveDateTime::default());
+    assert_ne!(msg.timestamp, Local::now().naive_local());
 }
