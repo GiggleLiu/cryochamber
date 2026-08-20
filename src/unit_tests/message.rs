@@ -405,6 +405,14 @@ fn parse_message_file_falls_back_to_file_mtime_not_now() {
 }
 
 #[test]
+fn file_mtime_fallback_uses_epoch_when_metadata_is_unavailable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("missing.md");
+
+    assert_eq!(file_mtime_fallback(&missing), NaiveDateTime::default());
+}
+
+#[test]
 fn parse_message_without_file_uses_stable_fallback_not_now() {
     // Content-only parsing has no file to ask; the fallback must still be
     // stable (a fixed epoch), never "now".

@@ -386,6 +386,12 @@ async fn chamber_file_serves_an_articles_pdf() {
             .contains("attachment"),
         "chamber files are downloads"
     );
+    assert_eq!(
+        resp.headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok()),
+        Some("9")
+    );
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
@@ -456,4 +462,31 @@ async fn chamber_file_sanitizes_the_disposition_filename() {
         .and_then(|v| v.to_str().ok())
         .unwrap();
     assert_eq!(cd, "attachment; filename=\"abc.pdf\"", "header: {cd:?}");
+}
+
+#[test]
+fn disposition_filename_never_returns_an_empty_fallback() {
+    assert_eq!(disposition_filename("\"\n"), "download");
+}
+
+#[tokio::test]
+async fn chamber_file_encodes_a_non_ascii_disposition_filename() {
+    let (tmp, router, id) = setup();
+    let chamber = tmp.path().join("alpha");
+    std::fs::create_dir_all(chamber.join("articles")).unwrap();
+    std::fs::write(chamber.join("articles/综述.pdf"), b"%PDF").unwrap();
+    let path = urlencoding::encode("articles/综述.pdf");
+
+    let resp = get(&router, &format!("/api/chambers/{id}/file?path={path}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap();
+    assert!(cd.contains("filename=\"download.pdf\""), "header: {cd:?}");
+    assert!(
+        cd.contains("filename*=UTF-8''%E7%BB%BC%E8%BF%B0.pdf"),
+        "header: {cd:?}"
+    );
 }

@@ -308,9 +308,6 @@ export function MessageBody({
       // Chamber-relative link (a file the agent produced on disk, e.g.
       // articles/review.pdf): same authenticated path, resolved against this
       // chamber. A plain navigation would 404 on the SPA route.
-      // Chamber-relative link (a file the agent produced on disk, e.g.
-      // articles/review.pdf): same authenticated path, resolved against this
-      // chamber. A plain navigation would 404 on the SPA route.
       const localUrl = chamberFileHref(href, chamberId)
       if (localUrl) {
         e.preventDefault()

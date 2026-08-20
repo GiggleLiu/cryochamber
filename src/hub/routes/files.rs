@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
+    body::Body,
     extract::{Multipart, Path as AxumPath, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Json, Response},
 };
 use serde::Deserialize;
 use serde_json::json;
+use tokio_util::io::ReaderStream;
 
 use crate::hub::mime::mime_for;
 use crate::hub::state::AppState;
@@ -311,14 +313,41 @@ fn safe_rel_path(rel: &str) -> bool {
         .all(|c| !c.is_empty() && c != "." && c != "..")
 }
 
-/// Filename safe to interpolate into a quoted `Content-Disposition` header:
-/// quotes and control characters are dropped (they could otherwise break out
-/// of the quoted-string or smuggle header lines). Chamber-file names are not
-/// sanitized like attachment names, so this is the boundary for them.
+/// ASCII fallback safe to interpolate into a quoted `Content-Disposition`
+/// header: non-ASCII, quotes and control characters are dropped (the latter
+/// two could otherwise break out of the quoted-string or smuggle header
+/// lines). Chamber-file names are not sanitized like attachment names, so
+/// this is the boundary for them.
 fn disposition_filename(name: &str) -> String {
-    name.chars()
-        .filter(|c| *c != '"' && !c.is_control())
-        .collect()
+    let cleaned: String = name
+        .chars()
+        .filter(|c| c.is_ascii() && *c != '"' && !c.is_control())
+        .collect();
+    if cleaned.is_empty() {
+        "download".to_string()
+    } else if cleaned.starts_with('.') {
+        format!("download{cleaned}")
+    } else {
+        cleaned
+    }
+}
+
+/// ASCII-safe fallback for every client, plus RFC 5987's UTF-8 form when the
+/// real filename is non-ASCII. Header values themselves must remain ASCII.
+fn attachment_disposition(name: &str) -> String {
+    let fallback = disposition_filename(name);
+    let safe_name: String = name
+        .chars()
+        .filter(|c| *c != '"' && *c != '\\' && !c.is_control())
+        .collect();
+    if safe_name.is_ascii() {
+        format!("attachment; filename=\"{fallback}\"")
+    } else {
+        format!(
+            "attachment; filename=\"{fallback}\"; filename*=UTF-8''{}",
+            urlencoding::encode(&safe_name)
+        )
+    }
 }
 
 #[derive(Deserialize)]
@@ -347,8 +376,8 @@ pub async fn get_chamber_file(
         return Err(StatusCode::NOT_FOUND);
     }
     let read_path = path.clone();
-    let name = disposition_filename(path.rsplit('/').next().unwrap_or(&path));
-    let bytes = tokio::task::spawn_blocking(move || {
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    let (file, len) = tokio::task::spawn_blocking(move || {
         let root = chamber.canonicalize().ok()?;
         let resolved = root.join(&read_path).canonicalize().ok()?;
         if !resolved.starts_with(&root) {
@@ -371,26 +400,20 @@ pub async fn get_chamber_file(
         // same privilege that can read any chamber file directly — so it is
         // accepted; the remote-reachable vector (a symlink planted over HTTP)
         // is rejected by the canonicalize+containment check above.
-        std::fs::metadata(&resolved).ok().filter(|m| m.is_file())?;
-        std::fs::read(&resolved).ok()
+        let file = std::fs::File::open(&resolved).ok()?;
+        let metadata = file.metadata().ok().filter(|m| m.is_file())?;
+        Some((file, metadata.len()))
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
-    Ok((
-        [
-            (
-                header::CONTENT_TYPE,
-                attachment_content_type(&name).to_string(),
-            ),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{name}\""),
-            ),
-        ],
-        bytes,
-    )
-        .into_response())
+    let body = Body::from_stream(ReaderStream::new(tokio::fs::File::from_std(file)));
+    Response::builder()
+        .header(header::CONTENT_TYPE, attachment_content_type(&name))
+        .header(header::CONTENT_DISPOSITION, attachment_disposition(&name))
+        .header(header::CONTENT_LENGTH, len)
+        .body(body)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[cfg(test)]

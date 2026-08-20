@@ -276,7 +276,7 @@ test('an owner mints a chamber-scoped invite link from the conversation header',
   await expect(page.getByRole('heading', { name: 'Invite to autoresearch' })).toBeVisible()
   await page.getByRole('button', { name: 'Copy invite link' }).click()
 
-  await expect(page.getByLabel('Invite link')).toHaveValue(
+  await expect(page.getByRole('textbox', { name: 'Invite link' })).toHaveValue(
     `${new URL(page.url()).origin}/#invite=${'ff'.repeat(16)}`,
   )
   // Named by default and scoped to exactly this chamber — never the index.
