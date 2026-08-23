@@ -35,7 +35,7 @@ and is platform-identical.
 
 Ask the user **one question at a time**. Start with the platform:
 
-- **Zulip** — REST API (`transport = events` realtime queue, or `poll`).
+- **Zulip** uses the REST API (`transport = events` realtime queue, or `poll`).
   Trigger models:
   - **Mention-gated** (default, recommended for shared/busy streams):
     only messages directed at the bot reach the agent — `@**bot**` mentions
@@ -46,6 +46,15 @@ Ask the user **one question at a time**. Start with the platform:
     arrives, so unrelated topics/chats never leak into the prompt.
   - **Pull-all** (`require_mention = false`): every message in the stream
     wakes the agent. Simple; fine for low-traffic channels.
+  - **Direct messages** (`--dm`): every one-to-one DM wakes the agent without
+    a mention. The bridge processes one DM at a time so replies cannot cross
+    sender boundaries. Group DMs are ignored.
+  - **DM dropbox** (`--dm --auto-reply TEXT`): downloads attachments under
+    `messages/dropbox/<sender>/`, sends the configured acknowledgement, and
+    does not wake the agent. Failed acknowledgements are persisted and retried.
+    Acknowledgements are at-least-once because Zulip has no idempotent send API,
+    so a bridge crash immediately after sending can produce a duplicate. Use
+    `--auto-reply-no-files TEXT` to redirect text-only messages.
 - **Feishu / Lark** — `lark-cli` event stream (WebSocket long connection, no
   ports opened). `require_mention` gates both p2p and group `@bot` messages;
   mention detection is content-based (lark events carry no mentions array).
@@ -75,15 +84,26 @@ cd <chamber>
 # Zulip
 chat-bridge init --platform zulip --stream "STREAM" --topic T \
     --config path/to/zuliprc [--history] [--trigger flash] [--allow-sender id...]
+# Zulip DM channel
+chat-bridge init --platform zulip --dm --name questions \
+    --config path/to/zuliprc
+# Zulip attachment dropbox
+chat-bridge init --platform zulip --dm --name submissions \
+    --auto-reply "Submission received." \
+    --auto-reply-no-files "Please attach your submission file."
 # Lark
 chat-bridge init --platform lark --chat-id oc_xxx [--chat-type p2p|group]
 # multi-channel: repeat init with --name <other>
 chat-bridge run            # installs the systemd user service (or --no-service)
 ```
 
-`init` requires one concrete reply route per channel: a Zulip topic or a Lark
-chat id. For Zulip, use `--topic T` (whole-stream routing is rejected). It
-validates credentials before replacing `.cryo/zuliprc` (0600), adds runtime
+For a Zulip stream channel, `--topic T` provides the default route for
+proactive chamber messages. Without it, reactive replies still go to the
+triggering message's topic, while proactive messages with no safe route are
+quarantined under `messages/outbox/failed/`. A Zulip `--dm` channel routes
+replies to the triggering sender. Lark can likewise resolve a reactive chat
+from the triggering message when `--chat-id` is omitted. `init` validates
+credentials before replacing `.cryo/zuliprc` (0600), adds runtime
 credentials/state to the chamber's `.gitignore`, resolves the channel, and
 anchors the cursor at the newest message. Zulip's
 `--history` option imports the past instead; Lark's event stream does not offer
@@ -103,6 +123,14 @@ Common flags in `bridge.toml`:
 | `allowed_senders` | `[]` | whitelist of platform ids; empty = anyone |
 | `reply_in_thread` | true | treat replies to the bot's messages as directed and answer in-thread (message-level replies are Lark-only; Zulip routes by topic) |
 | `transport` | auto | shared by all channels; zulip: `auto`/`poll`/`events` (other values behave as `poll`); lark always uses its event stream |
+
+Per-channel keys under `[[bridge.channels]]`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `dm` | false | Zulip only: watch one-to-one direct messages instead of a stream |
+| `auto_reply` | unset | DM dropbox acknowledgement; stores attachments without waking the agent |
+| `auto_reply_no_files` | unset | DM dropbox reply for messages without attachments |
 
 ## Step 3 — Survive reboots and logout
 
@@ -137,7 +165,7 @@ when the last SSH session closes — the chamber silently stops reacting.
 | Events long-poll never returns | Server ignores `timeout` param | Client bounds the poll (10 s) and recycles the queue — by design |
 | Services die when no SSH session | `loginctl linger` disabled | `sudo loginctl enable-linger <user>` |
 | Agent wakes for every message | `require_mention = false` on a busy stream | Set `require_mention = true` |
-| Reply posted to the wrong topic | Outbox files carry no platform metadata | Routing uses `last_active` channel + `last_thread` from state |
+| Proactive outbox file is quarantined | No active reply and no configured topic/chat | Configure `--topic` or `--chat-id`; stale DM routes are never reused |
 
 ## Common Mistakes
 

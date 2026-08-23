@@ -73,8 +73,17 @@ def cmd_init(args) -> int:
     chamber.mkdir(parents=True, exist_ok=True)
     configure_logging(chamber)
     ensure_runtime_ignored(chamber)
-    if args.platform == "zulip" and not args.stream:
-        log("error: --stream is required for zulip")
+    if args.platform == "zulip" and not args.stream and not args.dm:
+        log("error: --stream or --dm is required for zulip")
+        return 1
+    if args.dm and args.platform != "zulip":
+        log("error: --dm is supported only for zulip")
+        return 1
+    if args.auto_reply and not args.dm:
+        log("error: --auto-reply (dropbox mode) requires --dm")
+        return 1
+    if args.auto_reply_no_files and not args.auto_reply:
+        log("error: --auto-reply-no-files requires --auto-reply")
         return 1
     if args.platform == "lark" and args.history:
         log("error: --history is currently supported only for Zulip")
@@ -121,6 +130,9 @@ def cmd_init(args) -> int:
         platform=args.platform,
         stream=args.stream or "",
         topic=args.topic,
+        dm=args.dm,
+        auto_reply=args.auto_reply,
+        auto_reply_no_files=args.auto_reply_no_files,
         chat_id=args.chat_id,
         chat_type=args.chat_type,
         history=args.history,
@@ -172,9 +184,11 @@ def cmd_pull(args) -> int:
     try:
         state = load_state(chamber)
         if state.get("active_route"):
-            raise ChannelError(
-                "a chamber reply is still pending; push it before pulling another route"
-            )
+            specs = [spec for spec in specs if spec.auto_reply]
+            if not specs:
+                raise ChannelError(
+                    "a chamber reply is still pending; push it before pulling another route"
+                )
         attachments_dir = chamber / "messages" / "attachments"
         attachments_dir.mkdir(parents=True, exist_ok=True)
         start = int(state.get("next_channel_index", 0)) % len(specs)
@@ -299,6 +313,12 @@ def build_parser() -> argparse.ArgumentParser:
         ("--name", {"default": "main", "help": "channel name (multi-channel key)"}),
         ("--stream", {"default": "", "help": "zulip stream name"}),
         ("--topic", {"default": None, "help": "zulip topic (required for zulip: the reply route)"}),
+        ("--dm", {"action": "store_true", "default": False,
+                   "help": "zulip: watch the bot's direct messages (is:private) instead of a stream"}),
+        ("--auto-reply", {"default": None,
+                           "help": "dropbox mode: collect attachments, reply this template, and do NOT wake the agent (use with --dm for submission dropboxes)"}),
+        ("--auto-reply-no-files", {"default": None,
+                                    "help": "dropbox mode: template when a DM has no attachments (e.g. redirect questions elsewhere)"}),
         ("--chat-id", {"default": None, "help": "lark chat_id (required for lark: the reply route)"}),
         ("--chat-type", {"choices": ["p2p", "group"], "default": None,
                          "help": "lark chat type (default: p2p)"}),
