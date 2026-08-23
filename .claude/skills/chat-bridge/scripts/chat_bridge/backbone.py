@@ -72,6 +72,9 @@ class ChannelSpec:
     stream: str = ""
     stream_id: int = 0
     topic: str | None = None  # required by validate(): the reply route
+    dm: bool = False          # zulip: watch the bot's direct messages (is:private)
+    auto_reply: str | None = None  # dropbox mode: collect + reply a template, no agent wake
+    auto_reply_no_files: str | None = None  # dropbox mode: template when a DM has no attachments
     # lark
     chat_id: str | None = None
     chat_type: str | None = None  # p2p | group | None=any
@@ -113,6 +116,9 @@ class BridgeConfig:
                 stream=str(c.get("stream", "")),
                 stream_id=int(c.get("stream_id", 0) or 0),
                 topic=c.get("topic"),
+                dm=bool(c.get("dm", False)),
+                auto_reply=c.get("auto_reply"),
+                auto_reply_no_files=c.get("auto_reply_no_files"),
                 chat_id=c.get("chat_id"),
                 chat_type=c.get("chat_type"),
                 history=bool(c.get("history", False)),
@@ -129,6 +135,12 @@ class BridgeConfig:
                 d["stream_id"] = c.stream_id
             if c.topic is not None:
                 d["topic"] = c.topic
+            if c.dm:
+                d["dm"] = True
+            if c.auto_reply:
+                d["auto_reply"] = c.auto_reply
+            if c.auto_reply_no_files:
+                d["auto_reply_no_files"] = c.auto_reply_no_files
             if c.chat_id:
                 d["chat_id"] = c.chat_id
             if c.chat_type:
@@ -158,10 +170,18 @@ class BridgeConfig:
         if len(keys) != len(set(keys)):
             raise ChannelError("bridge channel names must be unique per platform")
         for channel in self.channels:
-            # Whole-stream / any-p2p modes are first-class: the reply thread is
+            if channel.dm and channel.platform != "zulip":
+                raise ChannelError("bridge channel dm mode is supported only for zulip")
+            if channel.auto_reply and not channel.dm:
+                raise ChannelError("bridge channel auto_reply requires dm = true")
+            if channel.auto_reply_no_files and not channel.auto_reply:
+                raise ChannelError(
+                    "bridge channel auto_reply_no_files requires auto_reply"
+                )
+            # Whole-stream / any-p2p / DM modes are first-class: the reply thread is
             # resolved from the triggering message (zulip topic / lark chat_id),
             # tracked as last_thread. A missing topic/chat-id is only a warning.
-            if channel.platform == "zulip" and not channel.topic:
+            if channel.platform == "zulip" and not channel.topic and not channel.dm:
                 log(f"note: zulip channel {channel.name!r} has no topic — "
                     "whole-stream mode; replies route to the triggering message's topic")
             if channel.platform == "lark" and not channel.chat_id:
@@ -562,9 +582,16 @@ def push_outbox(chamber: Path, channels: dict[str, Channel], state: dict,
                 errors.append(error)
             continue
         cs = channel_state(state, ckey)
-        thread = meta.get("thread") or (
-            active_route.get("thread") if active_route.get("channel_key") == ckey else None
-        ) or cs.get("last_thread") or default_threads.get(ckey)
+        if active_route.get("channel_key") == ckey:
+            # reply to the triggering message's thread (per-batch route)
+            thread = meta.get("thread") or active_route.get("thread")
+        else:
+            # Proactive or cross-channel message: route by the configured
+            # default thread only. Never reuse a stale last_thread from
+            # another channel's conversation — after a student DM that thread
+            # is the student's private inbox, so internal status (or a daemon
+            # fallback) would leak to them.
+            thread = meta.get("thread") or default_threads.get(ckey)
         if not thread:
             error = _quarantine_outbox(f, outbox, "no reply thread known")
             if errors is not None:
@@ -617,6 +644,33 @@ def _quarantine_outbox(f: Path, outbox: Path, reason: str) -> str:
 
 # ------------------------------------------------------------------ sync loop
 
+def _retry_dropbox_acks(chamber: Path, chan: Channel, key: str, cs: dict,
+                        state: dict) -> None:
+    """Retry durable dropbox acknowledgements with stable correlation keys."""
+    pending = cs.get("pending_acks") or []
+    if not pending:
+        return
+    remaining = []
+    for ack in pending:
+        try:
+            chan.send(
+                ReplyTarget(thread=ack["thread"]),
+                ack["reply"],
+                idempotency_key=ack["idempotency_key"],
+            )
+        except ChannelError as e:
+            remaining.append(ack)
+            log(f"[{key}] dropbox auto-reply pending for {ack['id']}: {e}")
+            continue
+        for record in reversed(cs.get("dropbox") or []):
+            if record.get("id") == ack["id"]:
+                record["ack_failed"] = False
+                break
+        log(f"[{key}] dropbox auto-replied for {ack['id']}")
+    cs["pending_acks"] = remaining
+    save_state(chamber, state)
+
+
 def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig,
               state: dict, bot: BotIdentity, attachments_dir: Path) -> int:
     key = spec.key
@@ -633,10 +687,14 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
     else:
         anchor = cs["cursor"]
 
-    res = chan.fetch_new(anchor, limit=1000)
+    if spec.auto_reply:
+        _retry_dropbox_acks(chamber, chan, key, cs, state)
+
+    # Agent-facing DMs are serialized one message at a time. A single active
+    # route cannot safely represent a batch containing several senders.
+    fetch_limit = 1 if spec.dm and not spec.auto_reply else 1000
+    res = chan.fetch_new(anchor, limit=fetch_limit)
     all_new = res.messages
-    if res.cursor:
-        cs["cursor"] = res.cursor
     delivered = 0
 
     for msg in all_new:
@@ -650,7 +708,9 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
             state["stats"]["ignored"] += 1
             log(f"[{key}] ignored (sender not whitelisted): {msg.id} from {msg.sender_id}")
             continue
-        if cfg.require_mention:
+        if spec.dm:
+            directed = "dm"  # every DM to the bot is directed; no trigger gate
+        elif cfg.require_mention:
             directed = is_directed(msg, bot, cfg)
             if not directed and cfg.reply_in_thread and _is_reply_to_bot(msg, cs):
                 directed = "reply"
@@ -661,13 +721,87 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
                 state["stats"]["ignored"] += 1
                 log(f"[{key}] buffered as context: {msg.id} from {msg.sender_id} thread={msg.thread_name}")
                 continue
-        if cfg.require_mention:
+        else:
+            directed = None
+        if spec.dm:
+            pass  # DMs are always directed; context batching is stream-scoped
+        elif cfg.require_mention:
             _trim_pending(cs)
             pending = [entry for entry in cs["pending_context"]
                        if entry.get("thread") == msg.thread]
             if pending:
                 body = _format_with_context(msg, directed or "mention", pending)
                 msg = replace(msg, content=body)
+        if spec.auto_reply:
+            # Dropbox mode: collect attachments + send a template reply, then
+            # move on WITHOUT waking the agent (no inbox file, no active_route).
+            # Used e.g. for test-submission DMs: the bridge answers, the agent
+            # is woken only by explicit operator commands on another channel.
+            files: list[Path] = []
+            download_failed = False
+            if msg.attachments:
+                for att in msg.attachments:
+                    try:
+                        p = chan.download(att, attachments_dir)
+                        files.append(p)
+                    except ChannelError as e:
+                        log(f"[{key}] dropbox download failed {att.name}: {e}")
+                        download_failed = True
+            # sender dir: slug + short hash so distinct senders never collide
+            sender_key = slugify(msg.sender_id or "unknown")
+            sender_hash = hashlib.sha256((msg.sender_id or "").encode()).hexdigest()[:8]
+            sender_dir = chamber / "messages" / "dropbox" / f"{sender_key}-{sender_hash}"
+            sender_dir.mkdir(parents=True, exist_ok=True)
+            stored = []
+            for p in files:
+                dest = sender_dir / f"{msg.id}_{p.name}"
+                os.replace(p, dest)
+                stored.append(dest.name)
+            # Acknowledge ONLY what was durably stored. A download failure gets
+            # an error reply (never a success ack); a message with no
+            # attachments gets the no-files redirect (defaults to the same
+            # template).
+            if download_failed:
+                reply = ("下载附件失败，请重新发送。 / Attachment download failed; please resend. "
+                         + (spec.auto_reply or ""))
+            elif not stored:
+                reply = spec.auto_reply_no_files or spec.auto_reply or ""
+            else:
+                reply = spec.auto_reply or ""
+            record = {
+                "id": msg.id,
+                "sender": msg.sender_id,
+                "sender_name": msg.sender_name,
+                "files": stored,
+                "download_failed": download_failed,
+                "ack_failed": bool(reply),
+                "ts": msg.timestamp.timestamp(),
+            }
+            cs.setdefault("dropbox", []).append(record)
+            cs["dropbox"] = cs["dropbox"][-SEEN_IDS_LIMIT:]
+            if reply:
+                idempotency_key = hashlib.sha256(
+                    f"{key}:dropbox:{msg.id}:{msg.thread}".encode()
+                ).hexdigest()[:32]
+                cs.setdefault("pending_acks", []).append({
+                    "id": msg.id,
+                    "thread": msg.thread,
+                    "reply": reply,
+                    "idempotency_key": idempotency_key,
+                })
+            state["stats"]["delivered"] += 1
+            delivered += 1
+            # Persist the stored-file record and pending acknowledgement before
+            # sending. Zulip has no idempotent send API, so this provides
+            # at-least-once delivery: a crash after the API accepts the send but
+            # before the success save can produce a duplicate acknowledgement.
+            cs["cursor"] = msg.id
+            save_state(chamber, state)
+            _retry_dropbox_acks(chamber, chan, key, cs, state)
+            status = "auto-replied" if not record["ack_failed"] else "ack pending"
+            log(f"[{key}] dropbox: collected {msg.id} from {msg.sender_id} "
+                f"({len(stored)} file(s), failed={download_failed}); {status}")
+            continue
         attachments: list[Path] = []
         if msg.attachments:
             for att in msg.attachments:
@@ -695,6 +829,8 @@ def pull_once(chamber: Path, chan: Channel, spec: ChannelSpec, cfg: BridgeConfig
         delivered += 1
         log(f"[{key}] delivered to inbox: {msg.id} from {msg.sender_id} thread={msg.thread_name}")
 
+    if res.cursor:
+        cs["cursor"] = res.cursor
     save_state(chamber, state)
     return delivered
 
@@ -715,12 +851,15 @@ def sync_once(chamber: Path, channels: dict[str, Channel], specs: list[ChannelSp
         if not errors:
             state.pop("active_route", None)
         log(f"pushed {pushed} outbox message(s)")
-    # Only an unanswered active route defers pulling (serialized replies).
-    # Push errors alone must not: a stuck proactive outbox file would
-    # otherwise wedge the pull phase forever.
+    # Only an unanswered active route defers agent-facing pulls. Dropbox
+    # channels keep collecting because they neither write inbox files nor
+    # alter the active route.
     if state.get("active_route"):
-        save_state(chamber, state)
-        return
+        dropbox_only = [s for s in specs if s.auto_reply]
+        if not dropbox_only:
+            save_state(chamber, state)
+            return
+        specs = dropbox_only
 
     attachments_dir = chamber / "messages" / "attachments"
     attachments_dir.mkdir(parents=True, exist_ok=True)

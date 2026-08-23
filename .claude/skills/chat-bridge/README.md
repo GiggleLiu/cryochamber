@@ -41,6 +41,12 @@ in `backbone.py` and is platform-identical.
 - B5 — Zulip history import (`--history`).
 - B6 — unified mailbox frontmatter / formatting across platforms.
 - B7 — Zulip real-time events queue (bounded long-poll; instant pickup).
+- B8: Zulip one-to-one DM channels, serialized per message so reply routes
+  cannot cross senders. Group DMs are ignored.
+- B9: Zulip DM dropboxes that store attachments per sender, acknowledge
+  without waking the agent, and retry failed acknowledgements. Acknowledgement
+  delivery is at-least-once, so a crash immediately after sending can duplicate
+  the reply.
 
 ## Quick start
 
@@ -52,6 +58,12 @@ ln -sf "$PWD/scripts/chat-bridge" ~/.local/bin/chat-bridge
 # Zulip
 chat-bridge init --chamber <chamber> --platform zulip \
     --stream "QEC-automated search" --topic "agent" --config path/to/zuliprc
+# Zulip direct messages
+chat-bridge init --chamber <chamber> --platform zulip --dm --name questions
+# Zulip attachment dropbox, no agent wake
+chat-bridge init --chamber <chamber> --platform zulip --dm --name submissions \
+    --auto-reply "Submission received." \
+    --auto-reply-no-files "Please attach your submission file."
 # Lark (tested with: npx @larksuite/cli@1.0.53 install)
 chat-bridge init --chamber <chamber> --platform lark --chat-id oc_xxx
 
@@ -61,7 +73,8 @@ chat-bridge pull / status / unsync --chamber <chamber>
 
 Per-chamber config: `bridge.toml` (`trigger_words`, `allowed_senders`,
 `require_mention`, `reply_in_thread`, `transport`, `[[bridge.channels]]`).
-State: `chat-bridge.json`.
+Channel entries can set `dm`, `auto_reply`, and `auto_reply_no_files`. State:
+`chat-bridge.json`. Dropbox files live under `messages/dropbox/<sender>/`.
 
 Requirements: Python 3.10+; Lark support is tested against `lark-cli` 1.0.53.
 

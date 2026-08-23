@@ -99,7 +99,7 @@ class ZulipChannel(Channel):
             labels=[prof.get("full_name") or "", (prof.get("email") or "").split("@")[0]],
             self_ids=[str(prof.get("user_id", "")), prof.get("email") or ""],
         )
-        if not self.stream_id and self.spec.stream:
+        if not self.spec.dm and not self.stream_id and self.spec.stream:
             streams = self.request("GET", "streams")
             for s in streams.get("streams", []):
                 if s.get("name") == self.spec.stream:
@@ -114,6 +114,8 @@ class ZulipChannel(Channel):
             self.transport = "events" if self._queue_supported() else "poll"
 
     def _register_narrow(self) -> str:
+        if self.spec.dm:
+            return json.dumps([["is", "private"]])
         operand = self.spec.stream or str(self.stream_id)
         narrow = [["stream", operand]]
         if self.spec.topic:
@@ -160,20 +162,34 @@ class ZulipChannel(Channel):
             for m in ev.messages:
                 by_id.setdefault(m.id, m)
             merged = [by_id[k] for k in sorted(by_id, key=int)]
+            merged = merged[:limit]
+            fallback_cursor = max(int(ev.cursor or 0), int(poll.cursor or 0))
+            merged_cursor = merged[-1].id if merged else str(fallback_cursor)
             return FetchResult(
                 messages=merged,
-                cursor=max(int(ev.cursor or 0), int(poll.cursor or 0)) and str(max(int(ev.cursor or 0), int(poll.cursor or 0))),
+                cursor=merged_cursor,
                 done=True,
             )
         return self._fetch_poll(cursor, limit)
+
+    def _is_group_dm(self, m: dict) -> bool:
+        """True for a group direct message (bot + >=2 humans)."""
+        return bool(
+            self.spec.dm
+            and m.get("type") == "private"
+            and len(m.get("display_recipient") or []) > 2
+        )
 
     def _fetch_poll(self, cursor: str, limit: int) -> FetchResult:
         anchor = int(cursor) if cursor and cursor.isdigit() else 0
         if cursor == "0":
             anchor = 1  # from the very beginning
-        narrow = [{"operator": "stream", "operand": self.stream_id}]
-        if self.spec.topic:
-            narrow.append({"operator": "topic", "operand": self.spec.topic})
+        if self.spec.dm:
+            narrow = [{"operator": "is", "operand": "private"}]
+        else:
+            narrow = [{"operator": "stream", "operand": self.stream_id}]
+            if self.spec.topic:
+                narrow.append({"operator": "topic", "operand": self.spec.topic})
         messages: list[Message] = []
         newest = anchor
         page = anchor
@@ -190,17 +206,25 @@ class ZulipChannel(Channel):
             for m in batch:
                 if m["id"] <= anchor:
                     continue  # anchor may be inclusive
+                newest = max(newest, m["id"])
+                if self._is_group_dm(m):
+                    log_warn(f"zulip: skipping group DM {m['id']} in DM-mode channel")
+                    continue
                 messages.append(self._to_message(m))
-            newest = max(newest, max(m["id"] for m in batch))
+                if len(messages) >= limit:
+                    return FetchResult(messages=messages, cursor=str(newest), done=False)
             if r.get("found_newest") or len(batch) < 1000:
                 break
             page = newest
         return FetchResult(messages=messages, cursor=str(newest), done=True)
 
     def _fetch_window(self, anchor, num_before: int, num_after: int) -> dict:
-        narrow = [{"operator": "stream", "operand": self.stream_id}]
-        if self.spec.topic:
-            narrow.append({"operator": "topic", "operand": self.spec.topic})
+        if self.spec.dm:
+            narrow = [{"operator": "is", "operand": "private"}]
+        else:
+            narrow = [{"operator": "stream", "operand": self.stream_id}]
+            if self.spec.topic:
+                narrow.append({"operator": "topic", "operand": self.spec.topic})
         return self.request("GET", "messages", params={
             "narrow": json.dumps(narrow),
             "anchor": anchor,
@@ -245,8 +269,13 @@ class ZulipChannel(Channel):
             m = ev.get("message") or {}
             if m.get("id", 0) <= newest:
                 continue
-            messages.append(self._to_message(m))
             newest = max(newest, m["id"])
+            if self._is_group_dm(m):
+                log_warn(f"zulip: skipping group DM {m.get('id')} in DM-mode channel")
+                continue
+            messages.append(self._to_message(m))
+            if len(messages) >= limit:
+                break
         return FetchResult(messages=messages, cursor=str(newest), done=True)
 
     def _to_message(self, m: dict) -> Message:
@@ -255,13 +284,20 @@ class ZulipChannel(Channel):
         attachments = _extract_upload_links(m.get("content") or "")
         for attachment in attachments:
             attachment.meta["message_id"] = str(m.get("id", 0))
+        sender_id = m.get("sender_email") or m.get("sender_id", "")
+        # DM channels: the reply route is the sender, so the thread carries
+        # their identifier (email preferred — private send accepts it directly).
+        if self.spec.dm:
+            thread = sender_id or "dm"
+        else:
+            thread = m.get("subject") or "general"
         return Message(
             id=str(m.get("id", 0)),
-            sender_id=m.get("sender_email") or m.get("sender_id", ""),
+            sender_id=sender_id,
             sender_name=m.get("sender_full_name") or "unknown",
             content=m.get("content") or "",
-            thread=m.get("subject") or "general",
-            thread_name=m.get("subject") or "general",
+            thread=thread,
+            thread_name=thread,
             timestamp=ts,
             mentioned=bool(m.get("mentioned", False)),
             mentioned_ids=mentioned_ids,
@@ -279,12 +315,19 @@ class ZulipChannel(Channel):
             return self.upload(path) if path is not None else match.group(0)
 
         content = LOCAL_LINK_RE.sub(externalize, content)
-        data = {
-            "type": "stream",
-            "to": self.stream_id,
-            "topic": target.thread,
-            "content": content,
-        }
+        if self.spec.dm:
+            data = {
+                "type": "private",
+                "to": json.dumps([target.thread]),  # Zulip wants a JSON-encoded array
+                "content": content,
+            }
+        else:
+            data = {
+                "type": "stream",
+                "to": self.stream_id,
+                "topic": target.thread,
+                "content": content,
+            }
         r = self.request("POST", "messages", data=data)
         return str(r.get("id", ""))
 

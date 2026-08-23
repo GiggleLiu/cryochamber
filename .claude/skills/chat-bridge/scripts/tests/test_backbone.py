@@ -31,6 +31,7 @@ from chat_bridge.backbone import (
     sync_once,
 )
 from chat_bridge.channel import (
+    Attachment,
     BotIdentity,
     Channel,
     ChannelError,
@@ -55,19 +56,37 @@ class MockChannel(Channel):
     def profile(self):
         return self._profile
 
+    def download(self, attachment, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+        out = dest / attachment.name
+        out.write_bytes(b"fake-content")
+        return out
+
     def fetch_new(self, cursor, limit=1000):
         if cursor is None:
             # initialization anchor
             ids = [int(k) for k in self._messages]
             return FetchResult(messages=[], cursor=str(max(ids)) if ids else "0", done=True)
         newest = int(cursor or 0)
-        out = [m for k, m in sorted(self._messages.items()) if int(k) > newest]
-        self._messages = {k: m for k, m in self._messages.items() if int(k) > newest}
-        return FetchResult(messages=out, cursor=str(max(int(k) for k in self._messages)) if self._messages else str(newest), done=True)
+        out = [m for k, m in sorted(self._messages.items()) if int(k) > newest][:limit]
+        next_cursor = out[-1].id if out else str(newest)
+        return FetchResult(messages=out, cursor=next_cursor,
+                           done=len(out) < limit)
 
     def send(self, target, content, idempotency_key=None):
         self._sent.append((target, content, idempotency_key))
         return f"sent-{len(self._sent)}"
+
+
+class FailingSendMockChannel(MockChannel):
+    def __init__(self, profile, messages=None):
+        super().__init__(profile, messages=messages)
+        self.fail_send = True
+
+    def send(self, target, content, idempotency_key=None):
+        if self.fail_send:
+            raise ChannelError("offline")
+        return super().send(target, content, idempotency_key)
 
 
 BOT = BotIdentity(id="bot1", name="flash", email="flash@x",
@@ -167,6 +186,158 @@ class PullTests(unittest.TestCase):
             self.assertEqual(cs["last_thread"], "general")
             self.assertEqual(state["stats"]["ignored"], 1)
 
+    def test_dm_channel_serializes_messages_from_different_senders(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            messages = {
+                "31": msg("31", "here is my homework", sender="alice@example.com",
+                           thread="alice@example.com"),
+                "32": msg("32", "mine too", sender="bob@example.com",
+                           thread="bob@example.com"),
+                "33": msg("33", "self echo", sender="bot1", thread="bot1"),
+            }
+            chan = MockChannel(BOT, messages=messages)
+            spec = ChannelSpec(name="dms", platform="mock", dm=True)
+            state = load_state(chamber)
+            state["channels"]["mock:dms"] = {"cursor": "30", "last_thread": None,
+                                              "delivered": [], "sent_ids": []}
+            pull_once(chamber, chan, spec, BridgeConfig(require_mention=True),
+                      state, BOT, chamber / "att")
+            inbox = list((chamber / "messages" / "inbox").glob("*.md"))
+            self.assertEqual(len(inbox), 1)
+            cs = channel_state(state, spec.key)
+            self.assertEqual(cs["last_thread"], "alice@example.com")
+            self.assertEqual(state["active_route"]["thread"], "alice@example.com")
+            self.assertEqual(cs["cursor"], "31")
+            self.assertEqual(state["stats"]["ignored"], 0)
+
+    def test_dropbox_mode_collects_and_replies_without_waking_agent(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            messages = {
+                "41": msg("41", "here is my test paper", sender="alice@example.com",
+                           thread="alice@example.com"),
+                "42": msg("42", "mine too", sender="bob@example.com",
+                           thread="bob@example.com"),
+            }
+            chan = MockChannel(BOT, messages=messages)
+            spec = ChannelSpec(name="dms", platform="mock", dm=True,
+                               auto_reply="received; queued")
+            state = load_state(chamber)
+            state["channels"]["mock:dms"] = {"cursor": "40", "last_thread": None,
+                                              "delivered": [], "sent_ids": []}
+            pull_once(chamber, chan, spec, BridgeConfig(require_mention=True),
+                      state, BOT, chamber / "att")
+            # NO agent wake: no inbox files, no active_route
+            inbox = list((chamber / "messages" / "inbox").glob("*.md"))
+            self.assertEqual(inbox, [])
+            self.assertNotIn("active_route", state)
+            # collected per sender with template replies to the right sender
+            box = chamber / "messages" / "dropbox"
+            senders = [d.name for d in box.iterdir()]
+            self.assertTrue(any("alice" in s for s in senders))
+            self.assertTrue(any("bob" in s for s in senders))
+            sent_threads = [t.thread for (t, _, _) in chan._sent]
+            self.assertEqual(sent_threads, ["alice@example.com", "bob@example.com"])
+            self.assertTrue(all(c == "received; queued" for (_, c, _) in chan._sent))
+            cs = channel_state(state, spec.key)
+            self.assertEqual(len(cs["dropbox"]), 2)
+            self.assertEqual(cs["cursor"], "42")
+            self.assertEqual(state["stats"]["ignored"], 0)
+
+    def test_dropbox_stores_attachments_and_acks_only_after_storage(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            m = msg("51", "submission with file", sender="alice@example.com",
+                    thread="alice@example.com")
+            m.attachments = [Attachment("photo.jpg", "photo.jpg", "image")]
+            chan = MockChannel(BOT, messages={"51": m})
+            spec = ChannelSpec(name="dms", platform="mock", dm=True,
+                               auto_reply="received; queued")
+            state = load_state(chamber)
+            state["channels"]["mock:dms"] = {"cursor": "50", "last_thread": None,
+                                              "delivered": [], "sent_ids": []}
+            pull_once(chamber, chan, spec, BridgeConfig(), state, BOT, chamber / "att")
+            # the file is durably stored under the sender's dropbox dir
+            stored = list((chamber / "messages" / "dropbox").rglob("*photo.jpg"))
+            self.assertEqual(len(stored), 1)
+            self.assertEqual(stored[0].read_bytes(), b"fake-content")
+            # exactly one ack, after storage
+            self.assertEqual(len(chan._sent), 1)
+            self.assertEqual(chan._sent[0][0].thread, "alice@example.com")
+            cs = channel_state(state, spec.key)
+            self.assertEqual(cs["dropbox"][-1]["files"], [stored[0].name])
+
+    def test_dropbox_no_files_uses_redirect_template(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            m = msg("61", "question, no file", sender="alice@example.com",
+                    thread="alice@example.com")
+            chan = MockChannel(BOT, messages={"61": m})
+            spec = ChannelSpec(name="dms", platform="mock", dm=True,
+                               auto_reply="submission received",
+                               auto_reply_no_files="questions go to the QA bot")
+            state = load_state(chamber)
+            state["channels"]["mock:dms"] = {"cursor": "60", "last_thread": None,
+                                              "delivered": [], "sent_ids": []}
+            pull_once(chamber, chan, spec, BridgeConfig(), state, BOT, chamber / "att")
+            self.assertEqual(len(chan._sent), 1)
+            self.assertIn("QA bot", chan._sent[0][1])
+
+    def test_dropbox_failed_ack_is_persisted_and_retried(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            m = msg("65", "submission", sender="alice@example.com",
+                    thread="alice@example.com")
+            chan = FailingSendMockChannel(BOT, messages={"65": m})
+            spec = ChannelSpec(name="dms", platform="mock", dm=True,
+                               auto_reply="received")
+            state = load_state(chamber)
+            channel_state(state, spec.key)["cursor"] = "64"
+
+            pull_once(chamber, chan, spec, BridgeConfig(), state, BOT,
+                      chamber / "att")
+            cs = channel_state(state, spec.key)
+            self.assertTrue(cs["dropbox"][-1]["ack_failed"])
+            self.assertEqual(len(cs["pending_acks"]), 1)
+            saved = load_state(chamber)
+            self.assertEqual(saved["channels"][spec.key]["cursor"], "65")
+
+            chan.fail_send = False
+            pull_once(chamber, chan, spec, BridgeConfig(), state, BOT,
+                      chamber / "att")
+            self.assertFalse(cs["dropbox"][-1]["ack_failed"])
+            self.assertEqual(cs["pending_acks"], [])
+            self.assertEqual(len(chan._sent), 1)
+            self.assertIsNotNone(chan._sent[0][2])
+
+    def test_dropbox_polled_while_agent_route_active(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            teaching = ChannelSpec(name="teaching", platform="mock", topic="reports")
+            dms = ChannelSpec(name="dms", platform="mock", dm=True,
+                              auto_reply="received; queued")
+            teach_chan = MockChannel(BOT)
+            dm_chan = MockChannel(BOT, {
+                "71": msg("71", "paper", sender="alice@example.com",
+                           thread="alice@example.com")})
+            channels = {teaching.key: teach_chan, dms.key: dm_chan}
+            bots = {teaching.key: BOT, dms.key: BOT}
+            state = load_state(chamber)
+            channel_state(state, teaching.key)["cursor"] = "0"
+            channel_state(state, dms.key)["cursor"] = "70"
+            state["active_route"] = {
+                "channel_key": teaching.key, "thread": "reports",
+                "parent_id": None,
+            }
+            cfg = BridgeConfig()
+            sync_once(chamber, channels, [teaching, dms], cfg, state, bots)
+            # dropbox still collected the submission while the route is active
+            stored = list((chamber / "messages" / "dropbox").rglob("*"))
+            self.assertTrue(stored)
+            self.assertEqual(dm_chan._sent[0][0].thread, "alice@example.com")
+            self.assertIn("active_route", state)  # route untouched
+
     def test_history_import(self):
         with tempfile.TemporaryDirectory() as td:
             chamber = Path(td)
@@ -255,6 +426,22 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(data["channels"][0]["stream"], 'Research "Lab"')
             self.assertEqual(data["channels"][0]["topic"], "a,b")
 
+    def test_config_validation_enforces_dropbox_dependencies(self):
+        with self.assertRaisesRegex(ChannelError, "auto_reply requires dm"):
+            BridgeConfig(channels=[ChannelSpec(
+                name="bad", platform="zulip", stream="research",
+                auto_reply="received",
+            )]).validate()
+        with self.assertRaisesRegex(ChannelError, "auto_reply_no_files"):
+            BridgeConfig(channels=[ChannelSpec(
+                name="bad", platform="zulip", dm=True,
+                auto_reply_no_files="attach a file",
+            )]).validate()
+        with self.assertRaisesRegex(ChannelError, "only for zulip"):
+            BridgeConfig(channels=[ChannelSpec(
+                name="bad", platform="lark", dm=True,
+            )]).validate()
+
     def test_invalid_state_fails_loudly(self):
         with tempfile.TemporaryDirectory() as td:
             chamber = Path(td)
@@ -320,10 +507,11 @@ class ContextBatchingTests(unittest.TestCase):
 
 
 class PushTests(unittest.TestCase):
-    def test_routes_via_last_active_and_archives(self):
+    def test_routes_via_default_thread_when_no_active_route(self):
         with tempfile.TemporaryDirectory() as td:
             chamber = Path(td)
             chan = MockChannel(BOT)
+            spec = ChannelSpec(name="main", platform="mock", topic="reports")
             outbox = chamber / "messages" / "outbox"
             outbox.mkdir(parents=True)
             (outbox / "2026-08-14T10-00-00_reply.md").write_text(
@@ -332,13 +520,33 @@ class PushTests(unittest.TestCase):
             state = load_state(chamber)
             state["last_active"] = "mock:main"
             cs = channel_state(state, "mock:main")
-            cs["last_thread"] = "general"
-            pushed = push_outbox(chamber, {"mock:main": chan}, state, BridgeConfig())
+            cs["last_thread"] = "stale-student-dm"
+            pushed = push_outbox(chamber, {spec.key: chan}, state, BridgeConfig(),
+                                 specs=[spec])
             self.assertEqual(pushed, 1)
-            self.assertEqual(chan._sent[0][0].thread, "general")
+            # proactive message: routed to the configured default, NOT a stale
+            # last_thread that could be a student's private inbox
+            self.assertEqual(chan._sent[0][0].thread, "reports")
             self.assertIn("Hello agent reply", chan._sent[0][1])
             self.assertEqual(len(chan._sent[0][2]), 32)
             self.assertTrue((outbox / "archive" / "2026-08-14T10-00-00_reply.md").exists())
+
+    def test_stale_dm_thread_never_leaks_without_default(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            chan = MockChannel(BOT)
+            spec = ChannelSpec(name="dms", platform="mock", dm=True)
+            outbox = chamber / "messages" / "outbox"
+            outbox.mkdir(parents=True)
+            (outbox / "reply.md").write_text("---\n---\n\ninternal status")
+            state = load_state(chamber)
+            cs = channel_state(state, "mock:dms")
+            cs["last_thread"] = "student@example.com"  # stale DM route
+            pushed = push_outbox(chamber, {spec.key: chan}, state, BridgeConfig(),
+                                 specs=[spec])
+            self.assertEqual(pushed, 0)  # quarantined, never sent to the student
+            self.assertEqual(chan._sent, [])
+            self.assertTrue(list((outbox / "failed").glob("*.md")))
 
     def test_active_route_wins_over_newer_last_active_state(self):
         with tempfile.TemporaryDirectory() as td:
@@ -426,6 +634,26 @@ class ReplyToBotTests(unittest.TestCase):
 
 
 class SyncOnceTests(unittest.TestCase):
+    def test_active_route_always_defers_agent_facing_pull(self):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            messages = {"31": msg("31", "@**flash** ping", sender="u1",
+                                 mentioned_ids=["bot1"])}
+            chan = MockChannel(BOT, messages=messages)
+            spec = ChannelSpec(name="main", platform="mock")
+            state = load_state(chamber)
+            state["channels"]["mock:main"] = {"cursor": "30", "last_thread": None,
+                                              "delivered": [], "sent_ids": []}
+            state["active_route"] = {
+                "channel_key": "mock:main", "thread": "t",
+                "parent_id": None,
+            }
+            sync_once(chamber, {"mock:main": chan}, [spec], BridgeConfig(), state,
+                      {"mock:main": BOT})
+            inbox = list((chamber / "messages" / "inbox").glob("*.md"))
+            self.assertEqual(len(inbox), 0)  # still deferred
+            self.assertIn("active_route", state)
+
     def test_full_cycle(self):
         with tempfile.TemporaryDirectory() as td:
             chamber = Path(td)
@@ -459,6 +687,31 @@ class SyncOnceTests(unittest.TestCase):
             make_channels.return_value = ({spec.key: chan}, [spec], {spec.key: BOT})
             with self.assertRaisesRegex(ChannelError, "reply is still pending"):
                 cmd_pull(SimpleNamespace(chamber=str(chamber)))
+
+    @patch("chat_bridge.cli._make_channels")
+    def test_one_shot_pull_keeps_dropbox_active_while_reply_is_pending(
+            self, make_channels):
+        with tempfile.TemporaryDirectory() as td:
+            chamber = Path(td)
+            state = load_state(chamber)
+            state["active_route"] = {
+                "channel_key": "mock:teaching", "thread": "reports",
+                "parent_id": None,
+            }
+            spec = ChannelSpec(name="dms", platform="mock", dm=True,
+                               auto_reply="received")
+            channel_state(state, spec.key)["cursor"] = "70"
+            save_state(chamber, state)
+            chan = MockChannel(BOT, {
+                "71": msg("71", "paper", sender="alice@example.com",
+                          thread="alice@example.com"),
+            })
+            make_channels.return_value = ({spec.key: chan}, [spec], {spec.key: BOT})
+
+            self.assertEqual(cmd_pull(SimpleNamespace(chamber=str(chamber))), 0)
+            self.assertEqual(chan._sent[0][0].thread, "alice@example.com")
+            saved = load_state(chamber)
+            self.assertEqual(saved["active_route"]["thread"], "reports")
 
     def test_routeless_proactive_outbox_falls_back_and_never_wedges_pull(self):
         # Bootstrap wake: the chamber writes an outbox message before any chat

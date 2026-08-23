@@ -135,18 +135,116 @@ class LarkChannelTests(unittest.TestCase):
 
 
 class ZulipChannelTests(unittest.TestCase):
+    def _channel(self, td, **kw):
+        zuliprc = Path(td) / "zuliprc"
+        zuliprc.write_text("[api]\nsite=https://zulip.example\nemail=bot@example.com\nkey=x\n")
+        spec = ChannelSpec(name="main", platform="zulip", **kw)
+        return ZulipChannel(spec, Path(td), zuliprc, "poll")
+
     def test_event_queue_narrow_includes_configured_topic(self):
         with tempfile.TemporaryDirectory() as td:
-            chamber = Path(td)
-            zuliprc = chamber / "zuliprc"
-            zuliprc.write_text("[api]\nsite=https://zulip.example\nemail=bot@example.com\nkey=x\n")
-            spec = ChannelSpec(name="main", platform="zulip", stream="research",
-                               stream_id=7, topic="decoder")
-            chan = ZulipChannel(spec, chamber, zuliprc, "events")
+            chan = self._channel(td, stream="research", stream_id=7, topic="decoder")
             self.assertEqual(
                 chan._register_narrow(),
                 '[["stream", "research"], ["topic", "decoder"]]',
             )
+
+    def test_dm_narrow_is_private(self):
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, dm=True)
+            self.assertEqual(chan._register_narrow(), '[["is", "private"]]')
+
+    @patch("chat_bridge.zulip.ZulipChannel.request")
+    def test_dm_poll_narrow_is_private(self, request):
+        request.return_value = {"messages": [], "found_newest": True}
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, dm=True)
+            chan._fetch_poll("5", 1000)
+            params = request.call_args.kwargs["params"]
+            self.assertEqual(params["narrow"], '[{"operator": "is", "operand": "private"}]')
+
+    @patch("chat_bridge.zulip.ZulipChannel.request")
+    def test_dm_poll_limit_preserves_the_next_senders_message(self, request):
+        request.return_value = {
+            "messages": [
+                {"id": 6, "timestamp": 0, "type": "private",
+                 "sender_email": "alice@example.com", "content": "first",
+                 "display_recipient": [{"id": 1}, {"id": 2}]},
+                {"id": 7, "timestamp": 0, "type": "private",
+                 "sender_email": "bob@example.com", "content": "second",
+                 "display_recipient": [{"id": 1}, {"id": 3}]},
+            ],
+            "found_newest": True,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, dm=True)
+            result = chan._fetch_poll("5", 1)
+            self.assertEqual([m.id for m in result.messages], ["6"])
+            self.assertEqual(result.cursor, "6")
+            self.assertFalse(result.done)
+
+    def test_dm_message_thread_is_the_sender(self):
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, dm=True)
+            m = chan._to_message({
+                "id": 42, "timestamp": 0, "sender_email": "alice@example.com",
+                "sender_id": 9, "sender_full_name": "Alice", "content": "hi",
+            })
+            self.assertEqual(m.thread, "alice@example.com")
+            self.assertEqual(m.thread_name, "alice@example.com")
+
+    def test_stream_message_thread_is_the_subject(self):
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, stream="research", stream_id=7)
+            m = chan._to_message({
+                "id": 1, "timestamp": 0, "sender_email": "bob@example.com",
+                "subject": "decoder", "content": "hi",
+            })
+            self.assertEqual(m.thread, "decoder")
+
+    def test_group_dm_is_filtered_in_dm_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, dm=True)
+            group = {"id": 2, "timestamp": 0, "type": "private",
+                     "sender_email": "alice@example.com", "content": "hi all",
+                     "display_recipient": [{"id": 1}, {"id": 2}, {"id": 3}]}
+            self.assertTrue(chan._is_group_dm(group))
+            one2one = {"id": 3, "timestamp": 0, "type": "private",
+                       "sender_email": "alice@example.com", "content": "hi",
+                       "display_recipient": [{"id": 1}, {"id": 2}]}
+            self.assertFalse(chan._is_group_dm(one2one))
+            stream = {"id": 4, "timestamp": 0, "type": "stream",
+                      "sender_email": "alice@example.com", "content": "hi"}
+            self.assertFalse(chan._is_group_dm(stream))
+
+    @patch("chat_bridge.zulip.ZulipChannel.request")
+    def test_dm_send_uses_private_type(self, request):
+        request.return_value = {"id": "99"}
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, dm=True)
+            chan.send(ReplyTarget("alice@example.com"), "ack")
+            data = request.call_args.kwargs["data"]
+            self.assertEqual(data["type"], "private")
+            # Zulip requires a JSON-encoded array on the wire; urlencode of a
+            # Python list would emit a Python repr (['alice@...']) that the
+            # server rejects.
+            self.assertEqual(data["to"], '["alice@example.com"]')
+            import urllib.parse
+            wire = urllib.parse.urlencode(data)
+            # urlencoded JSON array of the email
+            self.assertIn("to=%5B%22alice%40example.com%22%5D", wire)
+            import json as _json
+            self.assertEqual(_json.loads(data["to"]), ["alice@example.com"])
+
+    @patch("chat_bridge.zulip.ZulipChannel.request")
+    def test_stream_send_uses_stream_type(self, request):
+        request.return_value = {"id": "99"}
+        with tempfile.TemporaryDirectory() as td:
+            chan = self._channel(td, stream="research", stream_id=7, topic="decoder")
+            chan.send(ReplyTarget("decoder"), "report")
+            data = request.call_args.kwargs["data"]
+            self.assertEqual(data["type"], "stream")
+            self.assertEqual(data["topic"], "decoder")
 
 
 if __name__ == "__main__":
