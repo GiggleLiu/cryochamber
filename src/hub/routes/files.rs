@@ -19,6 +19,20 @@ use tokio_util::io::ReaderStream;
 use crate::hub::mime::mime_for;
 use crate::hub::state::AppState;
 
+pub(crate) struct UploadError(Box<Response>);
+
+impl From<Response> for UploadError {
+    fn from(response: Response) -> Self {
+        Self(Box::new(response))
+    }
+}
+
+impl IntoResponse for UploadError {
+    fn into_response(self) -> Response {
+        *self.0
+    }
+}
+
 pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 
 /// How much a single chamber's attachments directory may hold before further
@@ -167,19 +181,19 @@ fn sha12(bytes: &[u8]) -> String {
 /// a process-wide concurrency permit, the chamber's storage quota (507), and
 /// the per-file size cap (413). Every filesystem touch runs on a blocking
 /// worker so a slow disk cannot stall the async runtime.
-pub async fn post_upload(
+pub(crate) async fn post_upload(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
     role: Option<axum::Extension<crate::hub::tokens::Role>>,
     mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>, Response> {
+) -> Result<Json<serde_json::Value>, UploadError> {
     let (chamber, entry) = app
         .resolve(&id)
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
     // Same bucket as `send`: an upload is the other way a guest writes to the
     // owner's disk, so a flood of either must run the credential dry.
     if let Some(throttled) = app.write_limiter.refuse(role.as_ref().map(|e| &e.0)) {
-        return Err(throttled);
+        return Err(throttled.into());
     }
     let _slot = upload_slots()
         .acquire()
@@ -193,7 +207,7 @@ pub async fn post_upload(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     if used >= MAX_ATTACHMENTS_DIR_BYTES {
-        return Err(StatusCode::INSUFFICIENT_STORAGE.into_response());
+        return Err(StatusCode::INSUFFICIENT_STORAGE.into_response().into());
     }
 
     while let Some(field) = multipart
@@ -210,7 +224,7 @@ pub async fn post_upload(
             .await
             .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
         if bytes.len() > MAX_ATTACHMENT_BYTES {
-            return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
+            return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response().into());
         }
         let stored = format!("{}_{}", sha12(&bytes), safe_name(&original));
         let write_chamber = chamber.clone();
@@ -228,7 +242,7 @@ pub async fn post_upload(
             "markdown": format!("[{original}]({url})"),
         })));
     }
-    Err(StatusCode::BAD_REQUEST.into_response())
+    Err(StatusCode::BAD_REQUEST.into_response().into())
 }
 
 /// Attachments are downloads, never documents: anything a browser could run
