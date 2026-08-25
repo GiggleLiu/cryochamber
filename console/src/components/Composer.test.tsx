@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer } from './Composer'
 import { useAppStore, resetAppStore } from '../store/appStore'
@@ -152,6 +152,51 @@ describe('file upload', () => {
     expect(client.uploadFile).toHaveBeenCalledTimes(1)
   })
 
+  test('picking two files uploads them sequentially and inserts both links in order', async () => {
+    const order: string[] = []
+    const client = fakeClient({
+      uploadFile: vi.fn(async (file: File) => {
+        order.push(file.name)
+        return `/files/${file.name}`
+      }),
+    })
+    useAppStore.setState({ client })
+    render(<Composer chamberId="cham-a" />)
+    const first = new File(['a'], 'a.txt', { type: 'text/plain' })
+    const second = new File(['b'], 'b.pdf', { type: 'application/pdf' })
+    await userEvent.upload(attach(), [first, second])
+    await waitFor(() =>
+      expect(screen.getByRole('textbox')).toHaveValue(
+        '[a.txt](/files/a.txt) [b.pdf](/files/b.pdf)',
+      ),
+    )
+    expect(order).toEqual(['a.txt', 'b.pdf'])
+    expect(client.uploadFile).toHaveBeenNthCalledWith(1, first, 'cham-a')
+    expect(client.uploadFile).toHaveBeenNthCalledWith(2, second, 'cham-a')
+  })
+
+  test('dropping files on the dock uses the same sequential upload path', async () => {
+    const client = fakeClient({
+      uploadFile: vi.fn(async (file: File) => `/files/${file.name}`),
+    })
+    useAppStore.setState({ client })
+    const { container } = render(<Composer chamberId="cham-a" />)
+    const dock = container.querySelector('.composer-dock')!
+    const first = new File(['a'], 'a.txt', { type: 'text/plain' })
+    const second = new File(['b'], 'b.pdf', { type: 'application/pdf' })
+    const dataTransfer = { files: [first, second], types: ['Files'] }
+    fireEvent.dragOver(dock, { dataTransfer })
+    expect(dock).toHaveClass('is-drop')
+    fireEvent.drop(dock, { dataTransfer })
+    await waitFor(() =>
+      expect(screen.getByRole('textbox')).toHaveValue(
+        '[a.txt](/files/a.txt) [b.pdf](/files/b.pdf)',
+      ),
+    )
+    expect(dock).not.toHaveClass('is-drop')
+    expect(client.uploadFile).toHaveBeenCalledTimes(2)
+  })
+
   test('an uploaded image is inserted as an embed so it previews inline', async () => {
     const client = fakeClient({
       uploadFile: vi.fn(async () => '/api/chambers/cham-a/files/ab_photo.png'),
@@ -174,8 +219,29 @@ describe('file upload', () => {
     const box = screen.getByRole('textbox')
     await userEvent.type(box, 'keep this')
     await userEvent.upload(attach(), new File(['x'], 'big.pdf', { type: 'application/pdf' }))
-    expect(await screen.findByText('File too large')).toBeInTheDocument()
+    expect(await screen.findByText(/Could not upload big\.pdf\. File too large/)).toBeInTheDocument()
     expect(box).toHaveValue('keep this')
+  })
+
+  test('a failed file aborts the remaining uploads', async () => {
+    const client = fakeClient({
+      uploadFile: vi
+        .fn()
+        .mockResolvedValueOnce('/files/a.txt')
+        .mockRejectedValueOnce(new Error('disk full')),
+    })
+    useAppStore.setState({ client })
+    render(<Composer chamberId="cham-a" />)
+    await userEvent.upload(attach(), [
+      new File(['a'], 'a.txt'),
+      new File(['b'], 'b.txt'),
+      new File(['c'], 'c.txt'),
+    ])
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not upload b.txt. disk full',
+    )
+    expect(client.uploadFile).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('textbox')).toHaveValue('[a.txt](/files/a.txt)')
   })
 
   test('send is disabled while uploading and re-enabled after', async () => {

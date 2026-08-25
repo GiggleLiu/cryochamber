@@ -787,6 +787,10 @@ input, select, textarea { font: inherit; color: inherit; }
   box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.15);
 }
 .composer textarea::placeholder { color: var(--ink-3); }
+.composer-dock.is-drop textarea {
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
 
 .send-btn {
   display: grid;

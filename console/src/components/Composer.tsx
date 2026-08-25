@@ -25,10 +25,14 @@ export function Composer({ chamberId }: { chamberId: string }) {
   const [text, setText] = useState(() => localStorage.getItem(draftKey(account, chamberId)) ?? '')
   const [uploading, setUploading] = useState(false)
   const [uploadName, setUploadName] = useState('')
+  const [uploadIndex, setUploadIndex] = useState(0)
+  const [uploadTotal, setUploadTotal] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [isDrop, setIsDrop] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingCaret = useRef<number | null>(null)
+  const uploadingRef = useRef(false)
 
   // After a programmatic insert (upload link), place the caret at the end
   // of the inserted text so further typing appends naturally.
@@ -64,7 +68,8 @@ export function Composer({ chamberId }: { chamberId: string }) {
   function insertLink(name: string, uri: string) {
     const ta = textareaRef.current
     setText((current) => {
-      const caret = ta ? Math.min(ta.selectionStart, current.length) : current.length
+      const caret = pendingCaret.current ??
+        (ta ? Math.min(ta.selectionStart, current.length) : current.length)
       const before = current.slice(0, caret)
       const after = current.slice(caret)
       const link = `${IMAGE_EXT_RE.test(name) ? '!' : ''}[${name}](${uri})`
@@ -77,24 +82,63 @@ export function Composer({ chamberId }: { chamberId: string }) {
     })
   }
 
-  async function onFilePick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    // Reset immediately so the same file can be re-picked.
-    e.target.value = ''
-    if (!file || !client || uploading) return
+  async function uploadFiles(files: File[]) {
+    if (files.length === 0 || !client || uploadingRef.current) return
+    uploadingRef.current = true
     setUploading(true)
-    setUploadName(file.name)
+    setUploadTotal(files.length)
     setUploadError(null)
     try {
-      const uri = await client.uploadFile(file, chamberId)
-      insertLink(file.name, uri)
-    } catch (err) {
-      if (isUnauthorized(err)) return
-      setUploadError(err instanceof Error ? err.message : String(err))
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i]
+        setUploadName(file.name)
+        setUploadIndex(i + 1)
+        try {
+          const uri = await client.uploadFile(file, chamberId)
+          insertLink(file.name, uri)
+        } catch (err) {
+          if (isUnauthorized(err)) return
+          const detail = err instanceof Error ? err.message : String(err)
+          setUploadError(`Could not upload ${file.name}. ${detail}`)
+          return
+        }
+      }
     } finally {
+      uploadingRef.current = false
       setUploading(false)
       setUploadName('')
+      setUploadIndex(0)
+      setUploadTotal(0)
     }
+  }
+
+  function onFilePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    // Reset immediately so the same files can be re-picked.
+    e.target.value = ''
+    void uploadFiles(files)
+  }
+
+  function hasDraggedFiles(e: React.DragEvent): boolean {
+    return Array.from(e.dataTransfer.types).includes('Files')
+  }
+
+  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(e)) return
+    e.preventDefault()
+    setIsDrop(true)
+  }
+
+  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return
+    setIsDrop(false)
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(e)) return
+    e.preventDefault()
+    setIsDrop(false)
+    void uploadFiles(Array.from(e.dataTransfer.files))
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -118,7 +162,12 @@ export function Composer({ chamberId }: { chamberId: string }) {
   }
 
   return (
-    <div className="composer-dock">
+    <div
+      className={`composer-dock${isDrop ? ' is-drop' : ''}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       {uploadError && (
         <p className="composer-alert" role="alert">
           <AlertCircle size={15} />
@@ -126,7 +175,9 @@ export function Composer({ chamberId }: { chamberId: string }) {
         </p>
       )}
       {uploading && (
-        <p className="upload-status" role="status">Uploading {uploadName}…</p>
+        <p className="upload-status" role="status">
+          Uploading {uploadName} ({uploadIndex} of {uploadTotal})…
+        </p>
       )}
       <div className="composer">
         <button
@@ -143,6 +194,7 @@ export function Composer({ chamberId }: { chamberId: string }) {
           type="file"
           aria-label="Attach file"
           hidden
+          multiple
           onChange={onFilePick}
         />
         <textarea
