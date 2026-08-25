@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { appRuntime, makeClientFactory, parseInviteLink } from '../lib/appBoot'
 import { makeHubAccount, type HubTrust } from '../store/hubs'
+import { normalizeHubUrl } from '../lib/hubKeys'
 import { useAppStore } from '../store/appStore'
 import { isUnauthorized } from '../api/types'
 import { AlertCircle, Logo } from '../components/Icon'
@@ -12,12 +13,29 @@ export const REJECTED_TOKEN_ERROR = 'The hub rejected this token'
 const BAD_URL_ERROR =
   'That is not a hub address. Use the full address, like https://hub.example:8765.'
 
-/** What to put on screen for a failed add. `new URL()` and a failed fetch both
- * raise `TypeError`, but only the first happens before anything left the
- * machine — and its message ("Invalid URL") is not what a user needs to read. */
+/** `normalizeHubUrl` refuses a scheme it cannot speak; it says so in the
+ * language of the code, and this is the same thing said to a person. */
+const BAD_SCHEME_ERROR = 'Enter an http:// or https:// hub address.'
+
+/** The typed address as the stored account will actually record it. Parsed
+ * exactly once and shared by the warning and the trust decision, so the two can
+ * never disagree: `http:/hub.local` — one slash — is a hub reached in the
+ * clear, and a scheme test on the raw text would call it HTTPS and store that. */
+function parseAddress(raw: string): { url: string } | { error: string } | null {
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  try {
+    return { url: normalizeHubUrl(trimmed) }
+  } catch (err) {
+    // `new URL` raises TypeError on garbage; a parsed URL with a scheme we do
+    // not speak is normalizeHubUrl's own Error.
+    return { error: err instanceof TypeError ? BAD_URL_ERROR : BAD_SCHEME_ERROR }
+  }
+}
+
+/** What to put on screen for a probe that failed. */
 function errorText(err: unknown): string {
   if (isUnauthorized(err)) return REJECTED_TOKEN_ERROR
-  if (err instanceof TypeError && /invalid url/i.test(err.message)) return BAD_URL_ERROR
   return err instanceof Error && err.message ? err.message : 'Could not reach that hub.'
 }
 
@@ -34,10 +52,17 @@ export function AddHubView() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Scheme, not full parsing: the address is still being typed, and the only
-  // question here is whether the unencrypted-traffic warning applies.
-  const plainHttp = /^http:\/\//i.test(url.trim())
-  const ready = url.trim() !== '' && token.trim() !== '' && (!plainHttp || acknowledged)
+  const address = parseAddress(url)
+  // The parsed answer whenever there is one. The raw scheme test is only the
+  // live hint while a half-typed address does not parse yet — by submit time
+  // an unparseable address is refused, so nothing is ever stored on its word.
+  const plainHttp =
+    address && 'url' in address
+      ? address.url.startsWith('http://')
+      : /^http:\/\//i.test(url.trim())
+  // A refused address still submits: a button that quietly will not press says
+  // less than the sentence explaining what is wrong with what was typed.
+  const ready = address !== null && token.trim() !== '' && (!plainHttp || acknowledged)
 
   /** The acknowledgement is about one address, so a changed address asks
    * again — otherwise a box ticked for one host silently covers the next. */
@@ -62,14 +87,20 @@ export function AddHubView() {
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (!ready || busy) return
+    // Nothing is asked of an address we could not parse: no request leaves the
+    // machine, and no record is written for a hub we cannot name.
+    if (address === null || 'error' in address) {
+      setError(address?.error ?? BAD_URL_ERROR)
+      return
+    }
     setBusy(true)
     setError(null)
     try {
+      // Both from the same parse: the acknowledgement the user gave and the
+      // trust the record keeps are about the same address.
       const trust: HubTrust = plainHttp ? { kind: 'plain-http' } : { kind: 'https' }
-      // Throws on anything that is not an http(s) URL, before a single byte is
-      // sent to whatever the user typed.
       const account = makeHubAccount({
-        url: url.trim(),
+        url: address.url,
         token: token.trim(),
         label: label.trim(),
         trust,

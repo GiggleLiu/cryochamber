@@ -81,6 +81,42 @@ test('a plain-http hub is added only after the risk is acknowledged', async () =
   expect(useAppStore.getState().hubs[0].trust).toEqual({ kind: 'plain-http' })
 })
 
+test('a single-slash http address is still plain HTTP, warning and all', async () => {
+  // `http:/hub.local` is a valid URL that reaches the hub in the clear. Judging
+  // the scheme by the raw text would wave it through as HTTPS and store that.
+  await boot(whoamiMock({ role: 'owner', name: 'Jin' }))
+  render(<AddHubView />)
+  await userEvent.type(await screen.findByLabelText(/hub address/i), 'http:/hub.local')
+  await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
+  expect(screen.getByRole('button', { name: /add hub/i })).toBeDisabled()
+
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: /traffic to this hub is unencrypted/i }),
+  )
+  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+
+  await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
+  expect(useAppStore.getState().hubs[0].trust).toEqual({ kind: 'plain-http' })
+  expect(useAppStore.getState().hubs[0].url).toBe('http://hub.local')
+})
+
+test('an address with a scheme the app cannot speak is refused in plain words', async () => {
+  const fetchMock = whoamiMock({ role: 'owner' })
+  await boot(fetchMock)
+  render(<AddHubView />)
+  // Parses fine — as scheme `hub.local:`. The refusal must not be the internal
+  // "Hub URLs must be http or https, got …".
+  await userEvent.type(await screen.findByLabelText(/hub address/i), 'hub.local:8765')
+  await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
+  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Enter an http:// or https:// hub address.',
+  )
+  expect(useAppStore.getState().hubs).toEqual([])
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
 test('changing the address asks for the acknowledgement again', async () => {
   await boot(whoamiMock({ role: 'owner', name: 'Jin' }))
   render(<AddHubView />)
