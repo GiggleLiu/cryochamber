@@ -229,14 +229,28 @@ describe('owner chamber routes', () => {
   })
 
   test('createChamber returns the new id and surfaces the hub error text on 400', async () => {
-    const ok = mockFetch(() => new Response(JSON.stringify({ id: 'cham-new' }), { status: 201 }))
+    const ok = mockFetch(() => new Response(JSON.stringify({
+      id: 'cham-new', started: true, start_error: null,
+    }), { status: 201 }))
     const c = new HubClient({ ...OPTS, fetch: ok })
-    expect(await c.createChamber({ name: 'alpha' })).toEqual({ id: 'cham-new' })
+    expect(await c.createChamber({ name: 'alpha', start: true })).toEqual({
+      id: 'cham-new', started: true, start_error: null,
+    })
     const [url, init] = vi.mocked(ok).mock.calls[0]
     expect(String(url)).toBe('/api/chambers/new')
     expect(init?.method).toBe('POST')
     expect(init?.headers).toMatchObject({ 'Content-Type': 'application/json', 'X-Cryo-CSRF': '1' })
-    expect(JSON.parse(String(init?.body))).toEqual({ name: 'alpha' })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'alpha', start: true })
+
+    const warned = new HubClient({
+      ...OPTS,
+      fetch: mockFetch(() => new Response(JSON.stringify({
+        id: 'cham-new', started: false, start_error: 'service install failed',
+      }), { status: 201 })),
+    })
+    await expect(warned.createChamber({ name: 'alpha', start: true })).resolves.toEqual({
+      id: 'cham-new', started: false, start_error: 'service install failed',
+    })
 
     const bad = new HubClient({ ...OPTS, fetch: mockFetch(() => new Response(JSON.stringify({ error: 'chamber already exists' }), { status: 400 })) })
     await expect(bad.createChamber({ name: 'alpha' })).rejects.toThrow('chamber already exists')

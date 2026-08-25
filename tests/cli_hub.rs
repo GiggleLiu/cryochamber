@@ -350,6 +350,28 @@ fn start_mints_and_prints_the_owner_token_on_first_run() {
         .stdout(contains(printed.as_str()));
 }
 
+#[test]
+fn start_rejects_a_missing_default_agent_without_persisting_it() {
+    let home = tempfile::tempdir().unwrap();
+    cryohub_in(
+        home.path(),
+        &[
+            "start",
+            "--default-agent",
+            "definitely-not-an-installed-cryo-agent",
+            "--foreground",
+        ],
+    )
+    .failure()
+    .stderr(contains("Invalid --default-agent"))
+    .stderr(contains("not found"));
+
+    assert!(
+        !home.path().join("config/cryo/cryohub.toml").exists(),
+        "an invalid override must be rejected before it is persisted"
+    );
+}
+
 /// `~/config/cryo/cryohub.toml` under a `cryohub_in` home.
 fn hub_config_text(home: &std::path::Path) -> String {
     let path = home.join("config/cryo/cryohub.toml");

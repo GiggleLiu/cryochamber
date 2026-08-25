@@ -26,11 +26,12 @@ export function buildNewChamberPayload(fields: {
   const model = fields.model.trim()
   if (!name) return 'name is empty'
   const configuring = fields.providerOpen || provider !== '' || apiKey !== '' || model !== ''
-  if (!configuring) return { name }
+  if (!configuring) return { name, start: true }
   if (!provider) return 'api key provider is empty'
   if (!apiKey) return 'api key is empty'
   return {
     name,
+    start: true,
     api_key_provider: provider,
     api_key: apiKey,
     ...(model ? { model } : {}),
@@ -71,7 +72,7 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
     // no longer exists: neither its result nor its 401 may touch the new one.
     const stale = () => useAppStore.getState().client !== hub
     try {
-      const { id } = await hub.createChamber(payload)
+      const { id, start_error: startError } = await hub.createChamber(payload)
       // The index changed, so re-read it rather than waiting for the `index`
       // event the hub also emits — the new chamber has to exist in the store
       // before we can navigate into it.
@@ -80,6 +81,11 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
       useAppStore.getState().setChambers(list)
       onClose()
       navigate({ name: 'conversation', chamberId: id })
+      if (startError) {
+        useAppStore
+          .getState()
+          .setAccessNotice(`Chamber was created but could not start: ${startError}`)
+      }
     } catch (e) {
       if (stale()) return
       if (isUnauthorized(e)) return
@@ -165,7 +171,7 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
 
       <div className="sheet-action">
         <button className="btn-primary" onClick={create} disabled={busy}>
-          {busy ? 'Creating…' : 'Create'}
+          {busy ? 'Creating and starting…' : 'Create and start'}
         </button>
       </div>
     </Sheet>

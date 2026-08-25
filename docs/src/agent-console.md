@@ -56,6 +56,16 @@ status, todos, lifecycle, sync, token management — gets `403` regardless of wh
 the app draws, and a guest's live event stream never carries log lines or
 other chambers' messages.
 
+## Creating a chamber
+
+The owner-only **+ New chamber** sheet creates and starts the chamber in one
+operation. It uses the host-level `default_agent` from `cryohub.toml`; change
+that command in the Console's **Settings** sheet before creating the chamber
+if needed. The hub verifies that the command's executable is available before
+it creates anything. If scaffolding succeeds but the daemon cannot launch, the
+new chamber remains available and the Console shows the start error so it can
+be fixed and launched from Chamber controls.
+
 ## Inviting someone to a chamber
 
 1. Sign in with the owner token, open the chamber, tap **Invite** in its header.
@@ -97,6 +107,9 @@ Both lists offer `pi`, `opencode`, `claude`, `codex` and `kimi`, plus whatever
 is currently saved — a hand-written command like `pi --thinking high`, or a
 path to your own runner, stays selectable rather than being quietly replaced.
 Anything else you want to run, write into `cryo.toml` directly.
+
+Saving either dropdown verifies that the command's executable is available on
+the Hub host. An unavailable runner is rejected without changing the setting.
 
 The daemon reads `cryo.toml` when it starts, so changing a **running**
 chamber's agent takes effect on its next restart; the console says so when that

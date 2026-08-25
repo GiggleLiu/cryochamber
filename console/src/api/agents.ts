@@ -4,8 +4,9 @@
  * to launch, minus `mock`, which exists for the test harness rather than for a
  * chamber anyone would create.
  *
- * The hub accepts any parseable command, so this list is a shortcut, never a
- * limit — `agentOptions` keeps whatever is already saved alongside it.
+ * The hub accepts any command whose executable is available on the host, so
+ * this list is a shortcut, never a limit — `agentOptions` keeps whatever is
+ * already saved alongside it.
  */
 export const AGENT_CHOICES = ['pi', 'opencode', 'claude', 'codex', 'kimi'] as const
 

@@ -40,6 +40,10 @@ pub struct NewChamberPayload {
     pub api_key_provider: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,
+    /// Start the chamber after scaffolding. Optional on the wire so existing
+    /// API clients retain the original create-only behavior.
+    #[serde(default)]
+    pub start: bool,
 }
 
 /// List chambers. An invite sees only the chambers its token is scoped to —
@@ -119,6 +123,30 @@ pub async fn post_new(
         }
     };
 
+    let default_agent = app
+        .default_agent
+        .read()
+        .map(|agent| agent.clone())
+        .unwrap_or_else(|_| crate::config::default_agent());
+    if provider_config.as_ref().is_some_and(|p| p.model.is_some()) {
+        if let Some(error) = model_refusal(&default_agent) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error })),
+            );
+        }
+    }
+    if payload.start {
+        if let Err(error) = crate::hub::lifecycle::validate_agent_command(&default_agent) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("cannot start chamber: {error}")
+                })),
+            );
+        }
+    }
+
     let workspace = app.workspace_dir.clone();
     let target = workspace.join(&payload.name);
 
@@ -138,20 +166,6 @@ pub async fn post_new(
                 "error": format!("failed to create chamber root: {e}")
             })),
         );
-    }
-
-    let default_agent = app
-        .default_agent
-        .read()
-        .map(|agent| agent.clone())
-        .unwrap_or_else(|_| crate::config::default_agent());
-    if provider_config.as_ref().is_some_and(|p| p.model.is_some()) {
-        if let Some(error) = model_refusal(&default_agent) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": error })),
-            );
-        }
     }
 
     match std::fs::create_dir(&target) {
@@ -201,6 +215,19 @@ pub async fn post_new(
         }
     }
 
+    let start_error = if payload.start {
+        let target = target.clone();
+        match tokio::task::spawn_blocking(move || crate::hub::lifecycle::start_chamber(&target))
+            .await
+        {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error.to_string()),
+            Err(error) => Some(format!("start task failed: {error}")),
+        }
+    } else {
+        None
+    };
+
     app.refresh();
     let id = app
         .chambers
@@ -213,7 +240,14 @@ pub async fn post_new(
         })
         .unwrap_or_default();
 
-    (StatusCode::CREATED, Json(serde_json::json!({ "id": id })))
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": id,
+            "started": payload.start && start_error.is_none(),
+            "start_error": start_error,
+        })),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

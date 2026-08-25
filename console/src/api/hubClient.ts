@@ -94,6 +94,12 @@ export interface ChamberAgentUpdate {
   override_active: boolean
 }
 
+export interface NewChamberResult {
+  id: string
+  started: boolean
+  start_error: string | null
+}
+
 /** `GET /api/chambers/{id}/status`. The raw `cryo.toml` is deliberately absent
  * from the hub's payload (it can hold an API key); `has_config` plus the masked
  * `settings_rows` are what the UI gets. */
@@ -134,6 +140,7 @@ export interface ActionResult {
 
 export interface NewChamberPayload {
   name: string
+  start?: boolean
   api_key_provider?: string
   api_key?: string
   model?: string
@@ -361,10 +368,15 @@ export class HubClient {
     })
   }
 
-  /** 201 → the new chamber id. A rejected name answers 400 with `{error}`,
-   * which `request` already turns into that sentence. */
-  async createChamber(payload: NewChamberPayload): Promise<{ id: string }> {
-    const body = await this.request<{ id?: string }>('/api/chambers/new', {
+  /** 201 → the new chamber id and launch outcome. A rejected name or failed
+   * preflight answers 400 with `{error}`, which `request` turns into that
+   * sentence. */
+  async createChamber(payload: NewChamberPayload): Promise<NewChamberResult> {
+    const body = await this.request<{
+      id?: string
+      started?: boolean
+      start_error?: string | null
+    }>('/api/chambers/new', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -375,7 +387,11 @@ export class HubClient {
     if (typeof body.id !== 'string' || body.id === '') {
       throw new ApiError(201, 'Chamber was created but the hub did not report its id')
     }
-    return { id: body.id }
+    return {
+      id: body.id,
+      started: body.started === true,
+      start_error: typeof body.start_error === 'string' ? body.start_error : null,
+    }
   }
 
   /** Re-scan the workspace. The hub also emits an `index` SSE event, which is

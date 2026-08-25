@@ -25,6 +25,14 @@ pub fn start_chamber(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Validate an agent command in the same environment a Hub lifecycle action
+/// will use. Resolving `cryo` here also catches an incomplete installation
+/// before a new chamber directory is created.
+pub fn validate_agent_command(agent_cmd: &str) -> Result<()> {
+    let exe = resolve_cryo_exe()?;
+    crate::lifecycle::validate_agent_command(agent_cmd, exe.parent())
+}
+
 /// Stop the daemon for the chamber at `dir`. Mirrors `cmd_cancel`, but leaves
 /// timer.json intact (stop is not the same as cancel — restart needs overrides).
 pub fn stop_chamber(dir: &Path) -> Result<()> {

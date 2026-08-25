@@ -97,7 +97,10 @@ Unknown keys are rejected: a typo such as `console-dir` fails `cryohub start` wi
 The Console updates `default_agent` without a hub restart. The next chamber it
 creates uses the new command; no existing chamber is rewritten. A hand edit to
 this file, like every other key here, is picked up on the next `cryohub
-restart`.
+restart`. Saving the setting, changing a chamber's agent, passing `cryohub
+start --default-agent`, and starting a chamber all verify that the command's
+executable is available. The Console's New Chamber action creates and starts
+the chamber in one operation.
 
 ### Serving the Agent Console
 
