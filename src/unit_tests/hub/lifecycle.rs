@@ -252,3 +252,46 @@ fn start_chamber_refuses_archived_chamber_before_launch_preflight() {
 
     assert!(err.to_string().contains("Unarchive"));
 }
+
+/// A runner that lives next to `cryo` but nowhere on PATH. This is the shape
+/// of a `cargo build` tree, where `target/debug/` holds both.
+fn runner_beside_cryo(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(dir.join("cryo"), "cryo binary").unwrap();
+    let runner = dir.join(name);
+    std::fs::write(&runner, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+    runner
+}
+
+#[test]
+fn validate_agent_command_accepts_a_runner_installed_next_to_cryo() {
+    // The session PATH a spawned agent gets starts with the `cryo` binary's
+    // directory, so a runner there is launchable. Every hub-side check has to
+    // agree with that, or the Settings sheet refuses what a start accepts.
+    let dir = tempfile::tempdir().unwrap();
+    let runner = runner_beside_cryo(dir.path(), "cryo-test-runner");
+
+    assert!(
+        crate::lifecycle::validate_agent_command("cryo-test-runner", None).is_err(),
+        "the fixture only works if the runner is invisible on the plain PATH"
+    );
+    assert!(
+        validate_agent_command_from("cryo-test-runner --flag", || Ok(runner
+            .parent()
+            .unwrap()
+            .join("cryo")))
+        .is_ok()
+    );
+}
+
+#[test]
+fn validate_agent_command_still_judges_the_runner_when_cryo_is_missing() {
+    // An unresolvable `cryo` narrows the search to the plain PATH; it is not
+    // itself a verdict on the agent command, in either direction.
+    let no_cryo = || anyhow::bail!("Could not locate the `cryo` binary");
+    assert!(validate_agent_command_from("/usr/bin/env", no_cryo).is_ok());
+    assert!(
+        validate_agent_command_from("definitely-not-an-installed-cryo-agent", no_cryo).is_err()
+    );
+}

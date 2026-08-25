@@ -14,7 +14,7 @@ pub fn start_chamber(dir: &Path) -> Result<()> {
     }
     let exe = resolve_cryo_exe()?;
     let prepared = crate::lifecycle::prepare_start(dir, crate::lifecycle::StartOptions::default())?;
-    crate::lifecycle::validate_agent_command(&prepared.effective_agent, exe.parent())?;
+    validate_agent_command(&prepared.effective_agent)?;
 
     MessageStore::new(dir.to_path_buf()).ensure_dirs()?;
 
@@ -25,12 +25,27 @@ pub fn start_chamber(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Validate an agent command in the same environment a Hub lifecycle action
-/// will use. Resolving `cryo` here also catches an incomplete installation
-/// before a new chamber directory is created.
+/// Validate an agent command against the PATH a chamber session will actually
+/// get. `agent.rs` prepends the `cryo` binary's directory to that PATH so
+/// `cryo-agent` resolves, which also makes a runner installed next to `cryo`
+/// launchable. Every hub-side agent check — create-and-start, the chamber
+/// Settings sheet, the host default, `cryohub start --default-agent` — goes
+/// through here, so the Console can never refuse to save a runner that a start
+/// would happily launch.
+///
+/// A `cryo` binary this process cannot find is not itself an invalid agent
+/// command, so it only narrows the search back to the plain PATH; the lifecycle
+/// action that needs the binary reports its absence in its own words.
 pub fn validate_agent_command(agent_cmd: &str) -> Result<()> {
-    let exe = resolve_cryo_exe()?;
-    crate::lifecycle::validate_agent_command(agent_cmd, exe.parent())
+    validate_agent_command_from(agent_cmd, resolve_cryo_exe)
+}
+
+fn validate_agent_command_from(
+    agent_cmd: &str,
+    resolve: impl Fn() -> Result<PathBuf>,
+) -> Result<()> {
+    let exe = resolve().ok();
+    crate::lifecycle::validate_agent_command(agent_cmd, exe.as_deref().and_then(Path::parent))
 }
 
 /// Stop the daemon for the chamber at `dir`. Mirrors `cmd_cancel`, but leaves

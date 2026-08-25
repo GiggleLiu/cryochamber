@@ -254,7 +254,7 @@ pub async fn post_agent(
     }
     // `{error:#}` preserves the shell parser's specific reason (for example an
     // unbalanced quote) as well as the missing-executable preflight.
-    if let Err(error) = crate::lifecycle::validate_agent_command(agent, None) {
+    if let Err(error) = crate::hub::lifecycle::validate_agent_command(agent) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("invalid agent command: {error:#}") })),
