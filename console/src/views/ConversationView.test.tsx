@@ -445,8 +445,20 @@ describe('message loading', () => {
     })
     useAppStore.setState({ client, view: { name: 'conversation', chamberId: 'cham-a' } })
     render(<ConversationView chamberId="cham-a" />)
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn’t load this conversation/i)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/couldn’t load this conversation/i)
+    expect(alert).toHaveTextContent('Check your connection and try again.')
+    expect(alert).not.toHaveTextContent('HTTP 500')
     expect(useAppStore.getState().view).toEqual({ name: 'conversation', chamberId: 'cham-a' })
+  })
+
+  test('a hub-authored history error is shown verbatim', async () => {
+    const client = fakeClient({
+      getMessages: vi.fn().mockRejectedValue(new ApiError(500, 'Mailbox is unavailable.', true)),
+    })
+    useAppStore.setState({ client })
+    render(<ConversationView chamberId="cham-a" />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Mailbox is unavailable.')
   })
 })
 

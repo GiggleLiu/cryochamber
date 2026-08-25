@@ -156,7 +156,11 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
           useAppStore.getState().pruneChamber(chamberId, ACCESS_REVOKED_NOTICE)
           return
         }
-        setLoadError(e instanceof Error ? e.message : String(e))
+        setLoadError(
+          e instanceof ApiError && e.hubSaid
+            ? e.message
+            : 'Check your connection and try again.',
+        )
       })
   }, [client, chamber, historyLoaded, chamberId, retryToken])
 
