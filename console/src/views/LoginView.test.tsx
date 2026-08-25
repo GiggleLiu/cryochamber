@@ -19,6 +19,23 @@ test('sign-in asks for an access token and nothing else', async () => {
   expect(screen.queryByLabelText(/^password$/i)).toBeNull()
 })
 
+test('explains how the hub operator can print a token', () => {
+  render(<LoginView />)
+  expect(screen.getByText('cryohub token owner')).toBeInTheDocument()
+})
+
+test('the access token can be shown and hidden again', async () => {
+  render(<LoginView />)
+  const input = screen.getByLabelText(/access token/i)
+  const toggle = screen.getByRole('button', { name: 'Show' })
+  expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await userEvent.click(toggle)
+  expect(input).toHaveAttribute('type', 'text')
+  expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-pressed', 'true')
+  await userEvent.click(screen.getByRole('button', { name: 'Hide' }))
+  expect(input).toHaveAttribute('type', 'password')
+})
+
 test('there is no server to pick: the console talks to the hub that served it', async () => {
   render(<LoginView />)
   await screen.findByLabelText(/access token/i)

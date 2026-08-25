@@ -875,6 +875,27 @@ input, select, textarea { font: inherit; color: inherit; }
   border-color: var(--brand);
   box-shadow: var(--focus-ring);
 }
+.token-field { position: relative; display: block; }
+.token-field input {
+  width: 100%;
+  padding-right: calc(var(--tap) + var(--sp-2));
+}
+.token-toggle {
+  position: absolute;
+  top: 50%;
+  right: var(--sp-1);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+  transform: translateY(-50%);
+}
+.login-hint {
+  margin-top: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.login-hint code { font-family: var(--font-mono); }
 
 .btn-primary {
   display: grid;
