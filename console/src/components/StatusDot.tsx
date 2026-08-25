@@ -3,14 +3,17 @@
  * while the chamber is up but the agent sleeps between wakes, gray when the
  * chamber is not running at all.
  *
- * Both flags are booleans by the time they get here — the client boundary maps
- * an absent flag to `false` — so there is no "unknown" state to draw. It is
- * the same dot everywhere the chamber is named, so liveness never requires
- * opening the controls sheet to read.
+ * When neither flag has arrived, a hollow ring says the status is unknown
+ * without making the stronger claim that the chamber stopped. It is the same
+ * dot everywhere the chamber is named, so liveness never requires opening the
+ * controls sheet to read.
  */
-export function StatusDot({ running, agentRunning }: { running: boolean; agentRunning: boolean }) {
-  const state = agentRunning ? ' is-awake' : running ? ' is-running' : ''
-  const label = agentRunning
+export function StatusDot({ running, agentRunning }: { running?: boolean; agentRunning?: boolean }) {
+  const unknown = running === undefined && agentRunning === undefined
+  const state = unknown ? ' is-unknown' : agentRunning ? ' is-awake' : running ? ' is-running' : ''
+  const label = unknown
+    ? 'chamber status unknown'
+    : agentRunning
     ? 'agent working'
     : running
       ? 'chamber running, agent asleep'

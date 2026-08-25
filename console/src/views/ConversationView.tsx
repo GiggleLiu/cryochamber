@@ -331,7 +331,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
       {/* Persistent, and the composer stays enabled: queuing for a sleeping
           agent is the intended way to use it, so this states where the message
           goes rather than standing in its way. */}
-      {!chamber.running ? (
+      {chamber.running === false ? (
         <p className="asleep-note is-stopped" role="status">
           Chamber is not running — messages will wait in its inbox until it is started
         </p>

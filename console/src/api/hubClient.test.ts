@@ -12,14 +12,14 @@ function mockFetch(handler: (url: string, init?: RequestInit) => object | Respon
 
 beforeEach(() => localStorage.clear())
 
-test('listChambers maps the hub index; absent flags become false; stopped chambers show no wake', async () => {
+test('listChambers maps the hub index; absent flags stay unknown; stopped chambers show no wake', async () => {
   const fetchFn = mockFetch(() => [
     { id: 'cham-b', name: 'beta', running: false, next_wake_display: 'in 2 h' },
     { id: 'cham-a', name: 'alpha', running: true, agent_running: true, next_wake_display: 'in 1 h', completed: true, archived: false, has_open_question: true },
   ])
   const list = await new HubClient({ ...OPTS, fetch: fetchFn }).listChambers()
   expect(list).toEqual([
-    { id: 'cham-b', name: 'beta', running: false, agentRunning: false, nextWakeDisplay: null, completed: false, archived: false, hasOpenQuestion: false },
+    { id: 'cham-b', name: 'beta', running: false, agentRunning: undefined, nextWakeDisplay: null, completed: false, archived: false, hasOpenQuestion: false },
     { id: 'cham-a', name: 'alpha', running: true, agentRunning: true, nextWakeDisplay: 'in 1 h', completed: true, archived: false, hasOpenQuestion: true },
   ])
   expect(vi.mocked(fetchFn).mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer tok123' })
@@ -72,7 +72,10 @@ test('uploadFile falls back to the files route when the markdown is unreadable',
 })
 
 test('toChamber/toChamberMessage tolerate junk fields', () => {
-  expect(toChamber({ id: 'x', name: 'X', running: 'yes' as unknown as boolean })).toMatchObject({ running: false })
+  expect(toChamber({ id: 'x', name: 'X', running: 'yes' as unknown as boolean })).toMatchObject({
+    running: undefined,
+    agentRunning: undefined,
+  })
   expect(toChamberMessage({ id: 'inbox/1.md', from: 1 as unknown as string, timestamp: 't' }, 'c').sender).toBe('')
 })
 

@@ -2,18 +2,20 @@ import { ApiError, isUnauthorized, messageKey } from './types'
 import { readSse } from './sse'
 import type { Chamber, ChamberMessage } from './types'
 
-/** Raw hub index row → `Chamber`. Absent flags are false: the hub only omits a
- * flag when it has nothing to say, and the list must not paint "unknown". A
- * stopped chamber's schedule is a stale leftover and never shown. */
+/** Raw hub index row → `Chamber`. Absent liveness flags stay absent because
+ * the hub has not said the chamber is stopped. A stopped chamber's schedule
+ * is a stale leftover and never shown. */
 export function toChamber(raw: Record<string, unknown>): Chamber {
-  const running = raw.running === true
+  const running = typeof raw.running === 'boolean' ? raw.running : undefined
   return {
     id: String(raw.id ?? ''),
     name: String(raw.name ?? raw.id ?? ''),
     running,
-    agentRunning: raw.agent_running === true,
+    agentRunning: typeof raw.agent_running === 'boolean' ? raw.agent_running : undefined,
     nextWakeDisplay:
-      running && typeof raw.next_wake_display === 'string' ? raw.next_wake_display : null,
+      running === true && typeof raw.next_wake_display === 'string'
+        ? raw.next_wake_display
+        : null,
     completed: raw.completed === true,
     archived: raw.archived === true,
     hasOpenQuestion: raw.has_open_question === true,

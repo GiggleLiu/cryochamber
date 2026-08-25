@@ -314,14 +314,17 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 
 /* Liveness, reading immediately before the chamber's name — in the list and in
-   the conversation header alike. Present only once the hub has said, so a
-   chamber whose status is unknown carries no dot at all. */
+   the conversation header alike. A hollow dot means the hub has not said. */
 .status-dot {
   flex: none;
   width: 8px;
   height: 8px;
   background: var(--line-strong);
   border-radius: var(--r-full);
+}
+.status-dot.is-unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--line-strong);
 }
 .status-dot.is-awake { background: var(--brand); }
 /* Started chamber whose agent is between wakes; gray stays "not running". */
