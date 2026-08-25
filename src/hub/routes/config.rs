@@ -38,7 +38,7 @@ pub async fn post_config(
             Json(json!({ "error": "default agent is empty" })),
         );
     }
-    if let Err(error) = crate::agent::agent_program(default_agent) {
+    if let Err(error) = crate::lifecycle::validate_agent_command(default_agent, None) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("invalid default agent: {error}") })),

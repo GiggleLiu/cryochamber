@@ -40,6 +40,10 @@ Owner token (save it — or reprint later with `cryohub token owner`):
 
 这张表只是 UI 层面的决定，真正的边界在 hub：每个路由都按**默认拒绝**分类。访客直接调用 owner 路由——chamber 状态、todo、生命周期、同步、token 管理——无论应用画了什么都会得到 `403`；访客的实时事件流也从不携带日志行或其他 chamber 的消息。
 
+## 创建 chamber
+
+仅 owner 可见的 **+ 新建 chamber** 面板会在一次操作中创建并启动 chamber。它使用 `cryohub.toml` 中主机级的 `default_agent`；如需更改，请先在控制台的 **Settings** 面板中修改。hub 会在创建任何目录之前检查该命令的可执行文件是否可用。如果脚手架创建成功、但 daemon 启动失败，新 chamber 仍会保留，控制台会显示启动错误，修复后可从 Chamber 控制中再次启动。
+
 ## 邀请他人加入某个 chamber
 
 1. 用 owner token 登录，打开该 chamber，点击标题栏的 **Invite**。
@@ -71,6 +75,8 @@ cryohub token revoke alice
 两个列表都提供 `pi`、`opencode`、`claude`、`codex` 和 `kimi`，外加当前已保存的
 值——像 `pi --thinking high` 这样手写的命令，或指向自定义运行器的路径，都会保持
 可选，而不会被悄悄替换。其他想运行的命令请直接写进 `cryo.toml`。
+
+保存任一下拉框时，hub 都会检查该命令的可执行文件在主机上是否可用。不可用的运行器会被拒绝，原设置保持不变。
 
 守护进程在启动时读取 `cryo.toml`，因此修改**正在运行**的 chamber 的智能体要到下次
 重启才生效；遇到这种情况控制台会提示。保存同时会重写 `cryo.toml`，该文件中的注释

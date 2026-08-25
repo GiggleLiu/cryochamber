@@ -227,6 +227,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -234,6 +235,8 @@ mod post_new {
         let (status, Json(body)) = resp;
         assert_eq!(status, axum::http::StatusCode::CREATED);
         assert!(body.get("id").is_some());
+        assert_eq!(body["started"], false);
+        assert_eq!(body["start_error"], serde_json::Value::Null);
 
         let alpha = dir.path().join("alpha");
         assert!(alpha.join("cryo.toml").exists());
@@ -266,6 +269,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -297,6 +301,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -329,6 +334,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -338,6 +344,35 @@ mod post_new {
             .unwrap()
             .unwrap();
         assert_eq!(cfg.agent, "codex --model gpt-5");
+    }
+
+    #[tokio::test]
+    async fn create_and_start_rejects_missing_agent_before_scaffolding() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "definitely-not-an-installed-cryo-agent".to_string(),
+        ));
+
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+                start: true,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("not found"));
+        assert!(
+            !dir.path().join("alpha").exists(),
+            "a failed preflight must not leave a half-created chamber"
+        );
     }
 
     #[tokio::test]
@@ -356,6 +391,7 @@ mod post_new {
                 api_key_provider: Some("anthropic".into()),
                 api_key: Some("sk-test".into()),
                 model: Some("claude-sonnet".into()),
+                start: false,
             }),
         )
         .await;
@@ -389,6 +425,7 @@ mod post_new {
                 api_key_provider: Some("anthropic".into()),
                 api_key: Some("sk-test".into()),
                 model: Some("claude-sonnet".into()),
+                start: false,
             }),
         )
         .await;
@@ -422,6 +459,7 @@ mod post_new {
                 api_key_provider: Some("anthropic".into()),
                 api_key: Some("sk-test".into()),
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -447,6 +485,7 @@ mod post_new {
                 api_key_provider: Some("openai".into()),
                 api_key: Some("sk-openai-test".into()),
                 model: Some("gpt-5".into()),
+                start: false,
             }),
         )
         .await;
@@ -482,6 +521,7 @@ mod post_new {
                 api_key_provider: Some("my-provider".into()),
                 api_key: Some("sk-custom-test".into()),
                 model: Some("my-model".into()),
+                start: false,
             }),
         )
         .await;
@@ -512,6 +552,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -530,6 +571,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -548,6 +590,7 @@ mod post_new {
                 api_key_provider: Some("anthropic".into()),
                 api_key: Some("   ".into()),
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -566,6 +609,7 @@ mod post_new {
                 api_key_provider: Some("../escape".into()),
                 api_key: Some("sk-test".into()),
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -592,6 +636,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -613,6 +658,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;
@@ -647,6 +693,7 @@ mod post_new {
                 api_key_provider: None,
                 api_key: None,
                 model: None,
+                start: false,
             }),
         )
         .await;

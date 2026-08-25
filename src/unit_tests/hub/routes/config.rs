@@ -15,20 +15,20 @@ async fn host_default_agent_round_trips_to_disk_and_live_state() {
     let (status, Json(body)) = post_config(
         State(app.clone()),
         Json(UpdateHostConfig {
-            default_agent: "pi --thinking high".to_string(),
+            default_agent: "/bin/sh -c true".to_string(),
         }),
     )
     .await;
 
     assert_eq!(status, axum::http::StatusCode::OK);
-    assert_eq!(body["default_agent"], "pi --thinking high");
+    assert_eq!(body["default_agent"], "/bin/sh -c true");
     assert_eq!(
         get_config(State(app)).await.0.default_agent,
-        "pi --thinking high"
+        "/bin/sh -c true"
     );
     assert_eq!(
         crate::hub::config::load_config().unwrap().default_agent,
-        "pi --thinking high"
+        "/bin/sh -c true"
     );
 }
 
@@ -39,7 +39,11 @@ async fn host_default_agent_rejects_empty_or_invalid_commands() {
     let workspace = tempfile::tempdir().unwrap();
     let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
 
-    for value in ["   ", "'unterminated"] {
+    for value in [
+        "   ",
+        "'unterminated",
+        "definitely-not-an-installed-cryo-agent",
+    ] {
         let (status, _) = post_config(
             State(app.clone()),
             Json(UpdateHostConfig {

@@ -10,7 +10,10 @@ Security and reliability hardening.
   `cryohub.toml` controls both Console-created chambers and plain `cryo init`.
   Owners can update it live from the Console Settings sheet or with
   `cryohub start --default-agent <cmd>`; explicit per-chamber and CLI choices
-  still win, and existing chambers are never rewritten.
+  still win, and existing chambers are never rewritten. Agent settings and
+  chamber starts reject missing executables up front. The Console now creates
+  and starts a chamber in one action, surfacing a launch failure without
+  discarding a successfully scaffolded chamber.
 
 - **The Console can edit a chamber's plan.** Chamber controls → Plan → *Edit
   plan* opens `plan.md` as markdown source and writes it back. No restart: the
