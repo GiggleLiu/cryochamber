@@ -96,10 +96,13 @@ export function unreadCount(
   return n
 }
 
-/** Which hub a row belongs to. A row the router stamped says so itself; a
- * browser row (and every row a pre-multi-hub cache holds) says nothing, and
- * its key carries no hub prefix either — both spellings answer `''`. */
-function hubIdOf(c: Chamber): string {
+/** Which hub a row belongs to, and the only place that answer is spelled out:
+ * `c.hubId ?? splitChamberKey(c.id).hubId`. A row the router stamped says so
+ * itself; a browser row (and every row a pre-multi-hub cache holds) says
+ * nothing, and its key carries no hub prefix either — both answer `''`.
+ * Anything grouping or filtering chambers by hub must come through here rather
+ * than read `hubId` directly, which is what keeps the field safely optional. */
+export function hubIdOf(c: Chamber): string {
   return c.hubId ?? splitChamberKey(c.id).hubId
 }
 
@@ -393,6 +396,9 @@ export const useAppStore = create<AppState>()((set, get) => {
       const state = get()
       const hub = state.hubs.find((h) => h.id === hubId)
       if (!hub) return
+      // Order matters, as in logout: a pending debounced write would otherwise
+      // land after the clear and put the forgotten hub's cache back.
+      cancelPendingCachedState()
       // The cache is keyed on the token, like every other per-account store.
       clearCachedState({ token: hub.token })
       const hubs = state.hubs.filter((h) => h.id !== hubId)
