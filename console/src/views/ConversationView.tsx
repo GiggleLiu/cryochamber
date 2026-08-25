@@ -1,11 +1,19 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { ACCESS_REVOKED_NOTICE, useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
 import { StatusDot } from '../components/StatusDot'
-import { initial, messageSeconds, separatorLabel, tileColor } from '../lib/format'
+import { exactTimestamp, initial, messageSeconds, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
 import { InviteSheet } from './InviteSheet'
 import { ControlsSheet } from './ControlsSheet'
@@ -14,6 +22,12 @@ import { ControlsSheet } from './ControlsSheet'
 const GAP_SECONDS = 300
 /** How far from the bottom still counts as "reading the newest messages". */
 const PIN_SLACK_PX = 80
+const PAGE = 100
+
+function hasFinePointer(): boolean {
+  return typeof window.matchMedia === 'function' &&
+    window.matchMedia('(hover: hover) and (pointer: fine)').matches
+}
 
 /** True when the message carries genuinely wide block content (code, tables,
  * display math) that a hugging chat bubble would clip. Images, quotes, and
@@ -69,7 +83,12 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const [retryToken, setRetryToken] = useState(0)
   const [showJump, setShowJump] = useState(false)
   const [hasNew, setHasNew] = useState(false)
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [canCopy] = useState(hasFinePointer)
+  const [visibleCount, setVisibleCount] = useState(PAGE)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prependHeightRef = useRef<number | null>(null)
   // Whether the reader is parked at the newest message. Kept in a ref because
   // the scroll handler and the message effect both read it without re-render.
   const pinnedRef = useRef(true)
@@ -79,6 +98,8 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   // marker is cleared so gaps over cached messages get re-fetched.
   const historyLoaded = loadedChambers.includes(chamberId)
   const messageCount = messages?.length ?? 0
+  const firstVisible = Math.max(0, messageCount - visibleCount)
+  const visibleMessages = messages?.slice(firstVisible)
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const el = scrollRef.current
@@ -104,6 +125,45 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     setShowJump(!pinned)
     if (pinned) setHasNew(false)
   }
+
+  function revealEarlier() {
+    const el = scrollRef.current
+    if (el) prependHeightRef.current = el.scrollHeight
+    setVisibleCount((count) => Math.min(messageCount, count + PAGE))
+  }
+
+  useLayoutEffect(() => {
+    const before = prependHeightRef.current
+    const el = scrollRef.current
+    if (before === null || !el) return
+    el.scrollTop += el.scrollHeight - before
+    prependHeightRef.current = null
+  }, [visibleCount])
+
+  useEffect(() => {
+    prependHeightRef.current = null
+    setVisibleCount(PAGE)
+  }, [chamberId])
+
+  async function copyMessage(id: string, body: string) {
+    if (!navigator.clipboard) return
+    try {
+      await navigator.clipboard.writeText(body)
+      setCopiedMessageId(id)
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopiedMessageId(null), 1500)
+    } catch {
+      // Clipboard permission can be denied; leaving the label unchanged is
+      // more honest than claiming the message was copied.
+    }
+  }
+
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    },
+    [],
+  )
 
   // Opening a conversation lands on the newest message, with no visible glide.
   useEffect(() => {
@@ -156,7 +216,11 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
           useAppStore.getState().pruneChamber(chamberId, ACCESS_REVOKED_NOTICE)
           return
         }
-        setLoadError(e instanceof Error ? e.message : String(e))
+        setLoadError(
+          e instanceof ApiError && e.hubSaid
+            ? e.message
+            : 'Check your connection and try again.',
+        )
       })
   }, [client, chamber, historyLoaded, chamberId, retryToken])
 
@@ -175,7 +239,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     if (chamber) return
     const current = useAppStore.getState().view
     if (current.name === 'conversation' && current.chamberId === chamberId) {
-      navigate({ name: 'projects' })
+      navigate({ name: 'projects' }, { replace: true })
     }
   }, [chamber, chamberId, navigate])
 
@@ -217,8 +281,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
 
       <div className="thread">
       <div className="message-scroll" ref={scrollRef} onScroll={onScroll}>
-        {/* A mailbox returns its whole history in one fetch, so there is never
-            anything earlier to load. */}
+        {/* The mailbox fetch is complete, but only a bounded window mounts. */}
         {loadError && (
           <div className="alert" role="alert">
             <AlertCircle size={18} />
@@ -242,8 +305,14 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
           </div>
         )}
 
-        {messages?.map((m, i) => {
-          const prev = messages[i - 1]
+        {firstVisible > 0 && (
+          <button type="button" className="stream-reveal" onClick={revealEarlier}>
+            Earlier messages ({firstVisible})
+          </button>
+        )}
+
+        {visibleMessages?.map((m, i) => {
+          const prev = visibleMessages[i - 1]
           const seconds = messageSeconds(m)
           const gap = !prev || seconds - messageSeconds(prev) >= GAP_SECONDS
           const isSelf = m.sender === selfName
@@ -274,7 +343,16 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                 </div>
                 <div className="msg-col">
                   {!isSelf && !grouped && <div className="sender-label">{m.sender}</div>}
-                  <div className="bubble">
+                  <div className="bubble" title={exactTimestamp(m)}>
+                    {canCopy && (
+                      <button
+                        type="button"
+                        className="bubble-copy"
+                        onClick={() => void copyMessage(m.id, m.body)}
+                      >
+                        {copiedMessageId === m.id ? 'Copied' : 'Copy'}
+                      </button>
+                    )}
                     <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={chamberId} />
                   </div>
                 </div>
@@ -327,7 +405,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
       {/* Persistent, and the composer stays enabled: queuing for a sleeping
           agent is the intended way to use it, so this states where the message
           goes rather than standing in its way. */}
-      {!chamber.running ? (
+      {chamber.running === false ? (
         <p className="asleep-note is-stopped" role="status">
           Chamber is not running — messages will wait in its inbox until it is started
         </p>

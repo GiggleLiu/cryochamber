@@ -68,7 +68,44 @@ beforeEach(() => {
   })
 })
 
+afterEach(() => vi.unstubAllGlobals())
+
 describe('WeChat-style chat bubbles', () => {
+  test('each message bubble exposes its exact local timestamp', async () => {
+    const client = fakeClient({
+      getMessages: vi.fn(async () => [makeMsg(1, { timestamp: '2026-08-15T14:32:00' })]),
+    })
+    useAppStore.setState({ client })
+    const { container } = render(<ConversationView chamberId="cham-a" />)
+    await screen.findByText('msg-1')
+    expect(container.querySelector('.bubble')).toHaveAttribute('title', '2026-08-15 14:32')
+  })
+
+  test('a fine-pointer bubble copies the whole message body', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    const client = fakeClient({
+      getMessages: vi.fn(async () => [makeMsg(1, { body: 'copy the whole message' })]),
+    })
+    useAppStore.setState({ client })
+    render(<ConversationView chamberId="cham-a" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Copy' }))
+    expect(writeText).toHaveBeenCalledWith('copy the whole message')
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument()
+  })
+
+  test('touch devices do not render message copy controls', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
+    useAppStore.setState({ client: fakeClient() })
+    render(<ConversationView chamberId="cham-a" />)
+    await screen.findByText('msg-1')
+    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+  })
+
   test('marks own messages msg-self and other messages msg-other', async () => {
     const client = fakeClient({
       getMessages: vi.fn(async () => [
@@ -445,8 +482,20 @@ describe('message loading', () => {
     })
     useAppStore.setState({ client, view: { name: 'conversation', chamberId: 'cham-a' } })
     render(<ConversationView chamberId="cham-a" />)
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn’t load this conversation/i)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/couldn’t load this conversation/i)
+    expect(alert).toHaveTextContent('Check your connection and try again.')
+    expect(alert).not.toHaveTextContent('HTTP 500')
     expect(useAppStore.getState().view).toEqual({ name: 'conversation', chamberId: 'cham-a' })
+  })
+
+  test('a hub-authored history error is shown verbatim', async () => {
+    const client = fakeClient({
+      getMessages: vi.fn().mockRejectedValue(new ApiError(500, 'Mailbox is unavailable.', true)),
+    })
+    useAppStore.setState({ client })
+    render(<ConversationView chamberId="cham-a" />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Mailbox is unavailable.')
   })
 })
 
@@ -481,11 +530,53 @@ describe('isRichMessage', () => {
   })
 })
 
-test('a mailbox returns its whole history, so nothing offers to load earlier', async () => {
-  useAppStore.setState({ client: fakeClient() })
-  render(<ConversationView chamberId="cham-a" />)
-  await screen.findByText('msg-1')
-  expect(screen.queryByRole('button', { name: /load earlier/i })).toBeNull()
+test('long histories mount 100 messages and reveal the previous page per tap', async () => {
+  const history = Array.from({ length: 250 }, (_, i) => makeMsg(i + 1))
+  useAppStore.setState({ client: fakeClient({ getMessages: vi.fn(async () => history) }) })
+  const { container } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-250')
+  expect(container.querySelectorAll('.msg-row')).toHaveLength(100)
+  expect(screen.queryByText('msg-150')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Earlier messages (150)' })).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages (150)' }))
+  expect(container.querySelectorAll('.msg-row')).toHaveLength(200)
+  expect(screen.getByText('msg-51')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Earlier messages (50)' })).toBeInTheDocument()
+})
+
+test('prepending an earlier page preserves the reader’s viewport', async () => {
+  const history = Array.from({ length: 250 }, (_, i) => makeMsg(i + 1))
+  useAppStore.setState({ client: fakeClient({ getMessages: vi.fn(async () => history) }) })
+  const { container } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-250')
+  const scroller = container.querySelector('.message-scroll')!
+  Object.defineProperty(scroller, 'scrollHeight', {
+    configurable: true,
+    get: () => container.querySelectorAll('.msg-row').length * 10,
+  })
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value: 100 })
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages (150)' }))
+  expect(scroller.scrollTop).toBe(1100)
+})
+
+test('the visible cut starts a group and keeps grouping correct across revealed pages', async () => {
+  const history = Array.from({ length: 250 }, (_, i) =>
+    makeMsg(i + 1, { timestamp: stamp(i), sender: 'Agent' }),
+  )
+  useAppStore.setState({ client: fakeClient({ getMessages: vi.fn(async () => history) }) })
+  const { container } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-250')
+  let rows = container.querySelectorAll('.msg-row')
+  expect(rows[0]).not.toHaveClass('msg-grouped')
+  expect(rows[1]).toHaveClass('msg-grouped')
+  expect(container.querySelectorAll('.time-pill')).toHaveLength(1)
+
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages (150)' }))
+  rows = container.querySelectorAll('.msg-row')
+  expect(rows[0]).not.toHaveClass('msg-grouped')
+  expect(rows[100]).toHaveClass('msg-grouped')
+  expect(container.querySelectorAll('.time-pill')).toHaveLength(1)
 })
 
 describe('the asleep banner', () => {

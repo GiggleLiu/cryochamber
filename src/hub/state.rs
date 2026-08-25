@@ -136,6 +136,46 @@ impl AppState {
         self.wire_watchers();
     }
 
+    /// One pass of the registry staleness check: refresh the index when the
+    /// registry's content fingerprint moved since the previous pass. Split
+    /// from the watch thread so tests can drive it directly.
+    pub fn registry_poll_once(&self, last: &mut u64) {
+        let fingerprint = crate::registry::fingerprint();
+        if fingerprint != *last {
+            *last = fingerprint;
+            self.refresh();
+        }
+    }
+
+    /// Follow registry changes made by other processes (a terminal `cryo
+    /// start` writes its own registry entry) so the console learns about new
+    /// chambers on its own instead of needing Settings → Refresh chambers.
+    /// A 1s content-fingerprint poll, not a notify watcher: `refresh()` itself
+    /// rewrites entries (pid repair in `registry::list`), and a fingerprint
+    /// makes those self-writes compare equal instead of looping forever.
+    #[cfg(not(test))]
+    pub fn spawn_registry_watch(self: &Arc<Self>) {
+        if !self.discovery_options.include_registry {
+            return;
+        }
+        let app = Arc::downgrade(self);
+        std::thread::spawn(move || {
+            let mut last = crate::registry::fingerprint();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let Some(app) = app.upgrade() else {
+                    return;
+                };
+                app.registry_poll_once(&mut last);
+            }
+        });
+    }
+
+    /// Tests drive `registry_poll_once` directly; no background threads from
+    /// route/state tests.
+    #[cfg(test)]
+    pub fn spawn_registry_watch(self: &Arc<Self>) {}
+
     /// Synchronise the watcher registry with the current chamber index:
     /// start watchers for any new chambers and stop watchers for removed ones.
     /// Tests that populate the index directly should call this after writing.

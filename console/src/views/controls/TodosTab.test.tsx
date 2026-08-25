@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { TodosTab, sortTodos } from './TodosTab'
 import { HubClient, type TodoItem } from '../../api/hubClient'
 import { useAppStore, resetAppStore } from '../../store/appStore'
@@ -51,6 +51,23 @@ test('no fold at all when nothing is done', async () => {
   render(<TodosTab chamberId="cham-a" />)
   await screen.findByText('task-1')
   expect(screen.queryByText(/^History/)).toBeNull()
+})
+
+test('claimed pending items are marked in progress without changing other items', async () => {
+  useAppStore.setState({
+    client: makeHub([
+      todo(1, { text: 'claimed task', claimed: true }),
+      todo(2, { text: 'open task' }),
+      todo(3, { text: 'done task', claimed: true, done: true }),
+    ]),
+  })
+  render(<TodosTab chamberId="cham-a" />)
+  const claimed = (await screen.findByText('claimed task')).closest('.todo-row')!
+  const open = screen.getByText('open task').closest('.todo-row')!
+  const done = screen.getByText('done task').closest('.todo-row')!
+  expect(within(claimed as HTMLElement).getByLabelText('in progress')).toBeInTheDocument()
+  expect(within(open as HTMLElement).queryByLabelText('in progress')).toBeNull()
+  expect(within(done as HTMLElement).queryByLabelText('in progress')).toBeNull()
 })
 
 test('an empty todo list says so', async () => {

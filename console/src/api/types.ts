@@ -7,16 +7,15 @@ export interface Credentials {
   role: 'owner' | 'invite'
 }
 
-/** A chamber as the projects list needs it. Absent liveness flags from an
- * older hub are mapped to `false` at the client boundary — see `toChamber` —
- * so views never reason about `undefined`. */
+/** A chamber as the projects list needs it. Liveness stays optional because
+ * an absent hub flag says nothing about whether the chamber is stopped. */
 export interface Chamber {
   id: string
   name: string
   /** The chamber daemon holds its lock (the chamber is started). */
-  running: boolean
+  running?: boolean
   /** A session is executing right now; implies `running`. */
-  agentRunning: boolean
+  agentRunning?: boolean
   /** Display form of the next scheduled wake; null for a stopped chamber. */
   nextWakeDisplay: string | null
   completed: boolean

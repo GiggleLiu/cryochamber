@@ -70,6 +70,8 @@ export function MessageBody({
   // must revoke the object URL it just made instead of caching it.
   const mounted = useRef(true)
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
+  const lightboxRef = useRef<HTMLDivElement>(null)
+  const lightboxRestoreRef = useRef<HTMLElement | null>(null)
   // One inline alert slot for anything the body itself could not do: an
   // attachment that would not load, a clipboard that refused.
   const [notice, setNotice] = useState<string | null>(null)
@@ -200,35 +202,48 @@ export function MessageBody({
     }
   }, [])
 
-  // Close the lightbox on Escape.
+  // A modal must take focus when it opens and return it when it closes, or a
+  // keyboard user lands at an arbitrary point in the message thread.
   useEffect(() => {
     if (!lightbox) return
+    lightboxRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setLightbox(null)
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      const restoreTo = lightboxRestoreRef.current
+      lightboxRestoreRef.current = null
+      if (restoreTo && document.contains(restoreTo)) restoreTo.focus()
+    }
   }, [lightbox])
+
+  function showLightbox(next: { src: string; alt: string }) {
+    const active = document.activeElement
+    lightboxRestoreRef.current = active instanceof HTMLElement ? active : null
+    setLightbox(next)
+  }
 
   function openLightbox(href: string, alt: string, innerImg: HTMLImageElement | null) {
     const cached = blobCache.current.get(href)
     if (cached) {
-      setLightbox({ src: cached, alt })
+      showLightbox({ src: cached, alt })
       return
     }
     if (innerImg?.dataset.authSwap === 'done') {
-      setLightbox({ src: innerImg.getAttribute('src') ?? href, alt })
+      showLightbox({ src: innerImg.getAttribute('src') ?? href, alt })
       return
     }
     if (!fetchBlob) {
-      setLightbox({ src: href, alt })
+      showLightbox({ src: href, alt })
       return
     }
     fetchBlob(href)
       .then((blob) => {
         const url = URL.createObjectURL(blob)
         blobCache.current.set(href, url)
-        setLightbox({ src: url, alt })
+        showLightbox({ src: url, alt })
       })
       .catch((e) => {
         // A 401 here is not a broken image, it is a revoked session.
@@ -329,7 +344,7 @@ export function MessageBody({
       // `src` may still be empty while the swap is in flight.
       const upload = img.dataset.uploadSrc
       if (upload) openLightbox(upload, alt, img)
-      else setLightbox({ src: img.getAttribute('src') ?? '', alt })
+      else showLightbox({ src: img.getAttribute('src') ?? '', alt })
     }
   }
 
@@ -349,8 +364,11 @@ export function MessageBody({
       {lightbox && (
         <div
           className="lightbox"
+          ref={lightboxRef}
           role="dialog"
+          aria-modal="true"
           aria-label={lightbox.alt || 'Image'}
+          tabIndex={-1}
           onClick={() => setLightbox(null)}
         >
           <img src={lightbox.src} alt={lightbox.alt} />

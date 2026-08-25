@@ -196,6 +196,7 @@ describe('groups, badge and meta line', () => {
     render(<ProjectsView />)
     const badge = screen.getByTitle('Open question — agent is waiting on you')
     expect(badge).toHaveTextContent('?')
+    expect(badge).toHaveAccessibleName('Open question — the agent is waiting on you')
   })
 
   test('a running chamber shows its next wake; a stopped one does not', () => {

@@ -128,7 +128,7 @@ fn cmd_start(
     public: Option<bool>,
 ) -> Result<()> {
     if let Some(default_agent) = default_agent.as_deref() {
-        cryochamber::lifecycle::validate_agent_command(default_agent, None)
+        cryochamber::hub::lifecycle::validate_agent_command(default_agent)
             .context("Invalid --default-agent")?;
     }
     let config = cryochamber::hub::config::effective_config(host, port, public, default_agent)?;

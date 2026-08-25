@@ -85,7 +85,11 @@ export function ProjectsView() {
             <StatusDot running={c.running} agentRunning={c.agentRunning} />
             <span className="stream-name">{c.name}</span>
             {c.hasOpenQuestion && (
-              <span className="question-badge" title="Open question — agent is waiting on you">
+              <span
+                className="question-badge"
+                title="Open question — agent is waiting on you"
+                aria-label="Open question — the agent is waiting on you"
+              >
                 ?
               </span>
             )}

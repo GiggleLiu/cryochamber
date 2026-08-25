@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
-import App from './App'
+import userEvent from '@testing-library/user-event'
+import App, { takeInviteToken } from './App'
 import { useAppStore, resetAppStore } from './store/appStore'
 import { saveCredentials } from './store/auth'
 
@@ -46,6 +47,26 @@ test('a chamber pruned from under the user is explained on the list', async () =
   await screen.findByRole('heading', { name: 'Projects' })
   act(() => useAppStore.getState().setAccessNotice('You no longer have access to this chamber.'))
   expect(await screen.findByText(/no longer have access/i)).toBeInTheDocument()
+})
+
+test('simultaneous status banners share one stacking container', async () => {
+  saveCredentials(creds)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      new Response(
+        JSON.stringify(String(url).endsWith('/api/whoami') ? { role: 'owner', name: 'Alice' } : []),
+        { status: 200 },
+      ),
+    ),
+  )
+  render(<App />)
+  await screen.findByRole('heading', { name: 'Projects' })
+  act(() => useAppStore.getState().setUpdateAvailable(true))
+  const reconnecting = screen.getByText('Reconnecting')
+  const update = screen.getByText('Update available')
+  expect(reconnecting.parentElement).toBe(update.parentElement)
+  expect(reconnecting.parentElement).toHaveClass('banner-stack')
 })
 
 test('shows login when no credentials are stored', async () => {
@@ -160,6 +181,71 @@ describe('invite-link onboarding', () => {
       }),
     )
   }
+
+  test('store navigation updates the conversation hash', async () => {
+    stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
+    useAppStore.getState().setCreds(creds)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Projects' })
+    act(() => useAppStore.getState().navigate({ name: 'conversation', chamberId: 'cham-a' }))
+    expect(window.location.hash).toBe('#/chamber/cham-a')
+    await screen.findByRole('heading', { name: /alpha/ })
+  })
+
+  test('a hashchange updates the store view', async () => {
+    stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
+    useAppStore.getState().setCreds(creds)
+    render(<App />)
+    await waitFor(() => expect(useAppStore.getState().chambersLoaded).toBe(true))
+    act(() => {
+      window.history.pushState(null, '', '#/chamber/cham-a')
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+    })
+    await waitFor(() =>
+      expect(useAppStore.getState().view).toEqual({ name: 'conversation', chamberId: 'cham-a' }),
+    )
+  })
+
+  test('a stored session boots directly into a chamber deep link', async () => {
+    window.location.hash = '#/chamber/cham-a'
+    saveCredentials(creds)
+    stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: /alpha/ })).toBeInTheDocument()
+  })
+
+  test('sign-in honors a pending chamber deep link', async () => {
+    window.location.hash = '#/chamber/cham-a'
+    stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
+    render(<App />)
+    await userEvent.type(await screen.findByLabelText(/access token/i), TOKEN)
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
+    expect(await screen.findByRole('heading', { name: /alpha/ })).toBeInTheDocument()
+  })
+
+  test('an unknown chamber deep link falls back to projects and cleans the hash', async () => {
+    window.location.hash = '#/chamber/missing'
+    saveCredentials(creds)
+    stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(window.location.hash).toBe('#/')
+  })
+
+  test('an unknown guest deep link does not trigger the single-chamber redirect', async () => {
+    window.location.hash = '#/chamber/missing'
+    saveCredentials({ ...creds, role: 'invite' })
+    stubHub('invite', [{ id: 'cham-a', name: 'alpha' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(window.location.hash).toBe('#/')
+  })
+
+  test('takeInviteToken ignores conversation route fragments', () => {
+    window.location.hash = '#/chamber/cham-a'
+    expect(takeInviteToken()).toBeNull()
+    expect(window.location.hash).toBe('#/chamber/cham-a')
+  })
 
   test('a guest scoped to one chamber lands in that conversation', async () => {
     // Their link is tied to one chamber; a list of one says nothing and costs
