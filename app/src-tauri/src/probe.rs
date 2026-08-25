@@ -122,46 +122,83 @@ pub fn client_with_verifier(verifier: Arc<CapturingVerifier>) -> Result<reqwest:
     reqwest::Client::builder()
         .use_preconfigured_tls(config)
         .timeout(PROBE_TIMEOUT)
+        // A probe answers about the host the user typed. Following a redirect
+        // would let the answer describe a certificate from somewhere else
+        // entirely — and an https→http hop would report "valid" for a hub
+        // reached in the clear.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not set up a TLS client.".to_string())
+}
+
+/// Does the system trust store accept this host's certificate? One request,
+/// judged only by whether it completed.
+async fn system_trusts(url: &str) -> bool {
+    match reqwest::Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => client.get(url).send().await.is_ok(),
+        Err(_) => false,
+    }
 }
 
 /// The probe itself: is this hub's certificate one the system already trusts,
 /// and — trusted or not — which certificate is it? The fingerprint is captured
 /// either way, so a user who decides to pin does not pay a second round-trip.
 pub async fn probe_url(url: &str) -> Result<ProbeReport, String> {
-    if url.starts_with("http://") {
-        // Trust for plain http is the user's checkbox, not a handshake: there
-        // is nothing here to look at and nothing to ask the network.
+    // An allowlist, not a denial: only `https://` has a certificate to look at.
+    // Everything else — plain http in any spelling, or a scheme we do not speak
+    // — leaves without a request. Trust for plain http is the user's checkbox,
+    // not a handshake, and a denial (`starts_with("http://")`) would have sent
+    // `HTTP://hub.local` down the TLS path and reported a plaintext GET as valid.
+    if !url.starts_with("https://") {
         return Ok(ProbeReport {
             https_valid: false,
             fingerprint: None,
         });
     }
-    // First: does the system trust store accept it?
-    let valid = match reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() {
-        Ok(client) => client.get(url).send().await.is_ok(),
-        Err(_) => false,
-    };
     let verifier = Arc::new(CapturingVerifier::new(None));
     let client = client_with_verifier(verifier.clone())?;
-    // Any response — even a 404 — means the handshake completed and the
-    // fingerprint was captured. A transport error with no captured cert means
-    // the host is unreachable; surface reqwest's words.
+    // The capturing handshake goes first, because it is what makes the trust
+    // verdict below meaningful. It accepts any certificate, so any response —
+    // even a 404 — means the host answered and the fingerprint was captured.
     let attempt = client.get(url).send().await;
     let fingerprint = verifier
         .seen
         .lock()
         .map(|seen| seen.clone())
         .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
-    if fingerprint.is_none() {
-        if let Err(e) = attempt {
-            return Err(e.to_string());
-        }
-    }
+    let Some(fingerprint) = fingerprint else {
+        // No handshake at all: the host is unreachable. Say so in reqwest's
+        // words rather than reporting `https_valid: false`, which would read as
+        // "this hub's certificate is untrusted" and offer to pin nothing.
+        return match attempt {
+            Err(e) => Err(e.to_string()),
+            Ok(_) => Ok(ProbeReport {
+                https_valid: false,
+                fingerprint: None,
+            }),
+        };
+    };
+    // Now — and only now — a failed request against the system trust store is a
+    // statement about *trust*. reqwest cannot tell us that: it reports a
+    // rejected certificate, a refused connection and an unresolvable name all
+    // as `is_connect()`, so the error kind separates nothing. The capturing
+    // handshake above does: it proved the host is up and speaking TLS.
+    //
+    //   capturing failed          -> unreachable, returned above as an error
+    //   capturing ok, system ok   -> https_valid: true
+    //   capturing ok, system fails twice -> https_valid: false, a trust verdict
+    //
+    // The retry is for the third row: the host is known to be up, so one failed
+    // request there is either a real verdict or a blip on that one request, and
+    // a blip must not turn into a pin prompt the user has to judge.
+    let https_valid = system_trusts(url).await || system_trusts(url).await;
     Ok(ProbeReport {
-        https_valid: valid,
-        fingerprint,
+        https_valid,
+        fingerprint: Some(fingerprint),
     })
 }
 
@@ -183,12 +220,59 @@ mod tests {
     }
 
     #[test]
-    fn http_urls_probe_to_no_tls_without_any_request() {
-        // Port 1 answers nothing: if the probe reached the network at all this
-        // would come back as a transport error rather than a report.
-        let report = tauri::async_runtime::block_on(probe_url("http://127.0.0.1:1")).unwrap();
-        assert!(!report.https_valid);
-        assert!(report.fingerprint.is_none());
+    fn only_https_is_probed_and_everything_else_leaves_without_a_request() {
+        // Port 1 answers nothing: if the probe reached the network at all these
+        // would come back as transport errors rather than reports. `HTTP://` is
+        // the case a `starts_with("http://")` denial would have waved through
+        // into the TLS path — a plaintext GET reported as a valid certificate.
+        for url in [
+            "http://127.0.0.1:1",
+            "HTTP://127.0.0.1:1",
+            "hTtP://127.0.0.1:1",
+            "ftp://127.0.0.1:1",
+        ] {
+            let report = tauri::async_runtime::block_on(probe_url(url)).unwrap();
+            assert!(!report.https_valid, "{url}");
+            assert!(report.fingerprint.is_none(), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_pinned_verifier_refuses_a_certificate_it_was_not_pinned_to() {
+        // The compare happens on the fingerprint alone, before anything
+        // certificate-shaped is needed — which is what lets Task 5's pinned
+        // transport lean on it.
+        let der = CertificateDer::from(b"not really a certificate".to_vec());
+        let verifier = CapturingVerifier::new(Some("00".repeat(32)));
+        let err = verifier
+            .verify_server_cert(
+                &der,
+                &[],
+                &ServerName::try_from("hub.example").unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("pinned fingerprint mismatch"));
+        // What it saw is recorded either way, so a refusal can still say which
+        // certificate it refused.
+        let seen = verifier.seen.lock().unwrap().clone();
+        assert_eq!(
+            seen.as_deref(),
+            Some(fingerprint_hex(der.as_ref()).as_str())
+        );
+
+        // And the certificate it *was* pinned to is accepted.
+        let matching = CapturingVerifier::new(Some(fingerprint_hex(der.as_ref())));
+        assert!(matching
+            .verify_server_cert(
+                &der,
+                &[],
+                &ServerName::try_from("hub.example").unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+            .is_ok());
     }
 
     #[test]

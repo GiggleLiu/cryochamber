@@ -237,6 +237,21 @@ test('a certificate the system does not trust is offered for pinning, not silent
   expect(invoke).toHaveBeenCalledWith('probe_hub', { url: 'https://hub.example' })
 })
 
+test('the form behind an open pin sheet cannot be submitted again', async () => {
+  enterAppShell()
+  await boot(whoamiMock({ role: 'owner', name: 'Jin' }))
+  invoke.mockResolvedValue({ https_valid: false, fingerprint: FINGERPRINT })
+  await addHub('https://hub.example')
+  await screen.findByRole('dialog', { name: /certificate/i })
+
+  // The form is still in the document behind the sheet, and a keyboard user can
+  // reach its button: pressing it must not probe again or stack a second
+  // question on top of the one already asked.
+  await userEvent.click(screen.getByRole('button', { name: 'Add hub' }))
+  expect(invoke).toHaveBeenCalledTimes(1)
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+})
+
 test('declining an untrusted certificate adds nothing', async () => {
   enterAppShell()
   const fetchMock = whoamiMock({ role: 'owner', name: 'Jin' })

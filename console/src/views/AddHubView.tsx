@@ -105,6 +105,10 @@ export function AddHubView() {
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (!ready || busy) return
+    // The form is still in the document behind the pin sheet: a keyboard user
+    // can reach its submit button and press it, which would probe again and
+    // stack a second question on top of the one already asked.
+    if (pin) return
     // Nothing is asked of an address we could not parse: no request leaves the
     // machine, and no record is written for a hub we cannot name.
     if (address === null || 'error' in address) {
