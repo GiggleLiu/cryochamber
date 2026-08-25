@@ -44,7 +44,7 @@ fn test_init_creates_chamber_files_without_agent_protocol_files() {
 
     // Verify cryo.toml contains the default agent
     let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
-    assert!(config_content.contains("agent = \"opencode\""));
+    assert!(config_content.contains("agent = \"pi\""));
 }
 
 #[test]
@@ -103,6 +103,25 @@ fn test_init_claude_agent() {
 }
 
 #[test]
+fn test_init_uses_host_default_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_home = tempfile::tempdir().unwrap();
+    let host_config = config_home.path().join("cryo/cryohub.toml");
+    fs::create_dir_all(host_config.parent().unwrap()).unwrap();
+    fs::write(&host_config, "default_agent = \"codex --model gpt-5\"\n").unwrap();
+
+    cmd()
+        .arg("init")
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let config_content = fs::read_to_string(dir.path().join("cryo.toml")).unwrap();
+    assert!(config_content.contains("agent = \"codex --model gpt-5\""));
+}
+
+#[test]
 fn test_init_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     // First init
@@ -156,7 +175,7 @@ fn test_status_with_state() {
         .success()
         .stdout(predicate::str::contains("Daemon: stopped"))
         .stdout(predicate::str::contains("Session: 3"))
-        .stdout(predicate::str::contains("Agent: opencode"));
+        .stdout(predicate::str::contains("Agent: pi"));
 }
 
 #[test]

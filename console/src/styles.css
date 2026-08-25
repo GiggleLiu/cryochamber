@@ -1022,6 +1022,38 @@ input, select, textarea { font: inherit; color: inherit; }
   border: none;
   outline: none;
 }
+/* The plan editor: a source textarea sized like the document it replaces, so
+   opening the editor does not resize the sheet under the reader. */
+.tab-editor {
+  display: block;
+  width: 100%;
+  min-height: 50vh;
+  padding: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  resize: vertical;
+}
+.tab-editor:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
+.tab-editor:disabled { opacity: 0.6; }
+
+/* A `<select>` in a row: the native control paints its own arrow, so the value
+   is right-aligned with `text-align-last` (plain `text-align` moves the option
+   list, not the closed control). */
+.row-input.is-select {
+  text-align-last: right;
+  cursor: pointer;
+}
+.row-input.is-select:disabled { cursor: default; opacity: 0.55; }
+
 .link-field {
   flex: 1;
   min-width: 0;

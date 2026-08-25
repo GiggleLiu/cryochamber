@@ -6,7 +6,7 @@
 
 ```toml
 # cryo.toml — cryochamber 项目配置
-agent = "opencode"               # 智能体命令 (opencode, claude, codex, pi, kimi, ...)
+agent = "pi"                     # 智能体命令 (pi, opencode, claude, codex, kimi, ...)
 max_session_duration = 3600      # 会话超时秒数 (0 = 不超时)
 watch_dirs = ["messages/inbox"]  # 监听以实现响应式唤醒的目录 ([] 表示禁用)
 zulip_poll_interval = 5          # Zulip 同步轮询间隔（秒）
@@ -19,7 +19,7 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # 派生智能体时设置的环境�
 
 | 字段 | 默认值 | 说明 |
 |-------|---------|-------------|
-| `agent` | `"opencode"` | 要运行的智能体命令。使用 `"claude"` 表示 Claude Code，`"codex"` 表示 Codex，`"pi"` 表示 Pi，`"kimi"` 表示 Kimi Code，或 `PATH` 上的任何可执行文件。 |
+| `agent` | `"pi"` | 要运行的智能体命令。使用 `"opencode"` 表示 OpenCode，`"claude"` 表示 Claude Code，`"codex"` 表示 Codex，`"kimi"` 表示 Kimi Code，或 `PATH` 上的任何可执行文件。除非 `cryo init --agent` 显式指定命令，新 chamber 使用主机级 `default_agent`。owner 也可以在 [Agent Console](../agent-console.md) 的 chamber 控制 → Settings → Agent 中修改：这会重写本文件（其中的注释以及 Cryochamber 不认识的键都不会保留），并在该 chamber 下次重启时生效。 |
 | `max_session_duration` | `3600` | 会话超时秒数。`0` 表示禁用超时。 |
 | `watch_dirs` | `["messages/inbox"]` | 守护进程监听新文件的目录列表，用于响应式唤醒智能体。路径相对于 chamber 目录解释，除非是绝对路径。设为 `[]` 可完全禁用响应式唤醒。 |
 | `zulip_poll_interval` | `5` | `cryo-zulip sync` 轮询 Zulip 的间隔（秒）。`cryo-zulip sync --interval N` 可单次覆盖它。 |
@@ -54,6 +54,7 @@ Cryohub 设置位于 `$XDG_CONFIG_HOME/cryo/cryohub.toml`；若未设置 `XDG_CO
 host = "127.0.0.1"
 port = 8765
 chamber_root = "/Users/alice/.cryo/chambers"
+default_agent = "pi"
 public = false
 owner_name = "human"
 public_hosts = []
@@ -69,10 +70,13 @@ public_hosts = []
 | `host` | `"127.0.0.1"` | 全局仪表盘服务的绑定地址。 |
 | `port` | `8765` | 全局仪表盘服务的 TCP 端口。 |
 | `chamber_root` | `~/.cryo/chambers` | 从仪表盘 UI 创建的 chamber 的默认位置。 |
+| `default_agent` | `"pi"` | 由控制台或普通 `cryo init` 创建新 chamber 时使用的主机级智能体命令。可在控制台的「设置」中修改、直接编辑此文件，或运行 `cryohub start --default-agent <命令>`。显式的 `cryo init --agent <命令>` 优先。现有 chamber 保留自己的 `cryo.toml`。 |
 | `public` | `true` | 是否对每个 `/api` 路由强制 bearer token 鉴权。默认开启；在此默认之前写下的、缺少该键的配置文件同样按 `true` 加载，而显式的 `public = false` 会保持开放模式。只有 `cryohub start --no-public` 会清除——普通的 `cryohub start` 保持这里保存的值。 |
 | `owner_name` | `"human"` | 公开模式下 owner 发送的消息所标记的发送者名字。客户端提供的 `from` 会被忽略。 |
 | `public_hosts` | `[]` | 在回环地址和 `host` 之外额外接受的 `Host` 头值。当反向代理转发公网主机名时需要设置。 |
 | `console_dir` | *（未设置——使用内嵌版本）* | 从此目录提供 [Agent Console](../agent-console.md)，而不是使用 `cryohub` 二进制中内嵌的构建。必须是指向 vite `dist/` 的绝对路径。仅用于开发和自定义构建。 |
+
+控制台修改 `default_agent` 后无需重启 hub。下一次创建 chamber 时会使用新命令；现有 chamber 不会被重写。与这里的其他键一样，手工编辑本文件要到下次 `cryohub restart` 才被读取。
 
 ### 提供 Agent Console
 

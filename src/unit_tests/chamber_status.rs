@@ -31,7 +31,7 @@ fn status_missing_timer_json_returns_stopped_defaults() {
 
     assert!(!status.running);
     assert_eq!(status.session, 0);
-    assert_eq!(status.agent, "opencode");
+    assert_eq!(status.agent, "pi");
 }
 
 #[test]

@@ -13,7 +13,7 @@ Run these from inside a chamber directory unless noted otherwise.
 <tr><th>Category</th><th>Command</th><th>What it does</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="6">Lifecycle</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>Initialize the directory: write <code>cryo.toml</code>, <code>plan.md</code>, <code>NOTES.md</code>, and <code>README.md</code>. Existing files are kept.</td></tr>
+<tr class="group"><td rowspan="6">Lifecycle</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>Initialize the directory: write <code>cryo.toml</code>, <code>plan.md</code>, <code>NOTES.md</code>, and <code>README.md</code>. Existing files are kept. Without <code>--agent</code>, uses the host-level <code>default_agent</code> from <code>cryohub.toml</code> (built-in default: <code>pi</code>).</td></tr>
 <tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>Start the daemon. Reads <code>cryo.toml</code> and writes overrides to <code>timer.json</code>.</td></tr>
 <tr><td><code>cryo start --max-session-duration 3600</code></td><td>Override the session timeout for this run.</td></tr>
 <tr><td><code>cryo status</code></td><td>Show whether the daemon is running, the current session number, and the next wake time.</td></tr>
@@ -32,7 +32,7 @@ Run these from inside a chamber directory unless noted otherwise.
 
 | Command | What it does |
 |---------|--------------|
-| `cryohub start [--host <ip>] [--port <n>]` | Install a service that survives reboot. Enforces bearer auth by default, printing the owner token on first run (`cryohub token owner` reprints it). `--host` and `--port` also update the saved hub config. |
+| `cryohub start [--host <ip>] [--port <n>] [--default-agent <cmd>]` | Install a service that survives reboot. Enforces bearer auth by default, printing the owner token on first run (`cryohub token owner` reprints it). The supplied host, port, and default agent update the saved host config. |
 | `cryohub start --foreground` | Run the hub in the current terminal instead of installing a service. |
 | `cryohub stop` | Uninstall the global hub service. |
 | `cryohub restart` | Restart the installed global hub service without reinstalling it. |

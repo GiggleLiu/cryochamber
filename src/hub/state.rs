@@ -37,6 +37,7 @@ pub enum SseEvent {
 
 pub struct AppState {
     pub workspace_dir: PathBuf,
+    pub default_agent: RwLock<String>,
     pub discovery_options: DiscoveryOptions,
     pub chambers: Arc<RwLock<ChamberIndex>>,
     pub tx: tokio::sync::broadcast::Sender<SseEvent>,
@@ -57,10 +58,12 @@ fn watcher_targets(idx: &ChamberIndex) -> (BTreeSet<PathBuf>, Vec<(String, PathB
 
 impl AppState {
     pub fn global() -> Self {
-        let chamber_root = crate::hub::config::load_config()
-            .map(|config| config.chamber_root)
-            .unwrap_or_else(|_| crate::hub::paths::global_chambers_dir());
-        Self::with_discovery_options(chamber_root, DiscoveryOptions::all_chambers())
+        let config = crate::hub::config::load_config().unwrap_or_default();
+        Self::with_discovery_options_and_agent(
+            config.chamber_root,
+            DiscoveryOptions::all_chambers(),
+            config.default_agent,
+        )
     }
 
     pub fn new(workspace_dir: PathBuf) -> Self {
@@ -75,9 +78,22 @@ impl AppState {
         workspace_dir: PathBuf,
         discovery_options: DiscoveryOptions,
     ) -> Self {
+        Self::with_discovery_options_and_agent(
+            workspace_dir,
+            discovery_options,
+            crate::config::default_agent(),
+        )
+    }
+
+    pub fn with_discovery_options_and_agent(
+        workspace_dir: PathBuf,
+        discovery_options: DiscoveryOptions,
+        default_agent: String,
+    ) -> Self {
         let (tx, _rx) = tokio::sync::broadcast::channel::<SseEvent>(256);
         Self {
             workspace_dir,
+            default_agent: RwLock::new(default_agent),
             discovery_options,
             chambers: Arc::new(RwLock::new(ChamberIndex::new())),
             tx,

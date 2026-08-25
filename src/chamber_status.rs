@@ -187,7 +187,13 @@ pub struct ChamberStatus {
     pub running: bool,
     pub agent_running: bool,
     pub session: u32,
+    /// The command that will actually run: a `cryo start --agent` override
+    /// from `timer.json` when one is in force, else `cryo.toml`'s `agent`.
     pub agent: String,
+    /// What `cryo.toml` says, which is the value an editor writes back. Equal
+    /// to `agent` unless a CLI override is in force — and when they differ, a
+    /// restart alone will not make `config_agent` take effect.
+    pub config_agent: String,
     pub log_tail: String,
     pub daily_digests: Vec<crate::log::DailyDigest>,
     pub next_wake: Option<String>,
@@ -266,6 +272,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
         .and_then(|st| st.agent_override.as_deref())
         .unwrap_or(&cfg.agent)
         .to_string();
+    let config_agent = cfg.agent.clone();
 
     let log_file = crate::log::log_path(dir);
     let completion_summary = crate::log::parse_latest_session_plan_complete(&log_file)
@@ -286,6 +293,7 @@ pub fn status(dir: &Path) -> ChamberStatus {
         agent_running,
         session,
         agent,
+        config_agent,
         log_tail: crate::log::read_recent_sessions(&log_file, 5)
             .ok()
             .flatten()

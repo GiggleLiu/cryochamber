@@ -20,9 +20,9 @@ struct Cli {
 enum Commands {
     /// Initialize a working directory with config and template plan
     Init {
-        /// Agent command to store in cryo.toml
-        #[arg(long, default_value = "opencode")]
-        agent: String,
+        /// Agent command to store in cryo.toml (defaults to the host setting)
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Begin a new plan: initialize and run the first task
     Start {
@@ -84,7 +84,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { agent } => cmd_init(&agent),
+        Commands::Init { agent } => cmd_init(agent.as_deref()),
         Commands::Start {
             agent,
             max_session_duration,
@@ -106,8 +106,16 @@ fn main() -> Result<()> {
     }
 }
 
-fn cmd_init(agent_cmd: &str) -> Result<()> {
+fn cmd_init(agent_cmd: Option<&str>) -> Result<()> {
     let dir = cryochamber::work_dir()?;
+    let host_config;
+    let agent_cmd = match agent_cmd {
+        Some(agent_cmd) => agent_cmd,
+        None => {
+            host_config = cryochamber::hub::config::load_config()?;
+            &host_config.default_agent
+        }
+    };
     let report = cryochamber::protocol::scaffold_chamber(&dir, agent_cmd)?;
 
     let line = |label: &str, created: bool| {

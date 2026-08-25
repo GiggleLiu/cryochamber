@@ -52,6 +52,9 @@ pub fn build_router_with_config(
     app: Arc<WebAppState>,
     config: crate::hub::config::HubConfig,
 ) -> Router {
+    if let Ok(mut default_agent) = app.default_agent.write() {
+        *default_agent = config.default_agent.clone();
+    }
     let mut configured_hosts = vec![config.host.clone()];
     configured_hosts.extend(config.public_hosts.iter().cloned());
     // The page surface belongs entirely to the console, which is served from
@@ -72,6 +75,11 @@ pub fn build_router_with_config(
             post(crate::hub::routes::chambers::post_new),
         )
         .route(
+            "/api/config",
+            get(crate::hub::routes::config::get_config)
+                .post(crate::hub::routes::config::post_config),
+        )
+        .route(
             "/api/chambers/{id}/status",
             get(crate::hub::routes::chamber::get_status),
         )
@@ -86,6 +94,14 @@ pub fn build_router_with_config(
         .route(
             "/api/chambers/{id}/send",
             post(crate::hub::routes::chamber::post_send),
+        )
+        .route(
+            "/api/chambers/{id}/plan",
+            post(crate::hub::routes::chamber::post_plan),
+        )
+        .route(
+            "/api/chambers/{id}/agent",
+            post(crate::hub::routes::chamber::post_agent),
         )
         .route(
             "/api/chambers/{id}/start",

@@ -13,7 +13,7 @@
 <tr><th>类别</th><th>命令</th><th>作用</th></tr>
 </thead>
 <tbody>
-<tr class="group"><td rowspan="6">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。</td></tr>
+<tr class="group"><td rowspan="6">生命周期</td><td><code>cryo init [--agent &lt;cmd&gt;]</code></td><td>初始化目录：写入 <code>cryo.toml</code>、<code>plan.md</code>、<code>NOTES.md</code> 和 <code>README.md</code>。已有文件会被保留。未给出 <code>--agent</code> 时使用 <code>cryohub.toml</code> 中的主机级 <code>default_agent</code>（内置默认：<code>pi</code>）。</td></tr>
 <tr><td><code>cryo start [--agent &lt;cmd&gt;]</code></td><td>启动守护进程。读取 <code>cryo.toml</code> 并把覆盖项写入 <code>timer.json</code>。</td></tr>
 <tr><td><code>cryo start --max-session-duration 3600</code></td><td>为本次运行覆盖会话超时时间。</td></tr>
 <tr><td><code>cryo status</code></td><td>显示守护进程是否在运行、当前会话编号以及下一次唤醒时间。</td></tr>
@@ -32,7 +32,7 @@
 
 | 命令 | 作用 |
 |---------|--------------|
-| `cryohub start [--host <ip>] [--port <n>]` | 安装一个重启后依然存活的服务。默认强制 bearer 鉴权，并在首次运行时打印 owner token（之后可用 `cryohub token owner` 再次打印）。`--host` 和 `--port` 同时更新已保存的 hub 配置。 |
+| `cryohub start [--host <ip>] [--port <n>] [--default-agent <cmd>]` | 安装一个重启后依然存活的服务。默认强制 bearer 鉴权，并在首次运行时打印 owner token（之后可用 `cryohub token owner` 再次打印）。提供的主机、端口和默认智能体会更新已保存的主机配置。 |
 | `cryohub start --foreground` | 在当前终端运行 hub，而不是安装服务。 |
 | `cryohub stop` | 卸载全局 hub 服务。 |
 | `cryohub restart` | 重启已安装的全局 hub 服务，无需重新安装。 |

@@ -78,6 +78,20 @@ export interface TodoItem {
   created: string
 }
 
+export interface HostConfig {
+  default_agent: string
+}
+
+/** `POST /api/chambers/{id}/agent`. */
+export interface ChamberAgentUpdate {
+  agent: string
+  /** The chamber is running, so the daemon is still on the old runner. */
+  restart_required: boolean
+  /** A `cryo start --agent` override in `timer.json` wins over `cryo.toml`,
+   * so a restart alone will not put this runner in charge. */
+  override_active: boolean
+}
+
 /** `GET /api/chambers/{id}/status`. The raw `cryo.toml` is deliberately absent
  * from the hub's payload (it can hold an API key); `has_config` plus the masked
  * `settings_rows` are what the UI gets. */
@@ -85,12 +99,20 @@ export interface ChamberStatus {
   running: boolean
   agent_running: boolean
   session: number
+  /** What will actually run: a `cryo start --agent` override when one is in
+   * force, else `cryo.toml`'s `agent`. */
   agent: string
+  /** What `cryo.toml` says — the value the agent dropdown edits. Differs from
+   * `agent` only while a CLI override is in force. */
+  config_agent: string
   log_tail: string
   daily_digests: DailyDigest[]
   next_wake: string | null
   notes_html: string
   plan_html: string
+  /** Raw `plan.md`, which the plan editor writes back. Safe to ship (unlike
+   * `cryo.toml`): a plan holds no credentials. */
+  plan_content: string
   has_config: boolean
   settings_rows: SettingsRow[]
   task: string | null
@@ -295,6 +317,35 @@ export class HubClient {
     return this.request<ChamberStatus>(`/api/chambers/${encodeURIComponent(chamberId)}/status`)
   }
 
+  /** Set one chamber's `agent` in its own `cryo.toml`. The daemon reads that
+   * file when it starts, so `restart_required` says whether the chamber has to
+   * be restarted before the new runner is the one that actually wakes. */
+  async setChamberAgent(chamberId: string, agent: string): Promise<ChamberAgentUpdate> {
+    const body = await this.request<Partial<ChamberAgentUpdate>>(
+      `/api/chambers/${encodeURIComponent(chamberId)}/agent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent }),
+      },
+    )
+    return {
+      agent: typeof body.agent === 'string' ? body.agent : agent,
+      restart_required: body.restart_required === true,
+      override_active: body.override_active === true,
+    }
+  }
+
+  /** Replace a chamber's `plan.md`. No restart: the agent is told to read the
+   * plan at the top of every session, so the next wake sees it. */
+  async setChamberPlan(chamberId: string, content: string): Promise<void> {
+    await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    })
+  }
+
   async chamberTodos(chamberId: string): Promise<TodoItem[]> {
     return this.request<TodoItem[]>(`/api/chambers/${encodeURIComponent(chamberId)}/todos`)
   }
@@ -329,6 +380,18 @@ export class HubClient {
    * what makes the app re-register; the returned list is not needed here. */
   async refreshIndex(): Promise<void> {
     await this.request('/api/chambers/refresh', { method: 'POST' })
+  }
+
+  async hostConfig(): Promise<HostConfig> {
+    return this.request<HostConfig>('/api/config')
+  }
+
+  async updateHostConfig(defaultAgent: string): Promise<HostConfig> {
+    return this.request<HostConfig>('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_agent: defaultAgent }),
+    })
   }
 
   async listInvites(): Promise<Invite[]> {

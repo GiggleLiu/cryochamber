@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[test]
 fn test_config_defaults() {
     let config = CryoConfig::default();
-    assert_eq!(config.agent, "opencode");
+    assert_eq!(config.agent, "pi");
     assert_eq!(config.max_session_duration, 3600);
     assert_eq!(config.watch_dirs, default_watch_dirs());
 }

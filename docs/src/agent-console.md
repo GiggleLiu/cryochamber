@@ -82,6 +82,38 @@ cryohub token list
 cryohub token revoke alice
 ```
 
+## Choosing which agent a chamber runs
+
+Two dropdowns, both owner-only:
+
+- **Settings → Default agent** is the host-wide default, saved to
+  `default_agent` in `cryohub.toml`. It is the runner **new** chambers are
+  created with — by the console's *+ New chamber* and by a plain `cryo init` on
+  the same machine. Changing it never rewrites a chamber that already exists.
+- **⋯ Chamber controls → Settings → Agent** is one chamber's own runner, saved
+  to `agent` in that chamber's `cryo.toml`.
+
+Both lists offer `pi`, `opencode`, `claude`, `codex` and `kimi`, plus whatever
+is currently saved — a hand-written command like `pi --thinking high`, or a
+path to your own runner, stays selectable rather than being quietly replaced.
+Anything else you want to run, write into `cryo.toml` directly.
+
+The daemon reads `cryo.toml` when it starts, so changing a **running**
+chamber's agent takes effect on its next restart; the console says so when that
+is the case. Saving also rewrites `cryo.toml`, which does not preserve comments
+in that file.
+
+## Editing a chamber's plan
+
+**⋯ Chamber controls → Plan → Edit plan** opens `plan.md` as markdown source and
+writes it back. Owner-only.
+
+Nothing has to be restarted: the agent is told to read `plan.md` at the top of
+every session, so the next wake works from the new brief. Last write wins — the
+console has no conflict dialog, because the chamber's own agent is instructed to
+keep its running state in `NOTES.md`, which stays read-only here for the same
+reason.
+
 ## Installing it on a phone or desktop
 
 The console is a PWA. Once it is open in a browser:

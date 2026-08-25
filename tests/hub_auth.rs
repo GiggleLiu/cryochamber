@@ -639,8 +639,12 @@ const OWNER_ONLY: &[(&str, &str)] = &[
     // even for a chamber the invite can chat in.
     ("GET", "/api/chambers/{id}/status"),
     ("GET", "/api/chambers/{id}/todos"),
+    ("POST", "/api/chambers/{id}/agent"),
+    ("POST", "/api/chambers/{id}/plan"),
     ("POST", "/api/chambers/refresh"),
     ("POST", "/api/chambers/new"),
+    ("GET", "/api/config"),
+    ("POST", "/api/config"),
     ("GET", "/api/tokens"),
     ("POST", "/api/tokens"),
     ("POST", "/api/tokens/Alice/revoke"),

@@ -140,6 +140,20 @@ pub async fn post_new(
         );
     }
 
+    let default_agent = app
+        .default_agent
+        .read()
+        .map(|agent| agent.clone())
+        .unwrap_or_else(|_| crate::config::default_agent());
+    if provider_config.as_ref().is_some_and(|p| p.model.is_some()) {
+        if let Some(error) = model_refusal(&default_agent) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error })),
+            );
+        }
+    }
+
     match std::fs::create_dir(&target) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -158,7 +172,7 @@ pub async fn post_new(
         }
     }
 
-    if let Err(e) = crate::protocol::scaffold_chamber(&target, "opencode") {
+    if let Err(e) = crate::protocol::scaffold_chamber(&target, &default_agent) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -167,7 +181,7 @@ pub async fn post_new(
         );
     }
     if let Some(provider_config) = provider_config {
-        if let Err(e) = write_opencode_provider_config(&target, &provider_config) {
+        if let Err(e) = write_provider_config(&target, &provider_config) {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -278,17 +292,67 @@ fn api_key_env_for_provider(provider: &str) -> String {
     }
 }
 
-fn write_opencode_provider_config(
+/// The bare executable name of an agent command (`"pi --provider x"` -> `"pi"`).
+fn agent_executable(agent_cmd: &str) -> anyhow::Result<String> {
+    let program = crate::agent::agent_program(agent_cmd)?;
+    Ok(program.rsplit('/').next().unwrap_or(&program).to_string())
+}
+
+/// Why a chosen model cannot reach this runner, or `None` if it can.
+///
+/// An API key is universal — every runner reads it from the environment — but a
+/// *model* only reaches the runner through a runner-specific flag or env var,
+/// and Cryohub knows those for `opencode` and `pi` alone. Writing the model
+/// nowhere and creating the chamber anyway would hand the owner a chamber that
+/// silently ignores the model they picked, so `post_new` refuses instead.
+fn model_refusal(agent_cmd: &str) -> Option<String> {
+    match agent_executable(agent_cmd) {
+        Ok(exe) if exe == "opencode" || exe == "pi" => None,
+        Ok(_) => Some(format!(
+            "the host agent `{agent_cmd}` takes its model from its own command, not from Cryohub: \
+             leave Model blank and add the model flag to `agent` in the chamber's cryo.toml"
+        )),
+        Err(error) => Some(format!(
+            "the host agent `{agent_cmd}` is not a command Cryohub can parse ({error:#}): fix \
+             `default_agent` in cryohub.toml before creating a chamber with a model"
+        )),
+    }
+}
+
+fn write_provider_config(
     target: &std::path::Path,
     provider: &ProviderConfigInput,
 ) -> anyhow::Result<()> {
     let config_path = crate::config::config_path(target);
     let mut config = crate::config::load_config(&config_path)?.unwrap_or_default();
-    config.agent = "opencode".to_string();
     let mut env = HashMap::new();
-    env.insert("OPENCODE_PROVIDER".to_string(), provider.provider.clone());
-    if let Some(model) = &provider.model {
-        env.insert("OPENCODE_MODEL".to_string(), model.clone());
+    match agent_executable(&config.agent)?.as_str() {
+        "opencode" => {
+            env.insert("OPENCODE_PROVIDER".to_string(), provider.provider.clone());
+            if let Some(model) = &provider.model {
+                env.insert("OPENCODE_MODEL".to_string(), model.clone());
+            }
+        }
+        "pi" => {
+            config.agent.push_str(" --provider ");
+            config
+                .agent
+                .push_str(&shell_words::quote(&provider.provider));
+            if let Some(model) = &provider.model {
+                config.agent.push_str(" --model ");
+                config.agent.push_str(&shell_words::quote(model));
+            }
+        }
+        // Any other runner: the API key below is the whole wiring. `post_new`
+        // refuses a model for these before it creates the directory, with a
+        // message that says why; this arm makes the drop impossible rather
+        // than merely unreached, since it reads the *scaffolded* agent while
+        // the guard reads the host default.
+        other => {
+            if provider.model.is_some() {
+                anyhow::bail!("`{other}` takes its model from its own command, not from Cryohub");
+            }
+        }
     }
     env.insert(
         api_key_env_for_provider(&provider.provider),

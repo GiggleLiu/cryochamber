@@ -7,6 +7,7 @@ import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
 import { TodosTab } from './controls/TodosTab'
 import { HtmlTab } from './controls/HtmlTab'
+import { PlanTab } from './controls/PlanTab'
 import { SettingsTab } from './controls/SettingsTab'
 import { LogTab } from './controls/LogTab'
 
@@ -257,12 +258,14 @@ export function ControlsSheet({
         <Sheet title={section} label={`${chamberName} ${section}`} onClose={() => setSection(null)}>
           {section === 'Todos' && <TodosTab chamberId={chamberId} />}
           {section === 'Plan' && (
-            <HtmlTab html={status.plan_html} empty="No plan.md in this chamber." />
+            <PlanTab status={status} chamberId={chamberId} onSaved={load} />
           )}
           {section === 'Notes' && (
             <HtmlTab html={status.notes_html} empty="No NOTES.md in this chamber." />
           )}
-          {section === 'Settings' && <SettingsTab status={status} />}
+          {section === 'Settings' && (
+            <SettingsTab status={status} chamberId={chamberId} onAgentChanged={load} />
+          )}
           {section === 'Log' && (
             <LogTab
               chamberId={chamberId}

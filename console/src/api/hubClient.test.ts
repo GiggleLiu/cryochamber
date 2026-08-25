@@ -91,6 +91,69 @@ test('invite management wrappers hit the token routes', async () => {
   expect(calls).toContain('POST /api/tokens/Cara/revoke')
 })
 
+test('host agent config uses the owner-only config route', async () => {
+  const calls: Array<[string, RequestInit | undefined]> = []
+  const fetchFn = mockFetch((url, init) => {
+    calls.push([String(url), init])
+    return { default_agent: init?.method === 'POST' ? 'pi --thinking high' : 'pi' }
+  })
+  const client = new HubClient({ ...OPTS, fetch: fetchFn })
+
+  await expect(client.hostConfig()).resolves.toEqual({ default_agent: 'pi' })
+  await expect(client.updateHostConfig('pi --thinking high')).resolves.toEqual({
+    default_agent: 'pi --thinking high',
+  })
+  expect(calls[0][0]).toBe('/api/config')
+  expect(calls[0][1]?.method).toBeUndefined()
+  expect(calls[1][0]).toBe('/api/config')
+  expect(calls[1][1]?.method).toBe('POST')
+  expect(calls[1][1]?.body).toBe(JSON.stringify({ default_agent: 'pi --thinking high' }))
+})
+
+test('setChamberAgent posts to the chamber agent route and fills in absent flags', async () => {
+  const calls: Array<[string, RequestInit | undefined]> = []
+  const fetchFn = mockFetch((url, init) => {
+    calls.push([String(url), init])
+    return { agent: 'claude', restart_required: true, override_active: true }
+  })
+  const client = new HubClient({ ...OPTS, fetch: fetchFn })
+
+  await expect(client.setChamberAgent('cham a/b', 'claude')).resolves.toEqual({
+    agent: 'claude',
+    restart_required: true,
+    override_active: true,
+  })
+  // Ids can carry a path separator, so they are encoded or they address a
+  // different route.
+  expect(calls[0][0]).toBe('/api/chambers/cham%20a%2Fb/agent')
+  expect(calls[0][1]?.method).toBe('POST')
+  expect(calls[0][1]?.body).toBe(JSON.stringify({ agent: 'claude' }))
+
+  // A hub that answers with nothing to say means "no, and no": the caller must
+  // never read an absent flag as a warning it then shows the operator.
+  const quiet = new HubClient({ ...OPTS, fetch: mockFetch(() => ({})) })
+  await expect(quiet.setChamberAgent('cham-a', 'pi')).resolves.toEqual({
+    agent: 'pi',
+    restart_required: false,
+    override_active: false,
+  })
+})
+
+test('setChamberPlan posts the raw markdown to the chamber plan route', async () => {
+  const calls: Array<[string, RequestInit | undefined]> = []
+  const fetchFn = mockFetch((url, init) => {
+    calls.push([String(url), init])
+    return { bytes: 8 }
+  })
+  const client = new HubClient({ ...OPTS, fetch: fetchFn })
+
+  await client.setChamberPlan('cham-a', '# Brief\n')
+
+  expect(calls[0][0]).toBe('/api/chambers/cham-a/plan')
+  expect(calls[0][1]?.method).toBe('POST')
+  expect(calls[0][1]?.body).toBe(JSON.stringify({ content: '# Brief\n' }))
+})
+
 test('createInvite surfaces the hub\'s own words on a rejected name', async () => {
   // A duplicate name is a considered answer, not a broken connection, and the
   // hub sometimes says why — so the caller gets those words verbatim.

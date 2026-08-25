@@ -123,6 +123,10 @@ describe('appearance', () => {
 describe('owner-only rows', () => {
   function ownerHub() {
     const client = new HubClient({ token: 'k', fetch: vi.fn() })
+    vi.spyOn(client, 'hostConfig').mockResolvedValue({ default_agent: 'pi' })
+    vi.spyOn(client, 'updateHostConfig').mockImplementation(async (default_agent) => ({
+      default_agent,
+    }))
     vi.spyOn(client, 'refreshIndex').mockResolvedValue(undefined)
     vi.spyOn(client, 'listChambers').mockResolvedValue([chamber('cham-c', 'gamma')])
     return client
@@ -135,6 +139,46 @@ describe('owner-only rows', () => {
     expect(toggle).not.toBeChecked()
     await userEvent.click(toggle)
     expect(useAppStore.getState().showCompletedArchived).toBe(true)
+  })
+
+  test('the default agent dropdown loads the host setting and saves on change', async () => {
+    const client = ownerHub()
+    useAppStore.setState({ hubRole: 'owner', client })
+    render(<SettingsSheet />)
+
+    const select = await screen.findByRole('combobox', { name: 'Default agent' })
+    expect(select).toHaveValue('pi')
+    await userEvent.selectOptions(select, 'claude')
+
+    expect(client.updateHostConfig).toHaveBeenCalledWith('claude')
+    await waitFor(() => expect(select).toHaveValue('claude'))
+  })
+
+  test('a host default the dropdown does not know stays selectable', async () => {
+    const client = ownerHub()
+    vi.mocked(client.hostConfig).mockResolvedValue({ default_agent: 'pi --thinking high' })
+    useAppStore.setState({ hubRole: 'owner', client })
+    render(<SettingsSheet />)
+
+    const select = await screen.findByRole('combobox', { name: 'Default agent' })
+    expect(select).toHaveValue('pi --thinking high')
+    expect(Array.from(select.querySelectorAll('option')).map((o) => o.value)).toContain(
+      'pi --thinking high',
+    )
+  })
+
+  test('shows the hub error when the default agent cannot be saved', async () => {
+    const client = ownerHub()
+    vi.mocked(client.updateHostConfig).mockRejectedValue(new ApiError(400, 'invalid default agent'))
+    useAppStore.setState({ hubRole: 'owner', client })
+    render(<SettingsSheet />)
+
+    const select = await screen.findByRole('combobox', { name: 'Default agent' })
+    await userEvent.selectOptions(select, 'codex')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('invalid default agent')
+    // The dropdown goes back to the runner the hub still holds.
+    expect(select).toHaveValue('pi')
   })
 
   test('refresh chambers re-scans the hub and re-registers', async () => {

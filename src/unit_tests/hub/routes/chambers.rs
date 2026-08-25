@@ -305,12 +305,134 @@ mod post_new {
         let cfg = crate::config::load_config(&dir.path().join("alpha").join("cryo.toml"))
             .unwrap()
             .unwrap();
-        assert_eq!(cfg.agent, "opencode");
+        assert_eq!(cfg.agent, "pi");
         assert!(
             cfg.provider.is_none(),
             "folded provider section should be optional unless filled in"
         );
         assert!(cfg.providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn creates_new_chamber_with_configured_host_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "codex --model gpt-5".to_string(),
+        ));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: None,
+                api_key: None,
+                model: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha/cryo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.agent, "codex --model gpt-5");
+    }
+
+    #[tokio::test]
+    async fn opencode_host_default_keeps_opencode_provider_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "opencode".to_string(),
+        ));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("anthropic".into()),
+                api_key: Some("sk-test".into()),
+                model: Some("claude-sonnet".into()),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha/cryo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.agent, "opencode");
+        let env = &cfg.provider.unwrap().env;
+        assert_eq!(env.get("OPENCODE_PROVIDER").unwrap(), "anthropic");
+        assert_eq!(env.get("OPENCODE_MODEL").unwrap(), "claude-sonnet");
+    }
+
+    #[tokio::test]
+    async fn refuses_a_model_the_host_agent_would_silently_ignore() {
+        // Claude takes its model from its own command line. Accepting the
+        // owner's model and writing it nowhere would scaffold a chamber that
+        // quietly runs a different model than the one they picked.
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "claude".to_string(),
+        ));
+
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("anthropic".into()),
+                api_key: Some("sk-test".into()),
+                model: Some("claude-sonnet".into()),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("claude"),
+            "the error should name the host agent: {body}"
+        );
+        assert!(
+            !dir.path().join("alpha").exists(),
+            "a rejected request must not leave a half-made chamber behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn accepts_a_provider_without_a_model_on_any_host_agent() {
+        // The API key is universal, so provider-only setup still works for a
+        // runner Cryohub has no model wiring for.
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "claude".to_string(),
+        ));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("anthropic".into()),
+                api_key: Some("sk-test".into()),
+                model: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha/cryo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.agent, "claude");
+        let env = &cfg.provider.unwrap().env;
+        assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test");
     }
 
     #[tokio::test]
@@ -333,15 +455,15 @@ mod post_new {
         let cfg = crate::config::load_config(&dir.path().join("alpha").join("cryo.toml"))
             .unwrap()
             .unwrap();
-        assert_eq!(cfg.agent, "opencode");
+        assert_eq!(cfg.agent, "pi --provider openai --model gpt-5");
         let provider = cfg
             .provider
             .as_ref()
             .expect("provider should be configured");
         assert_eq!(provider.name, "openai");
         assert!(cfg.providers.is_empty());
-        assert_eq!(provider.env.get("OPENCODE_PROVIDER").unwrap(), "openai");
-        assert_eq!(provider.env.get("OPENCODE_MODEL").unwrap(), "gpt-5");
+        assert!(!provider.env.contains_key("OPENCODE_PROVIDER"));
+        assert!(!provider.env.contains_key("OPENCODE_MODEL"));
         assert_eq!(
             provider.env.get("OPENAI_API_KEY").unwrap(),
             "sk-openai-test"
@@ -369,12 +491,10 @@ mod post_new {
             .unwrap()
             .unwrap();
         let provider = cfg.provider.as_ref().expect("provider");
+        assert_eq!(cfg.agent, "pi --provider my-provider --model my-model");
         assert_eq!(provider.name, "my-provider");
-        assert_eq!(
-            provider.env.get("OPENCODE_PROVIDER").unwrap(),
-            "my-provider"
-        );
-        assert_eq!(provider.env.get("OPENCODE_MODEL").unwrap(), "my-model");
+        assert!(!provider.env.contains_key("OPENCODE_PROVIDER"));
+        assert!(!provider.env.contains_key("OPENCODE_MODEL"));
         assert_eq!(
             provider.env.get("MY_PROVIDER_API_KEY").unwrap(),
             "sk-custom-test"

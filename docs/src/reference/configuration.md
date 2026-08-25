@@ -6,7 +6,7 @@ Each chamber is configured through a `cryo.toml` file in its directory. `cryo in
 
 ```toml
 # cryo.toml — cryochamber project configuration
-agent = "opencode"               # Agent command (opencode, claude, codex, pi, kimi, ...)
+agent = "pi"                     # Agent command (pi, opencode, claude, codex, kimi, ...)
 max_session_duration = 3600      # Session timeout in seconds (0 = no timeout)
 watch_dirs = ["messages/inbox"]  # Directories to watch for reactive wake ([] disables)
 zulip_poll_interval = 5          # Zulip sync poll interval in seconds
@@ -19,7 +19,7 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # Env vars set when spawning the age
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `agent` | `"opencode"` | Agent command to run. Use `"claude"` for Claude Code, `"codex"` for Codex, `"pi"` for Pi, `"kimi"` for Kimi Code, or any executable on `PATH`. |
+| `agent` | `"pi"` | Agent command to run. Use `"opencode"` for OpenCode, `"claude"` for Claude Code, `"codex"` for Codex, `"kimi"` for Kimi Code, or any executable on `PATH`. New chambers use the host-level `default_agent` unless `cryo init --agent` supplies an explicit command. An owner can also change it from the [Agent Console](../agent-console.md) — chamber controls → Settings → Agent — which rewrites this file (comments and any keys Cryochamber does not recognise are not preserved) and takes effect on the chamber's next restart. |
 | `max_session_duration` | `3600` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
 | `zulip_poll_interval` | `5` | How often `cryo-zulip sync` polls Zulip, in seconds. `cryo-zulip sync --interval N` overrides it for one run. |
@@ -72,6 +72,7 @@ Cryohub settings live in `$XDG_CONFIG_HOME/cryo/cryohub.toml`, or `~/.config/cry
 host = "127.0.0.1"
 port = 8765
 chamber_root = "/Users/alice/.cryo/chambers"
+default_agent = "pi"
 public = false
 owner_name = "human"
 public_hosts = []
@@ -87,10 +88,16 @@ Unknown keys are rejected: a typo such as `console-dir` fails `cryohub start` wi
 | `host` | `"127.0.0.1"` | Bind address for the global dashboard service. |
 | `port` | `8765` | TCP port for the global dashboard service. |
 | `chamber_root` | `~/.cryo/chambers` | Default location for chambers created from the dashboard UI. |
+| `default_agent` | `"pi"` | Host-level agent command for new chambers created by either the Console or plain `cryo init`. Change it in the Console's Settings sheet, edit this file, or run `cryohub start --default-agent <cmd>`. An explicit `cryo init --agent <cmd>` overrides it. Existing chambers keep their own `cryo.toml`. |
 | `public` | `true` | Whether bearer-token auth is enforced on every `/api` route. On by default; a config file written before this default that omits the key also loads as `true`, while an explicit `public = false` stays open. Cleared only by `cryohub start --no-public` — a plain `cryohub start` keeps whatever is saved here. |
 | `owner_name` | `"human"` | Sender name stamped on messages the owner sends in public mode. A client-supplied `from` is ignored. |
 | `public_hosts` | `[]` | Extra `Host` header values to accept, on top of loopback and `host`. Needed when a reverse proxy forwards the public hostname. |
 | `console_dir` | *(unset — embedded)* | Serve the [Agent Console](../agent-console.md) from this directory instead of the build embedded in the `cryohub` binary. Must be an absolute path to a vite `dist/`. Development and custom builds only. |
+
+The Console updates `default_agent` without a hub restart. The next chamber it
+creates uses the new command; no existing chamber is rewritten. A hand edit to
+this file, like every other key here, is picked up on the next `cryohub
+restart`.
 
 ### Serving the Agent Console
 
