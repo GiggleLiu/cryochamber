@@ -207,7 +207,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     if (chamber) return
     const current = useAppStore.getState().view
     if (current.name === 'conversation' && current.chamberId === chamberId) {
-      navigate({ name: 'projects' })
+      navigate({ name: 'projects' }, { replace: true })
     }
   }, [chamber, chamberId, navigate])
 

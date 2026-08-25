@@ -11,6 +11,7 @@ import {
 } from './cache'
 import { accountKey } from '../lib/account'
 import { resetChamberEvents } from './chamberEvents'
+import { writeViewHash } from '../lib/hashRoute'
 
 /** Per account: whether the projects list shows the completed and archived
  * folds. A name is reusable and a token is not, so the preference is keyed on
@@ -91,6 +92,8 @@ export interface AppState {
    *  reload. Transient — never cached, never persisted. */
   updateAvailable: boolean
   chambers: Chamber[]
+  /** The hub index has answered at least once for this session. */
+  chambersLoaded: boolean
   messagesByChamber: Record<string, ChamberMessage[]>
   /** `messageKey` of the newest message seen when the chamber was last open. Persisted. */
   lastReadByChamber: Record<string, string>
@@ -111,7 +114,7 @@ export interface AppState {
   outboxByChamber: Record<string, OutboxItem[]>
   setCreds(c: Credentials): void
   logout(reason?: string): void
-  navigate(v: View): void
+  navigate(v: View, options?: { replace?: boolean }): void
   setSettingsOpen(open: boolean): void
   setUpdateAvailable(v: boolean): void
   setChambers(list: Chamber[]): void
@@ -147,6 +150,7 @@ const initialData = {
   settingsOpen: false,
   updateAvailable: false,
   chambers: [] as Chamber[],
+  chambersLoaded: false,
   messagesByChamber: {} as Record<string, ChamberMessage[]>,
   lastReadByChamber: {} as Record<string, string>,
   loadedChambers: [] as string[],
@@ -224,6 +228,7 @@ export const useAppStore = create<AppState>()((set, get) => {
         selfName: c.name,
         hubRole: c.role,
         view: { name: 'projects' },
+        chambersLoaded: false,
         loginReason: null,
         accessNotice: null,
         showCompletedArchived: loadShowCompleted(c),
@@ -246,14 +251,21 @@ export const useAppStore = create<AppState>()((set, get) => {
       set({ ...initialData, loginReason: reason ?? null })
     },
 
-    navigate: (v) => set({ view: v, accessNotice: null }),
+    navigate: (v, options) => {
+      writeViewHash(v, options?.replace)
+      set({ view: v, accessNotice: null })
+    },
     setSettingsOpen: (open) => set({ settingsOpen: open }),
     setUpdateAvailable: (v) => set({ updateAvailable: v }),
 
     setChambers: (list) => {
       // Clearing loadedChambers on every index read is what makes a re-register
       // re-fetch histories over whatever the stream left behind.
-      set({ chambers: [...list].sort((a, b) => a.name.localeCompare(b.name)), loadedChambers: [] })
+      set({
+        chambers: [...list].sort((a, b) => a.name.localeCompare(b.name)),
+        chambersLoaded: true,
+        loadedChambers: [],
+      })
       persist()
     },
 
@@ -342,6 +354,7 @@ export const useAppStore = create<AppState>()((set, get) => {
     // Access was revoked: navigating away is not enough, because the chamber
     // stays in the list, stays tappable, and fails again on every tap.
     pruneChamber: (chamberId, notice) => {
+      let redirected = false
       set((state) => {
         const messagesByChamber = { ...state.messagesByChamber }
         const lastReadByChamber = { ...state.lastReadByChamber }
@@ -349,6 +362,7 @@ export const useAppStore = create<AppState>()((set, get) => {
         delete messagesByChamber[chamberId]
         delete lastReadByChamber[chamberId]
         delete outboxByChamber[chamberId]
+        redirected = state.view.name === 'conversation' && state.view.chamberId === chamberId
         return {
           chambers: state.chambers.filter((c) => c.id !== chamberId),
           messagesByChamber,
@@ -362,6 +376,7 @@ export const useAppStore = create<AppState>()((set, get) => {
           accessNotice: notice ?? state.accessNotice,
         }
       })
+      if (redirected) writeViewHash({ name: 'projects' }, true)
       persist()
     },
 

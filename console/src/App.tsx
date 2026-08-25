@@ -12,6 +12,7 @@ import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
 import { UpdateBar } from './components/UpdateBar'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { hashForView, viewFromHash } from './lib/hashRoute'
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
  * usable token — the caller says so on the login screen rather than dropping
@@ -38,10 +39,14 @@ export default function App() {
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
   const hubRole = useAppStore((s) => s.hubRole)
-  const chamberCount = useAppStore((s) => s.chambers.length)
+  const chambers = useAppStore((s) => s.chambers)
+  const chambersLoaded = useAppStore((s) => s.chambersLoaded)
   const accessNotice = useAppStore((s) => s.accessNotice)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
   const [downloadNote, setDownloadNote] = useState<string | null>(null)
+  const [routeRevision, setRouteRevision] = useState(0)
+  const explicitConversationRoute = useRef(viewFromHash()?.name === 'conversation')
+  const chamberCount = chambers.length
 
   useEffect(() => {
     // Before anything reads storage: the pre-cutover build's id maps and
@@ -93,6 +98,46 @@ export default function App() {
     // would be a second round-trip that can only agree with the first.
   }, [client])
 
+  useEffect(() => {
+    const changed = () => setRouteRevision((n) => n + 1)
+    window.addEventListener('hashchange', changed)
+    window.addEventListener('popstate', changed)
+    return () => {
+      window.removeEventListener('hashchange', changed)
+      window.removeEventListener('popstate', changed)
+    }
+  }, [])
+
+  // The hash proposes a view; the store owns it. Conversation routes wait for
+  // a completed chamber index so a cold deep link is not rejected against an
+  // empty pre-boot list. Once the index has loaded, Back and Forward keep
+  // working through reconnects from the last known scope.
+  useEffect(() => {
+    if (!creds) return
+    const route = viewFromHash()
+    const store = useAppStore.getState()
+    if (route?.name === 'conversation') {
+      explicitConversationRoute.current = true
+      if (!chambersLoaded) return
+      if (chambers.some((c) => c.id === route.chamberId)) {
+        if (
+          store.view.name !== 'conversation' ||
+          store.view.chamberId !== route.chamberId
+        ) {
+          store.navigate(route)
+        }
+      } else {
+        store.navigate({ name: 'projects' }, { replace: true })
+      }
+      return
+    }
+    const projects = { name: 'projects' as const }
+    if (inviteToken && window.location.hash === '' && store.view.name === 'projects') return
+    if (store.view.name !== 'projects' || window.location.hash !== hashForView(projects)) {
+      store.navigate(projects, { replace: true })
+    }
+  }, [creds, chambers, chambersLoaded, inviteToken, routeRevision])
+
   // A guest's link is tied to one chamber, so landing them in a list of one is
   // a step that says nothing. Once per app start, and only from the default
   // view: a guest who taps Back to the list is meant to stay there, and a
@@ -102,10 +147,11 @@ export default function App() {
   const landed = useRef(false)
   useEffect(() => {
     if (landed.current || hubRole !== 'invite' || chamberCount !== 1) return
+    if (explicitConversationRoute.current) return
     const store = useAppStore.getState()
     if (store.view.name !== 'projects') return
     landed.current = true
-    store.navigate({ name: 'conversation', chamberId: store.chambers[0].id })
+    store.navigate({ name: 'conversation', chamberId: store.chambers[0].id }, { replace: true })
   }, [hubRole, chamberCount])
 
   // Last line of defense against SPA-rebooting attachment clicks: whatever
