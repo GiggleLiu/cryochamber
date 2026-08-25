@@ -1,4 +1,5 @@
 import type { AppRuntime } from './appBoot'
+import { pinnedFetch } from './pinnedFetch'
 import { tauriFetch, tauriInvoke, tauriLoadStore, type TauriStore } from './tauri'
 import { parseHubAccounts, type HubAccount, type HubsBackend } from '../store/hubs'
 
@@ -75,10 +76,10 @@ export function makeTauriRuntime(): AppRuntime {
   return {
     backend,
     transportFor(hub: HubAccount): typeof fetch {
-      // Unreachable today: nothing can mint pinned trust until the probe
-      // ships, and a silent fallback to the plain transport would drop the
-      // certificate check the user asked for.
-      if (hub.trust.kind === 'pinned') throw new Error('pinned transport arrives in a later task')
+      // A pinned hub is one the system trust store rejects, so the plugin
+      // fetch cannot reach it at all: its requests go out through Rust, where
+      // the pinned fingerprint is what decides the handshake.
+      if (hub.trust.kind === 'pinned') return pinnedFetch(hub)
       return tauriFetch()
     },
   }

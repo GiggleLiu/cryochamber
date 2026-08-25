@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { tauriFetch, tauriLoadStore, tauriInvoke } from './tauri'
+import { tauriChannel, tauriFetch, tauriLoadStore, tauriInvoke } from './tauri'
 
 afterEach(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,6 +25,27 @@ describe('tauri global access', () => {
     ;(window as any).__TAURI__ = { core: { invoke } }
     await expect(tauriInvoke<number>('probe_hub', { url: 'http://x' })).resolves.toBe(42)
     expect(invoke).toHaveBeenCalledWith('probe_hub', { url: 'http://x' })
+  })
+
+  it('builds a channel with the handler already attached', () => {
+    class FakeChannel {
+      onmessage: ((msg: unknown) => void) | undefined
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).__TAURI__ = { core: { invoke: vi.fn(), Channel: FakeChannel } }
+    const seen: unknown[] = []
+    const ch = tauriChannel<{ n: number }>((msg) => seen.push(msg))
+    expect(ch).toBeInstanceOf(FakeChannel)
+    // The handler must be in place before the channel is ever handed to a
+    // command: a message that arrives first would otherwise be dropped.
+    ch.onmessage?.({ n: 1 })
+    expect(seen).toEqual([{ n: 1 }])
+  })
+
+  it('says the runtime is missing when the global has no Channel', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).__TAURI__ = { core: { invoke: vi.fn() } }
+    expect(() => tauriChannel(() => {})).toThrow('Tauri runtime not available')
   })
 
   it('loads a store through the store plugin global', async () => {

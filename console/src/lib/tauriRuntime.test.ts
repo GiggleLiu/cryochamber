@@ -178,12 +178,34 @@ describe('makeTauriRuntime', () => {
     expect(f.load).not.toHaveBeenCalled()
   })
 
-  it('refuses a pinned hub until the pinned transport ships', () => {
-    fakeStore()
+  it('routes a pinned hub through the pinned transport, not the plugin fetch', async () => {
+    const f = fakeStore()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = (window as any).__TAURI__
+    t.core.Channel = class {
+      onmessage: ((msg: unknown) => void) | undefined
+    }
+    t.core.invoke.mockResolvedValueOnce({ status: 200, headers: [], body_b64: '' })
     const rt = makeTauriRuntime()
-    expect(() => rt.transportFor(hub('https://c.example', { kind: 'pinned', sha256: 'a'.repeat(64) }))).toThrow(
-      'pinned transport arrives in a later task',
-    )
+    const pinned = hub('https://c.example', { kind: 'pinned', sha256: 'a'.repeat(64) })
+    // Building the transport must not reach the shell: `bootApp` builds one
+    // per hub before anything is fetched, and a throw here would take the
+    // whole boot down with it.
+    const transport = rt.transportFor(pinned)
+    expect(t.http.fetch).not.toHaveBeenCalled()
+
+    await transport('https://c.example/api/whoami')
+    expect(t.core.invoke).toHaveBeenCalledWith('pinned_fetch', {
+      req: expect.objectContaining({
+        url: 'https://c.example/api/whoami',
+        method: 'GET',
+        sha256: 'a'.repeat(64),
+      }),
+    })
+    // The certificate the user pinned is the whole point; the plugin fetch,
+    // which trusts the system store, must never see this hub.
+    expect(t.http.fetch).not.toHaveBeenCalled()
+    expect(f.load).not.toHaveBeenCalled()
   })
 })
 

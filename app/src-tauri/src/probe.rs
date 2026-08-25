@@ -109,8 +109,21 @@ impl ServerCertVerifier for CapturingVerifier {
 /// probe is a look at a handshake, not a download.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A client whose only certificate judgement is the one this verifier makes.
+/// A client whose only certificate judgement is the one this verifier makes,
+/// on the probe's own deadline.
 pub fn client_with_verifier(verifier: Arc<CapturingVerifier>) -> Result<reqwest::Client, String> {
+    client_with_verifier_timeout(verifier, Some(PROBE_TIMEOUT))
+}
+
+/// The same client with the whole-request deadline in the caller's hands.
+/// The pinned transport passes `None`: its event stream is meant to stay open
+/// for as long as the console is watching, and a fixed cap would cut every
+/// stream — and every slow upload — at the same arbitrary moment. Connecting
+/// still has a deadline, so an unreachable hub never hangs forever.
+pub fn client_with_verifier_timeout(
+    verifier: Arc<CapturingVerifier>,
+    timeout: Option<Duration>,
+) -> Result<reqwest::Client, String> {
     let config = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -119,9 +132,13 @@ pub fn client_with_verifier(verifier: Arc<CapturingVerifier>) -> Result<reqwest:
     .dangerous()
     .with_custom_certificate_verifier(verifier)
     .with_no_client_auth();
-    reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .use_preconfigured_tls(config)
-        .timeout(PROBE_TIMEOUT)
+        .connect_timeout(PROBE_TIMEOUT);
+    if let Some(timeout) = timeout {
+        builder = builder.timeout(timeout);
+    }
+    builder
         // A probe answers about the host the user typed. Following a redirect
         // would let the answer describe a certificate from somewhere else
         // entirely — and an https→http hop would report "valid" for a hub
