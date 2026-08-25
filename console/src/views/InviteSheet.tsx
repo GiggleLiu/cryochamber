@@ -199,7 +199,7 @@ export function InviteSheet({
           <input
             className="row-input"
             value={label}
-            placeholder="optional"
+            placeholder="e.g. mei-chen"
             autoCapitalize="words"
             autoCorrect="off"
             spellCheck={false}

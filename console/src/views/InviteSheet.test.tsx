@@ -79,6 +79,7 @@ function renderSheet() {
 test('titles the sheet for this chamber and lists only its active invites', async () => {
   renderSheet()
   expect(screen.getByRole('heading', { name: 'Invite to alpha' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Who is this for?')).toHaveAttribute('placeholder', 'e.g. mei-chen')
   const rows = await screen.findAllByRole('listitem')
   expect(rows).toHaveLength(2)
   expect(rows[0]).toHaveTextContent('Alice')
