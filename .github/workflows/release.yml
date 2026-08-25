@@ -215,3 +215,61 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: cryochamber-${{ github.ref_name }}-android-arm64.apk
+
+  # Build the macOS bundle from the native shell and attach it to the release.
+  build-macos:
+    name: macOS app
+    needs: verify
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Build the Agent Console
+        run: cd console && npm ci && npm run build
+
+      - name: Install tauri-cli
+        run: npm install -g @tauri-apps/cli@^2
+
+      # Ad-hoc signed (no identity configured): users right-click-open on
+      # first launch. Notarization is deliberately deferred — see the spec.
+      - name: Build app
+        run: cd app/src-tauri && tauri build
+
+      # The bundler leaves the .app carrying only the linker's ad-hoc
+      # signature, which Gatekeeper reads as a broken seal once the bundle has
+      # been rewritten. Re-sign the whole tree ad-hoc so at least the zipped
+      # .app opens cleanly; the dmg's inner copy is already packaged by now,
+      # so it ships as the bundler made it.
+      - name: Ad-hoc sign the app bundle
+        run: |
+          app="$(find app/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)"
+          test -n "$app" || { echo "::error::no .app produced"; exit 1; }
+          codesign --force --deep -s - "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --keepParent "$app" "cryochamber-${GITHUB_REF_NAME}-macos-arm64.app.zip"
+
+      - name: Collect artifact
+        run: |
+          dmg="$(find app/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)"
+          test -n "$dmg" || { echo "::error::no dmg produced"; exit 1; }
+          cp "$dmg" "cryochamber-${GITHUB_REF_NAME}-macos-arm64.dmg"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            cryochamber-${{ github.ref_name }}-macos-arm64.dmg
+            cryochamber-${{ github.ref_name }}-macos-arm64.app.zip
