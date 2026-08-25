@@ -47,16 +47,33 @@ export function makeClientFactory(rt: AppRuntime): (hub: HubAccount) => HubClien
     })
 }
 
+/** Shown on the Add Hub screen when the stored list could not be read. The
+ * warning is the point: an empty list here is indistinguishable from a first
+ * run, and adding a hub over it writes a new list where one already exists. */
+export const HUB_LOAD_ERROR =
+  'Could not read this device’s saved hubs. Adding a hub here replaces the saved list.'
+
 /**
  * App-mode boot: read the remembered hubs, enter app mode over them, then ask
  * each hub who our token is. The identity refresh is fire-and-forget — the
  * list is already on screen from the per-hub caches, and a hub that is down
  * must not hold up the ones that are not.
+ *
+ * A store that cannot be read still enters app mode, with no hubs and the
+ * reason on screen: staying in browser mode would leave the window on a blank
+ * Add Hub screen that explains nothing, behind an unhandled rejection.
  */
 export async function bootApp(rt: AppRuntime): Promise<void> {
-  const hubs = parseHubAccounts(await rt.backend.load())
+  let hubs: HubAccount[] = []
+  let loadError: string | null = null
+  try {
+    hubs = parseHubAccounts(await rt.backend.load())
+  } catch {
+    loadError = HUB_LOAD_ERROR
+  }
   const makeClient = makeClientFactory(rt)
   useAppStore.getState().initApp(hubs, rt.backend, makeClient)
+  if (loadError) useAppStore.setState({ loginReason: loadError })
   for (const hub of hubs) {
     void makeClient(hub)
       .whoami()

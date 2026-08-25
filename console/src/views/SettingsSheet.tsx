@@ -231,8 +231,13 @@ export function SettingsSheet() {
                       {roleByHub[h.id] === 'owner' ? 'Owner' : 'Guest'}
                       {version ? ` · cryohub v${version}` : ''}
                     </span>
-                    {connectionByHub[h.id] !== 'live' && (
+                    {/* Only a hub we failed to reach is down; one we have not
+                        heard from yet is still being asked. */}
+                    {connectionByHub[h.id] === 'offline' && (
                       <span className="hub-note">unreachable</span>
+                    )}
+                    {connectionByHub[h.id] === 'connecting' && (
+                      <span className="hub-note">connecting…</span>
                     )}
                     {authFailedHubs.includes(h.id) && (
                       <span className="hub-note">sign-in failed — token revoked?</span>

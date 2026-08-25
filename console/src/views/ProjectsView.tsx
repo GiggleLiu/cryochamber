@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Chamber } from '../api/types'
-import { hubIdOf, unreadCount, useAppStore, useIsOwner } from '../store/appStore'
+import { hubIdOf, isOwnerFor, unreadCount, useAppStore } from '../store/appStore'
 import { useOwnerHub } from '../hooks/useOwnerHub'
 import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, messageSeconds, previewText, tileColor } from '../lib/format'
@@ -47,10 +47,15 @@ export function ProjectsView() {
   const connectionByHub = useAppStore((s) => s.connectionByHub)
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
-  const isOwner = useIsOwner()
-  // Creating a chamber is a hub-level act, and app mode has no session-wide
-  // role to ask: owning *any* hub is what puts the + button there. Deliberately
-  // not the same question as `isOwner` above, which files this token's own list.
+  // Per row, never per session: a token can own one hub and be a guest on the
+  // next, so the fold is asked of the hub each chamber lives on. A session-wide
+  // `useIsOwner()` answers false for every app-mode row (no `hubRole`), which
+  // folded nothing while Settings still offered the switch.
+  const hubRole = useAppStore((s) => s.hubRole)
+  const roleByHub = useAppStore((s) => s.roleByHub)
+  const ownerFor = (c: Chamber) => isOwnerFor({ hubRole, roleByHub }, c.id)
+  // Creating a chamber is a hub-level act: owning *any* hub is what puts the +
+  // button there, which is also what gates the fold switch in Settings.
   const canCreate = useOwnerHub().isOwner
   const [newChamberOpen, setNewChamberOpen] = useState(false)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
@@ -64,10 +69,12 @@ export function ProjectsView() {
   // so their whole list can never disappear behind a preference they cannot
   // reach. Archived wins over completed: the operator put it away on purpose,
   // and one chamber must never appear in two groups.
-  const archivedList = isOwner ? visible.filter((c) => c.archived) : []
-  const completedList = isOwner ? visible.filter((c) => !c.archived && c.completed) : []
-  const active = isOwner ? visible.filter((c) => !c.archived && !c.completed) : visible
-  const showGroups = isOwner && showCompletedArchived
+  const archivedList = visible.filter((c) => ownerFor(c) && c.archived)
+  const completedList = visible.filter((c) => ownerFor(c) && !c.archived && c.completed)
+  const active = visible.filter((c) => !ownerFor(c) || (!c.archived && !c.completed))
+  // The lists are already empty for anything this token does not own, so the
+  // switch is the only remaining question.
+  const showGroups = showCompletedArchived
   // Nothing to show yet *and* still connecting means the first register is in
   // flight — show the shape of the list rather than an empty state that would
   // be contradicted a moment later. Once offline, the empty state plus the
@@ -82,7 +89,10 @@ export function ProjectsView() {
     // `hubIdOf`, never `c.hubId`: a row hydrated from the cache carries its hub
     // in its key alone.
     const hub = showHubs ? hubs.find((h) => h.id === hubIdOf(c)) : undefined
-    const reachable = hub ? connectionByHub[hub.id] === 'live' : true
+    // Only a hub we have actually failed to reach is unreachable. "Connecting"
+    // is a call still in flight, and saying it is down would be a verdict the
+    // app has not got yet.
+    const unreachable = hub ? connectionByHub[hub.id] === 'offline' : false
     const count = unreadCount(
       { messagesByChamber, lastReadByChamber, selfName, selfNameByHub },
       c.id,
@@ -107,9 +117,9 @@ export function ProjectsView() {
             {/* Which hub, and — when that hub is down — that everything on this
                 row is the last thing it said rather than the current state. */}
             {hub && (
-              <span className={`hub-chip${reachable ? '' : ' is-unreachable'}`}>
+              <span className={`hub-chip${unreachable ? ' is-unreachable' : ''}`}>
                 {hub.label}
-                {!reachable && ' · unreachable'}
+                {unreachable && ' · unreachable'}
               </span>
             )}
             {c.hasOpenQuestion && (

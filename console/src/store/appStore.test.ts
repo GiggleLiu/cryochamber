@@ -465,6 +465,40 @@ describe('app mode (multi-hub)', () => {
     expect((await backend.load()).map((h) => h.id)).toEqual([b.id])
   })
 
+  test('removeHub re-persists the hubs that stay', async () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+
+    // Forgetting a hub cancels every pending cache write, including the ones
+    // that belong to the hubs that stay — their record must be written again.
+    await useAppStore.getState().removeHub(a.id)
+    flushCachedState()
+
+    expect(loadCachedState({ token: b.token })?.chambers.map((c) => c.id)).toEqual([
+      chamberKey(b.id, 'y'),
+    ])
+  })
+
+  test('two hubs sharing one token hydrate that cache once', () => {
+    // Same token, two addresses (a tunnel and the LAN name): one cache record,
+    // and reading it per hub used to push its rows twice.
+    const a = makeHubAccount({ url: 'http://a.local:1', token: 't', trust: { kind: 'plain-http' } })
+    const b = makeHubAccount({ url: 'http://b.local:2', token: 't', trust: { kind: 'plain-http' } })
+    localStorage.setItem(
+      cacheKey({ token: 't' }),
+      JSON.stringify({
+        chambers: [hubChamber(a.id, 'x')],
+        messagesByChamber: {},
+        lastReadByChamber: {},
+      }),
+    )
+    enterAppMode(a, b)
+    expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual([chamberKey(a.id, 'x')])
+  })
+
   test('removeHub leaves a conversation on that hub for the projects list', async () => {
     const { a } = twoHubs()
     enterAppMode(a)

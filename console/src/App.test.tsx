@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import App, { takeInviteToken } from './App'
 import { useAppStore, resetAppStore } from './store/appStore'
 import { saveCredentials } from './store/auth'
+import { setAppRuntime } from './lib/appBoot'
+import { MemoryHubsBackend } from './store/hubs'
 
 const creds = { token: 'tok', name: 'Alice', role: 'owner' as const }
 
@@ -359,5 +361,26 @@ describe('invite-link onboarding', () => {
       name: 'Owner',
       role: 'owner',
     })
+  })
+})
+
+describe('the app shell', () => {
+  afterEach(() => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
+  test('nothing is drawn until boot has entered app mode', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    setAppRuntime({
+      backend: new MemoryHubsBackend(),
+      transportFor: () => (async () => new Response('[]', { status: 200 })) as typeof fetch,
+    })
+    render(<App />)
+    // An empty hub list is also the store's initial value, so "no hubs yet" is
+    // only true once the stored list has been read — offering Add Hub before
+    // that flashes onboarding at someone who has hubs.
+    expect(useAppStore.getState().mode).toBe('browser')
+    expect(screen.queryByRole('heading', { name: 'Add a hub' })).toBeNull()
+    expect(await screen.findByRole('heading', { name: 'Add a hub' })).toBeInTheDocument()
   })
 })

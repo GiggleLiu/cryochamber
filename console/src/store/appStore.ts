@@ -10,6 +10,7 @@ import {
   saveCachedStateDebounced,
   cancelPendingCachedState,
   clearCachedState,
+  cacheKey,
   CACHE_PREFIX,
 } from './cache'
 import { accountKey } from '../lib/account'
@@ -179,7 +180,9 @@ export interface AppState {
   hubVersion: string | null
   showCompletedArchived: boolean
   connection: Connection
-  /** Shown on the login screen after an auth-forced logout; cleared on next setCreds. */
+  /** Why the sign-in screen is what the window shows: browser mode's
+   * auth-forced logout, or app mode's unreadable hub store. Cleared on the next
+   * setCreds. */
   loginReason: string | null
   /** One-line banner after a chamber was pruned from under the user; cleared on navigate. */
   accessNotice: string | null
@@ -384,7 +387,13 @@ export const useAppStore = create<AppState>()((set, get) => {
       const chambers: Chamber[] = []
       const messagesByChamber: Record<string, ChamberMessage[]> = {}
       const lastReadByChamber: Record<string, string> = {}
+      // The cache is keyed on the token, not on the hub: two entries for one
+      // hub reached two ways (a tunnel and its LAN name) share a record, and
+      // reading it once per hub pushed the same rows in twice.
+      const hydrated = new Set<string>()
       for (const hub of hubs) {
+        if (hydrated.has(cacheKey({ token: hub.token }))) continue
+        hydrated.add(cacheKey({ token: hub.token }))
         const cached = loadCachedState({ token: hub.token })
         if (!cached) continue
         chambers.push(...cached.chambers)
@@ -474,6 +483,10 @@ export const useAppStore = create<AppState>()((set, get) => {
         // A conversation on a forgotten hub has nowhere left to talk to.
         view: leavingConversation ? { name: 'projects' } : state.view,
       })
+      // The cancel above took the surviving hubs' pending writes down with the
+      // forgotten hub's; without this their records stay at whatever the last
+      // flush left, and a boot after that hydrates a stale list.
+      persist()
       if (leavingConversation) writeViewHash({ name: 'projects' }, true)
       await state.hubsBackend?.save(hubs)
     },

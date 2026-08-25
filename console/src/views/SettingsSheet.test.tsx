@@ -296,6 +296,15 @@ describe('app mode', () => {
     expect(screen.getByText(/token revoked/)).toBeInTheDocument()
   })
 
+  test('a hub we have not heard from yet says connecting, not unreachable', () => {
+    enterAppMode([alpha, beta], {
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'connecting' },
+    })
+    render(<SettingsSheet />)
+    expect(hubRow('Beta hub')).toHaveTextContent('connecting…')
+    expect(screen.queryByText('unreachable')).toBeNull()
+  })
+
   test('a hub older than this console warns that features may be missing', () => {
     enterAppMode([alpha, beta], {
       versionByHub: { [alpha.id]: '0.0.1', [beta.id]: '999.0.0' },

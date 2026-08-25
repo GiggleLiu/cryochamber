@@ -211,8 +211,16 @@ export default function App() {
   useEventLoop()
 
   // What "signed out" means differs: browser mode has no token yet, the app
-  // has no hub yet.
-  if (isTauri() ? hubs.length === 0 : !creds) return isTauri() ? <AddHubView /> : <LoginView />
+  // has no hub yet. The app's empty list only means "no hubs" once boot has
+  // read the store — `mode === 'app'`. Before that it is just the store's
+  // initial value, and Add Hub over it flashes onboarding at someone who has
+  // hubs, for the frame it takes the boot to resolve.
+  if (isTauri()) {
+    if (mode !== 'app') return null
+    if (hubs.length === 0) return <AddHubView />
+  } else if (!creds) {
+    return <LoginView />
+  }
 
   return (
     <div className="app">

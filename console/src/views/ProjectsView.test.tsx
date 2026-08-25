@@ -345,9 +345,62 @@ describe('hub chips in app mode', () => {
     expect(screen.queryByText('Alpha hub')).toBeNull()
   })
 
+  test('a hub still connecting claims nothing about being down', () => {
+    // "Not live" covers a hub we have simply not heard from yet; calling that
+    // unreachable is a verdict on a call still in flight.
+    twoHubs({ [alpha.id]: 'live', [beta.id]: 'connecting' })
+    render(<ProjectsView />)
+    expect(screen.getByText('Beta hub')).toBeInTheDocument()
+    expect(screen.queryByText(/unreachable/)).toBeNull()
+  })
+
   test('browser mode has one hub and never chips a row', () => {
     render(<ProjectsView />)
     expect(document.querySelector('.hub-chip')).toBeNull()
+  })
+
+  test('the folds follow the role on each row’s own hub', () => {
+    // App mode has no session-wide role, so a session-scoped owner check folds
+    // nothing — and the Settings switch that offers the fold does nothing.
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubRole: null,
+      hubs: [alpha, beta],
+      roleByHub: { [alpha.id]: 'owner', [beta.id]: 'invite' },
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'live' },
+      chambers: [
+        chamber(`${alpha.id}:cham-a`, 'alpha done', { hubId: alpha.id, completed: true }),
+        chamber(`${beta.id}:cham-b`, 'beta done', { hubId: beta.id, completed: true }),
+        chamber(`${beta.id}:cham-c`, 'beta live', { hubId: beta.id }),
+      ],
+      showCompletedArchived: false,
+    })
+    render(<ProjectsView />)
+    expect(screen.queryByText('alpha done')).toBeNull()
+    expect(screen.getByRole('button', { name: /1 completed/ })).toBeInTheDocument()
+    // A guest's list is never filed for them: the finished chamber on the hub
+    // this token only visits stays a plain row.
+    expect(screen.getByText('beta done')).toBeInTheDocument()
+  })
+
+  test('the switch unfolds the owned hub’s finished chambers', () => {
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubRole: null,
+      hubs: [alpha, beta],
+      roleByHub: { [alpha.id]: 'owner', [beta.id]: 'invite' },
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'live' },
+      chambers: [
+        chamber(`${alpha.id}:cham-a`, 'alpha done', { hubId: alpha.id, completed: true }),
+        chamber(`${beta.id}:cham-c`, 'beta live', { hubId: beta.id }),
+      ],
+      showCompletedArchived: true,
+    })
+    render(<ProjectsView />)
+    expect(screen.getByText('alpha done')).toBeInTheDocument()
+    expect(screen.getByText(/Completed \(1\)/)).toBeInTheDocument()
   })
 })
 

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AddHubView } from './AddHubView'
-import { bootApp, setAppRuntime, type AppRuntime } from '../lib/appBoot'
+import { bootApp, HUB_LOAD_ERROR, setAppRuntime, type AppRuntime } from '../lib/appBoot'
 import { MemoryHubsBackend } from '../store/hubs'
 import { useAppStore, resetAppStore } from '../store/appStore'
 
@@ -153,6 +153,18 @@ test('an unreachable hub shows what went wrong and adds nothing', async () => {
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to fetch/)
   expect(useAppStore.getState().hubs).toEqual([])
+})
+
+test('a boot that could not read the saved hubs says so before anything is typed', async () => {
+  const backend = new MemoryHubsBackend()
+  vi.spyOn(backend, 'load').mockRejectedValue(new Error('store unavailable'))
+  const rt: AppRuntime = { backend, transportFor: () => whoamiMock({ role: 'owner' }) }
+  setAppRuntime(rt)
+  await bootApp(rt)
+  render(<AddHubView />)
+  // Otherwise the screen is indistinguishable from a first run, and adding a
+  // hub here would overwrite a list that is still on disk.
+  expect(screen.getByRole('alert')).toHaveTextContent(HUB_LOAD_ERROR)
 })
 
 test('a pasted invite link fills in the address and the token', async () => {

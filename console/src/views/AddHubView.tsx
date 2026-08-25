@@ -51,6 +51,10 @@ export function AddHubView() {
   const [acknowledged, setAcknowledged] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Why this screen is up at all, when it is not a first run: a hub store the
+  // boot could not read. What the form itself says wins — that is about the
+  // address in front of the user, not about the boot.
+  const bootError = useAppStore((s) => s.loginReason)
 
   const address = parseAddress(url)
   // The parsed answer whenever there is one. The raw scheme test is only the
@@ -126,10 +130,10 @@ export function AddHubView() {
         <p className="login-tagline">Point the app at a chamber hub and its access token.</p>
       </div>
 
-      {error && (
+      {(error ?? bootError) && (
         <p className="alert login-notice" role="alert">
           <AlertCircle size={18} />
-          <span className="alert-body">{error}</span>
+          <span className="alert-body">{error ?? bootError}</span>
         </p>
       )}
 

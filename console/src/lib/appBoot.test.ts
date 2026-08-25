@@ -1,4 +1,10 @@
-import { bootApp, makeClientFactory, parseInviteLink, type AppRuntime } from './appBoot'
+import {
+  bootApp,
+  HUB_LOAD_ERROR,
+  makeClientFactory,
+  parseInviteLink,
+  type AppRuntime,
+} from './appBoot'
 import { MemoryHubsBackend, makeHubAccount } from '../store/hubs'
 import { useAppStore, resetAppStore } from '../store/appStore'
 
@@ -105,6 +111,19 @@ describe('bootApp', () => {
       // A revoked token must not leave the row pinned at "connecting".
       expect(s.connectionByHub[hub.id]).toBe('offline')
     })
+  })
+
+  it('still enters app mode, and says why, when the stored list cannot be read', async () => {
+    const backend = new MemoryHubsBackend()
+    vi.spyOn(backend, 'load').mockRejectedValue(new Error('store unavailable'))
+    const rt: AppRuntime = { backend, transportFor: () => transport({ role: 'owner' }) }
+    // A rejection used to escape as an unhandled promise: the app stayed in
+    // browser mode behind a blank Add Hub screen with nothing said.
+    await bootApp(rt)
+    const s = useAppStore.getState()
+    expect(s.mode).toBe('app')
+    expect(s.hubs).toEqual([])
+    expect(s.loginReason).toBe(HUB_LOAD_ERROR)
   })
 
   it('enters app mode with an empty list when nothing is stored', async () => {
