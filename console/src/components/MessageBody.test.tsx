@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MessageBody, filenameFromHref, plainTextFallback, sanitizeHtml } from './MessageBody'
 import { chamberFileUrl, isChamberRelativePath } from './MessageBody'
@@ -431,6 +431,24 @@ describe('chamber attachments', () => {
     await userEvent.click(container.querySelector('img')!)
     const dialog = await screen.findByRole('dialog')
     expect(dialog.querySelector('img')!.getAttribute('src')).toBe('/static/logo.png')
+  })
+
+  test('the lightbox is a modal dialog that restores focus after Escape', async () => {
+    render(
+      <>
+        <button type="button">Before image</button>
+        <MessageBody source="![logo](/static/logo.png)" />
+      </>,
+    )
+    const before = screen.getByRole('button', { name: 'Before image' })
+    before.focus()
+    fireEvent.click(await screen.findByAltText('logo'))
+    const dialog = await screen.findByRole('dialog', { name: 'logo' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(before).toHaveFocus()
   })
 
   test('failed download surfaces a visible error instead of silence', async () => {
