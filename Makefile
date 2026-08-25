@@ -406,6 +406,10 @@ endif
 	perl -i -pe 's/^version = ".*"/version = "$(V)"/' Cargo.toml
 	cargo check
 	git add Cargo.toml Cargo.lock
+	python3 -c "import json,io; p='app/src-tauri/tauri.conf.json'; d=json.load(open(p)); d['version']='$(V)'; io.open(p,'w').write(json.dumps(d, indent=2) + '\n')"
+	perl -i -pe 's/^version = ".*"/version = "$(V)"/' app/src-tauri/Cargo.toml
+	cargo metadata --manifest-path app/src-tauri/Cargo.toml --format-version 1 >/dev/null
+	git add app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml app/src-tauri/Cargo.lock
 	git commit -m "release: v$(V)"
 	git tag -a "v$(V)" -m "Release v$(V)"
 	git push origin main --tags

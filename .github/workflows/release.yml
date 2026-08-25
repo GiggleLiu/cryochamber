@@ -56,6 +56,23 @@ jobs:
             exit 1
           fi
 
+      # The native shell carries its own version, stamped by `make release`.
+      # A tag whose app version drifted would ship an installer that reports
+      # the wrong version, so gate the whole release on it.
+      - name: Check tag matches app version
+        run: |
+          app_version="$(python3 -c "import json;print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")"
+          echo "tauri.conf.json version: ${app_version}"
+          if [ "v${app_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app version v${app_version}"
+            exit 1
+          fi
+          crate_version="$(grep '^version' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)"
+          if [ "v${crate_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/src-tauri/Cargo.toml version v${crate_version}"
+            exit 1
+          fi
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
