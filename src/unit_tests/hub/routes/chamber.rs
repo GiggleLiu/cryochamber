@@ -831,15 +831,15 @@ fn saved_agent(workspace: &tempfile::TempDir) -> String {
 async fn post_agent_writes_the_new_runner_into_the_chambers_own_config() {
     let (workspace, app, id) = one_chamber("/bin/sh -c true");
 
-    let (status, body) = put_agent(app, &id, "  /bin/true  ").await;
+    let (status, body) = put_agent(app, &id, "  /usr/bin/true  ").await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["agent"], "/bin/true");
+    assert_eq!(body["agent"], "/usr/bin/true");
     // Nothing is running and no `cryo start --agent` was ever used, so the new
     // runner is simply the one that will wake next.
     assert_eq!(body["restart_required"], false);
     assert_eq!(body["override_active"], false);
-    assert_eq!(saved_agent(&workspace), "/bin/true");
+    assert_eq!(saved_agent(&workspace), "/usr/bin/true");
 }
 
 #[tokio::test]
@@ -877,7 +877,7 @@ async fn post_agent_keeps_the_provider_section_the_chamber_already_had() {
             State(app),
             AxumPath(id),
             Json(AgentRequest {
-                agent: "/bin/true".to_string(),
+                agent: "/usr/bin/true".to_string(),
             }),
         )
         .await,
@@ -888,7 +888,7 @@ async fn post_agent_keeps_the_provider_section_the_chamber_already_had() {
     let saved = crate::config::load_config(&chamber.join("cryo.toml"))
         .unwrap()
         .unwrap();
-    assert_eq!(saved.agent, "/bin/true");
+    assert_eq!(saved.agent, "/usr/bin/true");
     let provider = saved.provider.expect("provider survives a runner change");
     assert_eq!(provider.name, "anthropic");
     assert_eq!(provider.env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test");
@@ -931,31 +931,31 @@ async fn post_agent_reports_a_running_chamber_and_a_cli_override() {
     let state = running_state(Some("codex"));
     crate::state::save_state(&crate::state::state_path(&chamber), &state).unwrap();
 
-    let (status, body) = put_agent(app, &id, "/bin/true").await;
+    let (status, body) = put_agent(app, &id, "/usr/bin/true").await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["agent"], "/bin/true");
+    assert_eq!(body["agent"], "/usr/bin/true");
     assert_eq!(body["restart_required"], true);
     assert_eq!(body["override_active"], true);
     // The file is still written: it is where the override lands back when the
     // chamber is next started without the flag.
-    assert_eq!(saved_agent(&workspace), "/bin/true");
+    assert_eq!(saved_agent(&workspace), "/usr/bin/true");
 }
 
 #[tokio::test]
 async fn post_agent_reports_the_same_state_when_nothing_changes() {
     // Re-picking the runner already in force is a no-op on disk, but the
     // caller still needs the true restart/override picture back.
-    let (workspace, app, id) = one_chamber("/bin/true");
+    let (workspace, app, id) = one_chamber("/usr/bin/true");
     let chamber = workspace.path().join("alpha");
     let before = std::fs::read_to_string(chamber.join("cryo.toml")).unwrap();
     let state = running_state(None);
     crate::state::save_state(&crate::state::state_path(&chamber), &state).unwrap();
 
-    let (status, body) = put_agent(app, &id, "/bin/true").await;
+    let (status, body) = put_agent(app, &id, "/usr/bin/true").await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["agent"], "/bin/true");
+    assert_eq!(body["agent"], "/usr/bin/true");
     assert_eq!(body["restart_required"], true);
     assert_eq!(body["override_active"], false);
     assert_eq!(
