@@ -169,12 +169,15 @@ export function AddHubView() {
     setBusy(true)
     setError(null)
     try {
-      // No whoami: the client's transport cannot cross a pinned certificate
-      // until the pinned transport ships (Task 5 replaces this with the same
-      // probe every other hub gets). The account keeps the defaults — the
-      // identity refresh on the next boot corrects role and name from the hub
-      // itself, which is where they come from for every other hub too.
-      await useAppStore.getState().addHub(pin.account)
+      // The same question every other hub is asked, over the transport this
+      // account's trust decision earned it: the factory routes a pinned hub
+      // through Rust, where the fingerprint the user just confirmed is what
+      // decides the handshake. A hub that will not answer — or will not take
+      // this token — is not stored, exactly as on the unpinned path.
+      const who = await makeClientFactory(appRuntime())(pin.account).whoami()
+      await useAppStore
+        .getState()
+        .addHub({ ...pin.account, role: who.role, name: who.name ?? pin.account.name })
       setPin(null)
     } catch (err) {
       // The form behind is where an error is read, so the sheet gets out of

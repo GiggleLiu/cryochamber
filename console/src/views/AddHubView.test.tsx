@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AddHubView } from './AddHubView'
+import { AddHubView, REJECTED_TOKEN_ERROR } from './AddHubView'
 import { bootApp, HUB_LOAD_ERROR, setAppRuntime, type AppRuntime } from '../lib/appBoot'
+import { makeTauriRuntime } from '../lib/tauriRuntime'
 import { MemoryHubsBackend } from '../store/hubs'
 import { useAppStore, resetAppStore } from '../store/appStore'
 
@@ -35,6 +36,41 @@ async function boot(fetchMock: typeof fetch): Promise<MemoryHubsBackend> {
 
 function whoamiMock(who: unknown, status = 200) {
   return vi.fn(async () => new Response(JSON.stringify(who), { status })) as unknown as typeof fetch
+}
+
+/** A `pinned_fetch` answer in the shape the command returns. */
+function pinnedAnswer(who: unknown, status = 200) {
+  return { status, headers: [], body_b64: btoa(JSON.stringify(who)) }
+}
+
+/**
+ * Boot with the transport the app itself builds, not a stand-in: a pinned hub
+ * goes through `pinned_fetch` and every other hub through the plugin fetch,
+ * because `makeTauriRuntime` is what decides. That is the point — a test that
+ * handed the pinned account an ordinary fetch could not tell the two apart.
+ * `answer` is what the shell replies to `pinned_fetch` with.
+ */
+async function bootPinned(
+  answer: () => unknown = () => pinnedAnswer({ role: 'owner', name: 'Jin' }),
+): Promise<MemoryHubsBackend> {
+  enterAppShell()
+  const backend = new MemoryHubsBackend()
+  const rt: AppRuntime = { backend, transportFor: makeTauriRuntime().transportFor }
+  setAppRuntime(rt)
+  await bootApp(rt)
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'probe_hub') return { https_valid: false, fingerprint: FINGERPRINT }
+    if (cmd === 'pinned_fetch') return answer()
+    throw new Error(`unexpected command: ${cmd}`)
+  })
+  return backend
+}
+
+/** The requests the shell was actually asked to make over the pinned client. */
+function pinnedRequests(): { url: string; headers: [string, string][]; sha256: string }[] {
+  return invoke.mock.calls
+    .filter(([cmd]) => cmd === 'pinned_fetch')
+    .map(([, args]) => args.req as { url: string; headers: [string, string][]; sha256: string })
 }
 
 beforeEach(() => {
@@ -214,10 +250,7 @@ async function addHub(url: string) {
 }
 
 test('a certificate the system does not trust is offered for pinning, not silently taken', async () => {
-  enterAppShell()
-  const fetchMock = whoamiMock({ role: 'owner', name: 'Jin' })
-  const backend = await boot(fetchMock)
-  invoke.mockResolvedValue({ https_valid: false, fingerprint: FINGERPRINT })
+  const backend = await bootPinned()
   await addHub('https://hub.example')
 
   const sheet = await screen.findByRole('dialog', { name: /certificate/i })
@@ -227,14 +260,54 @@ test('a certificate the system does not trust is offered for pinning, not silent
   // Nothing is stored, and the hub has not been spoken to, until the user says
   // this is the certificate the operator read out.
   expect(useAppStore.getState().hubs).toEqual([])
-  expect(fetchMock).not.toHaveBeenCalled()
+  expect(pinnedRequests()).toEqual([])
 
   await userEvent.click(screen.getByRole('button', { name: /add hub anyway/i }))
   await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
-  expect(useAppStore.getState().hubs[0].trust).toEqual({ kind: 'pinned', sha256: FINGERPRINT })
-  expect(useAppStore.getState().hubs[0].url).toBe('https://hub.example')
+  const [hub] = useAppStore.getState().hubs
+  expect(hub.trust).toEqual({ kind: 'pinned', sha256: FINGERPRINT })
+  expect(hub.url).toBe('https://hub.example')
+  // Answered by the hub, over the pinned certificate — not the defaults a
+  // record gets when nobody asked.
+  expect(hub.role).toBe('owner')
+  expect(hub.name).toBe('Jin')
   expect(await backend.load()).toHaveLength(1)
   expect(invoke).toHaveBeenCalledWith('probe_hub', { url: 'https://hub.example' })
+  // And it is the *pinned* client that carried the token: this hub's
+  // certificate is one the system trust store refuses, so the plugin fetch
+  // could not have reached it at all.
+  expect(pinnedRequests()).toEqual([
+    expect.objectContaining({
+      url: 'https://hub.example/api/whoami',
+      sha256: FINGERPRINT,
+      headers: expect.arrayContaining([['Authorization', `Bearer ${TOKEN}`]]),
+    }),
+  ])
+})
+
+test('a pinned hub that rejects the token adds nothing', async () => {
+  await bootPinned(() => pinnedAnswer('', 401))
+  await addHub('https://hub.example')
+  await userEvent.click(await screen.findByRole('button', { name: /add hub anyway/i }))
+
+  // The fingerprint was right and the token was not: the same sentence the
+  // unpinned path gives, because it is the same mistake.
+  expect(await screen.findByRole('alert')).toHaveTextContent(REJECTED_TOKEN_ERROR)
+  expect(useAppStore.getState().hubs).toEqual([])
+})
+
+test('a pinned hub that cannot be reached after the pin is confirmed adds nothing', async () => {
+  const backend = await bootPinned(() => {
+    throw new Error('This hub is presenting a different certificate than the one you pinned.')
+  })
+  await addHub('https://hub.example')
+  await userEvent.click(await screen.findByRole('button', { name: /add hub anyway/i }))
+
+  // A hub that answers nothing is not a hub to store: the certificate the
+  // probe saw is no promise that the address works.
+  expect(await screen.findByRole('alert')).toHaveTextContent(/different certificate/)
+  expect(useAppStore.getState().hubs).toEqual([])
+  expect(await backend.load()).toEqual([])
 })
 
 test('the form behind an open pin sheet cannot be submitted again', async () => {

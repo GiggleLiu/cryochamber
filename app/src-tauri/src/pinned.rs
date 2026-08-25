@@ -84,6 +84,25 @@ fn transport_error(error: &reqwest::Error) -> String {
     transport_message(&detail_of(error))
 }
 
+/// The one thing that makes this transport safe is the certificate it judges,
+/// and plaintext has none: an `http://` URL here would carry the hub's token
+/// past a pin check that never runs, over a connection anything on the way can
+/// read. The URLs come from `hubs.json` — a file on disk — so this is one
+/// hand-edit away rather than hypothetical.
+const HTTPS_REQUIRED: &str = "A pinned hub must be reached over https; this address is not.";
+
+/// An allowlist, not a denial, and read off the parsed URL rather than the
+/// text: `HTTPS://hub` is https and `http:/hub` is not, and neither reads that
+/// way to a `starts_with`.
+fn require_https(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| format!("{url} is not a URL."))?;
+    if parsed.scheme() == "https" {
+        Ok(())
+    } else {
+        Err(HTTPS_REQUIRED.to_string())
+    }
+}
+
 /// A client pinned to this fingerprint. No whole-request deadline: an upload
 /// and an event stream both outlive any number the shell could pick.
 fn pinned_client(sha256: &str) -> Result<reqwest::Client, String> {
@@ -108,6 +127,7 @@ fn header_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
 /// One buffered request through the pinned client.
 #[tauri::command]
 pub async fn pinned_fetch(req: PinnedRequest) -> Result<PinnedResponse, String> {
+    require_https(&req.url)?;
     let body = decode_body(&req)?;
     let method = reqwest::Method::from_bytes(req.method.as_bytes())
         .map_err(|_| format!("{} is not an HTTP method.", req.method))?;
@@ -259,6 +279,7 @@ async fn run_stream(
     headers: Vec<(String, String)>,
     on_event: Channel<SseEvent>,
 ) -> Result<(), String> {
+    require_https(&url)?;
     let client = pinned_client(&sha256)?;
     let mut request = client.get(&url);
     for (name, value) in &headers {
@@ -364,6 +385,63 @@ mod tests {
     fn a_body_that_is_not_base64_is_refused_rather_than_guessed_at() {
         let err = decode_body(&request_with(Some("not base64!!".into()))).unwrap_err();
         assert!(err.contains("could not be read"), "{err}");
+    }
+
+    /// A channel that throws its messages away. `run_stream` needs one; these
+    /// tests are about the refusal that happens before anything is sent.
+    fn silent_channel() -> Channel<SseEvent> {
+        Channel::new(|_| Ok(()))
+    }
+
+    /// Port 1 answers nothing, so a request that *did* leave would come back
+    /// with a transport error — a different sentence from the refusal.
+    const PLAINTEXT_URLS: [&str; 3] = [
+        "http://127.0.0.1:1/api/whoami",
+        "HTTP://127.0.0.1:1/api/whoami",
+        "ftp://127.0.0.1:1/api/whoami",
+    ];
+
+    #[test]
+    fn a_pinned_request_to_a_url_with_no_tls_is_refused_before_the_token_leaves() {
+        for url in PLAINTEXT_URLS {
+            let req = PinnedRequest {
+                url: url.into(),
+                method: "GET".into(),
+                headers: vec![("Authorization".into(), "Bearer secret".into())],
+                body_b64: None,
+                sha256: "0".repeat(64),
+            };
+            let err = tauri::async_runtime::block_on(pinned_fetch(req))
+                .err()
+                .unwrap_or_else(|| panic!("{url} was not refused"));
+            assert!(err.contains("https"), "{url}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_pinned_event_stream_to_a_url_with_no_tls_is_refused_the_same_way() {
+        for url in PLAINTEXT_URLS {
+            let err = tauri::async_runtime::block_on(run_stream(
+                url.into(),
+                "0".repeat(64),
+                vec![("Authorization".into(), "Bearer secret".into())],
+                silent_channel(),
+            ))
+            .unwrap_err();
+            assert!(err.contains("https"), "{url}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_guard_refuses_plaintext_without_refusing_everything() {
+        // Every spelling of https is a hub the app must still be able to reach
+        // — including the uppercase one a `starts_with` test would have turned
+        // away — and anything that is not a URL is refused in its own words
+        // rather than as a scheme problem.
+        assert!(require_https("https://hub.example:8443/api/events").is_ok());
+        assert!(require_https("HTTPS://hub.example/api/whoami").is_ok());
+        let err = require_https("not a url").unwrap_err();
+        assert!(err.contains("is not a URL"), "{err}");
     }
 
     #[test]

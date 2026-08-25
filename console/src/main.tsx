@@ -28,7 +28,10 @@ createRoot(document.getElementById('root')!).render(
 // and `pagehide` is the only event that reliably fires before it is frozen.
 window.addEventListener('pagehide', flushCachedState)
 
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+// Browser only. Inside the shell the console *is* the bundle on disk, replaced
+// wholesale by an app update — a worker caching it would keep serving the old
+// one afterwards, and there is no server to fetch a new `sw.js` from anyway.
+if (import.meta.env.PROD && !isTauri() && 'serviceWorker' in navigator) {
   navigator.serviceWorker
     .register('/sw.js')
     .then((reg) => wireUpdateFlow(reg, () => useAppStore.getState().setUpdateAvailable(true)))
