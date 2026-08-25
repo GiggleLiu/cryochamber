@@ -68,7 +68,44 @@ beforeEach(() => {
   })
 })
 
+afterEach(() => vi.unstubAllGlobals())
+
 describe('WeChat-style chat bubbles', () => {
+  test('each message bubble exposes its exact local timestamp', async () => {
+    const client = fakeClient({
+      getMessages: vi.fn(async () => [makeMsg(1, { timestamp: '2026-08-15T14:32:00' })]),
+    })
+    useAppStore.setState({ client })
+    const { container } = render(<ConversationView chamberId="cham-a" />)
+    await screen.findByText('msg-1')
+    expect(container.querySelector('.bubble')).toHaveAttribute('title', '2026-08-15 14:32')
+  })
+
+  test('a fine-pointer bubble copies the whole message body', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    const client = fakeClient({
+      getMessages: vi.fn(async () => [makeMsg(1, { body: 'copy the whole message' })]),
+    })
+    useAppStore.setState({ client })
+    render(<ConversationView chamberId="cham-a" />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Copy' }))
+    expect(writeText).toHaveBeenCalledWith('copy the whole message')
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument()
+  })
+
+  test('touch devices do not render message copy controls', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
+    useAppStore.setState({ client: fakeClient() })
+    render(<ConversationView chamberId="cham-a" />)
+    await screen.findByText('msg-1')
+    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull()
+  })
+
   test('marks own messages msg-self and other messages msg-other', async () => {
     const client = fakeClient({
       getMessages: vi.fn(async () => [

@@ -518,6 +518,25 @@ input, select, textarea { font: inherit; color: inherit; }
   border-radius: var(--r-lg);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .bubble { padding-right: calc(var(--sp-3) + var(--sp-10)); }
+  .msg-rich .bubble { padding-right: calc(var(--sp-3) + var(--sp-10)); }
+  .bubble-copy {
+    position: absolute;
+    top: var(--sp-1);
+    right: var(--sp-1);
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--fs-2xs);
+    color: var(--ink-3);
+    border-radius: var(--r-xs);
+    opacity: 0;
+    transition: opacity var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+  }
+  .bubble:hover .bubble-copy,
+  .bubble:focus-within .bubble-copy { opacity: 1; }
+  .bubble-copy:active { color: var(--ink); }
+}
+
 /* Jump-to-latest: appears only when the reader has scrolled away. */
 .jump-latest {
   position: absolute;

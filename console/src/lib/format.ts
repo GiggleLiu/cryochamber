@@ -50,6 +50,15 @@ export function separatorLabel(
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${time}`
 }
 
+/** Exact local minute attached to a message bubble for mouse users. */
+export function exactTimestamp(m: { timestamp: string }): string {
+  const d = new Date(messageSeconds(m) * 1000)
+  const year = String(d.getFullYear()).padStart(4, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hhmm(d)}`
+}
+
 /** The compact right-hand timestamp on a project row. */
 export function listTimeLabel(timestamp: number, now: Date = new Date()): string {
   const d = new Date(timestamp * 1000)

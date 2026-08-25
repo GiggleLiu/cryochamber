@@ -5,7 +5,7 @@ import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
 import { StatusDot } from '../components/StatusDot'
-import { initial, messageSeconds, separatorLabel, tileColor } from '../lib/format'
+import { exactTimestamp, initial, messageSeconds, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
 import { InviteSheet } from './InviteSheet'
 import { ControlsSheet } from './ControlsSheet'
@@ -14,6 +14,11 @@ import { ControlsSheet } from './ControlsSheet'
 const GAP_SECONDS = 300
 /** How far from the bottom still counts as "reading the newest messages". */
 const PIN_SLACK_PX = 80
+
+function hasFinePointer(): boolean {
+  return typeof window.matchMedia === 'function' &&
+    window.matchMedia('(hover: hover) and (pointer: fine)').matches
+}
 
 /** True when the message carries genuinely wide block content (code, tables,
  * display math) that a hugging chat bubble would clip. Images, quotes, and
@@ -69,7 +74,10 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const [retryToken, setRetryToken] = useState(0)
   const [showJump, setShowJump] = useState(false)
   const [hasNew, setHasNew] = useState(false)
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [canCopy] = useState(hasFinePointer)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Whether the reader is parked at the newest message. Kept in a ref because
   // the scroll handler and the message effect both read it without re-render.
   const pinnedRef = useRef(true)
@@ -104,6 +112,26 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     setShowJump(!pinned)
     if (pinned) setHasNew(false)
   }
+
+  async function copyMessage(id: string, body: string) {
+    if (!navigator.clipboard) return
+    try {
+      await navigator.clipboard.writeText(body)
+      setCopiedMessageId(id)
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopiedMessageId(null), 1500)
+    } catch {
+      // Clipboard permission can be denied; leaving the label unchanged is
+      // more honest than claiming the message was copied.
+    }
+  }
+
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    },
+    [],
+  )
 
   // Opening a conversation lands on the newest message, with no visible glide.
   useEffect(() => {
@@ -278,7 +306,16 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                 </div>
                 <div className="msg-col">
                   {!isSelf && !grouped && <div className="sender-label">{m.sender}</div>}
-                  <div className="bubble">
+                  <div className="bubble" title={exactTimestamp(m)}>
+                    {canCopy && (
+                      <button
+                        type="button"
+                        className="bubble-copy"
+                        onClick={() => void copyMessage(m.id, m.body)}
+                      >
+                        {copiedMessageId === m.id ? 'Copied' : 'Copy'}
+                      </button>
+                    )}
                     <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={chamberId} />
                   </div>
                 </div>
