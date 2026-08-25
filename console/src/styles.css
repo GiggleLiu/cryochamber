@@ -1161,6 +1161,26 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
 }
 
+/* One remembered hub in Settings: its name over its address, its access and
+   its version, with anything wrong with it underneath. */
+.hub-row { gap: var(--sp-2); }
+.hub-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.hub-name { font-size: var(--fs-md); }
+.hub-meta {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.hub-note {
+  font-size: var(--fs-xs);
+  color: var(--warn);
+}
+
 .invite-copy { margin-bottom: var(--sp-4); }
 
 /* The QR code under a freshly minted invite link: centred, framed in the
@@ -1702,6 +1722,31 @@ input, select, textarea { font: inherit; color: inherit; }
   font-family: var(--font-mono);
   font-size: var(--fs-2xs);
   color: var(--ink-3);
+}
+/* Which hub a project row lives on. Quieter than the name it sits next to —
+   it answers "where", and the row is about "what". */
+.hub-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The hub is not answering: the row is the last thing it said, so the chip
+   reads as an aside rather than a label. */
+.hub-chip.is-unreachable {
+  background: none;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  font-style: italic;
 }
 .question-badge {
   flex: none;

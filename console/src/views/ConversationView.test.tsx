@@ -141,6 +141,30 @@ describe('WeChat-style chat bubbles', () => {
     expect(rows[1].className).toContain('msg-self')
   })
 
+  test('in app mode "mine" is what THIS chamber\'s hub calls me', async () => {
+    // Two hubs can name the same token differently; the session-wide name is
+    // browser mode's answer and means nothing here.
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      selfName: 'me@b.c',
+      selfNameByHub: { aaaaaaaa: 'alice (invite)' },
+      chambers: [chamber({ id: 'aaaaaaaa:cham-a', hubId: 'aaaaaaaa' })],
+    })
+    const client = fakeClient({
+      getMessages: vi.fn(async () => [
+        makeMsg(1, { chamberId: 'aaaaaaaa:cham-a', sender: 'me@b.c' }),
+        makeMsg(2, { chamberId: 'aaaaaaaa:cham-a', sender: 'alice (invite)' }),
+      ]),
+    })
+    useAppStore.setState({ client })
+    const { container } = render(<ConversationView chamberId="aaaaaaaa:cham-a" />)
+    await screen.findByText('msg-2')
+    const rows = container.querySelectorAll('.msg-row')
+    expect(rows[0].className).toContain('msg-other')
+    expect(rows[1].className).toContain('msg-self')
+  })
+
   test('shows a sender label only above other people\'s bubbles', async () => {
     const client = fakeClient({
       getMessages: vi.fn(async () => [

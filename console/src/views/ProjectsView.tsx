@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Chamber } from '../api/types'
-import { unreadCount, useAppStore, useIsOwner } from '../store/appStore'
+import { hubIdOf, unreadCount, useAppStore, useIsOwner } from '../store/appStore'
 import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, messageSeconds, previewText, tileColor } from '../lib/format'
 import { NewChamberSheet } from './NewChamberSheet'
@@ -41,6 +41,9 @@ export function ProjectsView() {
   const selfName = useAppStore((s) => s.selfName)
   const selfNameByHub = useAppStore((s) => s.selfNameByHub)
   const connection = useAppStore((s) => s.connection)
+  const mode = useAppStore((s) => s.mode)
+  const hubs = useAppStore((s) => s.hubs)
+  const connectionByHub = useAppStore((s) => s.connectionByHub)
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const isOwner = useIsOwner()
@@ -65,8 +68,16 @@ export function ProjectsView() {
   // be contradicted a moment later. Once offline, the empty state plus the
   // reconnecting banner is the honest report.
   const loading = chambers.length === 0 && connection === 'connecting'
+  // Which hub a row lives on only means something once the app holds more than
+  // one: a chip that says the same word on every row is noise, and browser mode
+  // never has a second hub to name.
+  const showHubs = mode === 'app' && hubs.length > 1
 
   function card(c: Chamber) {
+    // `hubIdOf`, never `c.hubId`: a row hydrated from the cache carries its hub
+    // in its key alone.
+    const hub = showHubs ? hubs.find((h) => h.id === hubIdOf(c)) : undefined
+    const reachable = hub ? connectionByHub[hub.id] === 'live' : true
     const count = unreadCount(
       { messagesByChamber, lastReadByChamber, selfName, selfNameByHub },
       c.id,
@@ -88,6 +99,14 @@ export function ProjectsView() {
                 sheet. */}
             <StatusDot running={c.running} agentRunning={c.agentRunning} />
             <span className="stream-name">{c.name}</span>
+            {/* Which hub, and — when that hub is down — that everything on this
+                row is the last thing it said rather than the current state. */}
+            {hub && (
+              <span className={`hub-chip${reachable ? '' : ' is-unreachable'}`}>
+                {hub.label}
+                {!reachable && ' · unreachable'}
+              </span>
+            )}
             {c.hasOpenQuestion && (
               <span
                 className="question-badge"

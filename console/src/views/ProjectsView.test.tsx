@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectsView, foldedLabel } from './ProjectsView'
-import { useAppStore, resetAppStore } from '../store/appStore'
+import { useAppStore, resetAppStore, type Connection } from '../store/appStore'
+import { makeHubAccount } from '../store/hubs'
 import type { Chamber, ChamberMessage } from '../api/types'
 
 function chamber(id: string, name = id, extra: Partial<Chamber> = {}): Chamber {
@@ -260,6 +261,67 @@ describe('the folded chambers are always accounted for', () => {
     expect(foldedLabel(2, 0)).toBe('2 completed')
     expect(foldedLabel(0, 3)).toBe('3 archived')
     expect(foldedLabel(2, 3)).toBe('2 completed · 3 archived')
+  })
+})
+
+describe('hub chips in app mode', () => {
+  const alpha = makeHubAccount({
+    url: 'https://a.example',
+    label: 'Alpha hub',
+    token: 'ka',
+    trust: { kind: 'https' },
+  })
+  const beta = makeHubAccount({
+    url: 'https://b.example',
+    label: 'Beta hub',
+    token: 'kb',
+    trust: { kind: 'https' },
+  })
+
+  /** Two hubs, one chamber each, keyed the way the router keys them. */
+  function twoHubs(connectionByHub: Record<string, Connection>) {
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubs: [alpha, beta],
+      connectionByHub,
+      chambers: [
+        chamber(`${alpha.id}:cham-a`, 'alpha', { hubId: alpha.id }),
+        chamber(`${beta.id}:cham-b`, 'beta', { hubId: beta.id }),
+      ],
+    })
+  }
+
+  test('every row says which hub it lives on', () => {
+    twoHubs({ [alpha.id]: 'live', [beta.id]: 'live' })
+    render(<ProjectsView />)
+    expect(screen.getByText('Alpha hub')).toBeInTheDocument()
+    expect(screen.getByText('Beta hub')).toBeInTheDocument()
+    expect(screen.queryByText(/unreachable/)).toBeNull()
+  })
+
+  test('a hub that is not live says so on its own rows only', () => {
+    twoHubs({ [alpha.id]: 'live', [beta.id]: 'offline' })
+    render(<ProjectsView />)
+    expect(screen.getByText('Alpha hub')).toBeInTheDocument()
+    expect(screen.getByText(/Beta hub · unreachable/)).toBeInTheDocument()
+  })
+
+  test('a chip that would always say the same thing is not drawn', () => {
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubs: [alpha],
+      connectionByHub: { [alpha.id]: 'live' },
+      chambers: [chamber(`${alpha.id}:cham-a`, 'alpha', { hubId: alpha.id })],
+    })
+    render(<ProjectsView />)
+    expect(screen.queryByText('Alpha hub')).toBeNull()
+  })
+
+  test('browser mode has one hub and never chips a row', () => {
+    render(<ProjectsView />)
+    expect(document.querySelector('.hub-chip')).toBeNull()
   })
 })
 

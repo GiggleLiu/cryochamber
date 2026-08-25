@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { ACCESS_REVOKED_NOTICE, useAppStore, useIsOwner } from '../store/appStore'
+import { ACCESS_REVOKED_NOTICE, selfNameFor, useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
 import type { HubClient } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
@@ -69,10 +69,14 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const messages = useAppStore((s) => s.messagesByChamber[chamberId])
   const outbox = useAppStore((s) => s.outboxByChamber[chamberId])
   const loadedChambers = useAppStore((s) => s.loadedChambers)
-  const selfName = useAppStore((s) => s.selfName)
+  // What makes a bubble "mine" is what *this chamber's hub* calls our token:
+  // two hubs can name the same person differently.
+  const selfName = useAppStore((s) => selfNameFor(s, chamberId))
   const client = useAppStore((s) => s.client)
   const navigate = useAppStore((s) => s.navigate)
-  const isOwner = useIsOwner()
+  // Owner of this chamber's hub — a token can own one hub and be a guest on
+  // the next, so the question is only ever asked about a chamber.
+  const isOwner = useIsOwner(chamberId)
   const [sheet, setSheet] = useState<'invite' | 'controls' | null>(null)
   // Memoised: MessageBody keys its decorate effect on this, and a fresh arrow
   // every render would tear down and rebuild its MutationObserver each time.
