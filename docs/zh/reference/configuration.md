@@ -76,7 +76,7 @@ public_hosts = []
 | `public_hosts` | `[]` | 在回环地址和 `host` 之外额外接受的 `Host` 头值。当反向代理转发公网主机名时需要设置。 |
 | `console_dir` | *（未设置——使用内嵌版本）* | 从此目录提供 [Agent Console](../agent-console.md)，而不是使用 `cryohub` 二进制中内嵌的构建。必须是指向 vite `dist/` 的绝对路径。仅用于开发和自定义构建。 |
 
-控制台修改 `default_agent` 后无需重启 hub。下一次创建 chamber 时会使用新命令；现有 chamber 不会被重写。与这里的其他键一样，手工编辑本文件要到下次 `cryohub restart` 才被读取。
+控制台修改 `default_agent` 后无需重启 hub。下一次创建 chamber 时会使用新命令；现有 chamber 不会被重写。与这里的其他键一样，手工编辑本文件要到下次 `cryohub restart` 才被读取。保存该设置、修改某个 chamber 的 agent、传入 `cryohub start --default-agent` 以及启动 chamber 时，都会检查命令的可执行文件是否可用。控制台的「新建 Chamber」会在一次操作中创建并启动 chamber。
 
 ### 提供 Agent Console
 

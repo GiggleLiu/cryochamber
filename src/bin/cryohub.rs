@@ -127,6 +127,10 @@ fn cmd_start(
     foreground: bool,
     public: Option<bool>,
 ) -> Result<()> {
+    if let Some(default_agent) = default_agent.as_deref() {
+        cryochamber::lifecycle::validate_agent_command(default_agent, None)
+            .context("Invalid --default-agent")?;
+    }
     let config = cryochamber::hub::config::effective_config(host, port, public, default_agent)?;
     config.validate_console_dir()?;
     std::fs::create_dir_all(&config.chamber_root)?;

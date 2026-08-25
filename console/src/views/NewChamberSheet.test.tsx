@@ -12,8 +12,8 @@ const INDEX: Chamber[] = [
   {
     id: 'cham-new',
     name: 'gamma',
-    running: false,
-    agentRunning: false,
+    running: true,
+    agentRunning: true,
     nextWakeDisplay: null,
     completed: false,
     archived: false,
@@ -23,7 +23,11 @@ const INDEX: Chamber[] = [
 
 function makeHub(): HubClient {
   const client = new HubClient({ token: creds.token, fetch: vi.fn() })
-  vi.spyOn(client, 'createChamber').mockResolvedValue({ id: 'cham-new' })
+  vi.spyOn(client, 'createChamber').mockResolvedValue({
+    id: 'cham-new',
+    started: true,
+    start_error: null,
+  })
   vi.spyOn(client, 'listChambers').mockResolvedValue(INDEX)
   return client
 }
@@ -38,9 +42,9 @@ test('a name alone is enough, and success re-registers and opens the chamber', a
   const onClose = vi.fn()
   render(<NewChamberSheet onClose={onClose} />)
   await userEvent.type(screen.getByLabelText('Name'), '  gamma  ')
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
 
-  expect(hub.createChamber).toHaveBeenCalledWith({ name: 'gamma' })
+  expect(hub.createChamber).toHaveBeenCalledWith({ name: 'gamma', start: true })
   await waitFor(() => expect(hub.listChambers).toHaveBeenCalledTimes(1))
   expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['gamma'])
   // Straight into the chamber by the id the hub minted — no lookup in between.
@@ -51,7 +55,7 @@ test('a name alone is enough, and success re-registers and opens the chamber', a
 test('an empty name is refused before any request', async () => {
   const hub = useAppStore.getState().client as HubClient
   render(<NewChamberSheet onClose={() => {}} />)
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('name is empty')
   expect(hub.createChamber).not.toHaveBeenCalled()
 })
@@ -62,22 +66,22 @@ test('the provider section is all-or-nothing', async () => {
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
   await userEvent.click(screen.getByText('API key provider'))
   await userEvent.type(screen.getByLabelText('Provider'), 'anthropic')
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('api key is empty')
   expect(hub.createChamber).not.toHaveBeenCalled()
 
   await userEvent.type(screen.getByLabelText('API key'), 'sk-test')
   await userEvent.type(screen.getByLabelText('Model'), 'claude-opus')
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
   expect(hub.createChamber).toHaveBeenCalledWith({
-    name: 'gamma', api_key_provider: 'anthropic', api_key: 'sk-test', model: 'claude-opus',
+    name: 'gamma', start: true, api_key_provider: 'anthropic', api_key: 'sk-test', model: 'claude-opus',
   })
 })
 
 test('buildNewChamberPayload covers every branch', () => {
   const base = { name: 'gamma', provider: '', apiKey: '', model: '', providerOpen: false }
   expect(buildNewChamberPayload({ ...base, name: '   ' })).toBe('name is empty')
-  expect(buildNewChamberPayload(base)).toEqual({ name: 'gamma' })
+  expect(buildNewChamberPayload(base)).toEqual({ name: 'gamma', start: true })
   // Opening the section commits to filling it in.
   expect(buildNewChamberPayload({ ...base, providerOpen: true })).toBe('api key provider is empty')
   // Or typing into any of its fields does.
@@ -86,7 +90,7 @@ test('buildNewChamberPayload covers every branch', () => {
   )
   expect(buildNewChamberPayload({ ...base, provider: 'anthropic' })).toBe('api key is empty')
   expect(buildNewChamberPayload({ ...base, provider: 'anthropic', apiKey: 'sk' })).toEqual({
-    name: 'gamma', api_key_provider: 'anthropic', api_key: 'sk',
+    name: 'gamma', start: true, api_key_provider: 'anthropic', api_key: 'sk',
   })
 })
 
@@ -96,10 +100,10 @@ test('the hub error is shown verbatim and the form stays open', async () => {
   const onClose = vi.fn()
   render(<NewChamberSheet onClose={onClose} />)
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('chamber already exists')
   expect(onClose).not.toHaveBeenCalled()
-  expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Create and start' })).toBeEnabled()
 })
 
 test('a 401 shows no inline error — the client already signed out', async () => {
@@ -107,7 +111,7 @@ test('a 401 shows no inline error — the client already signed out', async () =
   vi.mocked(hub.createChamber).mockRejectedValue(new ApiError(401, 'HTTP 401'))
   render(<NewChamberSheet onClose={() => {}} />)
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
   await waitFor(() => expect(hub.createChamber).toHaveBeenCalled())
   expect(screen.queryByRole('alert')).toBeNull()
 })
@@ -119,11 +123,32 @@ test('closing while a create is in flight waits for the outcome', async () => {
   const onClose = vi.fn()
   render(<NewChamberSheet onClose={onClose} />)
   await userEvent.type(screen.getByLabelText('Name'), 'gamma')
-  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).not.toHaveBeenCalled()
   reject(new ApiError(400, 'chamber already exists'))
   expect(await screen.findByRole('alert')).toHaveTextContent('chamber already exists')
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('a launch failure opens the created chamber with a persistent warning', async () => {
+  const hub = useAppStore.getState().client as HubClient
+  vi.mocked(hub.createChamber).mockResolvedValue({
+    id: 'cham-new',
+    started: false,
+    start_error: "Agent command 'missing' not found",
+  })
+  render(<NewChamberSheet onClose={() => {}} />)
+  await userEvent.type(screen.getByLabelText('Name'), 'gamma')
+  await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
+
+  await waitFor(() => {
+    expect(useAppStore.getState().view).toEqual({
+      name: 'conversation',
+      chamberId: 'cham-new',
+    })
+  })
+  expect(useAppStore.getState().accessNotice).toContain('created but could not start')
+  expect(useAppStore.getState().accessNotice).toContain("Agent command 'missing' not found")
 })

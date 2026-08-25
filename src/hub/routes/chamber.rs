@@ -224,10 +224,8 @@ pub struct AgentRequest {
 /// Set one chamber's `agent` command in its own `cryo.toml`.
 ///
 /// Owner-only, like every other write to a chamber's working state. The command
-/// is checked for parseability, not for existence on `PATH`: `cryo.toml`
-/// documents "any executable on PATH", and the preflight that a runner is
-/// actually installed belongs to `cryo start`, which runs on the chamber's own
-/// machine.
+/// is checked for parseability and availability before it is persisted, so the
+/// Console cannot save a runner this host cannot launch.
 ///
 /// Answers `{agent, restart_required, override_active}`. The daemon reads
 /// `cryo.toml` once when it starts, so a chamber that is already running keeps
@@ -254,10 +252,9 @@ pub async fn post_agent(
         )
             .into_response();
     }
-    // `{error:#}` — anyhow's outermost context alone is "Failed to parse agent
-    // command", which tells the operator nothing about the unbalanced quote
-    // that caused it.
-    if let Err(error) = crate::agent::agent_program(agent) {
+    // `{error:#}` preserves the shell parser's specific reason (for example an
+    // unbalanced quote) as well as the missing-executable preflight.
+    if let Err(error) = crate::lifecycle::validate_agent_command(agent, None) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("invalid agent command: {error:#}") })),
