@@ -84,6 +84,9 @@ export function TodosTab({ chamberId }: { chamberId: string }) {
     <li className={`todo-row${t.done ? ' is-done' : ''}`} key={t.id}>
       <span className="todo-text">{t.text}</span>
       {t.at && <span className="todo-when">{t.at}</span>}
+      {!t.done && t.claimed && (
+        <span className="todo-claimed" aria-label="in progress">in progress</span>
+      )}
     </li>
   )
 

@@ -1605,6 +1605,17 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: var(--fs-2xs);
   color: var(--ink-3);
 }
+.todo-claimed {
+  flex: none;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.03em;
+  line-height: var(--lh-tight);
+  color: var(--brand-press);
+  text-transform: uppercase;
+  background: var(--brand-tint);
+  border-radius: var(--r-full);
+}
 .todo-history { padding: var(--sp-3) var(--sp-4); }
 .todo-history summary {
   font-size: var(--fs-sm);
