@@ -57,6 +57,34 @@ cryohub token list
 cryohub token revoke alice
 ```
 
+## 选择 chamber 运行哪个智能体
+
+两个下拉框，都只对 owner 可见：
+
+- **Settings → Default agent** 是主机级默认值，保存在 `cryohub.toml` 的
+  `default_agent` 中。它决定**新建** chamber 使用哪个运行器——包括控制台的
+  *+ 新建 chamber* 和同一台机器上的普通 `cryo init`。修改它不会重写任何已存在的
+  chamber。
+- **⋯ Chamber 控制 → Settings → Agent** 是单个 chamber 自己的运行器，保存在该
+  chamber 的 `cryo.toml` 的 `agent` 中。
+
+两个列表都提供 `pi`、`opencode`、`claude`、`codex` 和 `kimi`，外加当前已保存的
+值——像 `pi --thinking high` 这样手写的命令，或指向自定义运行器的路径，都会保持
+可选，而不会被悄悄替换。其他想运行的命令请直接写进 `cryo.toml`。
+
+守护进程在启动时读取 `cryo.toml`，因此修改**正在运行**的 chamber 的智能体要到下次
+重启才生效；遇到这种情况控制台会提示。保存同时会重写 `cryo.toml`，该文件中的注释
+不会被保留。
+
+## 编辑 chamber 的计划
+
+**⋯ Chamber 控制 → Plan → Edit plan** 会以 markdown 源码打开 `plan.md` 并写回。
+仅 owner 可用。
+
+无需重启任何东西：智能体被要求在每个会话开始时读取 `plan.md`，因此下一次唤醒就会
+按新的计划工作。以最后一次写入为准——控制台没有冲突提示，因为 chamber 自己的智能体
+被要求把运行状态保存在 `NOTES.md` 中；出于同样的原因，`NOTES.md` 在这里保持只读。
+
 ## 安装到手机或桌面
 
 控制台是一个 PWA。在浏览器中打开后：

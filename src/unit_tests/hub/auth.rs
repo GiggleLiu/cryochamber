@@ -34,6 +34,8 @@ fn classification_matches_spec_matrix() {
         (Method::POST, "/api/chambers/new", OwnerOnly),
         (Method::GET, "/api/config", OwnerOnly),
         (Method::POST, "/api/config", OwnerOnly),
+        (Method::POST, "/api/chambers/x1/agent", OwnerOnly),
+        (Method::POST, "/api/chambers/x1/plan", OwnerOnly),
         (Method::POST, "/api/chambers/x1/start", OwnerOnly),
         (Method::POST, "/api/chambers/x1/stop", OwnerOnly),
         (Method::POST, "/api/chambers/x1/reset", OwnerOnly),

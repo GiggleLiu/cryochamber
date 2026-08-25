@@ -96,6 +96,14 @@ pub fn build_router_with_config(
             post(crate::hub::routes::chamber::post_send),
         )
         .route(
+            "/api/chambers/{id}/plan",
+            post(crate::hub::routes::chamber::post_plan),
+        )
+        .route(
+            "/api/chambers/{id}/agent",
+            post(crate::hub::routes::chamber::post_agent),
+        )
+        .route(
             "/api/chambers/{id}/start",
             post(crate::hub::routes::chamber::post_start),
         )

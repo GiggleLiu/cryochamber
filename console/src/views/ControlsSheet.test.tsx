@@ -11,9 +11,9 @@ const creds: Credentials = { token: 'k', name: 'Owner', role: 'owner' }
 
 function status(overrides: Partial<ChamberStatus> = {}): ChamberStatus {
   return {
-    running: false, agent_running: false, session: 7, agent: 'opencode',
+    running: false, agent_running: false, session: 7, agent: 'opencode', config_agent: 'opencode',
     log_tail: '', daily_digests: [], next_wake: null,
-    notes_html: '', plan_html: '', has_config: false, settings_rows: [],
+    notes_html: '', plan_html: '', plan_content: '', has_config: false, settings_rows: [],
     task: null, session_summary: null, completed: false, completion_summary: null,
     ...overrides,
   }
@@ -361,7 +361,11 @@ describe('detail sections', () => {
       status({
         log_tail: 'boot line one',
         has_config: true,
-        settings_rows: [{ key: 'agent', value: 'claude', kind: 'scalar' }],
+        config_agent: 'claude',
+        settings_rows: [
+          { key: 'agent', value: 'claude', kind: 'scalar' },
+          { key: 'watch_dirs', value: '["messages/inbox"]', kind: 'scalar' },
+        ],
       }),
     )
     useAppStore.setState({ client: hub })
@@ -372,7 +376,9 @@ describe('detail sections', () => {
     // The Log sheet is where the session number lives now.
     expect(screen.getByText('Session #7')).toBeInTheDocument()
     await open('Settings')
-    expect(await screen.findByText('claude')).toBeInTheDocument()
+    // The runner is the dropdown; the read-only rows carry the rest of the file.
+    expect(await screen.findByRole('combobox', { name: 'Agent' })).toHaveValue('claude')
+    expect(screen.getByText('["messages/inbox"]')).toBeInTheDocument()
   })
 
   test('there is no Sync section', async () => {

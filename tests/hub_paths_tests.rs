@@ -150,9 +150,13 @@ fn hub_effective_config_persists_host_and_port_overrides() {
     let config_home = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
 
-    let cfg =
-        cryochamber::hub::config::effective_config(Some("0.0.0.0".to_string()), Some(9900), None)
-            .unwrap();
+    let cfg = cryochamber::hub::config::effective_config(
+        Some("0.0.0.0".to_string()),
+        Some(9900),
+        None,
+        None,
+    )
+    .unwrap();
 
     assert_eq!(cfg.host, "0.0.0.0");
     assert_eq!(cfg.port, 9900);
@@ -164,7 +168,7 @@ fn hub_effective_config_persists_default_agent_override() {
     let config_home = tempfile::tempdir().unwrap();
     let _config = EnvVarGuard::set("XDG_CONFIG_HOME", config_home.path());
 
-    let cfg = cryochamber::hub::config::effective_config_with_default_agent(
+    let cfg = cryochamber::hub::config::effective_config(
         None,
         None,
         None,
@@ -188,7 +192,7 @@ fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
     use cryochamber::hub::config::effective_config;
 
     assert!(
-        effective_config(None, None, None).unwrap().public,
+        effective_config(None, None, None, None).unwrap().public,
         "a fresh config defaults to public (bearer auth)"
     );
     assert!(
@@ -196,16 +200,24 @@ fn hub_effective_config_keeps_public_mode_until_it_is_explicitly_turned_off() {
         "public mode must be on disk, not just in this process"
     );
 
-    assert!(!effective_config(None, None, Some(false)).unwrap().public);
     assert!(
-        !effective_config(None, None, None).unwrap().public,
+        !effective_config(None, None, Some(false), None)
+            .unwrap()
+            .public
+    );
+    assert!(
+        !effective_config(None, None, None, None).unwrap().public,
         "a plain start must not re-enable auth behind the operator's back"
     );
     assert!(!cryochamber::hub::config::load_config().unwrap().public);
 
-    assert!(effective_config(None, None, Some(true)).unwrap().public);
     assert!(
-        effective_config(None, None, None).unwrap().public,
+        effective_config(None, None, Some(true), None)
+            .unwrap()
+            .public
+    );
+    assert!(
+        effective_config(None, None, None, None).unwrap().public,
         "a plain start must not drop public mode"
     );
     assert!(cryochamber::hub::config::load_config().unwrap().public);
@@ -314,6 +326,7 @@ fn hub_overlay_config_applies_flags_without_touching_disk() {
         Some("0.0.0.0".to_string()),
         Some(9900),
         Some(true),
+        None,
     );
 
     assert_eq!(cfg.host, "0.0.0.0");
@@ -325,7 +338,7 @@ fn hub_overlay_config_applies_flags_without_touching_disk() {
     );
     // Absent flags leave the base untouched.
     assert_eq!(
-        cryochamber::hub::config::overlay_config(base.clone(), None, None, None),
+        cryochamber::hub::config::overlay_config(base.clone(), None, None, None, None),
         base
     );
 }

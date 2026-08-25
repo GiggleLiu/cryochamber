@@ -157,15 +157,6 @@ pub fn load_or_create_config() -> Result<HubConfig> {
 /// which case the saved mode stands: turning auth *off* has to be an explicit
 /// act, never a side effect of restarting without the flag.
 pub fn overlay_config(
-    config: HubConfig,
-    host: Option<String>,
-    port: Option<u16>,
-    public: Option<bool>,
-) -> HubConfig {
-    overlay_config_with_default_agent(config, host, port, public, None)
-}
-
-pub fn overlay_config_with_default_agent(
     mut config: HubConfig,
     host: Option<String>,
     port: Option<u16>,
@@ -194,18 +185,10 @@ pub fn effective_config(
     host: Option<String>,
     port: Option<u16>,
     public: Option<bool>,
-) -> Result<HubConfig> {
-    effective_config_with_default_agent(host, port, public, None)
-}
-
-pub fn effective_config_with_default_agent(
-    host: Option<String>,
-    port: Option<u16>,
-    public: Option<bool>,
     default_agent: Option<String>,
 ) -> Result<HubConfig> {
     let base = load_or_create_config()?;
-    let config = overlay_config_with_default_agent(base.clone(), host, port, public, default_agent);
+    let config = overlay_config(base.clone(), host, port, public, default_agent);
     if config != base {
         save_config(&config)?;
     }

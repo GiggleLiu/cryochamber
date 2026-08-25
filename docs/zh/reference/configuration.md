@@ -19,7 +19,7 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # 派生智能体时设置的环境�
 
 | 字段 | 默认值 | 说明 |
 |-------|---------|-------------|
-| `agent` | `"pi"` | 要运行的智能体命令。使用 `"opencode"` 表示 OpenCode，`"claude"` 表示 Claude Code，`"codex"` 表示 Codex，`"kimi"` 表示 Kimi Code，或 `PATH` 上的任何可执行文件。除非 `cryo init --agent` 显式指定命令，新 chamber 使用主机级 `default_agent`。 |
+| `agent` | `"pi"` | 要运行的智能体命令。使用 `"opencode"` 表示 OpenCode，`"claude"` 表示 Claude Code，`"codex"` 表示 Codex，`"kimi"` 表示 Kimi Code，或 `PATH` 上的任何可执行文件。除非 `cryo init --agent` 显式指定命令，新 chamber 使用主机级 `default_agent`。owner 也可以在 [Agent Console](../agent-console.md) 的 chamber 控制 → Settings → Agent 中修改：这会重写本文件（其中的注释以及 Cryochamber 不认识的键都不会保留），并在该 chamber 下次重启时生效。 |
 | `max_session_duration` | `3600` | 会话超时秒数。`0` 表示禁用超时。 |
 | `watch_dirs` | `["messages/inbox"]` | 守护进程监听新文件的目录列表，用于响应式唤醒智能体。路径相对于 chamber 目录解释，除非是绝对路径。设为 `[]` 可完全禁用响应式唤醒。 |
 | `zulip_poll_interval` | `5` | `cryo-zulip sync` 轮询 Zulip 的间隔（秒）。`cryo-zulip sync --interval N` 可单次覆盖它。 |
@@ -76,7 +76,7 @@ public_hosts = []
 | `public_hosts` | `[]` | 在回环地址和 `host` 之外额外接受的 `Host` 头值。当反向代理转发公网主机名时需要设置。 |
 | `console_dir` | *（未设置——使用内嵌版本）* | 从此目录提供 [Agent Console](../agent-console.md)，而不是使用 `cryohub` 二进制中内嵌的构建。必须是指向 vite `dist/` 的绝对路径。仅用于开发和自定义构建。 |
 
-控制台修改 `default_agent` 后无需重启 hub。下一次创建 chamber 时会使用新命令；现有 chamber 不会被重写。
+控制台修改 `default_agent` 后无需重启 hub。下一次创建 chamber 时会使用新命令；现有 chamber 不会被重写。与这里的其他键一样，手工编辑本文件要到下次 `cryohub restart` 才被读取。
 
 ### 提供 Agent Console
 

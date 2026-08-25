@@ -371,6 +371,71 @@ mod post_new {
     }
 
     #[tokio::test]
+    async fn refuses_a_model_the_host_agent_would_silently_ignore() {
+        // Claude takes its model from its own command line. Accepting the
+        // owner's model and writing it nowhere would scaffold a chamber that
+        // quietly runs a different model than the one they picked.
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "claude".to_string(),
+        ));
+
+        let (status, Json(body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("anthropic".into()),
+                api_key: Some("sk-test".into()),
+                model: Some("claude-sonnet".into()),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("claude"),
+            "the error should name the host agent: {body}"
+        );
+        assert!(
+            !dir.path().join("alpha").exists(),
+            "a rejected request must not leave a half-made chamber behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn accepts_a_provider_without_a_model_on_any_host_agent() {
+        // The API key is universal, so provider-only setup still works for a
+        // runner Cryohub has no model wiring for.
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_discovery_options_and_agent(
+            dir.path().to_path_buf(),
+            crate::hub::discovery::DiscoveryOptions::local_only(),
+            "claude".to_string(),
+        ));
+
+        let (status, Json(_body)) = post_new(
+            State(app),
+            Json(NewChamberPayload {
+                name: "alpha".into(),
+                api_key_provider: Some("anthropic".into()),
+                api_key: Some("sk-test".into()),
+                model: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(status, axum::http::StatusCode::CREATED);
+        let cfg = crate::config::load_config(&dir.path().join("alpha/cryo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cfg.agent, "claude");
+        let env = &cfg.provider.unwrap().env;
+        assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test");
+    }
+
+    #[tokio::test]
     async fn creates_new_chamber_with_selected_api_key_provider() {
         let dir = tempfile::tempdir().unwrap();
         let app = Arc::new(AppState::local_only(dir.path().to_path_buf()));

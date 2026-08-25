@@ -19,7 +19,7 @@ env = { ANTHROPIC_API_KEY = "sk-ant-..." }  # Env vars set when spawning the age
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `agent` | `"pi"` | Agent command to run. Use `"opencode"` for OpenCode, `"claude"` for Claude Code, `"codex"` for Codex, `"kimi"` for Kimi Code, or any executable on `PATH`. New chambers use the host-level `default_agent` unless `cryo init --agent` supplies an explicit command. |
+| `agent` | `"pi"` | Agent command to run. Use `"opencode"` for OpenCode, `"claude"` for Claude Code, `"codex"` for Codex, `"kimi"` for Kimi Code, or any executable on `PATH`. New chambers use the host-level `default_agent` unless `cryo init --agent` supplies an explicit command. An owner can also change it from the [Agent Console](../agent-console.md) — chamber controls → Settings → Agent — which rewrites this file (comments and any keys Cryochamber does not recognise are not preserved) and takes effect on the chamber's next restart. |
 | `max_session_duration` | `3600` | Session timeout in seconds. `0` disables the timeout. |
 | `watch_dirs` | `["messages/inbox"]` | List of directories the daemon watches for new files to wake the agent reactively. Paths are interpreted relative to the chamber directory unless absolute. Set to `[]` to disable reactive wake entirely. |
 | `zulip_poll_interval` | `5` | How often `cryo-zulip sync` polls Zulip, in seconds. `cryo-zulip sync --interval N` overrides it for one run. |
@@ -95,7 +95,9 @@ Unknown keys are rejected: a typo such as `console-dir` fails `cryohub start` wi
 | `console_dir` | *(unset — embedded)* | Serve the [Agent Console](../agent-console.md) from this directory instead of the build embedded in the `cryohub` binary. Must be an absolute path to a vite `dist/`. Development and custom builds only. |
 
 The Console updates `default_agent` without a hub restart. The next chamber it
-creates uses the new command; no existing chamber is rewritten.
+creates uses the new command; no existing chamber is rewritten. A hand edit to
+this file, like every other key here, is picked up on the next `cryohub
+restart`.
 
 ### Serving the Agent Console
 

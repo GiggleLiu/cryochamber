@@ -36,6 +36,11 @@ enum AgentKind {
 ///   "kimi"      → "kimi -p"        (needs -p flag for non-interactive mode)
 ///
 /// Unknown programs are treated as custom agents (prompt passed as positional arg).
+///
+/// Adding a runner here? `console/src/api/agents.ts` lists the same set for the
+/// Console's agent dropdowns. The hub accepts any parseable command, so that
+/// list is a shortcut rather than a limit — but a new runner is invisible in
+/// the UI until it is added there too.
 fn resolve_agent(agent_cmd: &str) -> Result<(AgentKind, String, Vec<String>)> {
     let parts = shell_words::split(agent_cmd.trim()).context("Failed to parse agent command")?;
     let program = parts.first().context("Agent command is empty")?;

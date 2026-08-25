@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { HubClient } from '../api/hubClient'
+import { AgentSelect } from '../components/AgentSelect'
 import { useAppStore } from '../store/appStore'
 import { isUnauthorized } from '../api/types'
 import { applyTheme, readTheme, type Theme } from '../lib/theme'
@@ -39,7 +40,6 @@ export function SettingsSheet() {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [defaultAgent, setDefaultAgent] = useState('')
-  const [savedDefaultAgent, setSavedDefaultAgent] = useState('')
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
 
@@ -51,7 +51,6 @@ export function SettingsSheet() {
       (config) => {
         if (cancelled || useAppStore.getState().client !== hub) return
         setDefaultAgent(config.default_agent)
-        setSavedDefaultAgent(config.default_agent)
       },
       (error) => {
         if (cancelled || useAppStore.getState().client !== hub || isUnauthorized(error)) return
@@ -96,21 +95,29 @@ export function SettingsSheet() {
     }
   }
 
-  async function saveDefaultAgent() {
+  /** The dropdown saves on change, and the field shows the chosen runner
+   * straight away: a select that snapped back while the request was in flight
+   * would read as the hub having refused it. A real refusal restores the value
+   * the hub still holds, next to the reason it gave. */
+  async function chooseDefaultAgent(next: string) {
     const hub = client instanceof HubClient ? client : null
-    const value = defaultAgent.trim()
-    if (!hub || agentBusy || !value) return
+    const previous = defaultAgent
+    if (!hub || agentBusy || !next.trim() || next === previous) return
+    setDefaultAgent(next)
     setAgentBusy(true)
     setAgentError(null)
     const stale = () => useAppStore.getState().client !== hub
     try {
-      const config = await hub.updateHostConfig(value)
+      const config = await hub.updateHostConfig(next)
       if (stale()) return
       setDefaultAgent(config.default_agent)
-      setSavedDefaultAgent(config.default_agent)
     } catch (error) {
-      if (stale() || isUnauthorized(error)) return
-      setAgentError(error instanceof Error ? error.message : 'Could not save the host agent setting.')
+      if (stale()) return
+      setDefaultAgent(previous)
+      if (isUnauthorized(error)) return
+      setAgentError(
+        error instanceof Error ? error.message : 'Could not save the host agent setting.',
+      )
     } finally {
       setAgentBusy(false)
     }
@@ -160,28 +167,12 @@ export function SettingsSheet() {
         <>
           <p className="group-label">Chambers</p>
           <div className="group">
-            <label className="row">
-              Default agent
-              <input
-                className="row-input"
-                value={defaultAgent}
-                placeholder="pi"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => setDefaultAgent(event.target.value)}
-              />
-            </label>
-            <button
-              className="row"
-              onClick={saveDefaultAgent}
-              disabled={agentBusy || !defaultAgent.trim() || defaultAgent.trim() === savedDefaultAgent}
-            >
-              Save default agent
-              <span className="row-value" aria-hidden="true">
-                {agentBusy ? 'Saving…' : 'For new chambers'}
-              </span>
-            </button>
+            <AgentSelect
+              label="Default agent"
+              value={defaultAgent}
+              disabled={agentBusy}
+              onChange={chooseDefaultAgent}
+            />
             <label className="row">
               Show completed &amp; archived
               <input
@@ -206,9 +197,14 @@ export function SettingsSheet() {
               {refreshError}
             </p>
           )}
-          {agentError && (
+          {agentError ? (
             <p className="group-hint" role="alert">
               {agentError}
+            </p>
+          ) : (
+            <p className="group-hint">
+              The default agent is the runner new chambers are created with. Chambers that already
+              exist keep the runner in their own <code>cryo.toml</code>.
             </p>
           )}
         </>

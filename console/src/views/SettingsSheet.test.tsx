@@ -141,20 +141,29 @@ describe('owner-only rows', () => {
     expect(useAppStore.getState().showCompletedArchived).toBe(true)
   })
 
-  test('loads and saves the host default agent', async () => {
+  test('the default agent dropdown loads the host setting and saves on change', async () => {
     const client = ownerHub()
     useAppStore.setState({ hubRole: 'owner', client })
     render(<SettingsSheet />)
 
-    const input = await screen.findByRole('textbox', { name: 'Default agent' })
-    expect(input).toHaveValue('pi')
-    await userEvent.clear(input)
-    await userEvent.type(input, 'pi --thinking high')
-    await userEvent.click(screen.getByRole('button', { name: 'Save default agent' }))
+    const select = await screen.findByRole('combobox', { name: 'Default agent' })
+    expect(select).toHaveValue('pi')
+    await userEvent.selectOptions(select, 'claude')
 
-    expect(client.updateHostConfig).toHaveBeenCalledWith('pi --thinking high')
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save default agent' })).toBeDisabled(),
+    expect(client.updateHostConfig).toHaveBeenCalledWith('claude')
+    await waitFor(() => expect(select).toHaveValue('claude'))
+  })
+
+  test('a host default the dropdown does not know stays selectable', async () => {
+    const client = ownerHub()
+    vi.mocked(client.hostConfig).mockResolvedValue({ default_agent: 'pi --thinking high' })
+    useAppStore.setState({ hubRole: 'owner', client })
+    render(<SettingsSheet />)
+
+    const select = await screen.findByRole('combobox', { name: 'Default agent' })
+    expect(select).toHaveValue('pi --thinking high')
+    expect(Array.from(select.querySelectorAll('option')).map((o) => o.value)).toContain(
+      'pi --thinking high',
     )
   })
 
@@ -164,11 +173,12 @@ describe('owner-only rows', () => {
     useAppStore.setState({ hubRole: 'owner', client })
     render(<SettingsSheet />)
 
-    const input = await screen.findByRole('textbox', { name: 'Default agent' })
-    await userEvent.clear(input)
-    await userEvent.type(input, 'broken')
-    await userEvent.click(screen.getByRole('button', { name: 'Save default agent' }))
+    const select = await screen.findByRole('combobox', { name: 'Default agent' })
+    await userEvent.selectOptions(select, 'codex')
+
     expect(await screen.findByRole('alert')).toHaveTextContent('invalid default agent')
+    // The dropdown goes back to the runner the hub still holds.
+    expect(select).toHaveValue('pi')
   })
 
   test('refresh chambers re-scans the hub and re-registers', async () => {

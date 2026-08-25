@@ -756,3 +756,318 @@ async fn open_mode_send_is_never_throttled() {
         assert_eq!(status, StatusCode::OK, "send {i}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// post_agent — the owner's per-chamber runner choice
+// ---------------------------------------------------------------------------
+
+/// A workspace holding one chamber with a saved `cryo.toml`, plus the app state
+/// and the chamber id the routes address it by.
+fn one_chamber(agent: &str) -> (tempfile::TempDir, Arc<AppState>, String) {
+    chamber_with_config(crate::config::CryoConfig {
+        agent: agent.to_string(),
+        ..Default::default()
+    })
+}
+
+fn chamber_with_config(
+    cfg: crate::config::CryoConfig,
+) -> (tempfile::TempDir, Arc<AppState>, String) {
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = app
+        .chambers
+        .read()
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()
+        .0
+        .clone();
+    (workspace, app, id)
+}
+
+/// `timer.json` for a live daemon — this process's own PID passes `is_locked`
+/// — optionally carrying a `cryo start --agent` override.
+fn running_state(agent_override: Option<&str>) -> crate::state::CryoState {
+    crate::state::CryoState {
+        session_number: 1,
+        pid: Some(std::process::id()),
+        agent_override: agent_override.map(str::to_string),
+        max_session_duration_override: None,
+        instance_id: None,
+        session_active: false,
+        previous_session_crashed: false,
+    }
+}
+
+async fn put_agent(app: Arc<AppState>, id: &str, agent: &str) -> (StatusCode, Value) {
+    json_of(
+        post_agent(
+            State(app),
+            AxumPath(id.to_string()),
+            Json(AgentRequest {
+                agent: agent.to_string(),
+            }),
+        )
+        .await,
+    )
+    .await
+}
+
+fn saved_agent(workspace: &tempfile::TempDir) -> String {
+    crate::config::load_config(&workspace.path().join("alpha/cryo.toml"))
+        .unwrap()
+        .unwrap()
+        .agent
+}
+
+#[tokio::test]
+async fn post_agent_writes_the_new_runner_into_the_chambers_own_config() {
+    let (workspace, app, id) = one_chamber("pi");
+
+    let (status, body) = put_agent(app, &id, "  claude  ").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["agent"], "claude");
+    // Nothing is running and no `cryo start --agent` was ever used, so the new
+    // runner is simply the one that will wake next.
+    assert_eq!(body["restart_required"], false);
+    assert_eq!(body["override_active"], false);
+    assert_eq!(saved_agent(&workspace), "claude");
+}
+
+#[tokio::test]
+async fn post_agent_keeps_the_provider_section_the_chamber_already_had() {
+    // The runner changes; the API key the chamber was created with does not.
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = workspace.path().join("alpha");
+    std::fs::create_dir_all(&chamber).unwrap();
+    let cfg = crate::config::CryoConfig {
+        agent: "pi".to_string(),
+        provider: Some(crate::config::ProviderConfig {
+            name: "anthropic".to_string(),
+            env: std::collections::HashMap::from([(
+                "ANTHROPIC_API_KEY".to_string(),
+                "sk-test".to_string(),
+            )]),
+        }),
+        ..Default::default()
+    };
+    crate::config::save_config(&chamber.join("cryo.toml"), &cfg).unwrap();
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+    let id = app
+        .chambers
+        .read()
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()
+        .0
+        .clone();
+
+    let (status, _) = json_of(
+        post_agent(
+            State(app),
+            AxumPath(id),
+            Json(AgentRequest {
+                agent: "opencode".to_string(),
+            }),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let saved = crate::config::load_config(&chamber.join("cryo.toml"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.agent, "opencode");
+    let provider = saved.provider.expect("provider survives a runner change");
+    assert_eq!(provider.name, "anthropic");
+    assert_eq!(provider.env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test");
+}
+
+#[tokio::test]
+async fn post_agent_rejects_a_command_the_daemon_could_not_launch() {
+    // Two different refusals, and the operator has to be able to tell them
+    // apart: nothing typed, versus typed but unparseable.
+    for (bad, expected) in [
+        ("", "agent command is empty"),
+        ("   ", "agent command is empty"),
+        ("'unterminated", "missing closing quote"),
+    ] {
+        let (workspace, app, id) = one_chamber("pi");
+
+        let (status, body) = put_agent(app, &id, bad).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "agent {bad:?}");
+        let error = body["error"].as_str().unwrap_or_default();
+        assert!(
+            error.contains(expected),
+            "agent {bad:?}: expected {expected:?} in {error:?}"
+        );
+        assert_eq!(
+            saved_agent(&workspace),
+            "pi",
+            "agent {bad:?} must not stick"
+        );
+    }
+}
+
+#[tokio::test]
+async fn post_agent_reports_a_running_chamber_and_a_cli_override() {
+    // A chamber started with `cryo start --agent codex` ignores cryo.toml's
+    // `agent` entirely, so writing the file is not enough and a restart alone
+    // will not help. The response has to say both.
+    let (workspace, app, id) = one_chamber("pi");
+    let chamber = workspace.path().join("alpha");
+    let state = running_state(Some("codex"));
+    crate::state::save_state(&crate::state::state_path(&chamber), &state).unwrap();
+
+    let (status, body) = put_agent(app, &id, "claude").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["agent"], "claude");
+    assert_eq!(body["restart_required"], true);
+    assert_eq!(body["override_active"], true);
+    // The file is still written: it is where the override lands back when the
+    // chamber is next started without the flag.
+    assert_eq!(saved_agent(&workspace), "claude");
+}
+
+#[tokio::test]
+async fn post_agent_reports_the_same_state_when_nothing_changes() {
+    // Re-picking the runner already in force is a no-op on disk, but the
+    // caller still needs the true restart/override picture back.
+    let (workspace, app, id) = one_chamber("pi");
+    let chamber = workspace.path().join("alpha");
+    let before = std::fs::read_to_string(chamber.join("cryo.toml")).unwrap();
+    let state = running_state(None);
+    crate::state::save_state(&crate::state::state_path(&chamber), &state).unwrap();
+
+    let (status, body) = put_agent(app, &id, "pi").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["agent"], "pi");
+    assert_eq!(body["restart_required"], true);
+    assert_eq!(body["override_active"], false);
+    assert_eq!(
+        std::fs::read_to_string(chamber.join("cryo.toml")).unwrap(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn post_agent_404s_for_a_chamber_the_hub_does_not_know() {
+    let workspace = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+
+    let (status, _) = json_of(
+        post_agent(
+            State(app),
+            AxumPath("no-such-chamber".to_string()),
+            Json(AgentRequest {
+                agent: "pi".to_string(),
+            }),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// post_plan — the operator's brief, edited from the console
+// ---------------------------------------------------------------------------
+
+async fn put_plan(app: Arc<AppState>, id: &str, content: &str) -> (StatusCode, Value) {
+    json_of(
+        post_plan(
+            State(app),
+            AxumPath(id.to_string()),
+            Json(PlanRequest {
+                content: content.to_string(),
+            }),
+        )
+        .await,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn post_plan_replaces_the_file_and_normalises_line_endings() {
+    let (workspace, app, id) = one_chamber("pi");
+    let plan = workspace.path().join("alpha/plan.md");
+    std::fs::write(&plan, "# Old plan\n").unwrap();
+
+    // CRLF from a browser textarea, and no trailing newline.
+    let (status, body) = put_plan(app, &id, "# New plan\r\n\r\nDo the thing.").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let written = std::fs::read_to_string(&plan).unwrap();
+    assert_eq!(written, "# New plan\n\nDo the thing.\n");
+    assert_eq!(body["bytes"], written.len());
+}
+
+#[tokio::test]
+async fn post_plan_creates_the_file_when_the_chamber_has_none() {
+    let (workspace, app, id) = one_chamber("pi");
+    let plan = workspace.path().join("alpha/plan.md");
+    assert!(!plan.exists());
+
+    let (status, _) = put_plan(app, &id, "# Brief\n").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(&plan).unwrap(), "# Brief\n");
+}
+
+#[tokio::test]
+async fn post_plan_accepts_an_empty_plan_without_inventing_a_newline() {
+    // Clearing the plan is a legitimate edit, and an "empty" file that is
+    // actually one byte of newline is not what the operator asked for.
+    let (workspace, app, id) = one_chamber("pi");
+    let plan = workspace.path().join("alpha/plan.md");
+    std::fs::write(&plan, "# Old plan\n").unwrap();
+
+    let (status, body) = put_plan(app, &id, "").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["bytes"], 0);
+    assert_eq!(std::fs::read_to_string(&plan).unwrap(), "");
+}
+
+#[tokio::test]
+async fn post_plan_refuses_a_plan_over_the_cap_without_touching_the_file() {
+    let (workspace, app, id) = one_chamber("pi");
+    let plan = workspace.path().join("alpha/plan.md");
+    std::fs::write(&plan, "# Keep me\n").unwrap();
+
+    let (status, body) = put_plan(app, &id, &"x".repeat(MAX_PLAN_BYTES + 1)).await;
+
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        body["error"].as_str().unwrap().contains("the limit is"),
+        "the refusal should name the limit: {body}"
+    );
+    assert_eq!(std::fs::read_to_string(&plan).unwrap(), "# Keep me\n");
+}
+
+#[tokio::test]
+async fn post_plan_404s_for_a_chamber_the_hub_does_not_know() {
+    let workspace = tempfile::tempdir().unwrap();
+    let app = Arc::new(AppState::local_only(workspace.path().to_path_buf()));
+    app.refresh();
+
+    let (status, _) = put_plan(app, "no-such-chamber", "# Brief\n").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

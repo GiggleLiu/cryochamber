@@ -127,12 +127,7 @@ fn cmd_start(
     foreground: bool,
     public: Option<bool>,
 ) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config_with_default_agent(
-        host,
-        port,
-        public,
-        default_agent,
-    )?;
+    let config = cryochamber::hub::config::effective_config(host, port, public, default_agent)?;
     config.validate_console_dir()?;
     std::fs::create_dir_all(&config.chamber_root)?;
 
@@ -279,6 +274,7 @@ fn cmd_daemon(host: Option<String>, port: Option<u16>, public: Option<bool>) -> 
         host,
         port,
         public,
+        None,
     );
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(cryochamber::hub::serve(
