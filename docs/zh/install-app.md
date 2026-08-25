@@ -18,6 +18,10 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | Apple Silicon 上的 macOS |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | 同一个 App 的 zip 包，如果你不想挂载磁盘映像 |
 
+在 macOS 上请选 **dmg**——它是主要的构建产物，原样保留 bundler 的打包结果；
+`.app.zip` 是给不愿挂载磁盘映像的人准备的备选，其中的 `.app` 在压缩前经过一次完整的
+`codesign --deep -s -` 重新封签。
+
 没有 Play Store 上架，没有 App Store 上架，没有 Windows 构建，也没有 Intel Mac 构建。
 上面列出的就是全部。
 
@@ -50,7 +54,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 一共三种情况。
 
 **系统已信任其证书的 HTTPS。** 什么都不问。这就是挂在反向代理后、持有真实证书的 hub
-（[控制台指南里的 Caddy 配置](./agent-console.md)），也是应当追求的情况。
+（[控制台指南里的 Caddy 配置](./agent-console.md#公网部署在外用手机访问)），也是应当追求的情况。
 
 **明文 `http://`。** 只要你输入的是明文地址，地址下方立刻出现警告，并且 **Add hub**
 按钮保持禁用，直到你勾选 *「I understand traffic to this hub is unencrypted」*

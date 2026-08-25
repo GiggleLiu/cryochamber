@@ -20,6 +20,11 @@ release](https://github.com/GiggleLiu/cryochamber/releases):
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | macOS on Apple Silicon |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | the same app, zipped, if you would rather not mount a disk image |
 
+On macOS take the **dmg** — it is the primary build, shipping the bundler's
+original packaging; the `.app.zip` is a fallback whose `.app` is re-sealed with
+a full `codesign --deep -s -` before zipping, for anyone who would rather not
+mount a disk image.
+
 There is no Play Store listing, no App Store listing, no Windows build, and no
 Intel Mac build. What is above is what exists.
 
