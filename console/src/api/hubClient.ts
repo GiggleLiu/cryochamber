@@ -162,6 +162,10 @@ function isRefusal(body: unknown): boolean {
 
 export interface HubClientOptions {
   token: string
+  /** Absolute hub origin (`http://hub.local:8765`), no trailing slash. Empty
+   * (the default) keeps today's same-origin relative paths: the browser
+   * console is served by the hub it talks to. The app sets it per hub. */
+  baseUrl?: string
   /** Runs once per 401 before the ApiError propagates: the app's single
    * logout path. Nothing else in the client interprets 401. */
   onAuthFailure?: () => void
@@ -188,12 +192,14 @@ export interface WhoAmI {
  */
 export class HubClient {
   private readonly token: string
+  private readonly base: string
   private readonly onAuthFailure: (() => void) | undefined
   private readonly fetchFn: typeof fetch
   private authFailed = false
 
   constructor(opts: HubClientOptions) {
     this.token = opts.token
+    this.base = opts.baseUrl ?? ''
     this.onAuthFailure = opts.onAuthFailure
     // Native window.fetch throws "Illegal invocation" when called as a member
     // (this.fetchFn(...) binds `this` to the client). Bind to undefined so
@@ -207,15 +213,17 @@ export class HubClient {
 
   /** Every hub request goes through here: bearer header always, CSRF header on
    * anything that is not a GET, and the one place a 401 is noticed. Nothing
-   * may build its own fetch call. */
+   * may build its own fetch call. A hub-relative path picks up `base`; an
+   * already-absolute URL (an attachment link the hub minted) passes through. */
   private async send(path: string, init: RequestInit = {}): Promise<Response> {
+    const target = /^https?:\/\//.test(path) ? path : this.base + path
     const headers: Record<string, string> = {
       Authorization: this.authHeaderValue(),
       ...((init.headers as Record<string, string>) ?? {}),
     }
     // The hub rejects state-changing requests without this header.
     if (init.method && init.method !== 'GET') headers['X-Cryo-CSRF'] = '1'
-    const res = await this.fetchFn(path, { ...init, headers })
+    const res = await this.fetchFn(target, { ...init, headers })
     if (res.status === 401) this.noteAuthFailure()
     return res
   }
@@ -259,7 +267,7 @@ export class HubClient {
     signal: AbortSignal,
   ): Promise<void> {
     try {
-      await readSse('/api/events', {
+      await readSse(this.base + '/api/events', {
         signal,
         headers: { Authorization: this.authHeaderValue() },
         onEvent,

@@ -363,3 +363,42 @@ describe('events()', () => {
     })
   })
 })
+
+describe('baseUrl', () => {
+  it('prefixes every request path', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ role: 'owner' }), { status: 200 })
+    }) as typeof fetch
+    const c = new HubClient({ token: 't', baseUrl: 'http://hub.local:8765', fetch: fakeFetch })
+    await c.whoami()
+    expect(calls).toEqual(['http://hub.local:8765/api/whoami'])
+  })
+
+  it('fetchBlob prefixes hub-relative urls and leaves absolute ones alone', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return new Response(new Blob(['x']), { status: 200 })
+    }) as typeof fetch
+    const c = new HubClient({ token: 't', baseUrl: 'http://hub.local:8765', fetch: fakeFetch })
+    await c.fetchBlob('/api/chambers/a/files/pic.png')
+    await c.fetchBlob('http://elsewhere.example/x')
+    expect(calls).toEqual([
+      'http://hub.local:8765/api/chambers/a/files/pic.png',
+      'http://elsewhere.example/x',
+    ])
+  })
+
+  it('defaults to same-origin relative paths (browser mode unchanged)', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ role: 'owner' }), { status: 200 })
+    }) as typeof fetch
+    const c = new HubClient({ token: 't', fetch: fakeFetch })
+    await c.whoami()
+    expect(calls).toEqual(['/api/whoami'])
+  })
+})
