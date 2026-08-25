@@ -143,6 +143,31 @@ fn set_archived_persists_across_register_and_unregister() {
 }
 
 #[test]
+fn fingerprint_moves_with_entries_and_stays_put_without_writes() {
+    let state_home = tempfile::tempdir().unwrap();
+    let _guard = EnvVarGuard::set_path("XDG_STATE_HOME", state_home.path());
+    let workspace = tempfile::tempdir().unwrap();
+    let chamber = scaffold_chamber(workspace.path(), "alpha");
+
+    let before = fingerprint();
+    remember_chamber(&chamber).unwrap();
+    let after_add = fingerprint();
+    assert_ne!(before, after_add, "adding an entry moves the fingerprint");
+    assert_eq!(after_add, fingerprint(), "no writes, no movement");
+
+    // Non-entry files in the registry dir are not registry state.
+    std::fs::write(registry_dir().unwrap().join("scratch.txt"), "x").unwrap();
+    assert_eq!(after_add, fingerprint(), "non-json files are ignored");
+
+    set_archived(&chamber, true).unwrap();
+    assert_ne!(
+        after_add,
+        fingerprint(),
+        "rewriting an entry moves the fingerprint"
+    );
+}
+
+#[test]
 fn entry_filename_dedupes_symlinked_path_forms() {
     // A chamber reached through a symlinked path (macOS `/var` -> `/private/var`
     // is the real-world case) must map to the same registry file, or the hub

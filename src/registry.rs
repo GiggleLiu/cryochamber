@@ -127,6 +127,34 @@ fn write_entry(dir: &Path, entry: DaemonEntry) -> Result<()> {
     Ok(())
 }
 
+/// Read-only content fingerprint of the whole registry: every entry file's
+/// name and bytes folded into one hash. Unlike [`list`], which repairs the
+/// store as it reads (rewriting entries, pruning dead ones), this changes
+/// nothing on disk — so the hub's registry watch can poll it and have its own
+/// refresh's repair writes compare equal instead of retriggering forever.
+pub fn fingerprint() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let Ok(reg) = registry_dir() else {
+        return 0;
+    };
+    let mut entries: Vec<(String, String)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&reg) {
+        for file in rd.flatten() {
+            let path = file.path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let name = file.file_name().to_string_lossy().into_owned();
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            entries.push((name, content));
+        }
+    }
+    entries.sort();
+    entries.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Mark this daemon as stopped while preserving the chamber entry.
 pub fn unregister(dir: &Path) {
     let entry = DaemonEntry {

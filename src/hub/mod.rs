@@ -26,6 +26,9 @@ use crate::hub::state::AppState as WebAppState;
 pub fn build_router() -> Router {
     let app = Arc::new(WebAppState::global());
     app.refresh();
+    // Out-of-process registrations (a terminal `cryo start`) only touch
+    // registry files; the watch turns them into index refreshes on its own.
+    app.spawn_registry_watch();
     build_router_with_state(app)
 }
 
@@ -278,6 +281,7 @@ pub async fn serve(host: &str, port: u16, public: bool) -> anyhow::Result<()> {
 
     let app = Arc::new(WebAppState::global());
     app.refresh();
+    app.spawn_registry_watch();
     let router = match ctx {
         Some(ctx) => {
             println!("Cryochamber hub: PUBLIC mode (bearer auth enforced)");
