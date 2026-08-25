@@ -913,6 +913,18 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
   transform: translateY(-50%);
 }
+/* A consent, not a preference: a real checkbox beside its sentence, rather
+   than the settings switch. Lives inside the plain-HTTP warning block. */
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+.check-field input { flex: none; margin: 0; }
+
 .login-hint {
   margin-top: var(--sp-4);
   font-size: var(--fs-sm);

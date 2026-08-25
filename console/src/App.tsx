@@ -7,6 +7,9 @@ import { INVALID_INVITE_REASON, MALFORMED_INVITE_REASON, signInWithHubToken } fr
 import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
 import { isUnauthorized } from './api/types'
 import { HubClient } from './api/hubClient'
+import { isTauri } from './lib/env'
+import { appRuntime, bootApp } from './lib/appBoot'
+import { AddHubView } from './views/AddHubView'
 import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
@@ -36,6 +39,8 @@ export function takeInviteToken(): string | typeof MALFORMED_INVITE | null {
 export default function App() {
   const creds = useAppStore((s) => s.creds)
   const client = useAppStore((s) => s.client)
+  const mode = useAppStore((s) => s.mode)
+  const hubs = useAppStore((s) => s.hubs)
   const view = useAppStore((s) => s.view)
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
@@ -49,7 +54,17 @@ export default function App() {
   const explicitConversationRoute = useRef(viewFromHash()?.name === 'conversation')
   const chamberCount = chambers.length
 
+  // The app boots from its own remembered hubs, all of them at once. The three
+  // effects that follow are browser mode's single-hub session — a stored
+  // credential, an invite fragment, one session-wide identity — and none of
+  // them has a meaning when there are N hubs, so the app skips them.
   useEffect(() => {
+    if (!isTauri()) return
+    void bootApp(appRuntime())
+  }, [])
+
+  useEffect(() => {
+    if (isTauri()) return
     // Before anything reads storage: the pre-cutover build's id maps and
     // message cache are keyed on numbers this build has no use for, and a
     // stale cache under a live key would be read as this build's own.
@@ -64,6 +79,7 @@ export default function App() {
   // the token in the fragment is exchanged for a session on the spot. Stored
   // credentials win, so an existing session is never silently replaced.
   useEffect(() => {
+    if (isTauri()) return
     if (!inviteToken || useAppStore.getState().creds) return
     if (inviteToken === MALFORMED_INVITE) {
       useAppStore.getState().logout(MALFORMED_INVITE_REASON)
@@ -81,8 +97,9 @@ export default function App() {
   // owner-only UI simply stays hidden.
   useEffect(() => {
     // Browser mode's single hub. App mode has no session-wide identity to
-    // refresh: each hub answers its own whoami through `setHubIdentity`.
-    if (!(client instanceof HubClient)) return
+    // refresh: each hub answers its own whoami through `setHubIdentity`, which
+    // `bootApp` owns.
+    if (isTauri() || !(client instanceof HubClient)) return
     client
       .whoami()
       .then((who) => {
@@ -163,7 +180,8 @@ export default function App() {
   // on document, so component handlers (download/lightbox in MessageBody,
   // which call preventDefault) always win first.
   useEffect(() => {
-    if (!creds || !client) return
+    // App mode has no session-wide `creds`; its hubs are the sign-in.
+    if (!client || (mode !== 'app' && !creds)) return
     const origin = window.location.origin
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented) return
@@ -174,18 +192,27 @@ export default function App() {
       if (!HUB_FILES_RE.test(href)) return
       e.preventDefault()
       const name = filenameFromHref(href)
-      downloadUpload((u) => client.fetchBlobFor('', u), href).catch((err) => {
+      // The chamber key names the hub the file lives on. Browser mode ignores
+      // it (one hub); in app mode a click outside a conversation cannot name
+      // one, and the router refuses rather than guessing — such links only
+      // ever render inside a conversation.
+      downloadUpload(
+        (u) => client.fetchBlobFor(view.name === 'conversation' ? view.chamberId : '', u),
+        href,
+      ).catch((err) => {
         if (isUnauthorized(err)) return
         setDownloadNote(`Could not download ${name}. Check your connection and try again.`)
       })
     }
     document.addEventListener('click', onClick)
     return () => document.removeEventListener('click', onClick)
-  }, [creds, client])
+  }, [creds, client, mode, view])
 
   useEventLoop()
 
-  if (!creds) return <LoginView />
+  // What "signed out" means differs: browser mode has no token yet, the app
+  // has no hub yet.
+  if (isTauri() ? hubs.length === 0 : !creds) return isTauri() ? <AddHubView /> : <LoginView />
 
   return (
     <div className="app">
