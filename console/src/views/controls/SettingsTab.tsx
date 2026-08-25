@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { HubClient, type ChamberStatus } from '../../api/hubClient'
+import type { ChamberStatus } from '../../api/hubClient'
 import { AgentSelect } from '../../components/AgentSelect'
 import { useAppStore } from '../../store/appStore'
 import { isUnauthorized } from '../../api/types'
@@ -25,7 +25,6 @@ export function SettingsTab({
   onAgentChanged: () => void
 }) {
   const client = useAppStore((s) => s.client)
-  const hub = client instanceof HubClient ? client : null
   // What `cryo.toml` says, which is what this dropdown writes back — never
   // `status.agent`, which is the CLI override when one is in force.
   const [agent, setAgent] = useState(status.config_agent)
@@ -50,14 +49,14 @@ export function SettingsTab({
    * refusal restores the runner the chamber still has, next to the reason. */
   async function chooseAgent(next: string) {
     const previous = agent
-    if (!hub || busy || next === previous) return
+    if (!client || busy || next === previous) return
     setAgent(next)
     setBusy(true)
     setError(null)
     setSaved(null)
-    const stale = () => useAppStore.getState().client !== hub
+    const stale = () => useAppStore.getState().client !== client
     try {
-      const result = await hub.setChamberAgent(chamberId, next)
+      const result = await client.setChamberAgent(chamberId, next)
       if (stale()) return
       setAgent(result.agent)
       setSaved({ restart: result.restart_required, override: result.override_active })
@@ -78,7 +77,7 @@ export function SettingsTab({
     <>
       <p className="group-label">Agent</p>
       <div className="group">
-        <AgentSelect label="Agent" value={agent} disabled={!hub || busy} onChange={chooseAgent} />
+        <AgentSelect label="Agent" value={agent} disabled={!client || busy} onChange={chooseAgent} />
       </div>
       {error ? (
         <p className="group-hint" role="alert">

@@ -4,6 +4,8 @@ import { ConversationView, isRichMessage } from './ConversationView'
 import { ACCESS_REVOKED_NOTICE, unreadCount, useAppStore, resetAppStore } from '../store/appStore'
 import { ApiError } from '../api/types'
 import { HubClient } from '../api/hubClient'
+import { makeHubAccount, MemoryHubsBackend } from '../store/hubs'
+import { chamberKey } from '../lib/hubKeys'
 import { ECHO_TIMEOUT_MS, sendViaOutbox } from '../lib/outbox'
 import type { Chamber, ChamberMessage, Credentials } from '../api/types'
 
@@ -48,10 +50,19 @@ function chamber(extra: Partial<Chamber> = {}): Chamber {
 }
 
 function fakeClient(overrides: Partial<Record<keyof HubClient, unknown>> = {}) {
+  const blob = vi.fn(async (_url: string) => new Blob(['x']))
   return {
     getMessages: vi.fn(async () => [makeMsg(1), makeMsg(2)]),
     sendMessage: vi.fn(async () => ({ id: 'inbox/99.md' })),
-    fetchBlob: vi.fn(async () => new Blob(['x'])),
+    fetchBlob: blob,
+    // The ConsoleClient spelling the view actually calls; browser mode ignores
+    // the chamber key exactly as HubClient does.
+    fetchBlobFor: vi.fn(async (_key: string, url: string) => blob(url)),
+    // The controls sheet mounts over this view and asks for a status; a fake
+    // without one would throw where the real client answers.
+    chamberStatus: vi.fn(async () => {
+      throw new ApiError(500, 'HTTP 500')
+    }),
     ...overrides,
   } as unknown as HubClient
 }
@@ -804,9 +815,9 @@ describe('owner header actions', () => {
   })
 
   test('an owner gets a Controls button that opens the controls sheet', async () => {
-    // What the sheet reads is covered in ControlsSheet.test.tsx; this fake is
-    // not a HubClient, so the sheet fetches nothing through it and only the
-    // button mounting the sheet is under test here.
+    // What the sheet reads is covered in ControlsSheet.test.tsx; this fake
+    // answers its status call with nothing worth reading, so only the button
+    // mounting the sheet is under test here.
     useAppStore.setState({
       client: fakeClient(),
       hubRole: 'owner',
@@ -822,5 +833,85 @@ describe('owner header actions', () => {
     render(<ConversationView chamberId="cham-a" />)
     await screen.findByText('msg-1')
     expect(screen.queryByRole('button', { name: 'Chamber controls' })).toBeNull()
+  })
+})
+
+/**
+ * The view under a real `HubRouter`. An attachment is the sharpest case: the
+ * fetch has to reach the hub the chamber key names, *and* the URL it asks for
+ * has to carry that hub's own chamber id — the `{hubId}:` prefix is the
+ * router's business and means nothing on the wire.
+ */
+describe('app mode', () => {
+  const hubA = makeHubAccount({
+    url: 'http://a.local:1', token: 'ta', trust: { kind: 'plain-http' },
+  })
+  const hubB = makeHubAccount({
+    url: 'http://b.local:2', token: 'tb', trust: { kind: 'plain-http' },
+  })
+  const keyA = chamberKey(hubA.id, 'cham-a')
+
+  const originalCreateObjectURL = URL.createObjectURL
+  beforeEach(() => {
+    URL.createObjectURL = (() => 'blob:mock-1') as typeof URL.createObjectURL
+  })
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectURL
+  })
+
+  /** Both hubs behind one router over a fetch that records every URL asked
+   * for. Hub A's mailbox holds one message carrying `body`. */
+  function enterAppMode(body: string): string[] {
+    const calls: string[] = []
+    const fetchFn = (async (url: RequestInfo | URL) => {
+      const target = String(url)
+      calls.push(target)
+      if (target.endsWith('/messages')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'outbox/1.md', chamber_id: 'cham-a', direction: 'outbox', from: 'Agent',
+              subject: '', body, timestamp: stamp(0), is_question: false,
+            },
+          ]),
+          { status: 200 },
+        )
+      }
+      return new Response(new Blob(['bytes']), {
+        status: 200, headers: { 'Content-Type': 'image/png' },
+      })
+    }) as typeof fetch
+    useAppStore
+      .getState()
+      .initApp(
+        [hubA, hubB],
+        new MemoryHubsBackend(),
+        (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: fetchFn }),
+      )
+    useAppStore.setState({ chambers: [chamber({ id: keyA, hubId: hubA.id })] })
+    return calls
+  }
+
+  test('a chamber-relative image is fetched from that hub under its plain id', async () => {
+    const calls = enterAppMode('![plot.png](artwork/plot.png)')
+    const { container } = render(<ConversationView chamberId={keyA} />)
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+    const img = container.querySelector('img')!
+    await waitFor(() => expect(img.getAttribute('src')).toBe('blob:mock-1'))
+    expect(calls).toContain('http://a.local:1/api/chambers/cham-a/messages')
+    expect(calls).toContain(
+      'http://a.local:1/api/chambers/cham-a/file?path=artwork%2Fplot.png',
+    )
+    expect(calls.some((c) => c.includes('b.local'))).toBe(false)
+  })
+
+  test('a hub-minted attachment URL is fetched from the same hub', async () => {
+    const calls = enterAppMode('![plot.png](/api/chambers/cham-a/files/plot.png)')
+    const { container } = render(<ConversationView chamberId={keyA} />)
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+    await waitFor(() =>
+      expect(container.querySelector('img')!.getAttribute('src')).toBe('blob:mock-1'),
+    )
+    expect(calls).toContain('http://a.local:1/api/chambers/cham-a/files/plot.png')
   })
 })

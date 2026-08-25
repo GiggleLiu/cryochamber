@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { ACCESS_REVOKED_NOTICE, selfNameFor, useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
-import type { HubClient } from '../api/hubClient'
+import { splitChamberKey } from '../lib/hubKeys'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
@@ -73,6 +73,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   // two hubs can name the same person differently.
   const selfName = useAppStore((s) => selfNameFor(s, chamberId))
   const client = useAppStore((s) => s.client)
+  const mode = useAppStore((s) => s.mode)
   const navigate = useAppStore((s) => s.navigate)
   // Owner of this chamber's hub — a token can own one hub and be a guest on
   // the next, so the question is only ever asked about a chamber.
@@ -81,10 +82,19 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   // Memoised: MessageBody keys its decorate effect on this, and a fresh arrow
   // every render would tear down and rebuild its MutationObserver each time.
   const fetchBlob = useMemo(
-    // Still the browser-mode client's own blob fetch: this view learns to pass
-    // its chamber key when it becomes hub-aware.
-    () => (client ? (url: string) => (client as HubClient).fetchBlob(url) : undefined),
-    [client],
+    // The chamber key names the hub the file lives on; browser mode's client
+    // ignores it, so the request it makes is byte-identical.
+    () => (client ? (url: string) => client.fetchBlobFor(chamberId, url) : undefined),
+    [client, chamberId],
+  )
+  // What the hub itself calls this chamber. An attachment URL built from a
+  // chamber-relative link goes on the wire, and the `{hubId}:` prefix is the
+  // router's own bookkeeping — never part of a path a hub serves. Asked only
+  // in app mode: browser-mode ids are raw, and one that happened to start
+  // `{8 hex}:` would otherwise be mistaken for a key and truncated.
+  const hubChamberId = useMemo(
+    () => (mode === 'app' ? splitChamberKey(chamberId).chamberId : chamberId),
+    [mode, chamberId],
   )
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
@@ -360,7 +370,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                         {copiedMessageId === m.id ? 'Copied' : 'Copy'}
                       </button>
                     )}
-                    <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={chamberId} />
+                    <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
                   </div>
                 </div>
               </div>
@@ -376,7 +386,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
               <div className="bubble">
                 {/* Rendering the raw text approximates what the thread will
                     show back; it disappears the moment it does. */}
-                <MessageBody source={o.body} chamberId={chamberId} />
+                <MessageBody source={o.body} chamberId={hubChamberId} />
               </div>
               {o.state === 'sending' ? (
                 <div className="send-state">Sending…</div>

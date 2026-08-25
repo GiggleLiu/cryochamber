@@ -4,6 +4,8 @@ import { ControlsSheet, statePillLabel } from './ControlsSheet'
 import { HubClient, type ChamberStatus } from '../api/hubClient'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { emitChamberEvent } from '../store/chamberEvents'
+import { makeHubAccount, MemoryHubsBackend } from '../store/hubs'
+import { chamberKey } from '../lib/hubKeys'
 import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
 
@@ -393,5 +395,126 @@ describe('detail sections', () => {
     await screen.findByText('Stopped')
     await open('Plan')
     expect(await screen.findByText('No plan.md in this chamber.')).toBeInTheDocument()
+  })
+})
+
+/**
+ * The sheet under a real `HubRouter`, which is the only client app mode has.
+ * Everything here is chamber-scoped, so every call has to reach the hub the
+ * chamber key names — and no other hub the app happens to remember.
+ */
+describe('app mode', () => {
+  const hubA = makeHubAccount({
+    url: 'http://a.local:1', token: 'ta', trust: { kind: 'plain-http' },
+  })
+  const hubB = makeHubAccount({
+    url: 'http://b.local:2', token: 'tb', trust: { kind: 'plain-http' },
+  })
+  const keyA = chamberKey(hubA.id, 'cham-a')
+
+  /** Both hubs behind one router over a fetch that records which host each
+   * request actually reached. Returns that log. */
+  function enterAppMode(s: ChamberStatus = status()): string[] {
+    const calls: string[] = []
+    const fetchFn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const target = String(url)
+      calls.push(`${init?.method ?? 'GET'} ${target}`)
+      if (target.endsWith('/status')) return new Response(JSON.stringify(s), { status: 200 })
+      if (target.endsWith('/todos')) {
+        return new Response(
+          JSON.stringify([
+            { id: 1, text: 'sweep the decoders', at: null, done: false, claimed: false },
+          ]),
+          { status: 200 },
+        )
+      }
+      return new Response(JSON.stringify({ ok: true, message: 'Started' }), { status: 200 })
+    }) as typeof fetch
+    useAppStore
+      .getState()
+      .initApp(
+        [hubA, hubB],
+        new MemoryHubsBackend(),
+        (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: fetchFn }),
+      )
+    return calls
+  }
+
+  function renderAppSheet() {
+    return render(
+      <ControlsSheet chamberId={keyA} chamberName="alpha" archived={false} onClose={() => {}} />,
+    )
+  }
+
+  /** Each detail opens a sheet of its own, listed by a row underneath. */
+  const openDetail = (name: string) =>
+    userEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }))
+
+  test('the status load reaches the hub the chamber key names', async () => {
+    const calls = enterAppMode(status({ running: true, agent_running: true, next_wake: 'in 2 h' }))
+    renderAppSheet()
+    expect(await screen.findByText('Working')).toBeInTheDocument()
+    expect(screen.getByText('in 2 h')).toBeInTheDocument()
+    // The hub id is the router's routing key; the hub itself only ever sees
+    // the plain chamber id.
+    expect(calls).toContain('GET http://a.local:1/api/chambers/cham-a/status')
+    expect(calls.some((c) => c.includes('b.local'))).toBe(false)
+  })
+
+  test('a lifecycle action posts to that hub and re-reads its status', async () => {
+    const calls = enterAppMode()
+    renderAppSheet()
+    await screen.findByText('Stopped')
+    await userEvent.click(screen.getByRole('button', { name: 'Launch' }))
+    expect(await screen.findByText('Started')).toBeInTheDocument()
+    expect(calls).toContain('POST http://a.local:1/api/chambers/cham-a/start')
+    expect(calls.filter((c) => c.endsWith('/api/chambers/cham-a/status'))).toHaveLength(2)
+  })
+
+  test('the detail sheets are live too — todos, plan and cryo.toml all load', async () => {
+    const calls = enterAppMode(
+      status({
+        plan_html: '<p>the plan</p>',
+        plan_content: 'the plan',
+        has_config: true,
+        config_agent: 'claude',
+        settings_rows: [{ key: 'watch_dirs', value: '["messages/inbox"]', kind: 'scalar' }],
+      }),
+    )
+    renderAppSheet()
+    await screen.findByText('Stopped')
+
+    await openDetail('Todos')
+    expect(await screen.findByText('sweep the decoders')).toBeInTheDocument()
+    expect(calls).toContain('GET http://a.local:1/api/chambers/cham-a/todos')
+
+    await openDetail('Plan')
+    // The edit affordance is the proof the tab found a client at all: it is
+    // rendered only when one is reachable.
+    expect(await screen.findByRole('button', { name: /Edit plan/ })).toBeInTheDocument()
+
+    await openDetail('Settings')
+    const agent = await screen.findByRole('combobox', { name: 'Agent' })
+    expect(agent).toHaveValue('claude')
+    expect(agent).toBeEnabled()
+  })
+
+  test('saving the plan and changing the agent both write to that hub', async () => {
+    const calls = enterAppMode(
+      status({ plan_content: 'old brief', has_config: true, config_agent: 'claude' }),
+    )
+    renderAppSheet()
+    await screen.findByText('Stopped')
+
+    await openDetail('Plan')
+    await userEvent.click(await screen.findByRole('button', { name: /Edit plan/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Save plan/ }))
+    await waitFor(() => expect(calls).toContain('POST http://a.local:1/api/chambers/cham-a/plan'))
+
+    await userEvent.click(screen.getAllByRole('button', { name: /close/i }).at(-1)!)
+    await openDetail('Settings')
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), 'pi')
+    await waitFor(() => expect(calls).toContain('POST http://a.local:1/api/chambers/cham-a/agent'))
+    expect(calls.some((c) => c.includes('b.local'))).toBe(false)
   })
 })

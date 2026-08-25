@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { HubClient, type ChamberStatus } from '../../api/hubClient'
-import { AgentSelect } from '../../components/AgentSelect'
+import type { ChamberStatus } from '../../api/hubClient'
 import { useAppStore } from '../../store/appStore'
 import { isUnauthorized } from '../../api/types'
 import { HtmlTab } from './HtmlTab'
@@ -29,18 +28,17 @@ export function PlanTab({
   onSaved: () => void
 }) {
   const client = useAppStore((s) => s.client)
-  const hub = client instanceof HubClient ? client : null
   const [draft, setDraft] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function save() {
-    if (!hub || busy || draft === null) return
+    if (!client || busy || draft === null) return
     setBusy(true)
     setError(null)
-    const stale = () => useAppStore.getState().client !== hub
+    const stale = () => useAppStore.getState().client !== client
     try {
-      await hub.setChamberPlan(chamberId, draft)
+      await client.setChamberPlan(chamberId, draft)
       if (stale()) return
       setDraft(null)
       onSaved()
@@ -56,7 +54,7 @@ export function PlanTab({
   if (draft === null) {
     return (
       <>
-        {hub && (
+        {client && (
           <div className="group">
             <button className="row" onClick={() => setDraft(status.plan_content)}>
               Edit plan
