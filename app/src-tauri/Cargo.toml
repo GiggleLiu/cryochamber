@@ -1,0 +1,26 @@
+# Standalone crate: deliberately NOT a member of the repo-root `cryochamber`
+# package. The empty `[workspace]` table pins this directory as its own
+# workspace root so `cargo build` at the repo root never compiles the shell and
+# `cargo package` never ships it.
+[package]
+name = "cryochamber-app"
+version = "0.0.0"
+description = "Cryochamber Agent Console — native shell"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[lib]
+name = "cryochamber_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-http = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

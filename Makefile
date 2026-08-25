@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build console-check book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build console-check app-dev app-macos app-check book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -32,6 +32,9 @@ help:
 	@echo "  check-mock   - Run mock agent integration tests"
 	@echo "  cli          - Install the cryo CLI locally"
 	@echo "  console-build  - Build the Agent Console (embedded into cryohub on the next cargo build)"
+	@echo "  app-dev      - Run the native shell against the Vite dev server (requires tauri-cli)"
+	@echo "  app-macos    - Build the macOS app bundle + dmg from the production console build"
+	@echo "  app-check    - Format + lint + test the native shell crate"
 	@echo "  book         - Build mdbook documentation (en + zh)"
 	@echo "  book-serve   - Build and serve the full book (en + zh) at :3000"
 	@echo "  book-serve-live - mdbook serve with live reload (English book only; zh links 404 here)"
@@ -136,6 +139,21 @@ cli:
 # any built directory (absolute path).
 console-build:
 	cd console && npm ci && npm run build
+
+# --- Native shell (app/src-tauri) -------------------------------------------
+# A standalone crate: the repo-root `cargo build`/`cargo package` never see it.
+
+# Run the native shell against the Vite dev server (requires: cargo install tauri-cli)
+app-dev:
+	cd app/src-tauri && cargo tauri dev
+
+# Build the macOS app bundle + dmg from the production console build
+app-macos: console-build
+	cd app/src-tauri && cargo tauri build
+
+# Format + lint + test the shell crate
+app-check:
+	cd app/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 # Run an example
 # Usage: make example DIR=examples/chambers/mr-lazy

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cryochamber",
+  "version": "0.0.0",
+  "identifier": "com.cryochamber.app",
+  "build": {
+    "frontendDist": "../../console/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd ../console && npm run dev",
+    "beforeBuildCommand": "cd ../console && npm ci && npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Cryochamber",
+        "width": 1100,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

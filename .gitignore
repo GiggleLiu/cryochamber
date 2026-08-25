@@ -1,4 +1,6 @@
 /target
+# Native shell build output (the shell is a standalone crate under app/)
+app/src-tauri/target/
 *.log
 *.pid
 *.py[cod]
