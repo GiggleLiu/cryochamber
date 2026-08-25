@@ -16,7 +16,7 @@ import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '..
 import { StatusDot } from '../components/StatusDot'
 import { exactTimestamp, initial, messageSeconds, separatorLabel, tileColor } from '../lib/format'
 import { retryOutboxItem } from '../lib/outbox'
-import { InviteSheet } from './InviteSheet'
+import { InviteSheet, inviteScopeFor } from './InviteSheet'
 import { ControlsSheet } from './ControlsSheet'
 
 /** Messages this far apart start a new time-stamped block. */
@@ -95,6 +95,13 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const hubChamberId = useMemo(
     () => (mode === 'app' ? splitChamberKey(chamberId).chamberId : chamberId),
     [mode, chamberId],
+  )
+  // Which hub an invite to *this* chamber is minted on, and where the link it
+  // hands out must point. The app's own origin opens nothing.
+  const hubs = useAppStore((s) => s.hubs)
+  const inviteScope = useMemo(
+    () => inviteScopeFor({ mode, client, hubs }, chamberId),
+    [mode, client, hubs, chamberId],
   )
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
@@ -440,6 +447,8 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
         <InviteSheet
           chamberId={chamberId}
           chamberName={chamber.name}
+          hub={inviteScope.hub}
+          inviteBase={inviteScope.inviteBase}
           onClose={() => setSheet(null)}
         />
       )}

@@ -9,6 +9,10 @@ import { chamberKey } from '../lib/hubKeys'
 import { ECHO_TIMEOUT_MS, sendViaOutbox } from '../lib/outbox'
 import type { Chamber, ChamberMessage, Credentials } from '../api/types'
 
+// The invite sheet this view opens draws a QR code, and jsdom has no canvas
+// 2d context for it to draw on.
+vi.mock('qrcode', () => ({ default: { toCanvas: vi.fn(async () => {}) } }))
+
 const creds: Credentials = { token: 'k', name: 'me@b.c', role: 'owner' }
 
 /** A message at `2026-08-15T10:00:00 + offsetSeconds`, from the agent unless
@@ -850,6 +854,7 @@ describe('app mode', () => {
     url: 'http://b.local:2', token: 'tb', trust: { kind: 'plain-http' },
   })
   const keyA = chamberKey(hubA.id, 'cham-a')
+  const INVITE_TOKEN = 'ff'.repeat(16)
 
   const originalCreateObjectURL = URL.createObjectURL
   beforeEach(() => {
@@ -863,9 +868,19 @@ describe('app mode', () => {
    * for. Hub A's mailbox holds one message carrying `body`. */
   function enterAppMode(body: string): string[] {
     const calls: string[] = []
-    const fetchFn = (async (url: RequestInfo | URL) => {
+    const fetchFn = (async (url: RequestInfo | URL, init?: RequestInit) => {
       const target = String(url)
       calls.push(target)
+      if (target.endsWith('/api/tokens')) {
+        return new Response(
+          JSON.stringify(
+            init?.method === 'POST'
+              ? { ok: true, name: 'guest-1', token: INVITE_TOKEN }
+              : { invites: [] },
+          ),
+          { status: 200 },
+        )
+      }
       if (target.endsWith('/messages')) {
         return new Response(
           JSON.stringify([
@@ -902,6 +917,21 @@ describe('app mode', () => {
     expect(calls).toContain(
       'http://a.local:1/api/chambers/cham-a/file?path=artwork%2Fplot.png',
     )
+    expect(calls.some((c) => c.includes('b.local'))).toBe(false)
+  })
+
+  test('the header invite mints on this chamber\'s hub, and links to it', async () => {
+    const calls = enterAppMode('hello')
+    // Owner *of this chamber's hub* — the only thing that puts the button there.
+    useAppStore.setState({ roleByHub: { [hubA.id]: 'owner', [hubB.id]: 'invite' } })
+    render(<ConversationView chamberId={keyA} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Invite' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Copy invite link' }))
+
+    expect(await screen.findByLabelText('Invite link')).toHaveValue(
+      `http://a.local:1/#invite=${INVITE_TOKEN}`,
+    )
+    expect(calls).toContain('http://a.local:1/api/tokens')
     expect(calls.some((c) => c.includes('b.local'))).toBe(false)
   })
 

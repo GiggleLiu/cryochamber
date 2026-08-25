@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { HubClient } from '../api/hubClient'
 import { HubRouter } from '../api/hubRouter'
 import { AgentSelect } from '../components/AgentSelect'
 import { useAppStore } from '../store/appStore'
+import { useOwnerHub } from '../hooks/useOwnerHub'
 import type { HubAccount } from '../store/hubs'
 import { isUnauthorized } from '../api/types'
 import { compareVersions } from '../lib/format'
@@ -41,7 +41,9 @@ export function hubLabel(): string {
  * the page's origin.
  */
 export function SettingsSheet() {
-  const mode = useAppStore((s) => s.mode)
+  // Which hub the owner rows act on, and the choice that steers it — shared
+  // with the New Chamber sheet, which asks the same question of the same hubs.
+  const { app, ownedHubs, ownerHubId, ownerHub, isOwner, chooseHub } = useOwnerHub()
   const creds = useAppStore((s) => s.creds)
   const hubRole = useAppStore((s) => s.hubRole)
   const hubVersion = useAppStore((s) => s.hubVersion)
@@ -62,27 +64,8 @@ export function SettingsSheet() {
   const [defaultAgent, setDefaultAgent] = useState('')
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
-  const [hubChoice, setHubChoice] = useState('')
   const [addingHub, setAddingHub] = useState(false)
 
-  const app = mode === 'app'
-  const ownedHubs = app ? hubs.filter((h) => roleByHub[h.id] === 'owner') : []
-  // The hub the owner section acts on: the chosen one while it is still owned,
-  // and otherwise the first — a hub can be removed, or answer whoami with a
-  // role it did not have when the select was last touched.
-  const ownerHubId = ownedHubs.some((h) => h.id === hubChoice)
-    ? hubChoice
-    : (ownedHubs[0]?.id ?? '')
-  // Browser mode owns one hub: the one that served the page. App mode owns as
-  // many as its tokens do, and acts on one of them at a time.
-  const isOwner = app ? ownedHubs.length > 0 : hubRole === 'owner'
-  const ownerHub: HubClient | null = app
-    ? client instanceof HubRouter
-      ? client.forHub(ownerHubId)
-      : null
-    : client instanceof HubClient
-      ? client
-      : null
   const hubCount = hubs.length
   // Which hub the owner rows point at *now*, for a request that resolves after
   // the operator has already switched to another one.
@@ -308,7 +291,7 @@ export function SettingsSheet() {
                   className="row-input is-select"
                   aria-label="Hub"
                   value={ownerHubId}
-                  onChange={(e) => setHubChoice(e.target.value)}
+                  onChange={(e) => chooseHub(e.target.value)}
                 >
                   {ownedHubs.map((h) => (
                     <option key={h.id} value={h.id}>

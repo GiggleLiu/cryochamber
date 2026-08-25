@@ -1,9 +1,11 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import QRCode from 'qrcode'
-import { InviteSheet, defaultInviteLabel } from './InviteSheet'
+import { InviteSheet, defaultInviteLabel, inviteScopeFor } from './InviteSheet'
 import { HubClient, type Invite } from '../api/hubClient'
 import { useAppStore, resetAppStore } from '../store/appStore'
+import { makeHubAccount, MemoryHubsBackend } from '../store/hubs'
+import { chamberKey } from '../lib/hubKeys'
 import { ApiError } from '../api/types'
 import type { Credentials } from '../api/types'
 
@@ -72,8 +74,19 @@ beforeEach(() => {
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
 })
 
+/** Browser mode's own answer to "which hub, and where does the link point":
+ * the one hub that served the page, at this origin. */
 function renderSheet() {
-  return render(<InviteSheet chamberId="cham-a" chamberName="alpha" onClose={() => {}} />)
+  const scope = inviteScopeFor(useAppStore.getState(), 'cham-a')
+  return render(
+    <InviteSheet
+      chamberId="cham-a"
+      chamberName="alpha"
+      hub={scope.hub}
+      inviteBase={scope.inviteBase}
+      onClose={() => {}}
+    />,
+  )
 }
 
 test('titles the sheet for this chamber and lists only its active invites', async () => {
@@ -297,11 +310,140 @@ test('a hub in open mode blames open mode, not "check your connection"', async (
   const fetchFn = vi.fn(async () => new Response('', { status: 503 }))
   const client = new HubClient({ token: creds.token, fetch: fetchFn as unknown as typeof fetch })
   useAppStore.setState({ client })
-  render(<InviteSheet chamberId="cham-a" chamberName="alpha" onClose={() => {}} />)
+  render(
+    <InviteSheet
+      chamberId="cham-a"
+      chamberName="alpha"
+      hub={client}
+      inviteBase={window.location.origin}
+      onClose={() => {}}
+    />,
+  )
   const alert = await screen.findByRole('alert')
   expect(alert).toHaveTextContent(/open mode/)
   expect(alert).toHaveTextContent(/cryohub start/)
   expect(alert).not.toHaveTextContent(/connection/)
+})
+
+describe('app mode', () => {
+  const alpha = makeHubAccount({
+    url: 'https://a.example', label: 'Alpha hub', token: 'ka', role: 'owner',
+    trust: { kind: 'https' },
+  })
+  const beta = makeHubAccount({
+    url: 'https://b.example', label: 'Beta hub', token: 'kb', role: 'owner',
+    trust: { kind: 'https' },
+  })
+  // Both hubs happen to hold a chamber called `cham-a`: raw ids are only
+  // unique per hub, which is what the console-side key exists for.
+  const keyA = chamberKey(alpha.id, 'cham-a')
+  const keyAOther = chamberKey(alpha.id, 'cham-b')
+  const keyB = chamberKey(beta.id, 'cham-a')
+
+  /** Every request either hub was asked for, as `METHOD url`, plus the bodies
+   *  of the mints — so a test can prove which hub minted and what it scoped. */
+  let calls: string[]
+  let minted: Array<{ name: string; chambers: string[] }>
+
+  function enterAppMode(invites: Invite[] = [BOTH]) {
+    calls = []
+    minted = []
+    const fetchFn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const target = String(url)
+      calls.push(`${init?.method ?? 'GET'} ${target}`)
+      if (target.endsWith('/api/tokens') && init?.method === 'POST') {
+        minted.push(JSON.parse(String(init.body)))
+        return new Response(JSON.stringify({ ok: true, name: 'x', token: NEW_TOKEN }), {
+          status: 200,
+        })
+      }
+      return new Response(JSON.stringify({ invites }), { status: 200 })
+    }) as typeof fetch
+    useAppStore
+      .getState()
+      .initApp(
+        [alpha, beta],
+        new MemoryHubsBackend(),
+        (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: fetchFn }),
+      )
+    useAppStore.setState({
+      creds: null,
+      chambers: [
+        { ...chamber(keyA, 'alpha'), hubId: alpha.id },
+        { ...chamber(keyAOther, 'beta'), hubId: alpha.id },
+        // Another hub's chamber, whose raw id collides with this one's.
+        { ...chamber(keyB, 'elsewhere'), hubId: beta.id },
+      ],
+    })
+  }
+
+  function renderFor(key: string, name: string) {
+    const scope = inviteScopeFor(useAppStore.getState(), key)
+    return render(
+      <InviteSheet
+        chamberId={key}
+        chamberName={name}
+        hub={scope.hub}
+        inviteBase={scope.inviteBase}
+        onClose={() => {}}
+      />,
+    )
+  }
+
+  test('the link points at the hub, never at the app that minted it', async () => {
+    enterAppMode()
+    renderFor(keyA, 'alpha')
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+
+    const link = `https://a.example/#invite=${NEW_TOKEN}`
+    expect(await screen.findByLabelText('Invite link')).toHaveValue(link)
+    expect(writeText).toHaveBeenCalledWith(link)
+    // The app's own origin opens nothing — it must never be the base.
+    expect(link.startsWith(window.location.origin)).toBe(false)
+  })
+
+  test('the mint goes to that chamber\'s own hub, scoped by the id that hub knows', async () => {
+    enterAppMode()
+    renderFor(keyA, 'alpha')
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+
+    await waitFor(() => expect(minted).toHaveLength(1))
+    expect(calls).toContain('POST https://a.example/api/tokens')
+    expect(calls.some((c) => c.includes('b.example'))).toBe(false)
+    // `{hubId}:` is the console's own bookkeeping; the hub only knows `cham-a`.
+    expect(minted[0]).toEqual({ name: 'guest-1', chambers: ['cham-a'] })
+  })
+
+  test('"also" names this hub\'s chambers, not another hub\'s look-alike', async () => {
+    enterAppMode()
+    renderFor(keyA, 'alpha')
+    const rows = await screen.findAllByRole('listitem')
+    const bob = rows.find((r) => r.textContent?.includes('Bob'))!
+    expect(bob).toHaveTextContent('also: beta')
+    expect(bob).not.toHaveTextContent('elsewhere')
+  })
+
+  test('the same sheet on the other hub mints there instead', async () => {
+    enterAppMode()
+    renderFor(keyB, 'elsewhere')
+    await screen.findAllByRole('listitem')
+    await userEvent.click(screen.getByRole('button', { name: 'Copy invite link' }))
+
+    expect(await screen.findByLabelText('Invite link')).toHaveValue(
+      `https://b.example/#invite=${NEW_TOKEN}`,
+    )
+    expect(calls).toContain('POST https://b.example/api/tokens')
+    expect(calls.some((c) => c.startsWith('POST https://a.example'))).toBe(false)
+  })
+})
+
+test('browser mode mints on the hub that served the page, at this origin', () => {
+  const client = useAppStore.getState().client as HubClient
+  const scope = inviteScopeFor(useAppStore.getState(), 'cham-a')
+  expect(scope.hub).toBe(client)
+  expect(scope.inviteBase).toBe(window.location.origin)
 })
 
 describe('QR code for the invite link', () => {

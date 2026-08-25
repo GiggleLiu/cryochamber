@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { NewChamberSheet, buildNewChamberPayload } from './NewChamberSheet'
 import { HubClient } from '../api/hubClient'
 import { useAppStore, resetAppStore } from '../store/appStore'
+import { makeHubAccount, MemoryHubsBackend, type HubAccount } from '../store/hubs'
+import { chamberKey } from '../lib/hubKeys'
 import { ApiError } from '../api/types'
 import type { Chamber, Credentials } from '../api/types'
 
@@ -130,6 +132,73 @@ test('closing while a create is in flight waits for the outcome', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('chamber already exists')
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+describe('app mode', () => {
+  const alpha = makeHubAccount({
+    url: 'https://a.example', label: 'Alpha hub', token: 'ka', role: 'owner',
+    trust: { kind: 'https' },
+  })
+  const beta = makeHubAccount({
+    url: 'https://b.example', label: 'Beta hub', token: 'kb', role: 'owner',
+    trust: { kind: 'https' },
+  })
+
+  /** One stubbed HubClient per hub behind a real router, as the app has. */
+  function enterAppMode(
+    hubs: HubAccount[] = [alpha, beta],
+    roleByHub?: Record<string, 'owner' | 'invite'>,
+  ) {
+    const clients = new Map<string, HubClient>()
+    for (const h of hubs) {
+      const client = new HubClient({ token: h.token, baseUrl: h.url, fetch: vi.fn() })
+      vi.spyOn(client, 'createChamber').mockResolvedValue({
+        id: 'cham-new', started: true, start_error: null,
+      })
+      vi.spyOn(client, 'listChambers').mockResolvedValue(INDEX)
+      clients.set(h.id, client)
+    }
+    useAppStore.getState().initApp(hubs, new MemoryHubsBackend(), (h) => clients.get(h.id)!)
+    useAppStore.setState({ creds: null, ...(roleByHub ? { roleByHub } : {}) })
+    return clients
+  }
+
+  test('the create goes to the hub the select names, under that hub\'s key', async () => {
+    const clients = enterAppMode()
+    render(<NewChamberSheet onClose={() => {}} />)
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Hub' }), beta.id)
+    await userEvent.type(screen.getByLabelText('Name'), 'gamma')
+    await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
+
+    expect(clients.get(beta.id)!.createChamber).toHaveBeenCalledWith({ name: 'gamma', start: true })
+    expect(clients.get(alpha.id)!.createChamber).not.toHaveBeenCalled()
+    // The row and the conversation it opens are keyed to the hub that made it.
+    const key = chamberKey(beta.id, 'cham-new')
+    await waitFor(() =>
+      expect(useAppStore.getState().view).toEqual({ name: 'conversation', chamberId: key }),
+    )
+    expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual([key])
+  })
+
+  test('the first owned hub is the default, and re-reads only its own index', async () => {
+    const clients = enterAppMode()
+    render(<NewChamberSheet onClose={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Name'), 'gamma')
+    await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
+
+    expect(clients.get(alpha.id)!.createChamber).toHaveBeenCalled()
+    await waitFor(() => expect(clients.get(alpha.id)!.listChambers).toHaveBeenCalledTimes(1))
+    expect(clients.get(beta.id)!.listChambers).not.toHaveBeenCalled()
+  })
+
+  test('one owned hub asks no question', async () => {
+    const clients = enterAppMode([alpha, beta], { [alpha.id]: 'invite', [beta.id]: 'owner' })
+    render(<NewChamberSheet onClose={() => {}} />)
+    expect(screen.queryByRole('combobox', { name: 'Hub' })).toBeNull()
+    await userEvent.type(screen.getByLabelText('Name'), 'gamma')
+    await userEvent.click(screen.getByRole('button', { name: 'Create and start' }))
+    expect(clients.get(beta.id)!.createChamber).toHaveBeenCalled()
+  })
 })
 
 test('a launch failure opens the created chamber with a persistent warning', async () => {
