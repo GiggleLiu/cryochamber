@@ -58,7 +58,9 @@ export class HubRouter implements ConsoleClient {
     const entry = this.byId.get(hubId)
     if (!entry) throw new Error(`Unknown hub ${hubId}`)
     const list = await entry.client.listChambers()
-    return list.map((c) => ({ ...c, id: chamberKey(hubId, c.id) }))
+    // The row carries its hub both ways: in the key the views pass back, and
+    // as a field the store filters on and a hub chip reads.
+    return list.map((c) => ({ ...c, id: chamberKey(hubId, c.id), hubId }))
   }
 
   toEventMessageFor(hubId: string, payload: unknown): ChamberMessage | null {

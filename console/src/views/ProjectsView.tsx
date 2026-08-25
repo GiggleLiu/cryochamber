@@ -39,6 +39,7 @@ export function ProjectsView() {
   const messagesByChamber = useAppStore((s) => s.messagesByChamber)
   const lastReadByChamber = useAppStore((s) => s.lastReadByChamber)
   const selfName = useAppStore((s) => s.selfName)
+  const selfNameByHub = useAppStore((s) => s.selfNameByHub)
   const connection = useAppStore((s) => s.connection)
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
@@ -66,7 +67,10 @@ export function ProjectsView() {
   const loading = chambers.length === 0 && connection === 'connecting'
 
   function card(c: Chamber) {
-    const count = unreadCount({ messagesByChamber, lastReadByChamber, selfName }, c.id)
+    const count = unreadCount(
+      { messagesByChamber, lastReadByChamber, selfName, selfNameByHub },
+      c.id,
+    )
     const last = messagesByChamber[c.id]?.at(-1)
     const preview = last ? previewText(last.body) : ''
     return (

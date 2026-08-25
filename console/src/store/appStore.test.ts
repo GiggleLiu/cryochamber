@@ -5,9 +5,14 @@ import {
   unreadCount,
   useIsOwner,
   showCompletedKey,
+  selfNameFor,
+  isOwnerFor,
 } from './appStore'
 import type { Chamber, ChamberMessage, Credentials } from '../api/types'
 import { cacheKey, loadCachedState, flushCachedState } from './cache'
+import { MemoryHubsBackend, makeHubAccount, type HubAccount } from './hubs'
+import { HubClient } from '../api/hubClient'
+import { chamberKey } from '../lib/hubKeys'
 
 const creds: Credentials = { token: 'k', name: 'me', role: 'owner' }
 
@@ -332,5 +337,174 @@ describe('updateChamberStatus identity', () => {
       nextWakeDisplay: 'in 2 h',
       running: false,
     })
+  })
+})
+
+describe('app mode (multi-hub)', () => {
+  /** No app-mode test makes a request: the clients exist to be routed, not called. */
+  const okFetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch
+
+  function twoHubs() {
+    const a = makeHubAccount({ url: 'http://a.local:1', token: 'ta', trust: { kind: 'plain-http' } })
+    const b = makeHubAccount({ url: 'http://b.local:2', token: 'tb', trust: { kind: 'plain-http' } })
+    return { a, b }
+  }
+
+  function enterAppMode(...hubs: HubAccount[]): MemoryHubsBackend {
+    const backend = new MemoryHubsBackend()
+    useAppStore
+      .getState()
+      .initApp(
+        hubs,
+        backend,
+        (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: okFetch }),
+      )
+    return backend
+  }
+
+  const hubChamber = (hubId: string, id: string, name = id): Chamber => ({
+    ...chamber(id, name),
+    id: chamberKey(hubId, id),
+    hubId,
+  })
+
+  test('initApp builds a router over every hub and enters app mode', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    expect(s.mode).toBe('app')
+    expect(s.hubs.map((h) => h.id)).toEqual([a.id, b.id])
+    expect(s.client).not.toBeNull()
+    expect(s.creds).toBeNull()
+    expect(s.roleByHub).toEqual({ [a.id]: a.role, [b.id]: b.role })
+    expect(s.connectionByHub).toEqual({ [a.id]: 'connecting', [b.id]: 'connecting' })
+  })
+
+  test('setChambersForHub merges per hub without clobbering the other hub', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x', 'y'])
+    expect(useAppStore.getState().chambersLoadedHubs).toEqual([a.id, b.id])
+    // refreshing hub a must not drop hub b's rows
+    s.setChambersForHub(a.id, [])
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['y'])
+    expect(useAppStore.getState().chambersLoadedHubs).toEqual([a.id, b.id])
+  })
+
+  test('a hub index read re-fetches only its own conversations', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setMessages(chamberKey(a.id, 'x'), [])
+    s.setMessages(chamberKey(b.id, 'y'), [])
+    expect(useAppStore.getState().loadedChambers).toHaveLength(2)
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    // b's stream was never interrupted, so its histories are still current.
+    expect(useAppStore.getState().loadedChambers).toEqual([chamberKey(b.id, 'y')])
+  })
+
+  test('aggregate connection: one live hub keeps the app live', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setConnectionForHub(a.id, 'live')
+    s.setConnectionForHub(b.id, 'offline')
+    expect(useAppStore.getState().connection).toBe('live')
+    s.setConnectionForHub(a.id, 'connecting')
+    expect(useAppStore.getState().connection).toBe('connecting')
+    s.setConnectionForHub(a.id, 'offline')
+    expect(useAppStore.getState().connection).toBe('offline')
+  })
+
+  test('setHubIdentity feeds selfNameFor and the per-hub owner check', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    useAppStore.getState().setHubIdentity(a.id, { role: 'owner', name: 'liu', version: '9.9.9' })
+    useAppStore.getState().setHubIdentity(b.id, { role: 'invite', name: 'guest' })
+    const s = useAppStore.getState()
+    expect(selfNameFor(s, chamberKey(a.id, 'x'))).toBe('liu')
+    expect(selfNameFor(s, chamberKey(b.id, 'y'))).toBe('guest')
+    expect(s.versionByHub).toEqual({ [a.id]: '9.9.9' })
+    expect(isOwnerFor(s, chamberKey(a.id, 'x'))).toBe(true)
+    expect(isOwnerFor(s, chamberKey(b.id, 'y'))).toBe(false)
+  })
+
+  test('removeHub prunes that hub completely and persists the shorter list', async () => {
+    const { a, b } = twoHubs()
+    const backend = enterAppMode(a, b)
+    const key = chamberKey(a.id, 'x')
+    const s = useAppStore.getState()
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    s.setConnectionForHub(a.id, 'live')
+    s.applyMessage({ ...msg(1), chamberId: key })
+    s.markRead(key)
+    s.enqueueOutbox(key, 'pending')
+    localStorage.setItem(
+      cacheKey({ token: a.token }),
+      JSON.stringify({ chambers: [], messagesByChamber: {}, lastReadByChamber: {} }),
+    )
+
+    await useAppStore.getState().removeHub(a.id)
+
+    const after = useAppStore.getState()
+    expect(after.hubs.map((h) => h.id)).toEqual([b.id])
+    expect(after.chambers.map((c) => c.id)).toEqual([chamberKey(b.id, 'y')])
+    expect(after.messagesByChamber[key]).toBeUndefined()
+    expect(after.lastReadByChamber[key]).toBeUndefined()
+    expect(after.outboxByChamber[key]).toBeUndefined()
+    expect(after.roleByHub[a.id]).toBeUndefined()
+    expect(after.connectionByHub[a.id]).toBeUndefined()
+    expect(after.chambersLoadedHubs).toEqual([b.id])
+    // The hub that was live is gone, so the app is no longer live through it.
+    expect(after.connection).toBe('connecting')
+    expect(loadCachedState({ token: a.token })).toBeNull()
+    expect((await backend.load()).map((h) => h.id)).toEqual([b.id])
+  })
+
+  test('removeHub leaves a conversation on that hub for the projects list', async () => {
+    const { a } = twoHubs()
+    enterAppMode(a)
+    useAppStore.getState().navigate({ name: 'conversation', chamberId: chamberKey(a.id, 'x') })
+    await useAppStore.getState().removeHub(a.id)
+    expect(useAppStore.getState().view).toEqual({ name: 'projects' })
+  })
+
+  test('addHub with a known id replaces that hub rather than adding a second row', async () => {
+    const { a, b } = twoHubs()
+    const backend = enterAppMode(a, b)
+    useAppStore.getState().markHubAuthFailed(a.id)
+    const fresh = makeHubAccount({
+      url: 'http://a.local:1/',
+      token: 'ta2',
+      name: 'liu',
+      role: 'owner',
+      trust: { kind: 'plain-http' },
+    })
+    expect(fresh.id).toBe(a.id)
+
+    await useAppStore.getState().addHub(fresh)
+
+    const s = useAppStore.getState()
+    expect(s.hubs.map((h) => h.id)).toEqual([a.id, b.id])
+    expect(s.hubs[0].token).toBe('ta2')
+    expect(s.roleByHub[a.id]).toBe('owner')
+    expect(s.selfNameByHub[a.id]).toBe('liu')
+    // The token that failed is gone, so the failure note goes with it.
+    expect(s.authFailedHubs).toEqual([])
+    expect((await backend.load()).map((h) => h.token)).toEqual(['ta2', 'tb'])
+  })
+
+  test('addHub appends an unknown hub and markHubAuthFailed notes it once', async () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a)
+    await useAppStore.getState().addHub(b)
+    expect(useAppStore.getState().hubs.map((h) => h.id)).toEqual([a.id, b.id])
+    useAppStore.getState().markHubAuthFailed(b.id)
+    useAppStore.getState().markHubAuthFailed(b.id)
+    expect(useAppStore.getState().authFailedHubs).toEqual([b.id])
   })
 })

@@ -6,6 +6,7 @@ import { useEventLoop } from './hooks/useEventLoop'
 import { INVALID_INVITE_REASON, MALFORMED_INVITE_REASON, signInWithHubToken } from './lib/hubSignIn'
 import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
 import { isUnauthorized } from './api/types'
+import { HubClient } from './api/hubClient'
 import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
@@ -79,7 +80,9 @@ export default function App() {
   // than waiting for the event loop). Other failures stay silent and
   // owner-only UI simply stays hidden.
   useEffect(() => {
-    if (!client) return
+    // Browser mode's single hub. App mode has no session-wide identity to
+    // refresh: each hub answers its own whoami through `setHubIdentity`.
+    if (!(client instanceof HubClient)) return
     client
       .whoami()
       .then((who) => {
@@ -171,7 +174,7 @@ export default function App() {
       if (!HUB_FILES_RE.test(href)) return
       e.preventDefault()
       const name = filenameFromHref(href)
-      downloadUpload((u) => client.fetchBlob(u), href).catch((err) => {
+      downloadUpload((u) => client.fetchBlobFor('', u), href).catch((err) => {
         if (isUnauthorized(err)) return
         setDownloadNote(`Could not download ${name}. Check your connection and try again.`)
       })

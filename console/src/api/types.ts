@@ -10,7 +10,13 @@ export interface Credentials {
 /** A chamber as the projects list needs it. Liveness stays optional because
  * an absent hub flag says nothing about whether the chamber is stopped. */
 export interface Chamber {
+  /** The console-side chamber key: the hub's own chamber id in browser mode,
+   * `"{hubId}:{chamberId}"` in app mode. */
   id: string
+  /** Which hub this row came from, stamped by the router in app mode. Absent
+   * is browser mode's one implicit hub — the same thing `''` says, and what
+   * the pre-multi-hub cache holds. */
+  hubId?: string
   name: string
   /** The chamber daemon holds its lock (the chamber is started). */
   running?: boolean

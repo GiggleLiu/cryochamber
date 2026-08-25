@@ -33,6 +33,12 @@ describe('HubRouter', () => {
     expect(chambers.map((c) => c.id)).toEqual([chamberKey(a.hub.id, 'alpha')])
   })
 
+  it('stamps each row with its hub, which is what the store filters a refresh on', async () => {
+    const a = fakeHub('http://a.local:1', ['alpha'])
+    const router = new HubRouter([{ hub: a.hub, client: a.client }])
+    expect((await router.listChambersFor(a.hub.id)).map((c) => c.hubId)).toEqual([a.hub.id])
+  })
+
   it('routes per-chamber calls to the owning hub and remaps message keys', async () => {
     const a = fakeHub('http://a.local:1', ['alpha'])
     const b = fakeHub('http://b.local:2', ['beta'])

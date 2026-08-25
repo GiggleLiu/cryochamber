@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { HubClient } from '../api/hubClient'
+import { HubRouter, type ConsoleClient } from '../api/hubRouter'
 import { messageKey, type Chamber, type ChamberMessage, type Credentials } from '../api/types'
+import { splitChamberKey } from '../lib/hubKeys'
+import type { HubAccount, HubsBackend } from './hubs'
 import { saveCredentials, clearCredentials } from './auth'
 import {
   loadCachedState,
@@ -65,27 +68,87 @@ function mergeMessages(...lists: ChamberMessage[][]): ChamberMessage[] {
   return [...byId.values()].sort(byKey)
 }
 
+/** The name that makes a bubble "mine" in this chamber: the hub the chamber
+ * lives on names our token, and two hubs can name the same person differently.
+ * Browser mode splits to `''`, which no hub ever fills, so the answer is the
+ * one `selfName` the session signed in with. */
+export function selfNameFor(
+  s: Pick<AppState, 'selfName' | 'selfNameByHub'>,
+  chamberKey: string,
+): string {
+  return s.selfNameByHub[splitChamberKey(chamberKey).hubId] ?? s.selfName
+}
+
 /** Unread = messages above this chamber's read watermark from anyone but us.
  * No watermark means the chamber was never opened on this device: only what
  * arrived live since (the cached list) counts, which is what a cold boot showed
  * before too. */
 export function unreadCount(
-  s: Pick<AppState, 'messagesByChamber' | 'lastReadByChamber' | 'selfName'>,
+  s: Pick<AppState, 'messagesByChamber' | 'lastReadByChamber' | 'selfName' | 'selfNameByHub'>,
   chamberId: string,
 ): number {
   const mark = s.lastReadByChamber[chamberId] ?? ''
+  const me = selfNameFor(s, chamberId)
   let n = 0
   for (const m of s.messagesByChamber[chamberId] ?? []) {
-    if (m.sender !== s.selfName && messageKey(m) > mark) n += 1
+    if (m.sender !== me && messageKey(m) > mark) n += 1
   }
   return n
 }
 
+/** Which hub a row belongs to. A row the router stamped says so itself; a
+ * browser row (and every row a pre-multi-hub cache holds) says nothing, and
+ * its key carries no hub prefix either — both spellings answer `''`. */
+function hubIdOf(c: Chamber): string {
+  return c.hubId ?? splitChamberKey(c.id).hubId
+}
+
+/** The app is as connected as its best hub: one live hub still shows live
+ * chambers, and only every hub being down is an offline app. */
+function aggregateConnection(byHub: Record<string, Connection>): Connection {
+  const values = Object.values(byHub)
+  if (values.includes('live')) return 'live'
+  if (values.includes('connecting')) return 'connecting'
+  return values.length === 0 ? 'connecting' : 'offline'
+}
+
+/** Drop every entry whose chamber key belongs to `hubId`. */
+function withoutHub<T>(map: Record<string, T>, hubId: string): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(map).filter(([key]) => splitChamberKey(key).hubId !== hubId),
+  )
+}
+
 let nextClientId = 1
 
+/** How app mode builds a client for a hub, kept from `initApp` so adding or
+ * removing a hub can rebuild the router. Process-lifetime configuration, not
+ * state: nothing renders from it. */
+let hubClientFactory: ((hub: HubAccount) => HubClient) | null = null
+
 export interface AppState {
+  /** `browser`: one hub, the one that served this page, signed in with `creds`.
+   * `app`: the desktop app's own list of hubs, every one of them at once. */
+  mode: 'browser' | 'app'
   creds: Credentials | null
-  client: HubClient | null
+  /** A `HubClient` in browser mode, the `HubRouter` over every hub in app mode. */
+  client: ConsoleClient | null
+  /** App mode's remembered hubs, in the order the user added them. */
+  hubs: HubAccount[]
+  /** Where that list is persisted; null until `initApp`. */
+  hubsBackend: HubsBackend | null
+  /** Per hub, what `/api/whoami` said: the role, the name our token wears, and
+   * the hub's version. Browser mode keeps using `hubRole`/`selfName`/`hubVersion`. */
+  roleByHub: Record<string, HubRole>
+  selfNameByHub: Record<string, string>
+  versionByHub: Record<string, string | null>
+  /** Per-hub liveness; `connection` is the aggregate the chrome shows. */
+  connectionByHub: Record<string, Connection>
+  /** Hubs whose index has answered at least once this session. */
+  chambersLoadedHubs: string[]
+  /** Hubs whose token the hub refused: one hub signing out must not sign the
+   * app out, so the failure is a note on that hub's row instead. */
+  authFailedHubs: string[]
   view: View
   settingsOpen: boolean
   /** A newer console build is installed and waiting; the UpdateBar offers a
@@ -114,6 +177,23 @@ export interface AppState {
   outboxByChamber: Record<string, OutboxItem[]>
   setCreds(c: Credentials): void
   logout(reason?: string): void
+  /** Enter app mode over a remembered hub list. `makeClient` is the caller's
+   * so tests inject a fake transport and the desktop app a trust-aware one. */
+  initApp(
+    hubs: HubAccount[],
+    backend: HubsBackend,
+    makeClient: (hub: HubAccount) => HubClient,
+  ): void
+  /** Add a hub, or replace the entry with the same id (the same hub, re-added
+   * with a fresh token). Persists the list and rebuilds the router. */
+  addHub(hub: HubAccount): Promise<void>
+  /** Forget a hub: its chambers, conversations, watermarks, unsent messages
+   * and local cache go with it. */
+  removeHub(hubId: string): Promise<void>
+  setChambersForHub(hubId: string, list: Chamber[]): void
+  setConnectionForHub(hubId: string, c: Connection): void
+  setHubIdentity(hubId: string, who: { role: HubRole; name?: string; version?: string | null }): void
+  markHubAuthFailed(hubId: string): void
   navigate(v: View, options?: { replace?: boolean }): void
   setSettingsOpen(open: boolean): void
   setUpdateAvailable(v: boolean): void
@@ -144,8 +224,17 @@ export interface AppState {
 }
 
 const initialData = {
+  mode: 'browser' as 'browser' | 'app',
   creds: null as Credentials | null,
-  client: null as HubClient | null,
+  client: null as ConsoleClient | null,
+  hubs: [] as HubAccount[],
+  hubsBackend: null as HubsBackend | null,
+  roleByHub: {} as Record<string, HubRole>,
+  selfNameByHub: {} as Record<string, string>,
+  versionByHub: {} as Record<string, string | null>,
+  connectionByHub: {} as Record<string, Connection>,
+  chambersLoadedHubs: [] as string[],
+  authFailedHubs: [] as string[],
   view: { name: 'projects' } as View,
   settingsOpen: false,
   updateAvailable: false,
@@ -162,6 +251,15 @@ const initialData = {
   loginReason: null as string | null,
   accessNotice: null as string | null,
   outboxByChamber: {} as Record<string, OutboxItem[]>,
+}
+
+/** The router over exactly these hubs. A hub added or removed rebuilds it
+ * rather than patching it, so the event loop's `[client]` effect restarts on
+ * the new set. Only reachable in app mode, where `initApp` set the factory. */
+function routerOver(hubs: HubAccount[]): HubRouter {
+  const make = hubClientFactory
+  if (!make) throw new Error('initApp must enter app mode before hubs are added or removed')
+  return new HubRouter(hubs.map((hub) => ({ hub, client: make(hub) })))
 }
 
 /** Shared by failOutbox/retryOutbox: the target state and the reason to carry
@@ -251,6 +349,106 @@ export const useAppStore = create<AppState>()((set, get) => {
       set({ ...initialData, loginReason: reason ?? null })
     },
 
+    initApp: (hubs, backend, makeClient) => {
+      hubClientFactory = makeClient
+      set({
+        mode: 'app',
+        hubs,
+        hubsBackend: backend,
+        client: routerOver(hubs),
+        // What the stored accounts last knew; `bootApp`'s whoami refreshes it.
+        roleByHub: Object.fromEntries(hubs.map((h) => [h.id, h.role])),
+        selfNameByHub: Object.fromEntries(hubs.map((h) => [h.id, h.name])),
+        versionByHub: {},
+        connectionByHub: Object.fromEntries(hubs.map((h) => [h.id, 'connecting' as Connection])),
+        chambersLoadedHubs: [],
+        // With no hubs there is no index to wait for — the app shows Add Hub.
+        chambersLoaded: hubs.length === 0,
+        authFailedHubs: [],
+        view: { name: 'projects' },
+      })
+    },
+
+    addHub: async (hub) => {
+      const state = get()
+      const known = state.hubs.some((h) => h.id === hub.id)
+      const hubs = known ? state.hubs.map((h) => (h.id === hub.id ? hub : h)) : [...state.hubs, hub]
+      set({
+        hubs,
+        client: routerOver(hubs),
+        roleByHub: { ...state.roleByHub, [hub.id]: hub.role },
+        selfNameByHub: { ...state.selfNameByHub, [hub.id]: hub.name },
+        connectionByHub: {
+          ...state.connectionByHub,
+          [hub.id]: state.connectionByHub[hub.id] ?? 'connecting',
+        },
+        // Every caller has just authenticated this token, so whatever the old
+        // one failed with is history.
+        authFailedHubs: state.authFailedHubs.filter((id) => id !== hub.id),
+      })
+      await state.hubsBackend?.save(hubs)
+    },
+
+    removeHub: async (hubId) => {
+      const state = get()
+      const hub = state.hubs.find((h) => h.id === hubId)
+      if (!hub) return
+      // The cache is keyed on the token, like every other per-account store.
+      clearCachedState({ token: hub.token })
+      const hubs = state.hubs.filter((h) => h.id !== hubId)
+      const connectionByHub = { ...state.connectionByHub }
+      const roleByHub = { ...state.roleByHub }
+      const selfNameByHub = { ...state.selfNameByHub }
+      const versionByHub = { ...state.versionByHub }
+      delete connectionByHub[hubId]
+      delete roleByHub[hubId]
+      delete selfNameByHub[hubId]
+      delete versionByHub[hubId]
+      const onThisHub = (key: string) => splitChamberKey(key).hubId === hubId
+      const leavingConversation =
+        state.view.name === 'conversation' && onThisHub(state.view.chamberId)
+      set({
+        hubs,
+        client: routerOver(hubs),
+        chambers: state.chambers.filter((c) => hubIdOf(c) !== hubId),
+        messagesByChamber: withoutHub(state.messagesByChamber, hubId),
+        lastReadByChamber: withoutHub(state.lastReadByChamber, hubId),
+        outboxByChamber: withoutHub(state.outboxByChamber, hubId),
+        loadedChambers: state.loadedChambers.filter((id) => !onThisHub(id)),
+        chambersLoadedHubs: state.chambersLoadedHubs.filter((id) => id !== hubId),
+        roleByHub,
+        selfNameByHub,
+        versionByHub,
+        connectionByHub,
+        connection: aggregateConnection(connectionByHub),
+        authFailedHubs: state.authFailedHubs.filter((id) => id !== hubId),
+        // A conversation on a forgotten hub has nowhere left to talk to.
+        view: leavingConversation ? { name: 'projects' } : state.view,
+      })
+      if (leavingConversation) writeViewHash({ name: 'projects' }, true)
+      await state.hubsBackend?.save(hubs)
+    },
+
+    setHubIdentity: (hubId, who) =>
+      set((state) => ({
+        roleByHub: { ...state.roleByHub, [hubId]: who.role },
+        selfNameByHub:
+          who.name === undefined
+            ? state.selfNameByHub
+            : { ...state.selfNameByHub, [hubId]: who.name },
+        versionByHub:
+          who.version === undefined
+            ? state.versionByHub
+            : { ...state.versionByHub, [hubId]: who.version },
+      })),
+
+    markHubAuthFailed: (hubId) =>
+      set((state) =>
+        state.authFailedHubs.includes(hubId)
+          ? state
+          : { authFailedHubs: [...state.authFailedHubs, hubId] },
+      ),
+
     navigate: (v, options) => {
       writeViewHash(v, options?.replace)
       set({ view: v, accessNotice: null })
@@ -258,14 +456,25 @@ export const useAppStore = create<AppState>()((set, get) => {
     setSettingsOpen: (open) => set({ settingsOpen: open }),
     setUpdateAvailable: (v) => set({ updateAvailable: v }),
 
-    setChambers: (list) => {
-      // Clearing loadedChambers on every index read is what makes a re-register
-      // re-fetch histories over whatever the stream left behind.
-      set({
-        chambers: [...list].sort((a, b) => a.name.localeCompare(b.name)),
+    /** Browser mode's one hub is the anonymous `''`, so this is the whole list. */
+    setChambers: (list) => get().setChambersForHub('', list),
+
+    setChambersForHub: (hubId, list) => {
+      set((state) => ({
+        // Only this hub's rows are replaced; the other hubs answered their own
+        // index reads and their rows are still current.
+        chambers: [...state.chambers.filter((c) => hubIdOf(c) !== hubId), ...list].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ),
         chambersLoaded: true,
-        loadedChambers: [],
-      })
+        chambersLoadedHubs: state.chambersLoadedHubs.includes(hubId)
+          ? state.chambersLoadedHubs
+          : [...state.chambersLoadedHubs, hubId],
+        // Clearing loadedChambers on an index read is what makes a re-register
+        // re-fetch histories over whatever the stream left behind — but only
+        // for the hub that re-registered, since no other hub was interrupted.
+        loadedChambers: state.loadedChambers.filter((id) => splitChamberKey(id).hubId !== hubId),
+      }))
       persist()
     },
 
@@ -394,7 +603,14 @@ export const useAppStore = create<AppState>()((set, get) => {
         return { showCompletedArchived: on }
       }),
 
-    setConnection: (c) => set({ connection: c }),
+    setConnection: (c) => get().setConnectionForHub('', c),
+
+    setConnectionForHub: (hubId, c) =>
+      set((state) => {
+        const connectionByHub = { ...state.connectionByHub, [hubId]: c }
+        return { connectionByHub, connection: aggregateConnection(connectionByHub) }
+      }),
+
     setHubRole: (role) => set({ hubRole: role }),
     setHubVersion: (v) => set({ hubVersion: v }),
 
@@ -456,14 +672,26 @@ export const useAppStore = create<AppState>()((set, get) => {
  * This is chrome only. Security is the hub's default-deny classifier; the app
  * never trusts its own flag for anything but what it draws.
  */
-export function useIsOwner(): boolean {
-  return useAppStore((s) => s.hubRole === 'owner')
+export function useIsOwner(scope?: string): boolean {
+  return useAppStore((s) => isOwnerFor(s, scope))
+}
+
+/** The check itself. Without a scope it answers for the session (browser
+ * mode's one hub); with a chamber key it answers for the hub that chamber is
+ * on, because a token can own one hub and be a guest on the next. */
+export function isOwnerFor(
+  s: Pick<AppState, 'hubRole' | 'roleByHub'>,
+  scope?: string,
+): boolean {
+  if (scope === undefined) return s.hubRole === 'owner'
+  return (s.roleByHub[splitChamberKey(scope).hubId] ?? s.hubRole) === 'owner'
 }
 
 export function resetAppStore(): void {
   resetChamberEvents()
   cancelPendingCachedState()
   nextClientId = 1
+  hubClientFactory = null
   try {
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith(CACHE_PREFIX)) localStorage.removeItem(key)

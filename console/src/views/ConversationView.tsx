@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { ACCESS_REVOKED_NOTICE, useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
+import type { HubClient } from '../api/hubClient'
 import { MessageBody } from '../components/MessageBody'
 import { Composer } from '../components/Composer'
 import { AlertCircle, ArrowDown, ChevronLeft, Dots, Message, UserPlus } from '../components/Icon'
@@ -76,7 +77,9 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   // Memoised: MessageBody keys its decorate effect on this, and a fresh arrow
   // every render would tear down and rebuild its MutationObserver each time.
   const fetchBlob = useMemo(
-    () => (client ? (url: string) => client.fetchBlob(url) : undefined),
+    // Still the browser-mode client's own blob fetch: this view learns to pass
+    // its chamber key when it becomes hub-aware.
+    () => (client ? (url: string) => (client as HubClient).fetchBlob(url) : undefined),
     [client],
   )
   const [loadError, setLoadError] = useState<string | null>(null)

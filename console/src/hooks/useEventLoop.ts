@@ -61,7 +61,9 @@ export function useEventLoop(): void {
   const client = useAppStore((s) => s.client)
 
   useEffect(() => {
-    if (!client) return
+    // One loop for the one browser-mode hub. App mode's router carries several,
+    // each with its own connection state, which this hook grows into next.
+    if (!(client instanceof HubClient)) return
     let stopped = false
     const abort = new AbortController()
     let backoff = 1000
