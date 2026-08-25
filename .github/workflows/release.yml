@@ -67,9 +67,9 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} does not match app version v${app_version}"
             exit 1
           fi
-          crate_version="$(grep '^version' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)"
-          if [ "v${crate_version}" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/src-tauri/Cargo.toml version v${crate_version}"
+          app_crate_version="$(grep '^version' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)"
+          if [ "v${app_crate_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/src-tauri/Cargo.toml version v${app_crate_version}"
             exit 1
           fi
 
@@ -131,14 +131,14 @@ jobs:
   # Build the Android APK from the native shell and attach it to the release.
   build-android:
     name: Android APK
-    needs: verify
+    needs: [verify, create-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # `gen/android` is committed scaffolding produced once by
-      # `cargo tauri android init`. Without it gradle fails deep inside the
-      # build with an unrelated-looking error, so say the real reason here.
+      # `gen/android` is committed by the Android init task; until it lands,
+      # this guard fails the release with instructions. Without the guard,
+      # gradle fails deep inside the build with an unrelated-looking error.
       - name: Android project scaffolding present
         run: |
           test -d app/src-tauri/gen/android || {
@@ -182,15 +182,22 @@ jobs:
         run: npm install -g @tauri-apps/cli@^2
 
       # The keystore never lives in the repo: CI materializes it from secrets
-      # into the runner's temp dir for the length of the job.
+      # into the runner's temp dir for the length of the job. The secrets reach
+      # the script through `env`, never through `${{ }}` interpolation — a
+      # password containing `$`, a backtick or a backslash would otherwise be
+      # shell-expanded into a different password, and gradle would report it as
+      # an unrelated signing failure.
       - name: Materialize signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
-          cat > app/src-tauri/gen/android/keystore.properties <<EOF
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          storeFile=$RUNNER_TEMP/release.jks
-          EOF
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          props=app/src-tauri/gen/android/keystore.properties
+          printf 'keyAlias=%s\n' "$KEY_ALIAS" > "$props"
+          printf 'password=%s\n' "$KEYSTORE_PASSWORD" >> "$props"
+          printf 'storeFile=%s\n' "$RUNNER_TEMP/release.jks" >> "$props"
 
       - name: Build APK
         env:
@@ -202,13 +209,18 @@ jobs:
       # instead of a useless download.
       - name: Collect artifact
         run: |
-          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' ! -name '*unsigned*' | head -1)"
+          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk \
+            -path '*/arm64/release/*' -name '*release*.apk' ! -name '*unsigned*' | head -1)"
           test -n "$apk" || { echo "::error::no signed release APK found"; exit 1; }
           cp "$apk" "cryochamber-${GITHUB_REF_NAME}-android-arm64.apk"
 
+      # The runner image usually carries several build-tools versions, so the
+      # glob must be resolved to exactly one path — expanding it in place would
+      # feed the extra matches to apksigner as its subcommand.
       - name: Verify APK signature
         run: |
-          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs \
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$apksigner" verify --print-certs \
             "cryochamber-${GITHUB_REF_NAME}-android-arm64.apk"
 
       - name: Attach to release
@@ -219,7 +231,7 @@ jobs:
   # Build the macOS bundle from the native shell and attach it to the release.
   build-macos:
     name: macOS app
-    needs: verify
+    needs: [verify, create-release]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
