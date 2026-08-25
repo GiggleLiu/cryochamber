@@ -261,6 +261,12 @@ export class HubClient {
     return res.blob()
   }
 
+  /** ConsoleClient-shape alias: the browser client has exactly one hub, so
+   * the chamber key adds nothing — it is the chamber id. */
+  fetchBlobFor(_chamberKey: string, url: string): Promise<Blob> {
+    return this.fetchBlob(url)
+  }
+
   /** The one `/api/events` stream. A 401 on connect takes the same hook. */
   async events(
     onEvent: (event: string, data: string) => void,
