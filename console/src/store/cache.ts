@@ -75,12 +75,16 @@ export function saveCachedState(creds: { token: string }, state: CachedState): v
  * to persist; localStorage writes are synchronous, so they are coalesced. */
 export const PERSIST_DEBOUNCE_MS = 250
 
-let pending: { creds: { token: string }; state: CachedState } | null = null
+/** Pending per cache key, not one slot for the app: app mode persists every
+ * hub in the same turn, and a single slot would let the last hub's write
+ * silently discard the rest. One key still coalesces to its newest state, so
+ * the single-account path writes exactly what it always did. */
+const pending = new Map<string, { creds: { token: string }; state: CachedState }>()
 let timer: ReturnType<typeof setTimeout> | null = null
 
 /** Coalesce a burst of store mutations (a chatty stream) into one write. */
 export function saveCachedStateDebounced(creds: { token: string }, state: CachedState): void {
-  pending = { creds, state }
+  pending.set(cacheKey(creds), { creds, state })
   if (timer) return
   timer = setTimeout(() => {
     timer = null
@@ -94,10 +98,10 @@ export function flushCachedState(): void {
     clearTimeout(timer)
     timer = null
   }
-  if (!pending) return
-  const { creds, state } = pending
-  pending = null
-  saveCachedState(creds, state)
+  if (pending.size === 0) return
+  const writes = [...pending.values()]
+  pending.clear()
+  for (const { creds, state } of writes) saveCachedState(creds, state)
 }
 
 /** Drop a pending write without saving (logout must not resurrect a cache). */
@@ -106,7 +110,7 @@ export function cancelPendingCachedState(): void {
     clearTimeout(timer)
     timer = null
   }
-  pending = null
+  pending.clear()
 }
 
 export function clearCachedState(creds: { token: string }): void {

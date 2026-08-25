@@ -88,6 +88,32 @@ test('debounced save writes once after the delay and flush writes immediately', 
   vi.useRealTimers()
 })
 
+test('debounced writes for different accounts all land, each under its own key', () => {
+  vi.useFakeTimers()
+  const blank = { chambers: [], messagesByChamber: {} }
+  saveCachedStateDebounced({ token: 'k1' }, { ...blank, lastReadByChamber: { a: '1' } })
+  saveCachedStateDebounced({ token: 'k2' }, { ...blank, lastReadByChamber: { b: '2' } })
+  // The newer state for an account still replaces the older one.
+  saveCachedStateDebounced({ token: 'k1' }, { ...blank, lastReadByChamber: { a: '3' } })
+  vi.advanceTimersByTime(250)
+  expect(loadCachedState({ token: 'k1' })!.lastReadByChamber).toEqual({ a: '3' })
+  expect(loadCachedState({ token: 'k2' })!.lastReadByChamber).toEqual({ b: '2' })
+  vi.useRealTimers()
+})
+
+test('cancel drops every account’s pending write', () => {
+  vi.useFakeTimers()
+  const blank = { chambers: [], messagesByChamber: {} }
+  saveCachedStateDebounced({ token: 'k1' }, { ...blank, lastReadByChamber: { a: '1' } })
+  saveCachedStateDebounced({ token: 'k2' }, { ...blank, lastReadByChamber: { b: '2' } })
+  cancelPendingCachedState()
+  vi.advanceTimersByTime(1000)
+  flushCachedState()
+  expect(loadCachedState({ token: 'k1' })).toBeNull()
+  expect(loadCachedState({ token: 'k2' })).toBeNull()
+  vi.useRealTimers()
+})
+
 test('a cancelled write never lands, and flush after it is a no-op', () => {
   vi.useFakeTimers()
   saveCachedStateDebounced(creds, {

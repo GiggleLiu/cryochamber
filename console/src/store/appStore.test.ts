@@ -507,4 +507,74 @@ describe('app mode (multi-hub)', () => {
     useAppStore.getState().markHubAuthFailed(b.id)
     expect(useAppStore.getState().authFailedHubs).toEqual([b.id])
   })
+
+  /** A relaunch, the app-mode twin of `reload`: an empty store over every
+   * hub's cache record, which `resetAppStore` wipes for test hygiene. */
+  function relaunch(...hubs: HubAccount[]): void {
+    flushCachedState()
+    const records = hubs.map((h) => {
+      const key = cacheKey({ token: h.token })
+      return [key, localStorage.getItem(key)] as const
+    })
+    resetAppStore()
+    for (const [key, record] of records) if (record !== null) localStorage.setItem(key, record)
+    enterAppMode(...hubs)
+  }
+
+  test('each hub is cached under its own token, holding only its own rows', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    const ka = chamberKey(a.id, 'x')
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    s.applyMessage({ ...msg(1), chamberId: ka })
+    s.markRead(ka)
+    flushCachedState()
+
+    const cachedA = loadCachedState({ token: a.token })!
+    expect(cachedA.chambers.map((c) => c.id)).toEqual([ka])
+    expect(Object.keys(cachedA.messagesByChamber)).toEqual([ka])
+    expect(cachedA.lastReadByChamber[ka]).toBeDefined()
+
+    // Hub b's record must not carry a single one of hub a's rows.
+    const cachedB = loadCachedState({ token: b.token })!
+    expect(cachedB.chambers.map((c) => c.id)).toEqual([chamberKey(b.id, 'y')])
+    expect(cachedB.messagesByChamber).toEqual({})
+    expect(cachedB.lastReadByChamber).toEqual({})
+  })
+
+  test('app mode rehydrates every hub from its own cache on relaunch', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    const ka = chamberKey(a.id, 'x')
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    s.applyMessage({ ...msg(1), chamberId: ka })
+    s.markRead(ka)
+
+    relaunch(a, b)
+
+    const after = useAppStore.getState()
+    expect(after.chambers.map((c) => c.name)).toEqual(['x', 'y'])
+    expect(after.messagesByChamber[ka]).toHaveLength(1)
+    expect(after.lastReadByChamber[ka]).toBeDefined()
+    // A cached tail is not a fetched history: every opened conversation still refetches.
+    expect(after.loadedChambers).toEqual([])
+    // And the cache is not an index answer.
+    expect(after.chambersLoaded).toBe(false)
+  })
+
+  test('a hub with no cache contributes nothing and does not break the others', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    useAppStore.getState().setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    flushCachedState()
+    localStorage.removeItem(cacheKey({ token: b.token }))
+
+    relaunch(a, b)
+
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x'])
+  })
 })

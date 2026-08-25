@@ -122,6 +122,13 @@ function withoutHub<T>(map: Record<string, T>, hubId: string): Record<string, T>
   )
 }
 
+/** Keep only the entries whose chamber key belongs to `hubId`. */
+function onlyHub<T>(map: Record<string, T>, hubId: string): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(map).filter(([key]) => splitChamberKey(key).hubId === hubId),
+  )
+}
+
 let nextClientId = 1
 
 /** How app mode builds a client for a hub, kept from `initApp` so adding or
@@ -300,6 +307,22 @@ export const useAppStore = create<AppState>()((set, get) => {
    * next boot paints instantly and unread counts survive a reload. */
   const persist = () => {
     const s = get()
+    // App mode has no session-wide `creds`: each hub keeps its own record under
+    // its own token, holding only its own rows. Anything else would leak one
+    // hub's chambers into another's cache — and survive that hub being removed.
+    if (s.mode === 'app') {
+      for (const hub of s.hubs) {
+        saveCachedStateDebounced(
+          { token: hub.token },
+          {
+            chambers: s.chambers.filter((c) => hubIdOf(c) === hub.id),
+            messagesByChamber: onlyHub(s.messagesByChamber, hub.id),
+            lastReadByChamber: onlyHub(s.lastReadByChamber, hub.id),
+          },
+        )
+      }
+      return
+    }
     if (s.creds) {
       saveCachedStateDebounced(s.creds, {
         chambers: s.chambers,
@@ -354,8 +377,28 @@ export const useAppStore = create<AppState>()((set, get) => {
 
     initApp: (hubs, backend, makeClient) => {
       hubClientFactory = makeClient
+      // Hydrate from every hub's cache before a single round-trip, as browser
+      // mode does at sign-in: the list and recent messages paint immediately,
+      // and each hub's index read merges its own rows on top. The keys are
+      // composite, so the hubs' records cannot collide.
+      const chambers: Chamber[] = []
+      const messagesByChamber: Record<string, ChamberMessage[]> = {}
+      const lastReadByChamber: Record<string, string> = {}
+      for (const hub of hubs) {
+        const cached = loadCachedState({ token: hub.token })
+        if (!cached) continue
+        chambers.push(...cached.chambers)
+        Object.assign(messagesByChamber, cached.messagesByChamber)
+        Object.assign(lastReadByChamber, cached.lastReadByChamber)
+      }
       set({
         mode: 'app',
+        chambers: chambers.sort((a, b) => a.name.localeCompare(b.name)),
+        messagesByChamber,
+        lastReadByChamber,
+        // A cached tail is not a fetched history: every conversation opened
+        // this session still refetches its own.
+        loadedChambers: [],
         hubs,
         hubsBackend: backend,
         client: routerOver(hubs),
