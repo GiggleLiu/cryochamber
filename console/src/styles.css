@@ -220,12 +220,20 @@ input, select, textarea { font: inherit; color: inherit; }
 .topbar .bar-start { grid-column: 1; justify-self: start; }
 .topbar .bar-end { grid-column: 3; justify-self: end; }
 
-/* Reconnecting notice: floats under the bar so it never reflows the list. */
-.banner {
+/* Status notices float under the bar so they never reflow the current view. */
+.banner-stack {
   position: absolute;
   top: calc(var(--bar-h) + env(safe-area-inset-top) + var(--sp-2));
   left: 50%;
   z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  transform: translateX(-50%);
+}
+.banner {
+  position: static;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -237,7 +245,6 @@ input, select, textarea { font: inherit; color: inherit; }
   border: 1px solid rgba(154, 91, 0, 0.18);
   border-radius: var(--r-full);
   box-shadow: var(--shadow-2);
-  transform: translateX(-50%);
   animation: banner-in var(--dur-2) var(--ease);
 }
 .banner::before {
@@ -1286,8 +1293,8 @@ input, select, textarea { font: inherit; color: inherit; }
   to { opacity: 1; transform: none; }
 }
 @keyframes banner-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
-  to { opacity: 1; transform: translateX(-50%); }
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes sheet-in {
   from { opacity: 0; transform: translateY(16px); }

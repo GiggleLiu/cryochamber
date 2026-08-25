@@ -48,6 +48,26 @@ test('a chamber pruned from under the user is explained on the list', async () =
   expect(await screen.findByText(/no longer have access/i)).toBeInTheDocument()
 })
 
+test('simultaneous status banners share one stacking container', async () => {
+  saveCredentials(creds)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      new Response(
+        JSON.stringify(String(url).endsWith('/api/whoami') ? { role: 'owner', name: 'Alice' } : []),
+        { status: 200 },
+      ),
+    ),
+  )
+  render(<App />)
+  await screen.findByRole('heading', { name: 'Projects' })
+  act(() => useAppStore.getState().setUpdateAvailable(true))
+  const reconnecting = screen.getByText('Reconnecting')
+  const update = screen.getByText('Update available')
+  expect(reconnecting.parentElement).toBe(update.parentElement)
+  expect(reconnecting.parentElement).toHaveClass('banner-stack')
+})
+
 test('shows login when no credentials are stored', async () => {
   render(<App />)
   expect(await screen.findByRole('heading', { name: 'Agent Console' })).toBeInTheDocument()

@@ -139,18 +139,20 @@ export default function App() {
 
   return (
     <div className="app">
-      {connection !== 'live' && (
-        <div className="banner" role="status">Reconnecting</div>
-      )}
-      <UpdateBar />
-      {downloadNote && (
-        <div className="banner banner-info" role="status">{downloadNote}</div>
-      )}
-      {/* A chamber pruned from under the user leaves them on the list with no
-          explanation otherwise; cleared by the next navigation. */}
-      {accessNotice && (
-        <div className="banner banner-info" role="status">{accessNotice}</div>
-      )}
+      <div className="banner-stack">
+        {connection !== 'live' && (
+          <div className="banner" role="status">Reconnecting</div>
+        )}
+        <UpdateBar />
+        {downloadNote && (
+          <div className="banner banner-info" role="status">{downloadNote}</div>
+        )}
+        {/* A chamber pruned from under the user leaves them on the list with no
+            explanation otherwise; cleared by the next navigation. */}
+        {accessNotice && (
+          <div className="banner banner-info" role="status">{accessNotice}</div>
+        )}
+      </div>
       {view.name === 'conversation' ? (
         <ConversationView chamberId={view.chamberId} />
       ) : (
