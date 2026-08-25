@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { HubClient } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
 import { isUnauthorized } from '../api/types'
@@ -18,13 +18,13 @@ export function hubLabel(): string {
 }
 
 /**
- * Hub-wide settings: what this token is, how the app looks, and the two
- * chamber-list preferences that are not about any one chamber. Everything that
- * belongs to a single chamber lives in its controls sheet instead.
+ * Hub-wide settings: what this token is, how the app looks, and controls that
+ * affect the host rather than any one chamber. Everything chamber-specific
+ * lives in its controls sheet instead.
  *
  * Owner and guest get the same sheet, in the same shell, in the same order —
- * the guest's simply has no Chambers section, because those two rows act on a
- * fold only an owner has.
+ * the guest's simply has no Chambers section, because those controls act on
+ * host state only an owner may change.
  */
 export function SettingsSheet() {
   const creds = useAppStore((s) => s.creds)
@@ -38,6 +38,30 @@ export function SettingsSheet() {
   const [theme, setTheme] = useState<Theme>(readTheme)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [defaultAgent, setDefaultAgent] = useState('')
+  const [savedDefaultAgent, setSavedDefaultAgent] = useState('')
+  const [agentBusy, setAgentBusy] = useState(false)
+  const [agentError, setAgentError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const hub = client instanceof HubClient && hubRole === 'owner' ? client : null
+    if (!hub) return
+    let cancelled = false
+    void hub.hostConfig().then(
+      (config) => {
+        if (cancelled || useAppStore.getState().client !== hub) return
+        setDefaultAgent(config.default_agent)
+        setSavedDefaultAgent(config.default_agent)
+      },
+      (error) => {
+        if (cancelled || useAppStore.getState().client !== hub || isUnauthorized(error)) return
+        setAgentError('Could not load the host agent setting.')
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [client, hubRole])
 
   if (!creds) return null
 
@@ -69,6 +93,26 @@ export function SettingsSheet() {
       setRefreshError('Could not refresh. Check your connection and try again.')
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  async function saveDefaultAgent() {
+    const hub = client instanceof HubClient ? client : null
+    const value = defaultAgent.trim()
+    if (!hub || agentBusy || !value) return
+    setAgentBusy(true)
+    setAgentError(null)
+    const stale = () => useAppStore.getState().client !== hub
+    try {
+      const config = await hub.updateHostConfig(value)
+      if (stale()) return
+      setDefaultAgent(config.default_agent)
+      setSavedDefaultAgent(config.default_agent)
+    } catch (error) {
+      if (stale() || isUnauthorized(error)) return
+      setAgentError(error instanceof Error ? error.message : 'Could not save the host agent setting.')
+    } finally {
+      setAgentBusy(false)
     }
   }
 
@@ -117,6 +161,28 @@ export function SettingsSheet() {
           <p className="group-label">Chambers</p>
           <div className="group">
             <label className="row">
+              Default agent
+              <input
+                className="row-input"
+                value={defaultAgent}
+                placeholder="pi"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={(event) => setDefaultAgent(event.target.value)}
+              />
+            </label>
+            <button
+              className="row"
+              onClick={saveDefaultAgent}
+              disabled={agentBusy || !defaultAgent.trim() || defaultAgent.trim() === savedDefaultAgent}
+            >
+              Save default agent
+              <span className="row-value" aria-hidden="true">
+                {agentBusy ? 'Saving…' : 'For new chambers'}
+              </span>
+            </button>
+            <label className="row">
               Show completed &amp; archived
               <input
                 type="checkbox"
@@ -138,6 +204,11 @@ export function SettingsSheet() {
           {refreshError && (
             <p className="group-hint" role="alert">
               {refreshError}
+            </p>
+          )}
+          {agentError && (
+            <p className="group-hint" role="alert">
+              {agentError}
             </p>
           )}
         </>

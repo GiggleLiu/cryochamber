@@ -641,6 +641,8 @@ const OWNER_ONLY: &[(&str, &str)] = &[
     ("GET", "/api/chambers/{id}/todos"),
     ("POST", "/api/chambers/refresh"),
     ("POST", "/api/chambers/new"),
+    ("GET", "/api/config"),
+    ("POST", "/api/config"),
     ("GET", "/api/tokens"),
     ("POST", "/api/tokens"),
     ("POST", "/api/tokens/Alice/revoke"),

@@ -19,5 +19,5 @@ watch_dirs = ["messages/inbox"]
 # to avoid accidentally committing secrets.
 #
 # [provider]
-# name = "opencode"
-# env = { OPENCODE_PROVIDER = "anthropic", OPENCODE_MODEL = "claude-sonnet-4-20250514", ANTHROPIC_API_KEY = "sk-ant-..." }
+# name = "anthropic"
+# env = { ANTHROPIC_API_KEY = "sk-ant-..." }

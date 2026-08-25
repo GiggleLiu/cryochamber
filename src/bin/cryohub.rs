@@ -27,6 +27,9 @@ enum Commands {
         /// Port to listen on (overrides cryohub.toml)
         #[arg(long)]
         port: Option<u16>,
+        /// Agent command to use when creating chambers (saved to cryohub.toml)
+        #[arg(long)]
+        default_agent: Option<String>,
         /// Run in foreground instead of installing a service
         #[arg(long)]
         foreground: bool,
@@ -87,10 +90,17 @@ fn main() -> Result<()> {
         Commands::Start {
             host,
             port,
+            default_agent,
             foreground,
             public,
             no_public,
-        } => cmd_start(host, port, foreground, public_override(public, no_public)),
+        } => cmd_start(
+            host,
+            port,
+            default_agent,
+            foreground,
+            public_override(public, no_public),
+        ),
         Commands::Stop => cmd_stop(),
         Commands::Restart => cmd_restart(),
         Commands::Status => cmd_status(),
@@ -113,10 +123,16 @@ fn public_override(public: bool, no_public: bool) -> Option<bool> {
 fn cmd_start(
     host: Option<String>,
     port: Option<u16>,
+    default_agent: Option<String>,
     foreground: bool,
     public: Option<bool>,
 ) -> Result<()> {
-    let config = cryochamber::hub::config::effective_config(host, port, public)?;
+    let config = cryochamber::hub::config::effective_config_with_default_agent(
+        host,
+        port,
+        public,
+        default_agent,
+    )?;
     config.validate_console_dir()?;
     std::fs::create_dir_all(&config.chamber_root)?;
 
@@ -163,6 +179,7 @@ fn cmd_start(
         println!("Mode: PUBLIC (bearer auth enforced on every /api route)");
     }
     println!("Chamber root: {}", config.chamber_root.display());
+    println!("Default agent: {}", config.default_agent);
     println!("Console: {}", config.console_source().describe());
     println!(
         "Config: {}",
@@ -221,6 +238,7 @@ fn cmd_status() -> Result<()> {
         }
     );
     println!("Chamber root: {}", config.chamber_root.display());
+    println!("Default agent: {}", config.default_agent);
     println!("Console: {}", config.console_source().describe());
     println!(
         "Config: {}",

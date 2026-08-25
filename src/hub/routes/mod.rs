@@ -2,6 +2,7 @@
 
 pub mod chamber;
 pub mod chambers;
+pub mod config;
 pub mod console;
 pub mod events;
 pub mod files;

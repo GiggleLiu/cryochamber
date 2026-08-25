@@ -22,7 +22,7 @@ help:
 	@echo "  logo         - Compile logo (requires typst)"
 	@echo "  run-plan     - Execute a plan with Codex or Claude"
 	@echo "  example      - Run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)"
-	@echo "  example-start-all - Start all example chambers (AGENT=opencode|claude)"
+	@echo "  example-start-all - Start all example chambers (AGENT=pi|opencode|claude)"
 	@echo "  example-cancel - Stop a running example (DIR=examples/...)"
 	@echo "  example-hub  - Start global cryohub in foreground (PORT=8765)"
 	@echo "  time         - Show current time or compute offset (OFFSET=\"+1 day\")"
@@ -178,9 +178,9 @@ example-hub: build
 	$(CURDIR)/target/debug/cryohub start --foreground --port $(PORT)
 
 # Quick smoke test: force one agent wakeup cycle
-# Usage: make check-agent                 # check default (opencode)
+# Usage: make check-agent                 # check default (pi)
 #        make check-agent AGENT=claude    # check claude
-AGENT ?= opencode
+AGENT ?= pi
 CHECK_TIMEOUT ?= 3000
 
 check-agent: build
@@ -208,7 +208,7 @@ check-agent: build
 
 # Full round-trip test with mr-lazy example (daemon mode)
 # Runs until plan completes or Ctrl-C, then cleans up.
-# Usage: make check-round-trip                 # check default (opencode)
+# Usage: make check-round-trip                 # check default (pi)
 #        make check-round-trip AGENT=claude    # check claude
 check-round-trip: build
 	@echo "=== Round-Trip Test (mr-lazy) ==="

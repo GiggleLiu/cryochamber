@@ -76,7 +76,7 @@ developer notes live in [`console/README.md`](console/README.md).
 - **Agent-guided hibernation**: the agent decides when to wake next instead of running on a fixed cron schedule.
 - **Folder watching**: configure `watch_dirs` to wake the agent when a folder changes, such as `messages/inbox/` or another project directory.
 - **Crash recovery and reboot persistence**: `cryo start` installs a launchd/systemd service by default, so scheduled sessions survive machine reboots; failed TODO sessions are rescheduled as visible retry attempts with backoff.
-- **Configurable agents**: run OpenCode, Claude Code, Codex, Pi, Kimi Code, or another command from `cryo.toml`.
+- **Configurable agents**: Pi is the default; choose a host-wide default in the Agent Console and override it per chamber with `cryo.toml` or `cryo init --agent`.
 - **Local and remote monitoring**: use the Cryohub dashboard to monitor chamber status, logs, messages, TODOs, notes, and lifecycle controls in a local browser UI, or talk to a chamber from anywhere via Zulip with `cryo-zulip`. See the [CLI reference](https://giggleliu.github.io/cryochamber/reference/cli.html).
 
 ## License

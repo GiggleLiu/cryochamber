@@ -78,6 +78,10 @@ export interface TodoItem {
   created: string
 }
 
+export interface HostConfig {
+  default_agent: string
+}
+
 /** `GET /api/chambers/{id}/status`. The raw `cryo.toml` is deliberately absent
  * from the hub's payload (it can hold an API key); `has_config` plus the masked
  * `settings_rows` are what the UI gets. */
@@ -329,6 +333,18 @@ export class HubClient {
    * what makes the app re-register; the returned list is not needed here. */
   async refreshIndex(): Promise<void> {
     await this.request('/api/chambers/refresh', { method: 'POST' })
+  }
+
+  async hostConfig(): Promise<HostConfig> {
+    return this.request<HostConfig>('/api/config')
+  }
+
+  async updateHostConfig(defaultAgent: string): Promise<HostConfig> {
+    return this.request<HostConfig>('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_agent: defaultAgent }),
+    })
   }
 
   async listInvites(): Promise<Invite[]> {

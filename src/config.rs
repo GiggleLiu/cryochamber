@@ -8,6 +8,7 @@ use crate::state::CryoState;
 
 pub const LEGACY_PROVIDERS_DEPRECATION_WARNING: &str = "Warning: [[providers]] is deprecated; use [provider] instead. Provider rotation has been removed; only one provider is used.";
 pub const DEFAULT_MAX_SESSION_DURATION_SECS: u64 = 3600;
+pub const DEFAULT_AGENT: &str = "pi";
 
 /// Default list of directories the daemon watches for reactive wake.
 pub fn default_watch_dirs() -> Vec<PathBuf> {
@@ -53,8 +54,8 @@ pub struct CryoConfig {
     pub zulip_poll_interval: u64,
 }
 
-fn default_agent() -> String {
-    "opencode".to_string()
+pub fn default_agent() -> String {
+    DEFAULT_AGENT.to_string()
 }
 
 fn default_max_session_duration() -> u64 {

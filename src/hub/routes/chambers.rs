@@ -158,7 +158,12 @@ pub async fn post_new(
         }
     }
 
-    if let Err(e) = crate::protocol::scaffold_chamber(&target, "opencode") {
+    let default_agent = app
+        .default_agent
+        .read()
+        .map(|agent| agent.clone())
+        .unwrap_or_else(|_| crate::config::default_agent());
+    if let Err(e) = crate::protocol::scaffold_chamber(&target, &default_agent) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -167,7 +172,7 @@ pub async fn post_new(
         );
     }
     if let Some(provider_config) = provider_config {
-        if let Err(e) = write_opencode_provider_config(&target, &provider_config) {
+        if let Err(e) = write_provider_config(&target, &provider_config) {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -278,17 +283,33 @@ fn api_key_env_for_provider(provider: &str) -> String {
     }
 }
 
-fn write_opencode_provider_config(
+fn write_provider_config(
     target: &std::path::Path,
     provider: &ProviderConfigInput,
 ) -> anyhow::Result<()> {
     let config_path = crate::config::config_path(target);
     let mut config = crate::config::load_config(&config_path)?.unwrap_or_default();
-    config.agent = "opencode".to_string();
     let mut env = HashMap::new();
-    env.insert("OPENCODE_PROVIDER".to_string(), provider.provider.clone());
-    if let Some(model) = &provider.model {
-        env.insert("OPENCODE_MODEL".to_string(), model.clone());
+    let program = crate::agent::agent_program(&config.agent)?;
+    let executable = program.rsplit('/').next().unwrap_or(&program);
+    match executable {
+        "opencode" => {
+            env.insert("OPENCODE_PROVIDER".to_string(), provider.provider.clone());
+            if let Some(model) = &provider.model {
+                env.insert("OPENCODE_MODEL".to_string(), model.clone());
+            }
+        }
+        "pi" => {
+            config.agent.push_str(" --provider ");
+            config
+                .agent
+                .push_str(&shell_words::quote(&provider.provider));
+            if let Some(model) = &provider.model {
+                config.agent.push_str(" --model ");
+                config.agent.push_str(&shell_words::quote(model));
+            }
+        }
+        _ => {}
     }
     env.insert(
         api_key_env_for_provider(&provider.provider),

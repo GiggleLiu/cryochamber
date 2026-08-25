@@ -123,6 +123,10 @@ describe('appearance', () => {
 describe('owner-only rows', () => {
   function ownerHub() {
     const client = new HubClient({ token: 'k', fetch: vi.fn() })
+    vi.spyOn(client, 'hostConfig').mockResolvedValue({ default_agent: 'pi' })
+    vi.spyOn(client, 'updateHostConfig').mockImplementation(async (default_agent) => ({
+      default_agent,
+    }))
     vi.spyOn(client, 'refreshIndex').mockResolvedValue(undefined)
     vi.spyOn(client, 'listChambers').mockResolvedValue([chamber('cham-c', 'gamma')])
     return client
@@ -135,6 +139,36 @@ describe('owner-only rows', () => {
     expect(toggle).not.toBeChecked()
     await userEvent.click(toggle)
     expect(useAppStore.getState().showCompletedArchived).toBe(true)
+  })
+
+  test('loads and saves the host default agent', async () => {
+    const client = ownerHub()
+    useAppStore.setState({ hubRole: 'owner', client })
+    render(<SettingsSheet />)
+
+    const input = await screen.findByRole('textbox', { name: 'Default agent' })
+    expect(input).toHaveValue('pi')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'pi --thinking high')
+    await userEvent.click(screen.getByRole('button', { name: 'Save default agent' }))
+
+    expect(client.updateHostConfig).toHaveBeenCalledWith('pi --thinking high')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save default agent' })).toBeDisabled(),
+    )
+  })
+
+  test('shows the hub error when the default agent cannot be saved', async () => {
+    const client = ownerHub()
+    vi.mocked(client.updateHostConfig).mockRejectedValue(new ApiError(400, 'invalid default agent'))
+    useAppStore.setState({ hubRole: 'owner', client })
+    render(<SettingsSheet />)
+
+    const input = await screen.findByRole('textbox', { name: 'Default agent' })
+    await userEvent.clear(input)
+    await userEvent.type(input, 'broken')
+    await userEvent.click(screen.getByRole('button', { name: 'Save default agent' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('invalid default agent')
   })
 
   test('refresh chambers re-scans the hub and re-registers', async () => {

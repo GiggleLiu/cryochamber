@@ -17,6 +17,11 @@ pub struct HubConfig {
     pub port: u16,
     #[serde(default = "default_chamber_root")]
     pub chamber_root: PathBuf,
+    /// Agent command written into newly scaffolded chambers. Individual
+    /// chambers can still override it in their own `cryo.toml`, and
+    /// `cryo init --agent` overrides it for one scaffold operation.
+    #[serde(default = "crate::config::default_agent")]
+    pub default_agent: String,
     /// Sender name stamped on messages the owner sends in public mode. The
     /// owner's identity is the server's to decide, not the browser's.
     #[serde(default = "default_owner_name")]
@@ -97,6 +102,7 @@ impl Default for HubConfig {
             host: default_host(),
             port: default_port(),
             chamber_root: default_chamber_root(),
+            default_agent: crate::config::default_agent(),
             owner_name: default_owner_name(),
             public_hosts: Vec::new(),
             public: default_public(),
@@ -151,10 +157,20 @@ pub fn load_or_create_config() -> Result<HubConfig> {
 /// which case the saved mode stands: turning auth *off* has to be an explicit
 /// act, never a side effect of restarting without the flag.
 pub fn overlay_config(
+    config: HubConfig,
+    host: Option<String>,
+    port: Option<u16>,
+    public: Option<bool>,
+) -> HubConfig {
+    overlay_config_with_default_agent(config, host, port, public, None)
+}
+
+pub fn overlay_config_with_default_agent(
     mut config: HubConfig,
     host: Option<String>,
     port: Option<u16>,
     public: Option<bool>,
+    default_agent: Option<String>,
 ) -> HubConfig {
     if let Some(host) = host {
         config.host = host;
@@ -164,6 +180,9 @@ pub fn overlay_config(
     }
     if let Some(public) = public {
         config.public = public;
+    }
+    if let Some(default_agent) = default_agent {
+        config.default_agent = default_agent;
     }
     config
 }
@@ -176,8 +195,17 @@ pub fn effective_config(
     port: Option<u16>,
     public: Option<bool>,
 ) -> Result<HubConfig> {
+    effective_config_with_default_agent(host, port, public, None)
+}
+
+pub fn effective_config_with_default_agent(
+    host: Option<String>,
+    port: Option<u16>,
+    public: Option<bool>,
+    default_agent: Option<String>,
+) -> Result<HubConfig> {
     let base = load_or_create_config()?;
-    let config = overlay_config(base.clone(), host, port, public);
+    let config = overlay_config_with_default_agent(base.clone(), host, port, public, default_agent);
     if config != base {
         save_config(&config)?;
     }

@@ -6,6 +6,12 @@ Security and reliability hardening.
 
 ### Cryohub
 
+- **Pi is now the default agent.** The host-level `default_agent` setting in
+  `cryohub.toml` controls both Console-created chambers and plain `cryo init`.
+  Owners can update it live from the Console Settings sheet or with
+  `cryohub start --default-agent <cmd>`; explicit per-chamber and CLI choices
+  still win, and existing chambers are never rewritten.
+
 - **Public mode (bearer auth) is now the default** (breaking). `cryohub start`
   enforces the bearer token on every `/api` route and prints the owner token on
   first run — copy it and paste it into the console to sign in (`cryohub token

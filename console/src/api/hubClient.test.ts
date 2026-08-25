@@ -91,6 +91,25 @@ test('invite management wrappers hit the token routes', async () => {
   expect(calls).toContain('POST /api/tokens/Cara/revoke')
 })
 
+test('host agent config uses the owner-only config route', async () => {
+  const calls: Array<[string, RequestInit | undefined]> = []
+  const fetchFn = mockFetch((url, init) => {
+    calls.push([String(url), init])
+    return { default_agent: init?.method === 'POST' ? 'pi --thinking high' : 'pi' }
+  })
+  const client = new HubClient({ ...OPTS, fetch: fetchFn })
+
+  await expect(client.hostConfig()).resolves.toEqual({ default_agent: 'pi' })
+  await expect(client.updateHostConfig('pi --thinking high')).resolves.toEqual({
+    default_agent: 'pi --thinking high',
+  })
+  expect(calls[0][0]).toBe('/api/config')
+  expect(calls[0][1]?.method).toBeUndefined()
+  expect(calls[1][0]).toBe('/api/config')
+  expect(calls[1][1]?.method).toBe('POST')
+  expect(calls[1][1]?.body).toBe(JSON.stringify({ default_agent: 'pi --thinking high' }))
+})
+
 test('createInvite surfaces the hub\'s own words on a rejected name', async () => {
   // A duplicate name is a considered answer, not a broken connection, and the
   // hub sometimes says why — so the caller gets those words verbatim.
