@@ -43,6 +43,10 @@ export class HubRouter implements ConsoleClient {
     return this.byId.get(hubId)?.client ?? null
   }
 
+  /** Throws for an unknown hub — which is why every method below is `async`:
+   * a `Promise`-declared method that throws synchronously skips a
+   * `.then(ok, err)` caller's error arm (the outbox is exactly that shape),
+   * stranding the call instead of failing it. */
   private resolve(key: string): { client: HubClient; chamberId: string; hubId: string } {
     const { hubId, chamberId } = splitChamberKey(key)
     const entry = this.byId.get(hubId)
@@ -70,42 +74,42 @@ export class HubRouter implements ConsoleClient {
     return msgs.map((m) => ({ ...m, chamberId: chamberKey(hubId, chamberId) }))
   }
 
-  sendMessage(key: string, body: string): Promise<{ id: string }> {
+  async sendMessage(key: string, body: string): Promise<{ id: string }> {
     const { client, chamberId } = this.resolve(key)
     return client.sendMessage(chamberId, body)
   }
 
-  uploadFile(file: File, key: string): Promise<string> {
+  async uploadFile(file: File, key: string): Promise<string> {
     const { client, chamberId } = this.resolve(key)
     return client.uploadFile(file, chamberId)
   }
 
-  chamberStatus(key: string): Promise<ChamberStatus> {
+  async chamberStatus(key: string): Promise<ChamberStatus> {
     const { client, chamberId } = this.resolve(key)
     return client.chamberStatus(chamberId)
   }
 
-  setChamberAgent(key: string, agent: string): Promise<ChamberAgentUpdate> {
+  async setChamberAgent(key: string, agent: string): Promise<ChamberAgentUpdate> {
     const { client, chamberId } = this.resolve(key)
     return client.setChamberAgent(chamberId, agent)
   }
 
-  setChamberPlan(key: string, content: string): Promise<void> {
+  async setChamberPlan(key: string, content: string): Promise<void> {
     const { client, chamberId } = this.resolve(key)
     return client.setChamberPlan(chamberId, content)
   }
 
-  chamberTodos(key: string): Promise<TodoItem[]> {
+  async chamberTodos(key: string): Promise<TodoItem[]> {
     const { client, chamberId } = this.resolve(key)
     return client.chamberTodos(chamberId)
   }
 
-  lifecycle(key: string, action: LifecycleAction): Promise<ActionResult> {
+  async lifecycle(key: string, action: LifecycleAction): Promise<ActionResult> {
     const { client, chamberId } = this.resolve(key)
     return client.lifecycle(chamberId, action)
   }
 
-  fetchBlobFor(key: string, url: string): Promise<Blob> {
+  async fetchBlobFor(key: string, url: string): Promise<Blob> {
     const { client } = this.resolve(key)
     return client.fetchBlob(url)
   }

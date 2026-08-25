@@ -52,6 +52,23 @@ describe('HubRouter', () => {
     await expect(router.getMessages('ffffffff:ghost')).rejects.toThrow('Unknown hub')
   })
 
+  // A Promise-declared method must *reject*, never throw synchronously: the
+  // outbox calls `client.sendMessage(...).then(ok, err)`, so a synchronous
+  // throw would skip `err`, strand the queued item and escape the handler.
+  it('rejects rather than throws for an unknown hub on every routed method', async () => {
+    const a = fakeHub('http://a.local:1', [])
+    const router = new HubRouter([{ hub: a.hub, client: a.client }])
+    await expect(router.lifecycle('ffffffff:ghost', 'start')).rejects.toThrow('Unknown hub')
+    let seen: unknown = null
+    await router.sendMessage('ffffffff:ghost', 'hi').then(
+      () => {},
+      (e) => {
+        seen = e
+      },
+    )
+    expect(String(seen)).toContain('Unknown hub')
+  })
+
   it('remaps SSE message payloads to composite keys', () => {
     const a = fakeHub('http://a.local:1', ['alpha'])
     const router = new HubRouter([{ hub: a.hub, client: a.client }])
