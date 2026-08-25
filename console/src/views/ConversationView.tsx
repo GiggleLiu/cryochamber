@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { ACCESS_REVOKED_NOTICE, useAppStore, useIsOwner } from '../store/appStore'
 import { ApiError, isUnauthorized } from '../api/types'
 import { MessageBody } from '../components/MessageBody'
@@ -14,6 +22,7 @@ import { ControlsSheet } from './ControlsSheet'
 const GAP_SECONDS = 300
 /** How far from the bottom still counts as "reading the newest messages". */
 const PIN_SLACK_PX = 80
+const PAGE = 100
 
 function hasFinePointer(): boolean {
   return typeof window.matchMedia === 'function' &&
@@ -76,8 +85,10 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const [hasNew, setHasNew] = useState(false)
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [canCopy] = useState(hasFinePointer)
+  const [visibleCount, setVisibleCount] = useState(PAGE)
   const scrollRef = useRef<HTMLDivElement>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prependHeightRef = useRef<number | null>(null)
   // Whether the reader is parked at the newest message. Kept in a ref because
   // the scroll handler and the message effect both read it without re-render.
   const pinnedRef = useRef(true)
@@ -87,6 +98,8 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   // marker is cleared so gaps over cached messages get re-fetched.
   const historyLoaded = loadedChambers.includes(chamberId)
   const messageCount = messages?.length ?? 0
+  const firstVisible = Math.max(0, messageCount - visibleCount)
+  const visibleMessages = messages?.slice(firstVisible)
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const el = scrollRef.current
@@ -112,6 +125,25 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     setShowJump(!pinned)
     if (pinned) setHasNew(false)
   }
+
+  function revealEarlier() {
+    const el = scrollRef.current
+    if (el) prependHeightRef.current = el.scrollHeight
+    setVisibleCount((count) => Math.min(messageCount, count + PAGE))
+  }
+
+  useLayoutEffect(() => {
+    const before = prependHeightRef.current
+    const el = scrollRef.current
+    if (before === null || !el) return
+    el.scrollTop += el.scrollHeight - before
+    prependHeightRef.current = null
+  }, [visibleCount])
+
+  useEffect(() => {
+    prependHeightRef.current = null
+    setVisibleCount(PAGE)
+  }, [chamberId])
 
   async function copyMessage(id: string, body: string) {
     if (!navigator.clipboard) return
@@ -249,8 +281,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
 
       <div className="thread">
       <div className="message-scroll" ref={scrollRef} onScroll={onScroll}>
-        {/* A mailbox returns its whole history in one fetch, so there is never
-            anything earlier to load. */}
+        {/* The mailbox fetch is complete, but only a bounded window mounts. */}
         {loadError && (
           <div className="alert" role="alert">
             <AlertCircle size={18} />
@@ -274,8 +305,14 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
           </div>
         )}
 
-        {messages?.map((m, i) => {
-          const prev = messages[i - 1]
+        {firstVisible > 0 && (
+          <button type="button" className="stream-reveal" onClick={revealEarlier}>
+            Earlier messages ({firstVisible})
+          </button>
+        )}
+
+        {visibleMessages?.map((m, i) => {
+          const prev = visibleMessages[i - 1]
           const seconds = messageSeconds(m)
           const gap = !prev || seconds - messageSeconds(prev) >= GAP_SECONDS
           const isSelf = m.sender === selfName

@@ -530,11 +530,53 @@ describe('isRichMessage', () => {
   })
 })
 
-test('a mailbox returns its whole history, so nothing offers to load earlier', async () => {
-  useAppStore.setState({ client: fakeClient() })
-  render(<ConversationView chamberId="cham-a" />)
-  await screen.findByText('msg-1')
-  expect(screen.queryByRole('button', { name: /load earlier/i })).toBeNull()
+test('long histories mount 100 messages and reveal the previous page per tap', async () => {
+  const history = Array.from({ length: 250 }, (_, i) => makeMsg(i + 1))
+  useAppStore.setState({ client: fakeClient({ getMessages: vi.fn(async () => history) }) })
+  const { container } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-250')
+  expect(container.querySelectorAll('.msg-row')).toHaveLength(100)
+  expect(screen.queryByText('msg-150')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Earlier messages (150)' })).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages (150)' }))
+  expect(container.querySelectorAll('.msg-row')).toHaveLength(200)
+  expect(screen.getByText('msg-51')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Earlier messages (50)' })).toBeInTheDocument()
+})
+
+test('prepending an earlier page preserves the reader’s viewport', async () => {
+  const history = Array.from({ length: 250 }, (_, i) => makeMsg(i + 1))
+  useAppStore.setState({ client: fakeClient({ getMessages: vi.fn(async () => history) }) })
+  const { container } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-250')
+  const scroller = container.querySelector('.message-scroll')!
+  Object.defineProperty(scroller, 'scrollHeight', {
+    configurable: true,
+    get: () => container.querySelectorAll('.msg-row').length * 10,
+  })
+  Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value: 100 })
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages (150)' }))
+  expect(scroller.scrollTop).toBe(1100)
+})
+
+test('the visible cut starts a group and keeps grouping correct across revealed pages', async () => {
+  const history = Array.from({ length: 250 }, (_, i) =>
+    makeMsg(i + 1, { timestamp: stamp(i), sender: 'Agent' }),
+  )
+  useAppStore.setState({ client: fakeClient({ getMessages: vi.fn(async () => history) }) })
+  const { container } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-250')
+  let rows = container.querySelectorAll('.msg-row')
+  expect(rows[0]).not.toHaveClass('msg-grouped')
+  expect(rows[1]).toHaveClass('msg-grouped')
+  expect(container.querySelectorAll('.time-pill')).toHaveLength(1)
+
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages (150)' }))
+  rows = container.querySelectorAll('.msg-row')
+  expect(rows[0]).not.toHaveClass('msg-grouped')
+  expect(rows[100]).toHaveClass('msg-grouped')
+  expect(container.querySelectorAll('.time-pill')).toHaveLength(1)
 })
 
 describe('the asleep banner', () => {
