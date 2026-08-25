@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { TauriHubsBackend, makeTauriRuntime } from './tauriRuntime'
+import { TauriHubsBackend, makeTauriRuntime, probeHub } from './tauriRuntime'
 import type { HubAccount } from '../store/hubs'
 
 afterEach(() => {
@@ -184,5 +184,21 @@ describe('makeTauriRuntime', () => {
     expect(() => rt.transportFor(hub('https://c.example', { kind: 'pinned', sha256: 'a'.repeat(64) }))).toThrow(
       'pinned transport arrives in a later task',
     )
+  })
+})
+
+describe('probeHub', () => {
+  it('asks the shell to look at one hub certificate', async () => {
+    const f = fakeStore()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const invoke = (window as any).__TAURI__.core.invoke
+    invoke.mockResolvedValueOnce({ https_valid: false, fingerprint: 'ab'.repeat(32) })
+    await expect(probeHub('https://a.example')).resolves.toEqual({
+      https_valid: false,
+      fingerprint: 'ab'.repeat(32),
+    })
+    expect(invoke).toHaveBeenCalledWith('probe_hub', { url: 'https://a.example' })
+    // Looking at a certificate has nothing to do with the stored hub list.
+    expect(f.load).not.toHaveBeenCalled()
   })
 })

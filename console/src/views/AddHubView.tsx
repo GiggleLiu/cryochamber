@@ -1,10 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { appRuntime, makeClientFactory, parseInviteLink } from '../lib/appBoot'
-import { makeHubAccount, type HubTrust } from '../store/hubs'
+import { makeHubAccount, type HubAccount, type HubTrust } from '../store/hubs'
 import { normalizeHubUrl } from '../lib/hubKeys'
+import { probeHub } from '../lib/tauriRuntime'
+import { isTauri } from '../lib/env'
 import { useAppStore } from '../store/appStore'
 import { isUnauthorized } from '../api/types'
 import { AlertCircle, Logo } from '../components/Icon'
+import { Sheet } from '../components/Sheet'
 
 /** The one thing a user can act on when a hub answers 401: the address was
  * right, the token was not. */
@@ -33,6 +36,13 @@ function parseAddress(raw: string): { url: string } | { error: string } | null {
   }
 }
 
+/** The fingerprint as an operator reads it out — the grouping
+ * `openssl x509 -fingerprint -sha256` prints, so the two can be compared
+ * character by character instead of eyeballed as one 64-character run. */
+function groupFingerprint(sha256: string): string {
+  return (sha256.toUpperCase().match(/../g) ?? []).join(':')
+}
+
 /** What to put on screen for a probe that failed. */
 function errorText(err: unknown): string {
   if (isUnauthorized(err)) return REJECTED_TOKEN_ERROR
@@ -51,6 +61,10 @@ export function AddHubView() {
   const [acknowledged, setAcknowledged] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // The hub the probe found an untrusted certificate on, built from the same
+  // parse the form judged — waiting on the one question only the user can
+  // answer: is this the certificate the operator read out?
+  const [pin, setPin] = useState<{ sha256: string; account: HubAccount } | null>(null)
   // Why this screen is up at all, when it is not a first run: a hub store the
   // boot could not read. What the form itself says wins — that is about the
   // address in front of the user, not about the boot.
@@ -100,6 +114,28 @@ export function AddHubView() {
     setBusy(true)
     setError(null)
     try {
+      // Inside the shell, an https hub is looked at before a token is sent to
+      // it: Rust can say *which* certificate a hub presents, so an untrusted
+      // one becomes a question instead of an unexplained network error. A
+      // browser has no such power — there the flow is exactly what it was, and
+      // a bad certificate still surfaces as the whoami's own failure.
+      if (isTauri() && !plainHttp) {
+        const report = await probeHub(address.url)
+        // No fingerprint means no handshake at all: the hub is unreachable, and
+        // the whoami below says so in the words the user already knows.
+        if (!report.https_valid && report.fingerprint) {
+          setPin({
+            sha256: report.fingerprint,
+            account: makeHubAccount({
+              url: address.url,
+              token: token.trim(),
+              label: label.trim(),
+              trust: { kind: 'pinned', sha256: report.fingerprint },
+            }),
+          })
+          return
+        }
+      }
       // Both from the same parse: the acknowledgement the user gave and the
       // trust the record keeps are about the same address.
       const trust: HubTrust = plainHttp ? { kind: 'plain-http' } : { kind: 'https' }
@@ -116,6 +152,30 @@ export function AddHubView() {
         .getState()
         .addHub({ ...account, role: who.role, name: who.name ?? account.name })
     } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** The user says the fingerprint is the operator's. From here the hub is
+   * reached over a certificate only this record trusts. */
+  async function confirmPin() {
+    if (!pin || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      // No whoami: the client's transport cannot cross a pinned certificate
+      // until the pinned transport ships (Task 5 replaces this with the same
+      // probe every other hub gets). The account keeps the defaults — the
+      // identity refresh on the next boot corrects role and name from the hub
+      // itself, which is where they come from for every other hub too.
+      await useAppStore.getState().addHub(pin.account)
+      setPin(null)
+    } catch (err) {
+      // The form behind is where an error is read, so the sheet gets out of
+      // the way rather than holding a message the user cannot act on.
+      setPin(null)
       setError(errorText(err))
     } finally {
       setBusy(false)
@@ -223,6 +283,44 @@ export function AddHubView() {
       <p className="login-hint">
         The hub operator can print a token with <code>cryohub token owner</code>.
       </p>
+
+      {pin && (
+        <Sheet
+          title="Untrusted certificate"
+          label="Untrusted certificate"
+          onClose={() => setPin(null)}
+        >
+          <div className="pin-sheet">
+            <p className="alert" role="alert">
+              <AlertCircle size={18} />
+              <span className="alert-body">
+                <strong>This hub’s certificate is not trusted by your system.</strong> Only continue
+                if this fingerprint matches the one shown by the hub’s operator.
+              </span>
+            </p>
+            <p className="pin-host">{pin.account.url}</p>
+            <p className="pin-fingerprint">{groupFingerprint(pin.sha256)}</p>
+            <p className="login-hint">
+              The operator can print it with{' '}
+              <code>openssl x509 -fingerprint -sha256 -noout</code>. If it does not match, someone
+              else is answering for this hub.
+            </p>
+            <div className="pin-actions">
+              <button className="btn-primary" type="button" onClick={confirmPin} disabled={busy}>
+                {busy ? 'Adding…' : 'Add hub anyway'}
+              </button>
+              <button
+                className="btn-quiet"
+                type="button"
+                onClick={() => setPin(null)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Sheet>
+      )}
     </div>
   )
 }

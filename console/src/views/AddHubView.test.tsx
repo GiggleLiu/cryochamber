@@ -5,7 +5,23 @@ import { bootApp, HUB_LOAD_ERROR, setAppRuntime, type AppRuntime } from '../lib/
 import { MemoryHubsBackend } from '../store/hubs'
 import { useAppStore, resetAppStore } from '../store/appStore'
 
+/** The shell's `invoke`, faked at the one seam the console has on it. Every
+ * test in this file gets it; only the app-mode ones (which also stub
+ * `__TAURI_INTERNALS__`) can reach it, and that is the point of half of them. */
+const invoke = vi.hoisted(() => vi.fn())
+vi.mock('../lib/tauri', () => ({
+  tauriInvoke: invoke,
+  tauriFetch: vi.fn(),
+  tauriLoadStore: vi.fn(),
+}))
+
 const TOKEN = 'ef'.repeat(16)
+const FINGERPRINT = '7e3d1274fb15f9bc2c2ac74425a03e1926d8069e9182f2e6efc743ca7705c19d'
+
+/** Inside the shell: `isTauri()` is true, so the https path probes first. */
+function enterAppShell() {
+  vi.stubGlobal('__TAURI_INTERNALS__', {})
+}
 
 /** The app has already booted (empty hub list) — which is exactly when the
  * Add Hub screen is what the window shows. */
@@ -24,6 +40,7 @@ function whoamiMock(who: unknown, status = 200) {
 beforeEach(() => {
   resetAppStore()
   localStorage.clear()
+  invoke.mockReset()
 })
 
 afterEach(() => vi.unstubAllGlobals())
@@ -186,4 +203,94 @@ test('a hub address that is not a URL is refused before anything is asked of it'
   expect(await screen.findByRole('alert')).toBeInTheDocument()
   expect(useAppStore.getState().hubs).toEqual([])
   expect(fetchMock).not.toHaveBeenCalled()
+})
+
+/** Fill in the form and press Add hub. */
+async function addHub(url: string) {
+  render(<AddHubView />)
+  await userEvent.type(await screen.findByLabelText(/hub address/i), url)
+  await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
+  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+}
+
+test('a certificate the system does not trust is offered for pinning, not silently taken', async () => {
+  enterAppShell()
+  const fetchMock = whoamiMock({ role: 'owner', name: 'Jin' })
+  const backend = await boot(fetchMock)
+  invoke.mockResolvedValue({ https_valid: false, fingerprint: FINGERPRINT })
+  await addHub('https://hub.example')
+
+  const sheet = await screen.findByRole('dialog', { name: /certificate/i })
+  // Grouped as `openssl x509 -fingerprint -sha256` prints it, so the two can be
+  // read against each other character by character.
+  expect(sheet).toHaveTextContent('7E:3D:12:74:FB:15:F9:BC')
+  // Nothing is stored, and the hub has not been spoken to, until the user says
+  // this is the certificate the operator read out.
+  expect(useAppStore.getState().hubs).toEqual([])
+  expect(fetchMock).not.toHaveBeenCalled()
+
+  await userEvent.click(screen.getByRole('button', { name: /add hub anyway/i }))
+  await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
+  expect(useAppStore.getState().hubs[0].trust).toEqual({ kind: 'pinned', sha256: FINGERPRINT })
+  expect(useAppStore.getState().hubs[0].url).toBe('https://hub.example')
+  expect(await backend.load()).toHaveLength(1)
+  expect(invoke).toHaveBeenCalledWith('probe_hub', { url: 'https://hub.example' })
+})
+
+test('declining an untrusted certificate adds nothing', async () => {
+  enterAppShell()
+  const fetchMock = whoamiMock({ role: 'owner', name: 'Jin' })
+  const backend = await boot(fetchMock)
+  invoke.mockResolvedValue({ https_valid: false, fingerprint: FINGERPRINT })
+  await addHub('https://hub.example')
+
+  await userEvent.click(await screen.findByRole('button', { name: /^cancel$/i }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(useAppStore.getState().hubs).toEqual([])
+  expect(await backend.load()).toEqual([])
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+test('a certificate the system trusts is added without a word about fingerprints', async () => {
+  enterAppShell()
+  const fetchMock = whoamiMock({ role: 'owner', name: 'Jin' })
+  await boot(fetchMock)
+  invoke.mockResolvedValue({ https_valid: true, fingerprint: FINGERPRINT })
+  await addHub('https://hub.example')
+
+  await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
+  expect(useAppStore.getState().hubs[0].trust).toEqual({ kind: 'https' })
+  expect(useAppStore.getState().hubs[0].role).toBe('owner')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(fetchMock).toHaveBeenCalled()
+})
+
+test('a plain-http hub is never probed — the checkbox is its whole trust decision', async () => {
+  enterAppShell()
+  await boot(whoamiMock({ role: 'owner', name: 'Jin' }))
+  render(<AddHubView />)
+  await userEvent.type(await screen.findByLabelText(/hub address/i), 'http://hub.local:8765')
+  await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: /traffic to this hub is unencrypted/i }),
+  )
+  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+
+  await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
+  expect(invoke).not.toHaveBeenCalled()
+})
+
+test('in a browser the shell is never asked to probe', async () => {
+  // No `__TAURI_INTERNALS__`: there is no shell to ask, and a browser cannot be
+  // told which certificate it saw. A hub with a bad certificate keeps failing
+  // the way it does today — as a network error on the whoami.
+  const failing = vi.fn(async () => {
+    throw new TypeError('Failed to fetch')
+  }) as unknown as typeof fetch
+  await boot(failing)
+  await addHub('https://hub.example')
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to fetch/)
+  expect(invoke).not.toHaveBeenCalled()
+  expect(useAppStore.getState().hubs).toEqual([])
 })

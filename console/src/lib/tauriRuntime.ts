@@ -1,5 +1,5 @@
 import type { AppRuntime } from './appBoot'
-import { tauriFetch, tauriLoadStore, type TauriStore } from './tauri'
+import { tauriFetch, tauriInvoke, tauriLoadStore, type TauriStore } from './tauri'
 import { parseHubAccounts, type HubAccount, type HubsBackend } from '../store/hubs'
 
 /** The hub list lives in the shell's own store file, not `localStorage`: the
@@ -50,6 +50,21 @@ export class TauriHubsBackend implements HubsBackend {
     this.queue = next.catch(() => {})
     return next
   }
+}
+
+/** One look at a hub's TLS, as `probe_hub` reports it. `fingerprint` is the
+ * SHA-256 of the end-entity certificate in lowercase hex, present whenever a
+ * handshake completed — trusted or not. */
+export interface ProbeReport {
+  https_valid: boolean
+  fingerprint: string | null
+}
+
+/** Ask the shell what certificate a hub presents. Only Rust can answer this:
+ * the WebView's `fetch` reports a bad certificate as an indistinguishable
+ * network error and never says which certificate it saw. */
+export function probeHub(url: string): Promise<ProbeReport> {
+  return tauriInvoke<ProbeReport>('probe_hub', { url })
 }
 
 /** What app mode gets inside the shell: hubs that survive a quit, and a

@@ -1316,6 +1316,43 @@ input, select, textarea { font: inherit; color: inherit; }
   text-underline-offset: 3px;
 }
 
+/* ==========================================================================
+   Untrusted-certificate sheet — one fingerprint, read against what the hub's
+   operator says it should be. The hex is the whole point of the screen, so it
+   is set large, monospaced and broken into pairs that can be tracked by eye.
+   ========================================================================== */
+.pin-sheet { padding: 0 var(--sp-4); }
+.pin-host {
+  margin-top: var(--sp-4);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pin-fingerprint {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow-wrap: anywhere;
+}
+.pin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+}
+.btn-quiet {
+  min-height: var(--tap);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.btn-quiet:disabled { opacity: 0.55; cursor: default; }
+
 /* Skeletons mirror the real rows, so the layout does not jump on arrival. */
 .skeleton {
   background: linear-gradient(
