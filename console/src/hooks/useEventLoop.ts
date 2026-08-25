@@ -1,7 +1,9 @@
 import { useEffect } from 'react'
-import { isUnauthorized } from '../api/types'
+import { isUnauthorized, type Chamber, type ChamberMessage } from '../api/types'
 import { isSseStall } from '../api/sse'
 import { HubClient } from '../api/hubClient'
+import { HubRouter, type ConsoleClient } from '../api/hubRouter'
+import { chamberKey } from '../lib/hubKeys'
 import { useAppStore } from '../store/appStore'
 import { emitChamberEvent } from '../store/chamberEvents'
 
@@ -45,6 +47,32 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/** This hub's chamber rows, keyed the way the store expects them. Browser
+ * mode's one hub is the anonymous `''`, whose keys are the hub's own raw ids;
+ * behind a router each row is stamped with its hub and re-keyed, which is the
+ * only spelling of that mapping the loop needs to know about. */
+function chambersFor(
+  hubId: string,
+  client: HubClient,
+  storeClient: ConsoleClient,
+): Promise<Chamber[]> {
+  return hubId !== '' && storeClient instanceof HubRouter
+    ? storeClient.listChambersFor(hubId)
+    : client.listChambers()
+}
+
+/** An SSE `message` payload → store message, under the same keys. */
+function eventMessageFor(
+  hubId: string,
+  client: HubClient,
+  storeClient: ConsoleClient,
+  payload: unknown,
+): ChamberMessage | null {
+  return hubId !== '' && storeClient instanceof HubRouter
+    ? storeClient.toEventMessageFor(hubId, payload)
+    : client.toEventMessage(payload)
+}
+
 function waitForVisible(): Promise<void> {
   return new Promise((resolve) => {
     const handler = () => {
@@ -61,17 +89,19 @@ export function useEventLoop(): void {
   const client = useAppStore((s) => s.client)
 
   useEffect(() => {
-    // One loop for the one browser-mode hub. App mode's router carries several,
-    // each with its own connection state, which this hook grows into next.
-    if (!(client instanceof HubClient)) return
+    if (!client) return
+    // Teardown is the whole app's: one flag and one controller stop every
+    // loop. A hub's backoff is its own, so a hub that is down cannot widen
+    // the wait of a hub that is up.
     let stopped = false
     const abort = new AbortController()
-    let backoff = 1000
     const store = useAppStore
 
-    // listChambers() is the scope read; a single SSE stream carries
-    // everything after that.
-    async function run(client: HubClient) {
+    // listChambers() is the scope read; a single SSE stream per hub carries
+    // everything after that. `storeClient` is what the store holds — the
+    // router in app mode — and is what maps this hub's ids into store keys.
+    async function run(hubId: string, client: HubClient, storeClient: ConsoleClient) {
+      let backoff = 1000
       while (!stopped) {
         if (document.visibilityState === 'hidden') {
           await waitForVisible()
@@ -79,13 +109,13 @@ export function useEventLoop(): void {
           continue
         }
         try {
-          store.getState().setConnection('connecting')
-          const chambers = await client.listChambers()
+          store.getState().setConnectionForHub(hubId, 'connecting')
+          const chambers = await chambersFor(hubId, client, storeClient)
           if (stopped) return
           // Re-reading the index clears loadedChambers, so an open conversation
           // re-fetches its history over whatever the events left behind.
-          store.getState().setChambers(chambers)
-          store.getState().setConnection('live')
+          store.getState().setChambersForHub(hubId, chambers)
+          store.getState().setConnectionForHub(hubId, 'live')
           // A successful index read says nothing about the stream that follows:
           // resetting the backoff here made a connection that dies instantly
           // retry forever at one second. The reset waits for proof — a first
@@ -109,15 +139,17 @@ export function useEventLoop(): void {
                 // still deserves the index refresh.
                 try {
                   const { chamber_id } = JSON.parse(payload) as { chamber_id: string }
-                  if (chamber_id) emitChamberEvent({ type: 'status', chamberId: chamber_id })
+                  // The sheet listens on the store's key, which names the hub.
+                  if (chamber_id) {
+                    emitChamberEvent({ type: 'status', chamberId: chamberKey(hubId, chamber_id) })
+                  }
                 } catch {
                   /* malformed payload: the index refresh below still runs */
                 }
                 // Fire and forget: a stale banner heals on the next status
                 // event, and a 401 has already signed the app out inside the
                 // client — there is nothing left for this catch to do.
-                client
-                  .listChambers()
+                chambersFor(hubId, client, storeClient)
                   .then((l) => store.getState().updateChamberStatus(l))
                   .catch(() => {})
                 return
@@ -129,7 +161,11 @@ export function useEventLoop(): void {
                     line: string
                   }
                   if (chamber_id) {
-                    emitChamberEvent({ type: 'log', chamberId: chamber_id, line: line ?? '' })
+                    emitChamberEvent({
+                      type: 'log',
+                      chamberId: chamberKey(hubId, chamber_id),
+                      line: line ?? '',
+                    })
                   }
                 } catch {
                   /* malformed payload: skip the line, keep the stream */
@@ -138,7 +174,7 @@ export function useEventLoop(): void {
               }
               if (event !== 'message') return
               try {
-                const msg = client.toEventMessage(JSON.parse(payload))
+                const msg = eventMessageFor(hubId, client, storeClient, JSON.parse(payload))
                 // A message for a chamber outside our scope has no row to land
                 // in; dropping it keeps the store's keys and the list agreeing.
                 if (msg && store.getState().chambers.some((c) => c.id === msg.chamberId)) {
@@ -158,7 +194,7 @@ export function useEventLoop(): void {
           // say so rather than leaving the banner claiming 'live'. A stream that
           // never proved healthy (proxy dropping it, server restarting) also
           // widens the wait, so the loop cannot spin.
-          store.getState().setConnection('offline')
+          store.getState().setConnectionForHub(hubId, 'offline')
           await sleep(backoff, abort.signal)
           if (!healthy) backoff = Math.min(backoff * 2, 30000)
         } catch (e) {
@@ -174,20 +210,29 @@ export function useEventLoop(): void {
             // socket never closed. The hub is not known to be down, so this is
             // not a failure to back off from — reconnect now, at the floor.
             backoff = 1000
-            store.getState().setConnection('connecting')
+            store.getState().setConnectionForHub(hubId, 'connecting')
             continue
           }
           // A 401 already signed the app out inside the client; this loop's
-          // job is only to stop.
+          // job is only to stop — this hub's, not the other hubs'.
           if (isUnauthorized(e)) return
-          store.getState().setConnection('offline')
+          store.getState().setConnectionForHub(hubId, 'offline')
           await sleep(backoff, abort.signal)
           backoff = Math.min(backoff * 2, 30000)
         }
       }
     }
 
-    void run(client)
+    // Browser mode is one hub, the anonymous `''`. App mode is one loop per
+    // hub in the router — and a hub added or removed rebuilds that router,
+    // which restarts this effect over the new set.
+    const loops =
+      client instanceof HubRouter
+        ? client.entries().map((e) => ({ hubId: e.hub.id, hubClient: e.client }))
+        : client instanceof HubClient
+          ? [{ hubId: '', hubClient: client }]
+          : []
+    for (const l of loops) void run(l.hubId, l.hubClient, client)
     return () => {
       stopped = true
       abort.abort()

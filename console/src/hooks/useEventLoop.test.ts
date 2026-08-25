@@ -3,6 +3,8 @@ import { waitFor } from '@testing-library/react'
 import { useEventLoop, sleep } from './useEventLoop'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { HubClient } from '../api/hubClient'
+import { makeHubAccount, MemoryHubsBackend } from '../store/hubs'
+import { chamberKey } from '../lib/hubKeys'
 import type { Credentials } from '../api/types'
 
 const creds: Credentials = { token: 'tok', name: 'Alice', role: 'owner' }
@@ -507,6 +509,97 @@ test('a stalled stream reconnects immediately, without a backoff sleep', async (
     vi.restoreAllMocks()
     vi.useRealTimers()
   }
+})
+
+test('runs one loop per hub, and a dead hub does not stop the live one', async () => {
+  const payload = JSON.stringify({
+    id: 'outbox/1.md', chamber_id: 'cham-a', direction: 'outbox', from: 'agent', subject: '',
+    body: 'from A', timestamp: '2026-08-15T10:00:00', is_question: false,
+  })
+  const aFetch = (async (url: RequestInfo | URL) =>
+    String(url).includes('/api/events')
+      ? liveStream([`event: message\ndata: ${payload}\n\n`])
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
+  ) as typeof fetch
+  // Hub B is unreachable: every call fails the way a refused connection does.
+  const bFetch = (async () => {
+    throw new TypeError('Failed to fetch')
+  }) as typeof fetch
+  const a = makeHubAccount({ url: 'http://a.local:1', token: 'ta', trust: { kind: 'plain-http' } })
+  const b = makeHubAccount({ url: 'http://b.local:2', token: 'tb', trust: { kind: 'plain-http' } })
+  useAppStore
+    .getState()
+    .initApp(
+      [a, b],
+      new MemoryHubsBackend(),
+      (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: h.id === a.id ? aFetch : bFetch }),
+    )
+  const { unmount } = renderHook(() => useEventLoop())
+
+  await waitFor(() => expect(useAppStore.getState().connectionByHub[b.id]).toBe('offline'))
+  // B being down says nothing about A: its index read, its stream and its
+  // messages all land, under keys that name the hub they came from.
+  await waitFor(() =>
+    expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual([chamberKey(a.id, 'cham-a')]),
+  )
+  expect(useAppStore.getState().chambers[0].hubId).toBe(a.id)
+  await waitFor(() =>
+    expect(useAppStore.getState().messagesByChamber[chamberKey(a.id, 'cham-a')]?.[0]?.body).toBe(
+      'from A',
+    ),
+  )
+  expect(useAppStore.getState().connectionByHub[a.id]).toBe('live')
+  // The chrome is as connected as the app's best hub.
+  expect(useAppStore.getState().connection).toBe('live')
+  unmount()
+})
+
+test('a status event on one hub carries that hub in the key its sheet listens on', async () => {
+  const { subscribeChamberEvents, resetChamberEvents } = await import('../store/chamberEvents')
+  resetChamberEvents()
+  const a = makeHubAccount({ url: 'http://a.local:1', token: 'ta', trust: { kind: 'plain-http' } })
+  const heard: unknown[] = []
+  subscribeChamberEvents(chamberKey(a.id, 'cham-a'), (ev) => heard.push(ev))
+  const aFetch = (async (url: RequestInfo | URL) =>
+    String(url).includes('/api/events')
+      ? liveStream([
+          'event: status\ndata: {"chamber_id":"cham-a"}\n\n',
+          'event: log\ndata: {"chamber_id":"cham-a","line":"session 5 started"}\n\n',
+        ])
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 })
+  ) as typeof fetch
+  useAppStore
+    .getState()
+    .initApp(
+      [a],
+      new MemoryHubsBackend(),
+      (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: aFetch }),
+    )
+  const { unmount } = renderHook(() => useEventLoop())
+  await waitFor(() => expect(heard).toHaveLength(2))
+  expect(heard[0]).toEqual({ type: 'status', chamberId: chamberKey(a.id, 'cham-a') })
+  expect(heard[1]).toEqual({
+    type: 'log', chamberId: chamberKey(a.id, 'cham-a'), line: 'session 5 started',
+  })
+  unmount()
+})
+
+test('browser mode still runs the single anonymous-hub loop', async () => {
+  const fetchMock = vi.fn(async (url: string) =>
+    String(url).includes('/api/events')
+      ? liveStream([])
+      : new Response(JSON.stringify([{ id: 'cham-a', name: 'alpha' }]), { status: 200 }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  useAppStore.setState({ client: new HubClient({ token: creds.token }) })
+  const { unmount } = renderHook(() => useEventLoop())
+  await waitFor(() => expect(useAppStore.getState().connection).toBe('live'))
+  // One hub, the anonymous one — so keys stay raw and no other hub is tracked.
+  expect(useAppStore.getState().connectionByHub).toEqual({ '': 'live' })
+  expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual(['cham-a'])
+  await new Promise((r) => setTimeout(r, 20))
+  expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/events'))).toHaveLength(1)
+  unmount()
 })
 
 test('coming back to the foreground cuts the reconnect wait short', async () => {
