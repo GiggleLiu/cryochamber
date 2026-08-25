@@ -82,6 +82,21 @@ describe('TauriHubsBackend', () => {
     expect(f.store.save).toHaveBeenCalledOnce()
     expect(f.calls).toEqual(['load:hubs.json', 'set:hubs', 'save'])
     await expect(backend.load()).resolves.toHaveLength(1)
+    // One handle for the life of the backend: a second would race the first
+    // handle's in-memory copy of the file.
+    expect(f.load).toHaveBeenCalledOnce()
+  })
+
+  it('retries the store load after a failed one instead of caching the failure', async () => {
+    const f = fakeStore([
+      { url: 'https://a.example', token: 't1', label: 'A', name: 'me', role: 'owner', trust: { kind: 'https' } },
+    ])
+    f.load.mockRejectedValueOnce(new Error('store permission denied'))
+    const backend = new TauriHubsBackend()
+    await expect(backend.load()).rejects.toThrow('store permission denied')
+    // A cached rejection would fail every later call for the process lifetime.
+    await expect(backend.load()).resolves.toHaveLength(1)
+    await expect(backend.save([hub('https://b.example', { kind: 'https' })])).resolves.toBeUndefined()
   })
 
   it('awaits the store save before resolving', async () => {
