@@ -143,6 +143,32 @@ describe('new chamber', () => {
     render(<ProjectsView />)
     expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
   })
+
+  test('in app mode, owning any hub is enough to reach the sheet', async () => {
+    const hub = makeHubAccount({
+      url: 'https://a.example', label: 'Alpha hub', token: 'ka', role: 'owner',
+      trust: { kind: 'https' },
+    })
+    // App mode has no session-wide role: `hubRole` stays null and the answer
+    // comes from the hubs this token owns.
+    useAppStore.setState({
+      mode: 'app', creds: null, hubs: [hub], roleByHub: { [hub.id]: 'owner' },
+    })
+    render(<ProjectsView />)
+    await userEvent.click(screen.getByRole('button', { name: 'New chamber' }))
+    expect(await screen.findByRole('dialog', { name: 'New chamber' })).toBeInTheDocument()
+  })
+
+  test('in app mode, a guest on every hub still sees no + button', () => {
+    const hub = makeHubAccount({
+      url: 'https://a.example', label: 'Alpha hub', token: 'ka', trust: { kind: 'https' },
+    })
+    useAppStore.setState({
+      mode: 'app', creds: null, hubs: [hub], roleByHub: { [hub.id]: 'invite' },
+    })
+    render(<ProjectsView />)
+    expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
+  })
 })
 
 describe('groups, badge and meta line', () => {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Chamber } from '../api/types'
 import { hubIdOf, unreadCount, useAppStore, useIsOwner } from '../store/appStore'
+import { useOwnerHub } from '../hooks/useOwnerHub'
 import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, messageSeconds, previewText, tileColor } from '../lib/format'
 import { NewChamberSheet } from './NewChamberSheet'
@@ -47,6 +48,10 @@ export function ProjectsView() {
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
   const isOwner = useIsOwner()
+  // Creating a chamber is a hub-level act, and app mode has no session-wide
+  // role to ask: owning *any* hub is what puts the + button there. Deliberately
+  // not the same question as `isOwner` above, which files this token's own list.
+  const canCreate = useOwnerHub().isOwner
   const [newChamberOpen, setNewChamberOpen] = useState(false)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
   const setShowCompletedArchived = useAppStore((s) => s.setShowCompletedArchived)
@@ -139,7 +144,7 @@ export function ProjectsView() {
       <header className="topbar">
         <h1>Projects</h1>
         <div className="topbar-actions">
-          {isOwner && (
+          {canCreate && (
             <button
               className="icon-btn"
               aria-label="New chamber"
