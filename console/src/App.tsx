@@ -11,6 +11,7 @@ import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
 import { UpdateBar } from './components/UpdateBar'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
  * usable token — the caller says so on the login screen rather than dropping
@@ -153,12 +154,14 @@ export default function App() {
           <div className="banner banner-info" role="status">{accessNotice}</div>
         )}
       </div>
-      {view.name === 'conversation' ? (
-        <ConversationView chamberId={view.chamberId} />
-      ) : (
-        <ProjectsView />
-      )}
-      {settingsOpen && <SettingsSheet />}
+      <ErrorBoundary>
+        {view.name === 'conversation' ? (
+          <ConversationView chamberId={view.chamberId} />
+        ) : (
+          <ProjectsView />
+        )}
+        {settingsOpen && <SettingsSheet />}
+      </ErrorBoundary>
     </div>
   )
 }
