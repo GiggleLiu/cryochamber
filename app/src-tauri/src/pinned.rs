@@ -210,6 +210,12 @@ impl<H> Streams<H> {
     /// Forget a stream that ended on its own. The epoch is what keeps a
     /// finished stream from evicting the live one that took its id: a reloaded
     /// console starts counting from 1 again while this map does not.
+    ///
+    /// It touches nothing but its own entry. A stream that gets this far was
+    /// registered, and a cancel against a registered stream takes the
+    /// `running` path above — so a remembered cancel under this id can only
+    /// ever belong to a *later* stream, and clearing it here would hand that
+    /// stream a registration nobody could stop.
     fn finish(&mut self, stream_id: u64, epoch: u64) {
         if self
             .running
@@ -218,7 +224,6 @@ impl<H> Streams<H> {
         {
             self.running.remove(&stream_id);
         }
-        self.cancelled.remove(&stream_id);
     }
 }
 
@@ -429,6 +434,26 @@ mod tests {
         // remembered — it cannot know — but only until the set fills.
         assert!(streams.cancel(1).is_none());
         assert_eq!(streams.cancelled.len(), 1);
+    }
+
+    #[test]
+    fn a_late_duplicate_finish_cannot_erase_a_pending_cancellation() {
+        let mut streams = streams();
+        let (first_epoch, _) = registered(streams.register(1, "first"));
+        streams.finish(1, first_epoch);
+        // The console reloaded, minted id 1 again, and cancelled it before the
+        // new command's future was ever polled: nothing is running, so the
+        // cancel is remembered.
+        assert!(streams.cancel(1).is_none());
+        // A stale `finish` for the *old* stream now lands. It is about a
+        // generation that is over and must leave the pending cancel alone.
+        streams.finish(1, first_epoch);
+        match streams.register(1, "second") {
+            Registration::AlreadyCancelled { handle } => assert_eq!(handle, "second"),
+            Registration::Registered { .. } => {
+                panic!("the new stream's cancel was erased by an old stream's cleanup")
+            }
+        }
     }
 
     #[test]
