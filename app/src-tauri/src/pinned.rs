@@ -140,30 +140,107 @@ pub enum SseEvent {
     Done { done: bool },
 }
 
-/// The live event streams, by the id the console minted for each. A stream
-/// outlives the call that started it only in the sense that the console can
-/// reach in and stop it; nothing else looks in here.
-#[derive(Default)]
-pub struct SseStreams(pub Mutex<HashMap<u64, JoinHandle<()>>>);
+/// What a registration found waiting for it.
+enum Registration<H> {
+    /// The stream is registered. `displaced` is a live stream that held the
+    /// same id and is nobody's to stop any more.
+    Registered { epoch: u64, displaced: Option<H> },
+    /// The console cancelled this id before the task ever reached the map;
+    /// the handle comes straight back to be aborted rather than registered.
+    AlreadyCancelled { handle: H },
+}
 
-impl SseStreams {
-    fn insert(&self, stream_id: u64, handle: JoinHandle<()>) {
-        // A poisoned lock means another stream panicked while holding it; the
-        // map itself is still sound, so carry on rather than take the app down.
-        let mut streams = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        streams.insert(stream_id, handle);
-    }
+/// A cancel can only lose the race for as long as it takes `pinned_sse`'s
+/// future to be polled, so a handful of remembered ids is already generous.
+/// The cap is what keeps a console that cancels streams it has already
+/// finished from growing the set for the life of the window.
+const MAX_CANCELLED_IDS: usize = 64;
 
-    fn take(&self, stream_id: u64) -> Option<JoinHandle<()>> {
-        let mut streams = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        streams.remove(&stream_id)
+/// The live streams by the id the console minted for each, plus the ids it
+/// cancelled before there was anything to cancel.
+///
+/// Generic over the handle so the bookkeeping — which is where every race
+/// lives — can be tested without an async runtime.
+struct Streams<H> {
+    running: HashMap<u64, (u64, H)>,
+    cancelled: std::collections::BTreeSet<u64>,
+    next_epoch: u64,
+}
+
+impl<H> Default for Streams<H> {
+    fn default() -> Self {
+        Self {
+            running: HashMap::new(),
+            cancelled: std::collections::BTreeSet::new(),
+            next_epoch: 0,
+        }
     }
 }
 
-/// Stop one stream and forget it. Unknown ids are ordinary: the console cancels
-/// on every teardown path, including ones where the stream already ended.
+impl<H> Streams<H> {
+    /// `pinned_sse_cancel` is a synchronous command and can run before the
+    /// `pinned_sse` future it means to stop has been polled even once — the
+    /// console mounts, unmounts and remounts its event loop faster than that.
+    /// So a cancel that finds nothing is remembered rather than dropped, and
+    /// the registration that arrives afterwards is refused.
+    fn register(&mut self, stream_id: u64, handle: H) -> Registration<H> {
+        if self.cancelled.remove(&stream_id) {
+            return Registration::AlreadyCancelled { handle };
+        }
+        let epoch = self.next_epoch;
+        self.next_epoch += 1;
+        let displaced = self.running.insert(stream_id, (epoch, handle));
+        Registration::Registered {
+            epoch,
+            displaced: displaced.map(|(_, handle)| handle),
+        }
+    }
+
+    fn cancel(&mut self, stream_id: u64) -> Option<H> {
+        if let Some((_, handle)) = self.running.remove(&stream_id) {
+            return Some(handle);
+        }
+        self.cancelled.insert(stream_id);
+        while self.cancelled.len() > MAX_CANCELLED_IDS {
+            self.cancelled.pop_first();
+        }
+        None
+    }
+
+    /// Forget a stream that ended on its own. The epoch is what keeps a
+    /// finished stream from evicting the live one that took its id: a reloaded
+    /// console starts counting from 1 again while this map does not.
+    fn finish(&mut self, stream_id: u64, epoch: u64) {
+        if self
+            .running
+            .get(&stream_id)
+            .is_some_and(|(e, _)| *e == epoch)
+        {
+            self.running.remove(&stream_id);
+        }
+        self.cancelled.remove(&stream_id);
+    }
+}
+
+/// The live event streams. A stream outlives the call that started it only in
+/// the sense that the console can reach in and stop it; nothing else looks in
+/// here.
+#[derive(Default)]
+pub struct SseStreams(Mutex<Streams<JoinHandle<()>>>);
+
+impl SseStreams {
+    /// A poisoned lock means another stream panicked while holding it; the map
+    /// itself is still sound, so carry on rather than take the app down.
+    fn with<T>(&self, act: impl FnOnce(&mut Streams<JoinHandle<()>>) -> T) -> T {
+        act(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+/// Stop one stream and remember the id in case its task has not registered
+/// yet. Unknown ids are ordinary: the console cancels on every teardown path,
+/// including ones where the stream already ended.
 pub fn cancel_stream(state: &SseStreams, stream_id: u64) {
-    if let Some(handle) = state.take(stream_id) {
+    if let Some(handle) = state.with(|streams| streams.cancel(stream_id)) {
         handle.abort();
     }
 }
@@ -221,12 +298,28 @@ pub async fn pinned_sse(
         let outcome = run_stream(url, sha256, headers, on_event).await;
         let _ = tx.send(outcome).await;
     });
-    state.insert(stream_id, handle);
+    let epoch = match state.with(|streams| streams.register(stream_id, handle)) {
+        Registration::AlreadyCancelled { handle } => {
+            // The console stopped this stream before its task was ever in the
+            // map. Nothing is waiting on the answer, but the connection is
+            // real and has to be let go of.
+            handle.abort();
+            return Ok(());
+        }
+        Registration::Registered { epoch, displaced } => {
+            // A reloaded console starts its ids at 1 again; the stream that
+            // held this one is still live and now unreachable, so it ends here.
+            if let Some(old) = displaced {
+                old.abort();
+            }
+            epoch
+        }
+    };
     // A cancelled task drops its sender, which closes the channel: that is the
     // `None` below, and it means the console asked for this and is not waiting
     // to be told anything went wrong.
     let outcome = rx.recv().await.unwrap_or(Ok(()));
-    cancel_stream(&state, stream_id);
+    state.with(|streams| streams.finish(stream_id, epoch));
     outcome
 }
 
@@ -272,6 +365,85 @@ mod tests {
     fn unknown_stream_cancel_is_a_noop() {
         let streams = SseStreams::default();
         cancel_stream(&streams, 7); // must not panic
+    }
+
+    /// The bookkeeping, with a handle a test can recognise by sight.
+    fn streams() -> Streams<&'static str> {
+        Streams::default()
+    }
+
+    fn registered<H>(outcome: Registration<H>) -> (u64, Option<H>) {
+        match outcome {
+            Registration::Registered { epoch, displaced } => (epoch, displaced),
+            Registration::AlreadyCancelled { .. } => panic!("expected a registration"),
+        }
+    }
+
+    #[test]
+    fn a_cancel_that_arrives_first_refuses_the_registration_behind_it() {
+        let mut streams = streams();
+        // `pinned_sse_cancel` runs while `pinned_sse`'s future is still
+        // unpolled: there is nothing to abort yet.
+        assert!(streams.cancel(1).is_none());
+        match streams.register(1, "the stream") {
+            Registration::AlreadyCancelled { handle } => assert_eq!(handle, "the stream"),
+            Registration::Registered { .. } => {
+                panic!("a cancelled stream must not be registered — nobody would ever stop it")
+            }
+        }
+        // And the refusal is spent: the id is free for the next stream.
+        let (_, displaced) = registered(streams.register(1, "a later stream"));
+        assert!(displaced.is_none());
+        assert_eq!(streams.cancel(1), Some("a later stream"));
+    }
+
+    #[test]
+    fn registering_a_reused_id_hands_back_the_stream_it_displaces() {
+        let mut streams = streams();
+        registered(streams.register(1, "first"));
+        // The console reloaded and started counting from 1 again while the
+        // first stream is still live.
+        let (_, displaced) = registered(streams.register(1, "second"));
+        assert_eq!(displaced, Some("first"));
+        assert_eq!(streams.cancel(1), Some("second"));
+    }
+
+    #[test]
+    fn a_displaced_streams_cleanup_leaves_the_live_one_alone() {
+        let mut streams = streams();
+        let (first_epoch, _) = registered(streams.register(1, "first"));
+        registered(streams.register(1, "second"));
+        // The displaced stream's own command now returns and tidies up; the
+        // stream that took its id must still be cancellable.
+        streams.finish(1, first_epoch);
+        assert_eq!(streams.cancel(1), Some("second"));
+    }
+
+    #[test]
+    fn a_finished_stream_leaves_nothing_behind() {
+        let mut streams = streams();
+        let (epoch, _) = registered(streams.register(1, "done"));
+        streams.finish(1, epoch);
+        assert!(streams.running.is_empty());
+        // A cancel the console sends after the stream already ended is
+        // remembered — it cannot know — but only until the set fills.
+        assert!(streams.cancel(1).is_none());
+        assert_eq!(streams.cancelled.len(), 1);
+    }
+
+    #[test]
+    fn the_remembered_cancels_stay_bounded() {
+        let mut streams = streams();
+        for id in 0..(MAX_CANCELLED_IDS as u64 * 4) {
+            assert!(streams.cancel(id).is_none());
+        }
+        assert_eq!(streams.cancelled.len(), MAX_CANCELLED_IDS);
+        // The most recent ids are the ones a racing registration could still
+        // be about; the oldest are what gets dropped.
+        assert!(streams
+            .cancelled
+            .contains(&(MAX_CANCELLED_IDS as u64 * 4 - 1)));
+        assert!(!streams.cancelled.contains(&0));
     }
 
     #[test]
