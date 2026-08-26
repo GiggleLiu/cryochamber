@@ -387,11 +387,9 @@ describe('app mode (multi-hub)', () => {
     s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
     s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
     expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x', 'y'])
-    expect(useAppStore.getState().chambersLoadedHubs).toEqual([a.id, b.id])
     // refreshing hub a must not drop hub b's rows
     s.setChambersForHub(a.id, [])
     expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['y'])
-    expect(useAppStore.getState().chambersLoadedHubs).toEqual([a.id, b.id])
   })
 
   test('a hub index read re-fetches only its own conversations', () => {
@@ -458,7 +456,6 @@ describe('app mode (multi-hub)', () => {
     expect(after.outboxByChamber[key]).toBeUndefined()
     expect(after.roleByHub[a.id]).toBeUndefined()
     expect(after.connectionByHub[a.id]).toBeUndefined()
-    expect(after.chambersLoadedHubs).toEqual([b.id])
     // The hub that was live is gone, so the app is no longer live through it.
     expect(after.connection).toBe('connecting')
     expect(loadCachedState({ token: a.token })).toBeNull()

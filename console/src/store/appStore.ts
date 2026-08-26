@@ -155,8 +155,6 @@ export interface AppState {
   versionByHub: Record<string, string | null>
   /** Per-hub liveness; `connection` is the aggregate the chrome shows. */
   connectionByHub: Record<string, Connection>
-  /** Hubs whose index has answered at least once this session. */
-  chambersLoadedHubs: string[]
   /** Hubs whose token the hub refused: one hub signing out must not sign the
    * app out, so the failure is a note on that hub's row instead. */
   authFailedHubs: string[]
@@ -246,7 +244,6 @@ const initialData = {
   selfNameByHub: {} as Record<string, string>,
   versionByHub: {} as Record<string, string | null>,
   connectionByHub: {} as Record<string, Connection>,
-  chambersLoadedHubs: [] as string[],
   authFailedHubs: [] as string[],
   view: { name: 'projects' } as View,
   settingsOpen: false,
@@ -416,7 +413,6 @@ export const useAppStore = create<AppState>()((set, get) => {
         selfNameByHub: Object.fromEntries(hubs.map((h) => [h.id, h.name])),
         versionByHub: {},
         connectionByHub: Object.fromEntries(hubs.map((h) => [h.id, 'connecting' as Connection])),
-        chambersLoadedHubs: [],
         // With no hubs there is no index to wait for — the app shows Add Hub.
         chambersLoaded: hubs.length === 0,
         authFailedHubs: [],
@@ -473,7 +469,6 @@ export const useAppStore = create<AppState>()((set, get) => {
         lastReadByChamber: withoutHub(state.lastReadByChamber, hubId),
         outboxByChamber: withoutHub(state.outboxByChamber, hubId),
         loadedChambers: state.loadedChambers.filter((id) => !onThisHub(id)),
-        chambersLoadedHubs: state.chambersLoadedHubs.filter((id) => id !== hubId),
         roleByHub,
         selfNameByHub,
         versionByHub,
@@ -529,9 +524,6 @@ export const useAppStore = create<AppState>()((set, get) => {
           a.name.localeCompare(b.name),
         ),
         chambersLoaded: true,
-        chambersLoadedHubs: state.chambersLoadedHubs.includes(hubId)
-          ? state.chambersLoadedHubs
-          : [...state.chambersLoadedHubs, hubId],
         // Clearing loadedChambers on an index read is what makes a re-register
         // re-fetch histories over whatever the stream left behind — but only
         // for the hub that re-registered, since no other hub was interrupted.

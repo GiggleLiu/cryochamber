@@ -16,7 +16,6 @@ release](https://github.com/GiggleLiu/cryochamber/releases):
 
 | File | For |
 |---|---|
-| `cryochamber-vX.Y.Z-android-arm64.apk` | Android phones and tablets, 64-bit ARM |
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | macOS on Apple Silicon |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | the same app, zipped, if you would rather not mount a disk image |
 
@@ -25,23 +24,8 @@ original packaging; the `.app.zip` is a fallback whose `.app` is re-sealed with
 a full `codesign --deep -s -` before zipping, for anyone who would rather not
 mount a disk image.
 
-There is no Play Store listing, no App Store listing, no Windows build, and no
-Intel Mac build. What is above is what exists.
-
-## Android
-
-1. Open the release page in the phone's browser and download
-   `cryochamber-vX.Y.Z-android-arm64.apk`.
-2. Tap the downloaded file. Android will refuse the first time and offer a
-   settings screen — *"install unknown apps"* for the browser you downloaded
-   with. Allow it, come back, tap again.
-3. Open the app. It starts on **Add a hub**.
-4. Enter the hub address and its access token, or paste an invite link into
-   *Invite link* — a link fills both fields for you and then clears itself, so
-   the token only ever sits in the field that masks it.
-
-The build is arm64 only. A 32-bit ARM or x86 Android device will refuse to
-install it.
+There is no Android, App Store, Windows, or Intel Mac build yet. What is above
+is what exists.
 
 ## macOS
 
@@ -54,7 +38,7 @@ install it.
    afterwards it launches normally. On **macOS 15 (Sequoia) and later** that
    right-click bypass is gone — let the first launch be refused, then approve
    the app under *System Settings → Privacy & Security → **Open Anyway***.
-3. Add a hub the same way as on Android.
+3. Enter a hub address and access token, or paste an invite link into *Invite link*.
 
 Apple Silicon only. Notarization is not done yet, and this page will say so
 until it is.
@@ -134,11 +118,6 @@ directory — treat it the way you treat `~/.config/cryo/cryohub-tokens.json`.
 There is no in-app updater and no update channel. Download the next release's
 build and install it over the old one.
 
-- **Android:** install the newer APK on top. Your hubs and tokens survive,
-  because the release builds are signed with the same key and Android treats it
-  as an upgrade of the same app. (An APK from a *different* signer is not an
-  upgrade — Android will make you uninstall first, which discards the hub
-  store.)
 - **macOS:** replace *Cryochamber* in *Applications*. The hub store lives
   outside the bundle and is untouched. The right-click gesture may be needed
   again for the newly downloaded copy.

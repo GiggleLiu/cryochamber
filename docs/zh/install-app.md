@@ -14,7 +14,6 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 
 | 文件 | 适用于 |
 |---|---|
-| `cryochamber-vX.Y.Z-android-arm64.apk` | Android 手机与平板，64 位 ARM |
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | Apple Silicon 上的 macOS |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | 同一个 App 的 zip 包，如果你不想挂载磁盘映像 |
 
@@ -22,20 +21,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 `.app.zip` 是给不愿挂载磁盘映像的人准备的备选，其中的 `.app` 在压缩前经过一次完整的
 `codesign --deep -s -` 重新封签。
 
-没有 Play Store 上架，没有 App Store 上架，没有 Windows 构建，也没有 Intel Mac 构建。
-上面列出的就是全部。
-
-## Android
-
-1. 在手机浏览器中打开 release 页面，下载
-   `cryochamber-vX.Y.Z-android-arm64.apk`。
-2. 点击下载好的文件。Android 第一次会拒绝，并给出一个设置页面——针对你下载所用浏览器的
-   *「安装未知应用」*。允许它，返回，再点一次。
-3. 打开 App，它会停在 **Add a hub**（添加 hub）界面。
-4. 填入 hub 地址和访问 token；或者把邀请链接粘贴到 *Invite link* 中——链接会替你填好两个字段
-   并随即清空自己，于是 token 只会停留在那个被遮蔽显示的字段里。
-
-该构建仅支持 arm64。32 位 ARM 或 x86 的 Android 设备会拒绝安装。
+目前还没有 Android、App Store、Windows 或 Intel Mac 构建。上面列出的就是全部。
 
 ## macOS
 
@@ -46,7 +32,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
    Control-点击）该 App → **打开** → **打开**。macOS 会记住这个决定，之后就能正常启动了。
    在 **macOS 15（Sequoia）及以后**的版本上，右键绕过的路子已经没有了——先让首次启动被拒绝，
    然后到*系统设置 → 隐私与安全性 → **仍要打开***中放行该 App。
-3. 添加 hub 的方式与 Android 相同。
+3. 填入 hub 地址和访问 token，或把邀请链接粘贴到 *Invite link*。
 
 仅支持 Apple Silicon。公证尚未完成，在完成之前本页会一直这样写着。
 
@@ -109,9 +95,6 @@ Hub 账号保存在 App 自己的私有数据目录里，而不是浏览器存�
 
 没有应用内更新器，也没有更新通道。下载下一个 release 的构建，覆盖安装即可。
 
-- **Android：** 直接安装更新的 APK。你的 hub 和 token 会保留，因为各次 release
-  使用同一个密钥签名，Android 会将其视为同一 App 的升级。（来自*不同*签名者的 APK
-  不算升级——Android 会要求你先卸载，而卸载会丢弃 hub 存储。）
 - **macOS：** 替换 *应用程序* 里的 *Cryochamber*。hub 存储位于 App 包之外，不受影响。
   新下载的这一份可能需要再做一次右键打开的动作。
 

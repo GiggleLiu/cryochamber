@@ -11,7 +11,7 @@
 //! one response, except `/api/events`, which is a stream that stays open and
 //! is fed to the console down a channel.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD;
@@ -162,12 +162,15 @@ pub enum SseEvent {
 
 /// What a registration found waiting for it.
 enum Registration<H> {
-    /// The stream is registered. `displaced` is a live stream that held the
-    /// same id and is nobody's to stop any more.
-    Registered { epoch: u64, displaced: Option<H> },
+    Registered,
     /// The console cancelled this id before the task ever reached the map;
     /// the handle comes straight back to be aborted rather than registered.
-    AlreadyCancelled { handle: H },
+    AlreadyCancelled {
+        handle: H,
+    },
+    Duplicate {
+        handle: H,
+    },
 }
 
 /// A cancel can only lose the race for as long as it takes `pinned_sse`'s
@@ -182,17 +185,15 @@ const MAX_CANCELLED_IDS: usize = 64;
 /// Generic over the handle so the bookkeeping — which is where every race
 /// lives — can be tested without an async runtime.
 struct Streams<H> {
-    running: HashMap<u64, (u64, H)>,
-    cancelled: std::collections::BTreeSet<u64>,
-    next_epoch: u64,
+    running: HashMap<String, H>,
+    cancelled: VecDeque<String>,
 }
 
 impl<H> Default for Streams<H> {
     fn default() -> Self {
         Self {
             running: HashMap::new(),
-            cancelled: std::collections::BTreeSet::new(),
-            next_epoch: 0,
+            cancelled: VecDeque::new(),
         }
     }
 }
@@ -203,47 +204,34 @@ impl<H> Streams<H> {
     /// console mounts, unmounts and remounts its event loop faster than that.
     /// So a cancel that finds nothing is remembered rather than dropped, and
     /// the registration that arrives afterwards is refused.
-    fn register(&mut self, stream_id: u64, handle: H) -> Registration<H> {
-        if self.cancelled.remove(&stream_id) {
+    fn register(&mut self, stream_id: String, handle: H) -> Registration<H> {
+        if let Some(at) = self.cancelled.iter().position(|id| id == &stream_id) {
+            self.cancelled.remove(at);
             return Registration::AlreadyCancelled { handle };
         }
-        let epoch = self.next_epoch;
-        self.next_epoch += 1;
-        let displaced = self.running.insert(stream_id, (epoch, handle));
-        Registration::Registered {
-            epoch,
-            displaced: displaced.map(|(_, handle)| handle),
+        if self.running.contains_key(&stream_id) {
+            return Registration::Duplicate { handle };
         }
+        self.running.insert(stream_id, handle);
+        Registration::Registered
     }
 
-    fn cancel(&mut self, stream_id: u64) -> Option<H> {
-        if let Some((_, handle)) = self.running.remove(&stream_id) {
+    fn cancel(&mut self, stream_id: String) -> Option<H> {
+        if let Some(handle) = self.running.remove(&stream_id) {
             return Some(handle);
         }
-        self.cancelled.insert(stream_id);
+        // ponytail: at most 64 entries; pair this queue with a HashSet if the cap grows.
+        if !self.cancelled.contains(&stream_id) {
+            self.cancelled.push_back(stream_id);
+        }
         while self.cancelled.len() > MAX_CANCELLED_IDS {
-            self.cancelled.pop_first();
+            self.cancelled.pop_front();
         }
         None
     }
 
-    /// Forget a stream that ended on its own. The epoch is what keeps a
-    /// finished stream from evicting the live one that took its id: a reloaded
-    /// console starts counting from 1 again while this map does not.
-    ///
-    /// It touches nothing but its own entry. A stream that gets this far was
-    /// registered, and a cancel against a registered stream takes the
-    /// `running` path above — so a remembered cancel under this id can only
-    /// ever belong to a *later* stream, and clearing it here would hand that
-    /// stream a registration nobody could stop.
-    fn finish(&mut self, stream_id: u64, epoch: u64) {
-        if self
-            .running
-            .get(&stream_id)
-            .is_some_and(|(e, _)| *e == epoch)
-        {
-            self.running.remove(&stream_id);
-        }
+    fn finish(&mut self, stream_id: &str) {
+        self.running.remove(stream_id);
     }
 }
 
@@ -264,7 +252,7 @@ impl SseStreams {
 /// Stop one stream and remember the id in case its task has not registered
 /// yet. Unknown ids are ordinary: the console cancels on every teardown path,
 /// including ones where the stream already ended.
-pub fn cancel_stream(state: &SseStreams, stream_id: u64) {
+pub fn cancel_stream(state: &SseStreams, stream_id: String) {
     if let Some(handle) = state.with(|streams| streams.cancel(stream_id)) {
         handle.abort();
     }
@@ -313,7 +301,7 @@ async fn run_stream(
 #[tauri::command]
 pub async fn pinned_sse(
     state: tauri::State<'_, SseStreams>,
-    stream_id: u64,
+    stream_id: String,
     url: String,
     sha256: String,
     headers: Vec<(String, String)>,
@@ -324,7 +312,7 @@ pub async fn pinned_sse(
         let outcome = run_stream(url, sha256, headers, on_event).await;
         let _ = tx.send(outcome).await;
     });
-    let epoch = match state.with(|streams| streams.register(stream_id, handle)) {
+    match state.with(|streams| streams.register(stream_id.clone(), handle)) {
         Registration::AlreadyCancelled { handle } => {
             // The console stopped this stream before its task was ever in the
             // map. Nothing is waiting on the answer, but the connection is
@@ -332,27 +320,24 @@ pub async fn pinned_sse(
             handle.abort();
             return Ok(());
         }
-        Registration::Registered { epoch, displaced } => {
-            // A reloaded console starts its ids at 1 again; the stream that
-            // held this one is still live and now unreachable, so it ends here.
-            if let Some(old) = displaced {
-                old.abort();
-            }
-            epoch
+        Registration::Duplicate { handle } => {
+            handle.abort();
+            return Err("Could not allocate an event stream.".to_string());
         }
-    };
+        Registration::Registered => {}
+    }
     // A cancelled task drops its sender, which closes the channel: that is the
     // `None` below, and it means the console asked for this and is not waiting
     // to be told anything went wrong.
     let outcome = rx.recv().await.unwrap_or(Ok(()));
-    state.with(|streams| streams.finish(stream_id, epoch));
+    state.with(|streams| streams.finish(&stream_id));
     outcome
 }
 
 /// Stop a live stream. The console calls this when its reader is released or
 /// its `AbortSignal` fires.
 #[tauri::command]
-pub fn pinned_sse_cancel(state: tauri::State<'_, SseStreams>, stream_id: u64) {
+pub fn pinned_sse_cancel(state: tauri::State<'_, SseStreams>, stream_id: String) {
     cancel_stream(&state, stream_id);
 }
 
@@ -447,7 +432,7 @@ mod tests {
     #[test]
     fn unknown_stream_cancel_is_a_noop() {
         let streams = SseStreams::default();
-        cancel_stream(&streams, 7); // must not panic
+        cancel_stream(&streams, "7".into()); // must not panic
     }
 
     /// The bookkeeping, with a handle a test can recognise by sight.
@@ -455,98 +440,70 @@ mod tests {
         Streams::default()
     }
 
-    fn registered<H>(outcome: Registration<H>) -> (u64, Option<H>) {
-        match outcome {
-            Registration::Registered { epoch, displaced } => (epoch, displaced),
-            Registration::AlreadyCancelled { .. } => panic!("expected a registration"),
-        }
-    }
-
     #[test]
     fn a_cancel_that_arrives_first_refuses_the_registration_behind_it() {
         let mut streams = streams();
         // `pinned_sse_cancel` runs while `pinned_sse`'s future is still
         // unpolled: there is nothing to abort yet.
-        assert!(streams.cancel(1).is_none());
-        match streams.register(1, "the stream") {
+        assert!(streams.cancel("1".into()).is_none());
+        match streams.register("1".into(), "the stream") {
             Registration::AlreadyCancelled { handle } => assert_eq!(handle, "the stream"),
-            Registration::Registered { .. } => {
+            Registration::Registered | Registration::Duplicate { .. } => {
                 panic!("a cancelled stream must not be registered — nobody would ever stop it")
             }
         }
         // And the refusal is spent: the id is free for the next stream.
-        let (_, displaced) = registered(streams.register(1, "a later stream"));
-        assert!(displaced.is_none());
-        assert_eq!(streams.cancel(1), Some("a later stream"));
+        assert!(matches!(
+            streams.register("1".into(), "a later stream"),
+            Registration::Registered
+        ));
+        assert_eq!(streams.cancel("1".into()), Some("a later stream"));
     }
 
     #[test]
-    fn registering_a_reused_id_hands_back_the_stream_it_displaces() {
+    fn duplicate_random_id_is_refused_without_displacing_the_live_stream() {
         let mut streams = streams();
-        registered(streams.register(1, "first"));
-        // The console reloaded and started counting from 1 again while the
-        // first stream is still live.
-        let (_, displaced) = registered(streams.register(1, "second"));
-        assert_eq!(displaced, Some("first"));
-        assert_eq!(streams.cancel(1), Some("second"));
-    }
-
-    #[test]
-    fn a_displaced_streams_cleanup_leaves_the_live_one_alone() {
-        let mut streams = streams();
-        let (first_epoch, _) = registered(streams.register(1, "first"));
-        registered(streams.register(1, "second"));
-        // The displaced stream's own command now returns and tidies up; the
-        // stream that took its id must still be cancellable.
-        streams.finish(1, first_epoch);
-        assert_eq!(streams.cancel(1), Some("second"));
+        assert!(matches!(
+            streams.register("same".into(), "first"),
+            Registration::Registered
+        ));
+        match streams.register("same".into(), "second") {
+            Registration::Duplicate { handle } => assert_eq!(handle, "second"),
+            Registration::Registered | Registration::AlreadyCancelled { .. } => {
+                panic!("duplicate id was accepted")
+            }
+        }
+        assert_eq!(streams.cancel("same".into()), Some("first"));
     }
 
     #[test]
     fn a_finished_stream_leaves_nothing_behind() {
         let mut streams = streams();
-        let (epoch, _) = registered(streams.register(1, "done"));
-        streams.finish(1, epoch);
+        assert!(matches!(
+            streams.register("done".into(), "done"),
+            Registration::Registered
+        ));
+        streams.finish("done");
         assert!(streams.running.is_empty());
         // A cancel the console sends after the stream already ended is
         // remembered — it cannot know — but only until the set fills.
-        assert!(streams.cancel(1).is_none());
+        assert!(streams.cancel("done".into()).is_none());
         assert_eq!(streams.cancelled.len(), 1);
-    }
-
-    #[test]
-    fn a_late_duplicate_finish_cannot_erase_a_pending_cancellation() {
-        let mut streams = streams();
-        let (first_epoch, _) = registered(streams.register(1, "first"));
-        streams.finish(1, first_epoch);
-        // The console reloaded, minted id 1 again, and cancelled it before the
-        // new command's future was ever polled: nothing is running, so the
-        // cancel is remembered.
-        assert!(streams.cancel(1).is_none());
-        // A stale `finish` for the *old* stream now lands. It is about a
-        // generation that is over and must leave the pending cancel alone.
-        streams.finish(1, first_epoch);
-        match streams.register(1, "second") {
-            Registration::AlreadyCancelled { handle } => assert_eq!(handle, "second"),
-            Registration::Registered { .. } => {
-                panic!("the new stream's cancel was erased by an old stream's cleanup")
-            }
-        }
     }
 
     #[test]
     fn the_remembered_cancels_stay_bounded() {
         let mut streams = streams();
         for id in 0..(MAX_CANCELLED_IDS as u64 * 4) {
-            assert!(streams.cancel(id).is_none());
+            assert!(streams.cancel(id.to_string()).is_none());
         }
         assert_eq!(streams.cancelled.len(), MAX_CANCELLED_IDS);
         // The most recent ids are the ones a racing registration could still
         // be about; the oldest are what gets dropped.
         assert!(streams
             .cancelled
-            .contains(&(MAX_CANCELLED_IDS as u64 * 4 - 1)));
-        assert!(!streams.cancelled.contains(&0));
+            .contains(&(MAX_CANCELLED_IDS as u64 * 4 - 1).to_string()));
+        assert!(!streams.cancelled.contains(&"0".to_string()));
     }
 
     #[test]

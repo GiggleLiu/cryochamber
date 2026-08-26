@@ -203,11 +203,9 @@ Signature=adhoc
 
 ## Android release: first-time setup (maintainer)
 
-CI already carries the Android job (`build-android` in
-`.github/workflows/release.yml`), but it builds from an Android project that
-must be generated and committed **once**, by hand, on a machine with the
-Android toolchain. Until that lands, the job fails early with a pointer back
-here. This is the whole of that one-time setup, in order.
+The Android project and its CI job should land together after a maintainer with
+the Android toolchain completes these steps. Until then, releases contain only
+the macOS app.
 
 ### 1. Prerequisites
 
@@ -277,7 +275,8 @@ with the reason above it, so nobody later "fixes" it:
 `cargo tauri android init` does **not** generate a signing config — add one by
 hand to `app/src-tauri/gen/android/app/build.gradle.kts`. Every part of it is
 guarded on `keystore.properties` existing, so a contributor without the
-keystore still builds (debug-signed) and only CI produces a release-signed APK.
+keystore still builds debug-signed. The release CI job can use the same config
+when it lands.
 
 At the top of the file:
 
@@ -341,8 +340,7 @@ gh secret set ANDROID_KEYSTORE_PASSWORD    # prompts; paste the store password
 gh secret set ANDROID_KEY_ALIAS --body cryochamber
 ```
 
-All three are required — the workflow's "Materialize signing keystore" step
-fails by name if any of them is empty.
+The future Android release job will require all three.
 
 To exercise the signing path locally before trusting CI with it, write
 `app/src-tauri/gen/android/keystore.properties`:
@@ -382,7 +380,5 @@ Do not let the first APK CI ever builds be a real release:
 3. Sideload it onto a device and run the [Release smoke
    checklist](#release-smoke-checklist) above against it — the Tauri seam it
    covers is untested by anything else, and the APK is a build no one has run.
-4. Then **pin the tauri-cli version** CI used: replace `@tauri-apps/cli@^2` in
-   the "Install tauri-cli" step with the exact version the successful run
-   logged, so the next release builds with the toolchain you rehearsed rather
-   than whatever `^2` resolves to that day.
+4. Add the Android release job with the exact `tauri-cli` version used in the
+   rehearsal.

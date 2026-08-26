@@ -228,7 +228,7 @@ describe('pinnedFetch — the events stream', () => {
     const s = openStream()
     expect(s.args.url).toBe('https://hub.example/api/events')
     expect(s.args.sha256).toBe(SHA)
-    expect(typeof s.args.streamId).toBe('number')
+    expect(s.args.streamId).toMatch(/^\d+(?:-\d+){3}$/)
     expect(s.args.headers).toEqual([['Authorization', 'Bearer deadbeef']])
 
     s.channel.onmessage({ status: 200 })

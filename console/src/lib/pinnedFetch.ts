@@ -27,63 +27,16 @@ interface PinnedResponse {
  * enum serializes to: an open, then chunks, then a close. */
 type SseEvent = { status: number } | { chunk_b64: string } | { done: boolean }
 
-const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-
-const B64_REVERSE = /* @__PURE__ */ (() => {
-  const table = new Uint8Array(256).fill(0xff)
-  for (let i = 0; i < B64_ALPHABET.length; i++) table[B64_ALPHABET.charCodeAt(i)] = i
-  return table
-})()
-
-/**
- * Bytes → base64, written out by hand rather than through `btoa`: the usual
- * `btoa(String.fromCharCode(...bytes))` spelling passes every byte as a
- * separate argument and overflows the call stack on any real upload.
- */
 export function b64encode(bytes: Uint8Array): string {
-  let out = ''
-  let i = 0
-  for (; i + 2 < bytes.length; i += 3) {
-    const v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]
-    out +=
-      B64_ALPHABET[(v >> 18) & 63] +
-      B64_ALPHABET[(v >> 12) & 63] +
-      B64_ALPHABET[(v >> 6) & 63] +
-      B64_ALPHABET[v & 63]
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
   }
-  const left = bytes.length - i
-  if (left === 1) {
-    const v = bytes[i] << 16
-    out += B64_ALPHABET[(v >> 18) & 63] + B64_ALPHABET[(v >> 12) & 63] + '=='
-  } else if (left === 2) {
-    const v = (bytes[i] << 16) | (bytes[i + 1] << 8)
-    out +=
-      B64_ALPHABET[(v >> 18) & 63] +
-      B64_ALPHABET[(v >> 12) & 63] +
-      B64_ALPHABET[(v >> 6) & 63] +
-      '='
-  }
-  return out
+  return btoa(binary)
 }
 
-/** base64 → bytes. Unknown characters (padding, stray whitespace) are skipped
- * rather than decoded as zeroes. */
 export function b64decode(text: string): Uint8Array {
-  const out = new Uint8Array(Math.ceil((text.length * 3) / 4))
-  let acc = 0
-  let bits = 0
-  let written = 0
-  for (let i = 0; i < text.length; i++) {
-    const six = B64_REVERSE[text.charCodeAt(i) & 0xff]
-    if (six === 0xff) continue
-    acc = (acc << 6) | six
-    bits += 6
-    if (bits >= 8) {
-      bits -= 8
-      out[written++] = (acc >> bits) & 0xff
-    }
-  }
-  return written === out.length ? out : out.subarray(0, written)
+  return Uint8Array.from(atob(text), (char) => char.charCodeAt(0))
 }
 
 /** A `multipart/form-data` body and the content type that describes it. */
@@ -92,26 +45,18 @@ export interface MultipartBody {
   contentType: string
 }
 
-/** Neither a field name nor a filename may end a header line or a quoted
- * string; browsers percent-encode exactly these three characters. */
 function headerSafe(value: string): string {
   return value.replace(/\r/g, '%0D').replace(/\n/g, '%0A').replace(/"/g, '%22')
 }
 
 function boundaryToken(): string {
   const bytes = new Uint8Array(12)
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    crypto.getRandomValues(bytes)
-  } else {
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
-  }
+  crypto.getRandomValues(bytes)
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
-  let total = 0
-  for (const part of parts) total += part.length
-  const out = new Uint8Array(total)
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
   let at = 0
   for (const part of parts) {
     out.set(part, at)
@@ -120,11 +65,6 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out
 }
 
-/**
- * Serialize a `FormData` the way the browser would before handing it to Rust.
- * Uploads have to survive pinning too, and the IPC bridge carries bytes, not
- * form objects — so the boundary is ours to pick and ours to declare.
- */
 export async function formDataToMultipart(form: FormData): Promise<MultipartBody> {
   const boundary = `----CryoFormBoundary${boundaryToken()}`
   const encoder = new TextEncoder()
@@ -146,12 +86,6 @@ export async function formDataToMultipart(form: FormData): Promise<MultipartBody
   return { bytes: concat(parts), contentType: `multipart/form-data; boundary=${boundary}` }
 }
 
-/**
- * A blob's bytes. `arrayBuffer()` is the whole story in any WebView the app
- * runs in; the `FileReader` path is for realms whose `Blob` predates it (the
- * console's own jsdom test realm is one), so an upload is never silently
- * serialized as an empty part.
- */
 async function blobBytes(blob: Blob): Promise<Uint8Array> {
   if (typeof blob.arrayBuffer === 'function') return new Uint8Array(await blob.arrayBuffer())
   const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -223,10 +157,6 @@ async function bodyBytes(body: BodyInit | null | undefined): Promise<Uint8Array 
   throw new Error('This request body cannot be sent to a pinned hub.')
 }
 
-/** One id per stream for the life of the window: `pinned_sse_cancel` names the
- * stream to stop, and a reused id would stop somebody else's. */
-let nextStreamId = 1
-
 /**
  * The `/api/events` half: a `Response` whose body is fed by the command's
  * channel. The status has to be known before the `Response` exists, so the
@@ -238,7 +168,7 @@ function eventsRequest(
   headers: [string, string][],
   signal: AbortSignal | null | undefined,
 ): Promise<Response> {
-  const streamId = nextStreamId++
+  const streamId = crypto.getRandomValues(new Uint32Array(4)).join('-')
   return new Promise<Response>((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortError(signal))

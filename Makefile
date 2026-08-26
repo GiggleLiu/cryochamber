@@ -147,8 +147,8 @@ console-build:
 app-dev:
 	cd app/src-tauri && cargo tauri dev
 
-# Build the macOS app bundle + dmg from the production console build
-app-macos: console-build
+# Build the macOS app bundle + dmg; Tauri runs its beforeBuildCommand.
+app-macos:
 	cd app/src-tauri && cargo tauri build
 
 # Format + lint + test the shell crate
