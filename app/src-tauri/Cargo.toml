@@ -4,7 +4,7 @@
 # `cargo package` never ships it.
 [package]
 name = "cryochamber-app"
-version = "0.0.0"
+version = "0.2.8"
 description = "Cryochamber Agent Console — native shell"
 edition = "2021"
 license = "MIT"
