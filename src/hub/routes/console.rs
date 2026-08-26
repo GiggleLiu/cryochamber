@@ -52,10 +52,11 @@ use crate::hub::mime::mime_for;
 
 /// Applied to every HTML the console route emits. Same-origin everything;
 /// `unsafe-inline` styles because KaTeX emits inline `style=`; models.dev is
-/// the provider catalog the New Chamber sheet fetches.
+/// the provider catalog the New Chamber sheet fetches; `data:` fonts because
+/// Vite inlines the smallest KaTeX face as a data:font/woff2 URI.
 pub const CONSOLE_CSP: &str = "default-src 'self'; img-src 'self' data: blob:; \
     connect-src 'self' https://models.dev; style-src 'self' 'unsafe-inline'; \
-    font-src 'self'; frame-ancestors 'none'; base-uri 'none'";
+    font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'";
 
 /// The built console compiled into the binary. `console/dist/` is created by
 /// `build.rs` when absent, so a checkout without Node still compiles; the

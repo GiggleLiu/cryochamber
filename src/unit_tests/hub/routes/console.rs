@@ -480,3 +480,16 @@ async fn console_html_carries_the_csp_and_assets_do_not() {
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(header(&resp, "content-security-policy"), CONSOLE_CSP);
 }
+
+#[test]
+fn the_csp_lets_the_inlined_katex_face_load() {
+    // Vite inlines one KaTeX face (KaTeX_Size3) as a data:font/woff2 URI in
+    // the built console CSS; without `data:` in font-src the browser refuses
+    // it and large math delimiters silently render in a fallback font.
+    let font_src = CONSOLE_CSP
+        .split(';')
+        .map(str::trim)
+        .find(|d| d.starts_with("font-src"))
+        .expect("CONSOLE_CSP declares font-src");
+    assert_eq!(font_src, "font-src 'self' data:");
+}
