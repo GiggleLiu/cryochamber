@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { tauriChannel, tauriFetch, tauriLoadStore, tauriInvoke } from './tauri'
+import { tauriChannel, tauriFetch, tauriLoadStore, tauriInvoke, tauriListen } from './tauri'
 
 afterEach(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,6 +25,16 @@ describe('tauri global access', () => {
     ;(window as any).__TAURI__ = { core: { invoke } }
     await expect(tauriInvoke<number>('probe_hub', { url: 'http://x' })).resolves.toBe(42)
     expect(invoke).toHaveBeenCalledWith('probe_hub', { url: 'http://x' })
+  })
+
+  it('listens through the global event API', async () => {
+    const unlisten = vi.fn()
+    const listen = vi.fn(async () => unlisten)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).__TAURI__ = { core: { invoke: vi.fn() }, event: { listen } }
+    const handler = vi.fn()
+    await expect(tauriListen<string[]>('open-urls', handler)).resolves.toBe(unlisten)
+    expect(listen).toHaveBeenCalledWith('open-urls', handler)
   })
 
   it('builds a channel with the handler already attached', () => {

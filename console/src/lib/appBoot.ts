@@ -103,14 +103,23 @@ export async function bootApp(rt: AppRuntime): Promise<void> {
   }
 }
 
-/** The invite-link token grammar, as App.tsx's `takeInviteToken` reads it. */
+/** The access-link token grammar, as App.tsx's `takeInviteToken` reads it. */
 const INVITE_TOKEN_RE = /^[0-9a-f]{32,}$/
 
+/** A link Android can route straight to the app. The admin token stays in the
+ * fragment, matching browser invite links, instead of becoming a query value
+ * that a server or proxy might log. */
+export function appAccessLink(url: string, token: string): string {
+  const link = new URL('cryochamber://add')
+  link.searchParams.set('hub', normalizeHubUrl(url))
+  link.hash = `invite=${token}`
+  return link.toString()
+}
+
 /**
- * A whole invite link — `https://hub[/path]/#invite=<hex>` — split into the
- * hub it points at and the token it carries. Pasting the link is the app's
- * onboarding: the user never has to take it apart by hand. Anything that is
- * not such a link is `null`, so the caller can leave the form alone.
+ * A browser invite link or `cryochamber://add` app link, split into the hub it
+ * points at and the token it carries. Anything else is `null`, so the caller
+ * can leave the form alone.
  */
 export function parseInviteLink(text: string): { url: string; token: string } | null {
   let parsed: URL
@@ -119,9 +128,22 @@ export function parseInviteLink(text: string): { url: string; token: string } | 
   } catch {
     return null
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
   if (!parsed.hash.startsWith('#invite=')) return null
   const token = parsed.hash.slice('#invite='.length)
   if (!INVITE_TOKEN_RE.test(token)) return null
-  return { url: normalizeHubUrl(`${parsed.protocol}//${parsed.host}${parsed.pathname}`), token }
+  try {
+    if (parsed.protocol === 'cryochamber:' && parsed.hostname === 'add') {
+      const hub = parsed.searchParams.get('hub')
+      return hub ? { url: normalizeHubUrl(hub), token } : null
+    }
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return {
+        url: normalizeHubUrl(`${parsed.protocol}//${parsed.host}${parsed.pathname}`),
+        token,
+      }
+    }
+  } catch {
+    return null
+  }
+  return null
 }

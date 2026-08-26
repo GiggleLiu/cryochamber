@@ -51,7 +51,7 @@ agent* 下拉框里——见[选择 chamber
 
 - 在手机浏览器打开 `https://agents.example.com`，*添加到主屏幕*；或者
 - 在 Mac 上安装[原生 App](./install-app.md)，添加 hub——地址加 owner token。App
-  可以**同时持有多个 hub**，合并成一份列表；浏览器安装的 PWA 只绑定提供它的那一个 hub。
+  可以**同时持有多份访问链接**，并按 Owned 与 Joined 分类；浏览器安装的 PWA 只绑定提供它的那一个 hub。
 
 ## 4. 第一个 chamber：host manager
 
@@ -81,7 +81,7 @@ Plan → Edit plan**，给它一份这样的任务简报：
 **Copy invite link**。把链接发给对方：
 
 - 在浏览器里打开，这个链接*就是*登录——对方直接落在这一个 chamber 里；
-- 粘贴进 App 的 *Add a hub → Invite link* 字段，它会替对方填好地址和 token。
+- 粘贴进 App 的 *Add a chamber → Admin or invite link* 字段，它会替对方填好地址和 token。
 
 链接只限定在这一个 chamber：访客可以在里面阅读和发送，但永远看不到你的其他
 chamber 和任何控制项。同一张表单上的 **People with access** 列出每条有效链接；

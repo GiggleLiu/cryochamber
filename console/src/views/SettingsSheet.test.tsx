@@ -6,6 +6,7 @@ import { ApiError } from '../api/types'
 import { useAppStore, resetAppStore, type Connection } from '../store/appStore'
 import { makeHubAccount, MemoryHubsBackend, type HubAccount } from '../store/hubs'
 import type { Chamber, Credentials } from '../api/types'
+import { parseInviteLink } from '../lib/appBoot'
 
 const chamber = (id: string, name = id) => ({
   id,
@@ -142,6 +143,31 @@ describe('owner-only rows', () => {
     expect(useAppStore.getState().showCompletedArchived).toBe(true)
   })
 
+  test('copying an admin link warns first and keeps the token out of the query', async () => {
+    const token = 'ab'.repeat(16)
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    useAppStore.setState({
+      creds: { token, name: 'owner', role: 'owner' },
+      hubRole: 'owner',
+      client: ownerHub(),
+    })
+    render(<SettingsSheet />)
+
+    await userEvent.click(screen.getByRole('button', { name: /copy admin link/i }))
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('administer every chamber'))
+    const link = vi.mocked(writeText).mock.calls[0][0]
+    expect(new URL(link).search).not.toContain(token)
+    expect(parseInviteLink(link)).toEqual({ url: window.location.origin, token })
+    expect(await screen.findByText('Admin link copied.')).toBeInTheDocument()
+    confirm.mockRestore()
+  })
+
   test('the default agent dropdown loads the host setting and saves on change', async () => {
     const client = ownerHub()
     useAppStore.setState({ hubRole: 'owner', client })
@@ -221,14 +247,14 @@ describe('app mode', () => {
   const alpha = makeHubAccount({
     url: 'https://a.example',
     label: 'Alpha hub',
-    token: 'ka',
+    token: 'aa'.repeat(16),
     role: 'owner',
     trust: { kind: 'https' },
   })
   const beta = makeHubAccount({
     url: 'https://b.example',
     label: 'Beta hub',
-    token: 'kb',
+    token: 'bb'.repeat(16),
     role: 'owner',
     trust: { kind: 'https' },
   })
@@ -327,11 +353,11 @@ describe('app mode', () => {
     confirm.mockRestore()
   })
 
-  test('Add hub opens the add-hub form on top of the settings sheet', async () => {
+  test('Add chamber opens the access-link form on top of the settings sheet', async () => {
     enterAppMode([alpha, beta])
     render(<SettingsSheet />)
-    await userEvent.click(screen.getByRole('button', { name: 'Add hub' }))
-    expect(await screen.findByRole('heading', { name: 'Add a hub' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Add chamber' }))
+    expect(await screen.findByRole('heading', { name: 'Add a chamber' })).toBeInTheDocument()
   })
 
   test('the owner rows act on the hub the select names', async () => {
@@ -343,6 +369,25 @@ describe('app mode', () => {
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: 'Default agent' })).toHaveValue('claude'),
     )
+  })
+
+  test('the selected owner hub is the one copied', async () => {
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    enterAppMode([alpha, beta])
+    render(<SettingsSheet />)
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Hub' }), beta.id)
+    await userEvent.click(screen.getByRole('button', { name: /copy admin link/i }))
+
+    expect(parseInviteLink(vi.mocked(writeText).mock.calls[0][0])).toEqual({
+      url: beta.url,
+      token: beta.token,
+    })
+    confirm.mockRestore()
   })
 
   test('one owned hub needs no hub select', () => {
@@ -359,7 +404,7 @@ describe('app mode', () => {
     render(<SettingsSheet />)
     expect(screen.queryByText('Chambers')).toBeNull()
     // Hub management is not an owner control: a guest still manages their app.
-    expect(screen.getByText('Hubs')).toBeInTheDocument()
+    expect(screen.getByText('Chamber access')).toBeInTheDocument()
   })
 })
 

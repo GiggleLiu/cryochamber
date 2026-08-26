@@ -377,11 +377,38 @@ describe('hub chips in app mode', () => {
       showCompletedArchived: false,
     })
     render(<ProjectsView />)
+    expect(screen.getByRole('heading', { name: 'Owned (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Joined (2)' })).toBeInTheDocument()
     expect(screen.queryByText('alpha done')).toBeNull()
     expect(screen.getByRole('button', { name: /1 completed/ })).toBeInTheDocument()
     // A guest's list is never filed for them: the finished chamber on the hub
     // this token only visits stays a plain row.
     expect(screen.getByText('beta done')).toBeInTheDocument()
+  })
+
+  test('overlapping admin and invite links show one owned chamber', () => {
+    const admin = makeHubAccount({
+      url: 'https://same.example', token: 'admin', role: 'owner', trust: { kind: 'https' },
+    })
+    const invite = makeHubAccount({
+      url: 'https://same.example', token: 'invite', trust: { kind: 'https' },
+    })
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubs: [invite, admin],
+      roleByHub: { [invite.id]: 'invite', [admin.id]: 'owner' },
+      chambers: [
+        chamber(`${invite.id}:shared`, 'shared', { hubId: invite.id }),
+        chamber(`${admin.id}:shared`, 'shared', { hubId: admin.id }),
+      ],
+    })
+
+    render(<ProjectsView />)
+
+    expect(screen.getAllByText('shared')).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Owned (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Joined (0)' })).toBeInTheDocument()
   })
 
   test('the switch unfolds the owned hub’s finished chambers', () => {

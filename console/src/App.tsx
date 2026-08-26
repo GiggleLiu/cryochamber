@@ -8,7 +8,8 @@ import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
 import { isUnauthorized } from './api/types'
 import { HubClient } from './api/hubClient'
 import { isTauri } from './lib/env'
-import { appRuntime, bootApp } from './lib/appBoot'
+import { appRuntime, bootApp, parseInviteLink } from './lib/appBoot'
+import { tauriInvoke, tauriListen } from './lib/tauri'
 import { AddHubView } from './views/AddHubView'
 import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
@@ -16,6 +17,7 @@ import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
 import { UpdateBar } from './components/UpdateBar'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { Sheet } from './components/Sheet'
 import { hashForView, viewFromHash } from './lib/hashRoute'
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
@@ -50,6 +52,7 @@ export default function App() {
   const accessNotice = useAppStore((s) => s.accessNotice)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
   const [downloadNote, setDownloadNote] = useState<string | null>(null)
+  const [openedLink, setOpenedLink] = useState<string | null>(null)
   const [routeRevision, setRouteRevision] = useState(0)
   const explicitConversationRoute = useRef(viewFromHash()?.name === 'conversation')
   const chamberCount = chambers.length
@@ -61,6 +64,33 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return
     void bootApp(appRuntime())
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let stop: (() => void) | undefined
+    const accept = (urls: string[]) => {
+      const link = urls.find((url) => parseInviteLink(url))
+      if (link) setOpenedLink(link)
+    }
+    let listening: Promise<() => void>
+    try {
+      listening = tauriListen<string[]>('open-urls', (event) => accept(event.payload))
+    } catch {
+      return
+    }
+    void listening
+      .then((unlisten) => {
+        if (disposed) return unlisten()
+        stop = unlisten
+        void tauriInvoke<string[]>('take_opened_urls').then(accept).catch(() => {})
+      })
+      .catch(() => {})
+    return () => {
+      disposed = true
+      stop?.()
+    }
   }, [])
 
   useEffect(() => {
@@ -217,7 +247,15 @@ export default function App() {
   // hubs, for the frame it takes the boot to resolve.
   if (isTauri()) {
     if (mode !== 'app') return null
-    if (hubs.length === 0) return <AddHubView />
+    if (hubs.length === 0) {
+      return (
+        <AddHubView
+          key={openedLink ?? 'empty'}
+          initialLink={openedLink ?? undefined}
+          onAdded={() => setOpenedLink(null)}
+        />
+      )
+    }
   } else if (!creds) {
     return <LoginView />
   }
@@ -245,6 +283,15 @@ export default function App() {
           <ProjectsView />
         )}
         {settingsOpen && <SettingsSheet />}
+        {openedLink && (
+          <Sheet title="Add chamber" label="Add chamber" onClose={() => setOpenedLink(null)}>
+            <AddHubView
+              key={openedLink}
+              initialLink={openedLink}
+              onAdded={() => setOpenedLink(null)}
+            />
+          </Sheet>
+        )}
       </ErrorBoundary>
     </div>
   )

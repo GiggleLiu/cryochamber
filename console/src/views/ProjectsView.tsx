@@ -4,6 +4,7 @@ import { hubIdOf, isOwnerFor, unreadCount, useAppStore } from '../store/appStore
 import { useOwnerHub } from '../hooks/useOwnerHub'
 import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, messageSeconds, previewText, tileColor } from '../lib/format'
+import { splitChamberKey } from '../lib/hubKeys'
 import { NewChamberSheet } from './NewChamberSheet'
 import { StatusDot } from '../components/StatusDot'
 
@@ -14,6 +15,29 @@ export function foldedLabel(completed: number, archived: number): string {
   if (completed > 0) parts.push(`${completed} completed`)
   if (archived > 0) parts.push(`${archived} archived`)
   return parts.join(' · ')
+}
+
+/** One hub can be saved through several scoped links. If their scopes overlap,
+ * show the chamber once; admin access wins because it carries the controls the
+ * joined copy cannot offer. */
+export function dedupeChambers(
+  chambers: Chamber[],
+  hubs: Array<{ id: string; url: string }>,
+  roleByHub: Record<string, 'owner' | 'invite'>,
+): Chamber[] {
+  const byHub = new Map(hubs.map((h) => [h.id, h]))
+  const visible = new Map<string, Chamber>()
+  for (const chamber of chambers) {
+    const { hubId, chamberId } = splitChamberKey(chamber.id)
+    const hub = byHub.get(hubId)
+    const key = hub ? `${hub.url}\n${chamberId}` : chamber.id
+    const previous = visible.get(key)
+    const previousHubId = previous ? splitChamberKey(previous.id).hubId : ''
+    if (!previous || (roleByHub[hubId] === 'owner' && roleByHub[previousHubId] !== 'owner')) {
+      visible.set(key, chamber)
+    }
+  }
+  return [...visible.values()]
 }
 
 function SkeletonList() {
@@ -63,14 +87,17 @@ export function ProjectsView() {
   // Every chamber this token can reach. The Completed/Archived fold below is
   // the only filing there is — a second, per-project hide switch used to live
   // in Settings and could leave a guest staring at an empty list.
-  const visible = chambers
+  const visible = mode === 'app' ? dedupeChambers(chambers, hubs, roleByHub) : chambers
   // The folds are an owner's filing system, never a filter on anyone else's
   // list: a guest scoped to a finished chamber still sees it as a plain row,
   // so their whole list can never disappear behind a preference they cannot
   // reach. Archived wins over completed: the operator put it away on purpose,
   // and one chamber must never appear in two groups.
-  const archivedList = visible.filter((c) => ownerFor(c) && c.archived)
-  const completedList = visible.filter((c) => ownerFor(c) && !c.archived && c.completed)
+  const owned = visible.filter(ownerFor)
+  const joined = visible.filter((c) => !ownerFor(c))
+  const archivedList = owned.filter((c) => c.archived)
+  const completedList = owned.filter((c) => !c.archived && c.completed)
+  const ownedActive = owned.filter((c) => !c.archived && !c.completed)
   const active = visible.filter((c) => !ownerFor(c) || (!c.archived && !c.completed))
   // The lists are already empty for anything this token does not own, so the
   // switch is the only remaining question.
@@ -152,7 +179,7 @@ export function ProjectsView() {
   return (
     <div className="projects">
       <header className="topbar">
-        <h1>Projects</h1>
+        <h1>Chambers</h1>
         <div className="topbar-actions">
           {canCreate && (
             <button
@@ -172,7 +199,7 @@ export function ProjectsView() {
       <div className="projects-scroll">
         {loading && <SkeletonList />}
 
-        {!loading &&
+        {!loading && mode !== 'app' &&
           active.length === 0 &&
           (!showGroups || completedList.length + archivedList.length === 0) && (
             <div className="empty-state">
@@ -196,27 +223,73 @@ export function ProjectsView() {
             </div>
           )}
 
-        {active.length > 0 && <ul className="stream-list">{active.map(card)}</ul>}
+        {!loading && mode === 'app' && visible.length === 0 && (
+          <div className="empty-state">
+            <Inbox size={40} />
+            <h2>No chambers yet</h2>
+            <p>Add an admin or invite link to see its chambers here.</p>
+          </div>
+        )}
+
+        {!loading && mode === 'app' && visible.length > 0 && (
+          <>
+            <h2 className="stream-category">Owned ({owned.length})</h2>
+            {ownedActive.length > 0 ? (
+              <ul className="stream-list">{ownedActive.map(card)}</ul>
+            ) : (
+              <p className="stream-category-empty">No active owned chambers.</p>
+            )}
+
+            {!showGroups && completedList.length + archivedList.length > 0 && (
+              <button className="stream-reveal" onClick={() => setShowCompletedArchived(true)}>
+                Show {foldedLabel(completedList.length, archivedList.length)}
+              </button>
+            )}
+
+            {showGroups && completedList.length > 0 && (
+              <details className="stream-group">
+                <summary>Completed ({completedList.length})</summary>
+                <ul className="stream-list">{completedList.map(card)}</ul>
+              </details>
+            )}
+
+            {showGroups && archivedList.length > 0 && (
+              <details className="stream-group">
+                <summary>Archived ({archivedList.length})</summary>
+                <ul className="stream-list">{archivedList.map(card)}</ul>
+              </details>
+            )}
+
+            <h2 className="stream-category">Joined ({joined.length})</h2>
+            {joined.length > 0 ? (
+              <ul className="stream-list">{joined.map(card)}</ul>
+            ) : (
+              <p className="stream-category-empty">No joined chambers.</p>
+            )}
+          </>
+        )}
+
+        {mode !== 'app' && active.length > 0 && <ul className="stream-list">{active.map(card)}</ul>}
 
         {/* With the toggle off, completed and archived chambers vanish from the
             list. Saying how many are folded away — and offering the one tap
             that unfolds them — is the difference between a filter and a
             chamber that looks lost. The empty state covers the case where
             there is no active list to sit under. */}
-        {!showGroups && active.length > 0 && completedList.length + archivedList.length > 0 && (
+        {mode !== 'app' && !showGroups && active.length > 0 && completedList.length + archivedList.length > 0 && (
           <button className="stream-reveal" onClick={() => setShowCompletedArchived(true)}>
             Show {foldedLabel(completedList.length, archivedList.length)}
           </button>
         )}
 
-        {showGroups && completedList.length > 0 && (
+        {mode !== 'app' && showGroups && completedList.length > 0 && (
           <details className="stream-group">
             <summary>Completed ({completedList.length})</summary>
             <ul className="stream-list">{completedList.map(card)}</ul>
           </details>
         )}
 
-        {showGroups && archivedList.length > 0 && (
+        {mode !== 'app' && showGroups && archivedList.length > 0 && (
           <details className="stream-group">
             <summary>Archived ({archivedList.length})</summary>
             <ul className="stream-list">{archivedList.map(card)}</ul>

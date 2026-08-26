@@ -1814,6 +1814,21 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .stream-reveal:active { background: var(--surface-press); }
 
+.stream-category {
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.stream-category-empty {
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+  background: var(--surface);
+}
+
 .stream-group { background: var(--surface); border-top: 1px solid var(--line); }
 .stream-group > summary {
   padding: var(--sp-3) var(--sp-4);

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { HubClient } from '../api/hubClient'
 import { HubRouter, type ConsoleClient } from '../api/hubRouter'
 import { messageKey, type Chamber, type ChamberMessage, type Credentials } from '../api/types'
-import { chamberKey, splitChamberKey } from '../lib/hubKeys'
+import { chamberKey, legacyHubIdFor, splitChamberKey } from '../lib/hubKeys'
 import type { HubAccount, HubsBackend } from './hubs'
 import { saveCredentials, clearCredentials } from './auth'
 import {
@@ -136,10 +136,18 @@ function onlyHubs<T>(map: Record<string, T>, hubIds: ReadonlySet<string>): Recor
  * from URL-only to URL+token. Re-scope every embedded chamber key to the id the
  * current account now uses; otherwise the first fresh index cannot replace the
  * legacy rows and they look like chambers from a hub that no longer exists. */
-function scopeCachedState(hub: HubAccount, cached: CachedState): CachedState {
-  const scoped = (key: string) => chamberKey(hub.id, splitChamberKey(key).chamberId)
+function scopeCachedState(hubs: HubAccount[], cached: CachedState): CachedState {
+  const migratedIds = new Map(hubs.map((hub) => [legacyHubIdFor(hub.url), hub.id]))
+  const scoped = (key: string) => {
+    const { hubId, chamberId } = splitChamberKey(key)
+    const migrated = migratedIds.get(hubId)
+    return migrated ? chamberKey(migrated, chamberId) : key
+  }
   return {
-    chambers: cached.chambers.map((c) => ({ ...c, id: scoped(c.id), hubId: hub.id })),
+    chambers: cached.chambers.map((c) => {
+      const id = scoped(c.id)
+      return { ...c, id, hubId: splitChamberKey(id).hubId }
+    }),
     messagesByChamber: Object.fromEntries(
       Object.entries(cached.messagesByChamber).map(([key, messages]) => {
         const id = scoped(key)
@@ -433,7 +441,10 @@ export const useAppStore = create<AppState>()((set, get) => {
         hydrated.add(cacheKey({ token: hub.token }))
         const loaded = loadCachedState({ token: hub.token })
         if (!loaded) continue
-        const cached = scopeCachedState(hub, loaded)
+        const cached = scopeCachedState(
+          hubs.filter((candidate) => candidate.token === hub.token),
+          loaded,
+        )
         chambers.push(...cached.chambers)
         Object.assign(messagesByChamber, cached.messagesByChamber)
         Object.assign(lastReadByChamber, cached.lastReadByChamber)

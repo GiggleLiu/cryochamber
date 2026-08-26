@@ -9,6 +9,7 @@ import { compareVersions } from '../lib/format'
 import { applyTheme, readTheme, type Theme } from '../lib/theme'
 import { Sheet } from '../components/Sheet'
 import { AddHubView } from './AddHubView'
+import { appAccessLink } from '../lib/appBoot'
 
 const THEMES: Array<{ value: Theme; label: string }> = [
   { value: '', label: 'System' },
@@ -64,6 +65,7 @@ export function SettingsSheet() {
   const [defaultAgent, setDefaultAgent] = useState('')
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
+  const [copyNote, setCopyNote] = useState<string | null>(null)
   const [addingHub, setAddingHub] = useState(false)
 
   // Which hub the owner rows point at *now*, for a request that resolves after
@@ -181,6 +183,24 @@ export function SettingsSheet() {
     void removeHub(hub.id)
   }
 
+  async function copyAdminLink() {
+    const access = app
+      ? ownedHubs.find((hub) => hub.id === ownerHubId)
+      : creds && hubRole === 'owner'
+        ? { url: window.location.origin, token: creds.token }
+        : null
+    if (!access) return
+    if (!window.confirm('Anyone with this link can administer every chamber on this hub. Copy it?')) {
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(appAccessLink(access.url, access.token))
+      setCopyNote('Admin link copied.')
+    } catch {
+      setCopyNote('Could not copy the admin link.')
+    }
+  }
+
   return (
     <Sheet title="Settings" label="Settings" onClose={() => setSettingsOpen(false)}>
       {creds && (
@@ -209,7 +229,7 @@ export function SettingsSheet() {
           this token, and whether the hub is answering at all. */}
       {app && (
         <>
-          <p className="group-label">Hubs</p>
+          <p className="group-label">Chamber access</p>
           <div className="group">
             {hubs.map((h) => {
               const version = versionByHub[h.id]
@@ -252,7 +272,7 @@ export function SettingsSheet() {
               )
             })}
             <button className="row" onClick={() => setAddingHub(true)}>
-              Add hub
+              Add chamber
             </button>
           </div>
         </>
@@ -301,6 +321,10 @@ export function SettingsSheet() {
                 </select>
               </label>
             )}
+            <button className="row" onClick={copyAdminLink}>
+              Copy admin link
+              <span className="row-value">Full access</span>
+            </button>
             <AgentSelect
               label="Default agent"
               value={defaultAgent}
@@ -329,6 +353,11 @@ export function SettingsSheet() {
           {refreshError && (
             <p className="group-hint" role="alert">
               {refreshError}
+            </p>
+          )}
+          {copyNote && (
+            <p className="group-hint" role="status">
+              {copyNote}
             </p>
           )}
           {agentError ? (
@@ -367,7 +396,7 @@ export function SettingsSheet() {
       </p>
 
       {addingHub && (
-        <Sheet title="Add hub" label="Add hub" onClose={() => setAddingHub(false)}>
+        <Sheet title="Add chamber" label="Add chamber" onClose={() => setAddingHub(false)}>
           <AddHubView onAdded={() => setAddingHub(false)} />
         </Sheet>
       )}

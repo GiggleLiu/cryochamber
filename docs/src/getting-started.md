@@ -59,9 +59,9 @@ a complete Caddy recipe. Then either:
 
 - open `https://agents.example.com` in the phone's browser and *Add to Home
   Screen*, or
-- on a Mac, install the [native app](./install-app.md) and add the hub —
-  address plus owner token. The app can hold **several hubs at once** in one
-  merged list; a browser install is bound to the one hub that served it.
+- install the [native app](./install-app.md) and add an owner or invite link.
+  It keeps every saved access and groups the resulting chambers under
+  **Owned** and **Joined**; a browser install is bound to the hub that served it.
 
 ## 4. A first chamber: the host manager
 
@@ -96,7 +96,7 @@ name, and **Copy invite link**. Send it to them:
 
 - opened in a browser, the link *is* the sign-in — they land directly in
   that one chamber;
-- pasted into the app's *Add a hub → Invite link* field, it fills the
+- pasted into the app's *Add a chamber → Admin or invite link* field, it fills the
   address and token for them.
 
 The link is scoped to that single chamber: a guest can read and send there,

@@ -2,8 +2,8 @@
 
 The **Cryochamber app** is a native window around the same [Agent
 Console](./agent-console.md) a hub serves in a browser. It exists for one
-reason a browser cannot cover: it holds **several hubs at once**, in a single
-merged chamber list, and reaches each of them over the OS network stack rather
+reason a browser cannot cover: it holds **several access links at once**, groups
+their chambers under Owned and Joined, and reaches each hub over the OS network stack rather
 than the page's own origin.
 
 Nothing about the hub changes. The console a hub serves stays exactly where it
@@ -32,7 +32,10 @@ is what exists.
 1. Download `cryochamber-vX.Y.Z-android-arm64.apk` from the release page.
 2. Open it and allow *Install unknown apps* for the browser or file manager when
    Android asks. Return to the APK and install it.
-3. Enter a hub address and access token, or paste an invite link into *Invite link*.
+3. Enter a hub address and access token, or paste an admin or invite link into
+   *Admin or invite link*.
+4. Cryochamber links open in the app. For an ordinary web invite link, use
+   Android's **Share** action and choose Cryochamber.
 
 The APK supports arm64 devices running Android 7 or later. It is signed, but it
 is distributed directly through GitHub rather than Google Play.
@@ -48,7 +51,8 @@ is distributed directly through GitHub rather than Google Play.
    afterwards it launches normally. On **macOS 15 (Sequoia) and later** that
    right-click bypass is gone — let the first launch be refused, then approve
    the app under *System Settings → Privacy & Security → **Open Anyway***.
-3. Enter a hub address and access token, or paste an invite link into *Invite link*.
+3. Enter a hub address and access token, or paste an admin or invite link into
+   *Admin or invite link*.
 
 Apple Silicon only. Notarization is not done yet, and this page will say so
 until it is.
@@ -65,7 +69,7 @@ console guide](./agent-console.md#public-deployment-phone-outside-your-network))
 and it is the case to aim for.
 
 **Plain `http://`.** A warning appears under the address as soon as you type
-one, and **Add hub** stays disabled until you tick *"I understand traffic to
+one, and **Add chamber** stays disabled until you tick *"I understand traffic to
 this hub is unencrypted"*. What it means literally: the token and every message
 you send travel readable by anything between the device and the hub. On your
 own machine (`http://127.0.0.1:8765`) that is nothing at all and the tick is a
@@ -90,25 +94,29 @@ openssl s_client -connect hub.example:8443 </dev/null 2>/dev/null \
 ```
 
 The sheet uses exactly that grouping so the two can be read group by group
-instead of eyeballed as one 64-character run. If they match, **Add hub anyway**
+instead of eyeballed as one 64-character run. If they match, **Add chamber anyway**
 pins *that* certificate for *that* hub from then on. If they do not match,
 someone else is answering for the hub — **Cancel** stores nothing.
 
 A pinned hub that later presents a different certificate stops connecting
 rather than quietly trusting the new one. When the operator legitimately
-renews, remove the hub in *Settings → Hubs* and add it again to re-pin.
+renews, remove the access in *Settings → Chamber access* and add it again to re-pin.
 
-## Several hubs at once
+## Several chamber accesses at once
 
-*Settings → Hubs* lists every hub the app remembers — label, address, whether
-this token is Owner or Guest there, the hub's `cryohub` version — with **Add
-hub** at the bottom and **Remove** on each row.
+*Settings → Chamber access* lists every access link the app remembers. Each row
+shows its label, hub address, Owner or Guest role, and `cryohub` version, with
+**Add chamber** at the bottom and **Remove** on each row. Adding a second token
+for the same hub keeps both scopes; it never replaces the chambers already saved.
 
-With more than one hub configured, the chamber list becomes a single list
-merged across all of them, and every row grows a **hub chip** naming the hub it
-came from. (With one hub the chip is suppressed; the same word on every row is
-noise.) Unread counts, drafts, and read watermarks are kept per hub, so nothing
-bleeds between them.
+The main list has **Owned** and **Joined** sections. If an owner token and an
+invite token both expose the same chamber on the same hub, the app shows it
+once under Owned so the admin controls remain available. Unread counts,
+drafts, and read watermarks stay separate for every saved access.
+
+An owner can use **Settings → Chambers → Copy admin link**. The app warns first
+because anyone holding that link can administer every chamber on the selected
+hub. The copied `cryochamber://` link opens the add-chamber form directly.
 
 Hubs fail independently. A hub that stops answering has its rows' chips read
 **· unreachable** and go muted — the row still shows the last thing that hub
@@ -135,5 +143,5 @@ build and install it over the old one.
   same, so Android treats it as an update and preserves the app's hub store.
 
 The hubs themselves upgrade separately (`cargo install cryochamber`, then
-`cryohub restart`). If a hub is older than the app, *Settings → Hubs* says so
+`cryohub restart`). If a hub is older than the app, *Settings → Chamber access* says so
 on that hub's row — *"hub is older — some features may be missing"*.

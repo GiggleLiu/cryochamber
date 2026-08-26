@@ -12,7 +12,7 @@ import type { Chamber, ChamberMessage, Credentials } from '../api/types'
 import { cacheKey, loadCachedState, flushCachedState } from './cache'
 import { MemoryHubsBackend, makeHubAccount, type HubAccount } from './hubs'
 import { HubClient } from '../api/hubClient'
-import { chamberKey } from '../lib/hubKeys'
+import { chamberKey, legacyHubIdFor } from '../lib/hubKeys'
 
 const creds: Credentials = { token: 'k', name: 'me', role: 'owner' }
 
@@ -633,7 +633,7 @@ describe('app mode (multi-hub)', () => {
 
   test('app mode migrates URL-keyed cached rows to the URL+token access id', () => {
     const { a } = twoHubs()
-    const oldId = 'deadbeef'
+    const oldId = legacyHubIdFor(a.url)
     const oldKey = chamberKey(oldId, 'x')
     const message = { ...msg(1), chamberId: oldKey }
     localStorage.setItem(
@@ -652,6 +652,32 @@ describe('app mode (multi-hub)', () => {
     expect(state.chambers.map((c) => c.id)).toEqual([key])
     expect(state.messagesByChamber[key]?.[0].chamberId).toBe(key)
     expect(state.lastReadByChamber).toEqual({ [key]: 'mark' })
+  })
+
+  test('cache migration preserves current ids for two aliases sharing one token', () => {
+    const first = makeHubAccount({
+      url: 'http://a.local:1', token: 'shared', trust: { kind: 'plain-http' },
+    })
+    const alias = makeHubAccount({
+      url: 'http://alias.local:1', token: 'shared', trust: { kind: 'plain-http' },
+    })
+    const firstChamber = hubChamber(first.id, 'x')
+    const aliasChamber = hubChamber(alias.id, 'y')
+    localStorage.setItem(
+      cacheKey({ token: first.token }),
+      JSON.stringify({
+        chambers: [firstChamber, aliasChamber],
+        messagesByChamber: {},
+        lastReadByChamber: {},
+      }),
+    )
+
+    enterAppMode(first, alias)
+
+    expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual([
+      firstChamber.id,
+      aliasChamber.id,
+    ])
   })
 
   test('a hub with no cache contributes nothing and does not break the others', () => {

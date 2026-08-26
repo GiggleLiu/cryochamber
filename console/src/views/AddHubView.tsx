@@ -64,10 +64,17 @@ function verificationClient(account: HubAccount): HubClient {
 /** Adding a hub is the app's whole onboarding: an address, a token, and — for
  * a hub reached over plain HTTP — an explicit acknowledgement that everything
  * between here and it travels in the clear. */
-export function AddHubView({ onAdded }: { onAdded?: () => void }) {
+export function AddHubView({
+  onAdded,
+  initialLink = '',
+}: {
+  onAdded?: () => void
+  initialLink?: string
+}) {
+  const initial = parseInviteLink(initialLink)
   const [link, setLink] = useState('')
-  const [url, setUrl] = useState('')
-  const [token, setToken] = useState('')
+  const [url, setUrl] = useState(initial?.url ?? '')
+  const [token, setToken] = useState(initial?.token ?? '')
   const [label, setLabel] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
@@ -205,8 +212,8 @@ export function AddHubView({ onAdded }: { onAdded?: () => void }) {
     <div className="login-screen">
       <div className="login-head">
         <Logo className="login-mark" />
-        <h1>Add a hub</h1>
-        <p className="login-tagline">Point the app at a chamber hub and its access token.</p>
+        <h1>Add a chamber</h1>
+        <p className="login-tagline">Paste an admin or invite link to add the chambers it can access.</p>
       </div>
 
       {(error ?? bootError) && (
@@ -218,7 +225,7 @@ export function AddHubView({ onAdded }: { onAdded?: () => void }) {
 
       <form className="login" onSubmit={submit}>
         <label className="field">
-          <span>Invite link</span>
+          <span>Admin or invite link</span>
           <input
             type="text"
             autoComplete="off"
@@ -296,7 +303,7 @@ export function AddHubView({ onAdded }: { onAdded?: () => void }) {
         )}
 
         <button className="btn-primary" type="submit" disabled={!ready || busy}>
-          {busy ? 'Connecting…' : 'Add hub'}
+          {busy ? 'Connecting…' : 'Add chamber'}
         </button>
       </form>
       <p className="login-hint">
@@ -326,7 +333,7 @@ export function AddHubView({ onAdded }: { onAdded?: () => void }) {
             </p>
             <div className="pin-actions">
               <button className="btn-primary" type="button" onClick={confirmPin} disabled={busy}>
-                {busy ? 'Adding…' : 'Add hub anyway'}
+                {busy ? 'Adding…' : 'Add chamber anyway'}
               </button>
               <button
                 className="btn-quiet"

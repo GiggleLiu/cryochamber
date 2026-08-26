@@ -11,6 +11,9 @@ interface TauriGlobal {
     // handed to a command as an argument.
     Channel?: new () => TauriChannel<unknown>
   }
+  event?: {
+    listen: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>
+  }
   http?: { fetch: typeof fetch }
   store?: { load: (file: string) => Promise<TauriStore> }
 }
@@ -35,6 +38,15 @@ function tauriGlobal(): TauriGlobal {
 
 export function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return tauriGlobal().core.invoke(cmd, args) as Promise<T>
+}
+
+export function tauriListen<T>(
+  event: string,
+  handler: (event: { payload: T }) => void,
+): Promise<() => void> {
+  const events = tauriGlobal().event
+  if (!events) throw new Error('Tauri runtime not available')
+  return events.listen(event, handler)
 }
 
 /** A channel a Rust command can push messages down, with the handler attached

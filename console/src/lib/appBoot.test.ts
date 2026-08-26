@@ -1,4 +1,5 @@
 import {
+  appAccessLink,
   bootApp,
   HUB_LOAD_ERROR,
   makeClientFactory,
@@ -36,11 +37,23 @@ describe('parseInviteLink', () => {
     })
   })
 
+  it('round-trips an app link without putting the token in its query', () => {
+    const token = 'c'.repeat(32)
+    const link = appAccessLink('https://box.example/console/', token)
+    expect(link).toContain('cryochamber://add?hub=')
+    expect(new URL(link).search).not.toContain(token)
+    expect(parseInviteLink(link)).toEqual({ url: 'https://box.example/console', token })
+  })
+
   it('rejects links without a plausible token', () => {
     expect(parseInviteLink('http://hub.local:8765/#invite=xyz')).toBeNull()
     expect(parseInviteLink('not a link')).toBeNull()
     expect(parseInviteLink('http://hub.local:8765/')).toBeNull()
     expect(parseInviteLink('ftp://hub.local/#invite=' + 'a'.repeat(32))).toBeNull()
+    expect(parseInviteLink('cryochamber://add#invite=' + 'a'.repeat(32))).toBeNull()
+    expect(
+      parseInviteLink('cryochamber://add?hub=ftp%3A%2F%2Fhub.local#invite=' + 'a'.repeat(32)),
+    ).toBeNull()
   })
 })
 

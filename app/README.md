@@ -84,11 +84,11 @@ cryohub start                # binds 127.0.0.1:8765 by default
 cryohub token owner          # prints the bearer token; paste it into the app
 ```
 
-In the app's Add Hub screen, enter `http://127.0.0.1:8765` and the token.
+In the app's Add chamber screen, enter `http://127.0.0.1:8765` and the token.
 
 - [ ] A warning appears as soon as the address is plain HTTP: *"This hub is
       plain HTTP. The token and every message you send it travel unencrypted…"*
-- [ ] **Add hub** stays disabled until the *"I understand traffic to this hub is
+- [ ] **Add chamber** stays disabled until the *"I understand traffic to this hub is
       unencrypted"* checkbox is ticked.
 - [ ] Editing the address clears the tick (the acknowledgement is about one
       host, not about the form).
@@ -128,14 +128,14 @@ Now add `https://localhost:8443` with the same token.
       group (the sheet formats it as colon-separated uppercase hex for exactly
       this comparison).
 - [ ] **Cancel** adds nothing — the hub does not appear in the list.
-- [ ] **Add hub anyway** adds it, and the chamber list, message stream, and
+- [ ] **Add chamber anyway** adds it, and the chamber list, message stream, and
       image attachments all load over the pinned connection.
 - [ ] Restart `socat` with a *freshly generated* certificate (repeat the
       `openssl req` line) and reopen the app: the hub now fails to connect
       rather than silently trusting the new certificate. Re-pin by removing and
       re-adding the hub.
 
-### 3. Two hubs live — merged list, chips, and one hub dying
+### 3. Two hubs live — owned/joined lists and one hub dying
 
 Keep the hub from item 1 and add a second. A real hub on another host is the
 most faithful test; a second `cryohub` on this machine works too, given its own
@@ -153,8 +153,8 @@ XDG_CONFIG_HOME=/tmp/hub2/config XDG_STATE_HOME=/tmp/hub2/state cryohub token ow
 `--foreground` keeps it out of launchd, so Ctrl-C is the kill in the step
 below and nothing is left installed afterwards.
 
-- [ ] The chamber list shows chambers from **both** hubs, merged and sorted
-      together.
+- [ ] The chamber list shows chambers from **both** hubs under **Owned** and
+      **Joined** according to each saved token.
 - [ ] Every row carries a hub chip naming its hub (chips only appear once more
       than one hub is configured — a chip repeating the same word on every row
       would be noise).
@@ -168,6 +168,8 @@ below and nothing is left installed afterwards.
       updating. One hub down is not the app down.
 - [ ] Restart the killed hub: its rows recover to normal on their own, with no
       app restart and no re-entry of the token.
+- [ ] Add another token for a hub already present. Its chambers appear without
+      removing any chamber from the first token's scope.
 
 ### 4. Cold restart — hubs and tokens persist, caches hydrate
 

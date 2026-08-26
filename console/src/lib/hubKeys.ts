@@ -18,6 +18,12 @@ export function hubIdFor(url: string, token: string): string {
   return fnv1a(`${normalizeHubUrl(url)}\n${token}`).toString(16).padStart(8, '0')
 }
 
+/** URL-only id written by app versions before access tokens became separate
+ * records. Kept only so their local caches can be re-keyed once at boot. */
+export function legacyHubIdFor(url: string): string {
+  return fnv1a(normalizeHubUrl(url)).toString(16).padStart(8, '0')
+}
+
 const KEY_RE = /^([0-9a-f]{8}):([\s\S]*)$/
 
 /** The console-side chamber key. Browser mode (`hubId === ''`) is the

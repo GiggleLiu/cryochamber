@@ -88,7 +88,7 @@ test('a hub URL and a token are enough to add a hub', async () => {
   render(<AddHubView onAdded={onAdded} />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'https://hub.example')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
   const [hub] = useAppStore.getState().hubs
@@ -114,7 +114,7 @@ test('an optional label names the hub in place of its host', async () => {
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'https://hub.example')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
   await userEvent.type(screen.getByLabelText(/label/i), 'Lab box')
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
   await waitFor(() => expect(useAppStore.getState().hubs[0]?.label).toBe('Lab box'))
 })
 
@@ -123,12 +123,12 @@ test('a plain-http hub is added only after the risk is acknowledged', async () =
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'http://hub.local:8765')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  expect(screen.getByRole('button', { name: /add hub/i })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /add chamber/i })).toBeDisabled()
 
   await userEvent.click(
     screen.getByRole('checkbox', { name: /traffic to this hub is unencrypted/i }),
   )
-  const submit = screen.getByRole('button', { name: /add hub/i })
+  const submit = screen.getByRole('button', { name: /add chamber/i })
   expect(submit).toBeEnabled()
   await userEvent.click(submit)
 
@@ -143,12 +143,12 @@ test('a single-slash http address is still plain HTTP, warning and all', async (
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'http:/hub.local')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  expect(screen.getByRole('button', { name: /add hub/i })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /add chamber/i })).toBeDisabled()
 
   await userEvent.click(
     screen.getByRole('checkbox', { name: /traffic to this hub is unencrypted/i }),
   )
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
   expect(useAppStore.getState().hubs[0].trust).toEqual({ kind: 'plain-http' })
@@ -163,7 +163,7 @@ test('an address with a scheme the app cannot speak is refused in plain words', 
   // "Hub URLs must be http or https, got …".
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'hub.local:8765')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Enter an http:// or https:// hub address.',
@@ -182,7 +182,7 @@ test('changing the address asks for the acknowledgement again', async () => {
   )
   // The box was ticked for one host; it cannot carry over to another.
   await userEvent.type(screen.getByLabelText(/hub address/i), '9')
-  expect(screen.getByRole('button', { name: /add hub/i })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /add chamber/i })).toBeDisabled()
 })
 
 test('a rejected token is said in the hub’s own terms and adds nothing', async () => {
@@ -190,7 +190,7 @@ test('a rejected token is said in the hub’s own terms and adds nothing', async
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'https://hub.example')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   expect(await screen.findByRole('alert')).toHaveTextContent('The hub rejected this token')
   expect(useAppStore.getState().hubs).toEqual([])
@@ -209,7 +209,7 @@ test('a rejected candidate does not mark the saved hub with that URL offline', a
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), saved.url)
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   expect(await screen.findByRole('alert')).toHaveTextContent(REJECTED_TOKEN_ERROR)
   expect(useAppStore.getState().connectionByHub[saved.id]).toBe('live')
@@ -224,7 +224,7 @@ test('an unreachable hub shows what went wrong and adds nothing', async () => {
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'https://hub.example')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/Failed to fetch/)
   expect(useAppStore.getState().hubs).toEqual([])
@@ -257,18 +257,18 @@ test('a hub address that is not a URL is refused before anything is asked of it'
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'hub.example')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
   expect(await screen.findByRole('alert')).toBeInTheDocument()
   expect(useAppStore.getState().hubs).toEqual([])
   expect(fetchMock).not.toHaveBeenCalled()
 })
 
-/** Fill in the form and press Add hub. */
+/** Fill in the form and press Add chamber. */
 async function addHub(url: string) {
   render(<AddHubView />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), url)
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 }
 
 test('a certificate the system does not trust is offered for pinning, not silently taken', async () => {
@@ -284,7 +284,7 @@ test('a certificate the system does not trust is offered for pinning, not silent
   expect(useAppStore.getState().hubs).toEqual([])
   expect(pinnedRequests()).toEqual([])
 
-  await userEvent.click(screen.getByRole('button', { name: /add hub anyway/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber anyway/i }))
   await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
   const [hub] = useAppStore.getState().hubs
   expect(hub.trust).toEqual({ kind: 'pinned', sha256: FINGERPRINT })
@@ -310,7 +310,7 @@ test('a certificate the system does not trust is offered for pinning, not silent
 test('a pinned hub that rejects the token adds nothing', async () => {
   await bootPinned(() => pinnedAnswer('', 401))
   await addHub('https://hub.example')
-  await userEvent.click(await screen.findByRole('button', { name: /add hub anyway/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /add chamber anyway/i }))
 
   // The fingerprint was right and the token was not: the same sentence the
   // unpinned path gives, because it is the same mistake.
@@ -323,7 +323,7 @@ test('a pinned hub that cannot be reached after the pin is confirmed adds nothin
     throw new Error('This hub is presenting a different certificate than the one you pinned.')
   })
   await addHub('https://hub.example')
-  await userEvent.click(await screen.findByRole('button', { name: /add hub anyway/i }))
+  await userEvent.click(await screen.findByRole('button', { name: /add chamber anyway/i }))
 
   // A hub that answers nothing is not a hub to store: the certificate the
   // probe saw is no promise that the address works.
@@ -342,7 +342,7 @@ test('the form behind an open pin sheet cannot be submitted again', async () => 
   // The form is still in the document behind the sheet, and a keyboard user can
   // reach its button: pressing it must not probe again or stack a second
   // question on top of the one already asked.
-  await userEvent.click(screen.getByRole('button', { name: 'Add hub' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Add chamber' }))
   expect(invoke).toHaveBeenCalledTimes(1)
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
 })
@@ -384,7 +384,7 @@ test('a plain-http hub is never probed — the checkbox is its whole trust decis
   await userEvent.click(
     screen.getByRole('checkbox', { name: /traffic to this hub is unencrypted/i }),
   )
-  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+  await userEvent.click(screen.getByRole('button', { name: /add chamber/i }))
 
   await waitFor(() => expect(useAppStore.getState().hubs).toHaveLength(1))
   expect(invoke).not.toHaveBeenCalled()

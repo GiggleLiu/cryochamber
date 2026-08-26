@@ -2,7 +2,7 @@
 
 **Cryochamber App** 是把 hub 在浏览器里提供的那个 [Agent
 Console](./agent-console.md) 装进原生窗口的版本。它存在的理由只有一个——浏览器做不到的事：
-它能**同时持有多个 hub**，合并成一份 chamber 列表，并且每个 hub 的请求都走操作系统的网络栈，
+它能**同时持有多份访问链接**，把 chamber 分为 Owned 与 Joined，并且每个 hub 的请求都走操作系统的网络栈，
 而不是页面自身的 origin。
 
 hub 这边什么都不变。hub 提供的网页控制台还在原处——用浏览器打开
@@ -27,7 +27,8 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 
 1. 从 release 页面下载 `cryochamber-vX.Y.Z-android-arm64.apk`。
 2. 打开文件；Android 提示时，允许浏览器或文件管理器*安装未知应用*，然后返回并安装 APK。
-3. 填入 hub 地址和访问 token，或把邀请链接粘贴到 *Invite link*。
+3. 填入 hub 地址和访问 token，或把管理员/邀请链接粘贴到 *Admin or invite link*。
+4. `cryochamber://` 链接会直接打开 App。普通网页邀请链接可通过 Android 的**分享**操作发送给 Cryochamber。
 
 该 APK 支持 Android 7 及以上的 arm64 设备。它有正式签名，但通过 GitHub 而不是 Google Play 分发。
 
@@ -40,7 +41,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
    Control-点击）该 App → **打开** → **打开**。macOS 会记住这个决定，之后就能正常启动了。
    在 **macOS 15（Sequoia）及以后**的版本上，右键绕过的路子已经没有了——先让首次启动被拒绝，
    然后到*系统设置 → 隐私与安全性 → **仍要打开***中放行该 App。
-3. 填入 hub 地址和访问 token，或把邀请链接粘贴到 *Invite link*。
+3. 填入 hub 地址和访问 token，或把管理员/邀请链接粘贴到 *Admin or invite link*。
 
 仅支持 Apple Silicon。公证尚未完成，在完成之前本页会一直这样写着。
 
@@ -52,7 +53,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 **系统已信任其证书的 HTTPS。** 什么都不问。这就是挂在反向代理后、持有真实证书的 hub
 （[控制台指南里的 Caddy 配置](./agent-console.md#公网部署在外用手机访问)），也是应当追求的情况。
 
-**明文 `http://`。** 只要你输入的是明文地址，地址下方立刻出现警告，并且 **Add hub**
+**明文 `http://`。** 只要你输入的是明文地址，地址下方立刻出现警告，并且 **Add chamber**
 按钮保持禁用，直到你勾选 *「I understand traffic to this hub is unencrypted」*
 （我明白发往此 hub 的流量未加密）。字面含义是：token 和你发送的每一条消息，在设备与 hub
 之间的任何一环上都是可读的。在自己机器上（`http://127.0.0.1:8765`）这个「任何一环」是空的，
@@ -74,20 +75,23 @@ openssl s_client -connect hub.example:8443 </dev/null 2>/dev/null \
 ```
 
 面板正是采用这种分组方式，好让两者可以一组一组地对读，而不是把 64 个字符当成一整串去瞪。
-如果一致，**Add hub anyway** 会从此把*那一张*证书钉死（pin）在*那一个* hub 上。
+如果一致，**Add chamber anyway** 会从此把*那一张*证书钉死（pin）在*那一个* hub 上。
 如果不一致，那么是别人在冒充这个 hub——**Cancel** 不会存下任何东西。
 
 被钉死的 hub 之后若换了另一张证书，连接会直接失败，而不是悄悄信任新证书。当运维者正常更换证书时，
-在 *Settings → Hubs* 中移除该 hub 再重新添加，即可重新钉定。
+在 *Settings → Chamber access* 中移除该访问记录再重新添加，即可重新钉定。
 
-## 同时使用多个 hub
+## 同时保存多份 chamber 访问
 
-*Settings → Hubs* 列出 App 记住的每一个 hub——标签、地址、当前 token 在该 hub
-上是 Owner 还是 Guest、以及该 hub 的 `cryohub` 版本——底部是 **Add hub**，每一行上是 **Remove**。
+*Settings → Chamber access* 列出 App 记住的每一份访问——标签、hub 地址、当前 token
+是 Owner 还是 Guest、以及该 hub 的 `cryohub` 版本——底部是 **Add chamber**，每一行上是
+**Remove**。即使两个 token 指向同一个 hub，也会同时保留；新加入的范围不会覆盖之前保存的 chamber。
 
-当配置了不止一个 hub 时，chamber 列表会变成跨所有 hub 合并的一份列表，每一行都会多出一个
-**hub 标签片（chip）**，标明它来自哪个 hub。（只有一个 hub 时标签片会被隐藏；每行重复同一个词
-只是噪音。）未读计数、草稿和已读水位都按 hub 分开保存，彼此不会串。
+主列表分为 **Owned** 和 **Joined**。如果同一个 hub 的管理员 token 与邀请 token 都能看到同一个
+chamber，App 只在 Owned 中显示一次，并保留管理员控制。未读计数、草稿和已读水位按每份访问分开保存。
+
+Owner 可以使用 *Settings → Chambers → Copy admin link*。App 会先警告，因为拿到该链接的人可以
+管理所选 hub 上的全部 chamber。复制出的 `cryochamber://` 链接会直接打开添加 chamber 表单。
 
 各个 hub 独立失败。某个 hub 不再应答时，它那些行的标签片会显示 **· unreachable**
 并变灰——该行仍然展示这个 hub 最后说过的话，而不是消失——与此同时其他每个 hub
@@ -108,5 +112,5 @@ Hub 账号保存在 App 自己的私有数据目录里，而不是浏览器存�
 - **Android：** 直接覆盖安装新版 APK。各版本使用同一签名密钥，所以 Android 会保留 App 的 hub 存储。
 
 hub 自身是单独升级的（`cargo install cryochamber`，然后 `cryohub restart`）。
-如果某个 hub 比 App 旧，*Settings → Hubs* 会在该 hub 那一行注明——
+如果某个 hub 比 App 旧，*Settings → Chamber access* 会在该 hub 那一行注明——
 *「hub is older — some features may be missing」*。
