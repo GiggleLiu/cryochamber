@@ -75,3 +75,9 @@ jobs:
             -path '*/release/*' -name '*.apk' ! -name '*unsigned*' | head -1)"
           test -n "$apk" || { echo "::error::no signed release APK found"; exit 1; }
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"
+          cp "$apk" cryochamber-android-arm64.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cryochamber-android-arm64-test
+          path: cryochamber-android-arm64.apk
