@@ -153,9 +153,10 @@ jobs:
           java-version: '17'
 
       - name: Install Android SDK packages
-        run: >-
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.13846066'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.13846066'
 
       - uses: actions/setup-node@v4
         with:
