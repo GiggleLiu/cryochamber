@@ -193,6 +193,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
+          # Fail with words before writing anything: an empty secret would
+          # otherwise produce a zero-byte keystore and a blank password, and
+          # gradle would report it as an opaque signing failure.
+          for v in KEYSTORE_B64 KEY_ALIAS KEYSTORE_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Secret ANDROID_${v} is unset or empty — set it with 'gh secret set ANDROID_${v}' (see app/README.md, 'Android release: first-time setup (maintainer)')"
+              exit 1
+            fi
+          done
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           props=app/src-tauri/gen/android/keystore.properties
           printf 'keyAlias=%s\n' "$KEY_ALIAS" > "$props"

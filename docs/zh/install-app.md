@@ -44,6 +44,8 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 2. **首次启动需要右键。** 该构建使用 ad-hoc 签名，且**未做公证（notarization）**，
    所以双击只会得到*「无法打开，因为无法验证开发者」*。在 *应用程序* 里右键（或
    Control-点击）该 App → **打开** → **打开**。macOS 会记住这个决定，之后就能正常启动了。
+   在 **macOS 15（Sequoia）及以后**的版本上，右键绕过的路子已经没有了——先让首次启动被拒绝，
+   然后到*系统设置 → 隐私与安全性 → **仍要打开***中放行该 App。
 3. 添加 hub 的方式与 Android 相同。
 
 仅支持 Apple Silicon。公证尚未完成，在完成之前本页会一直这样写着。

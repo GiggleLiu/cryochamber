@@ -51,7 +51,9 @@ install it.
    **not notarized**, so double-clicking it gets you *"cannot be opened because
    the developer cannot be verified"*. Right-click (or Control-click) the app in
    *Applications* → **Open** → **Open**. macOS remembers the decision;
-   afterwards it launches normally.
+   afterwards it launches normally. On **macOS 15 (Sequoia) and later** that
+   right-click bypass is gone — let the first launch be refused, then approve
+   the app under *System Settings → Privacy & Security → **Open Anyway***.
 3. Add a hub the same way as on Android.
 
 Apple Silicon only. Notarization is not done yet, and this page will say so

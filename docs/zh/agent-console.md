@@ -99,7 +99,7 @@ cryohub token revoke alice
 - **iOS / Safari：** *分享 → 添加到主屏幕*。
 - **macOS：** Chrome *安装*，或 Safari *文件 → 添加到程序坞*。
 
-安装的应用绑定到提供它的那个 hub——一次安装对应一个 hub。更新随 hub 到来：`cargo install cryochamber` 升级并 `cryohub restart` 之后，打开的应用会显示 *Update available · Reload* 提示条。
+安装的应用绑定到提供它的那个 hub——一次安装对应一个 hub。原生 App 解除了这个限制，可以把多个 hub 合并成一份列表，参见[安装 App](./install-app.md)。更新随 hub 到来：`cargo install cryochamber` 升级并 `cryohub restart` 之后，打开的应用会显示 *Update available · Reload* 提示条。
 
 **没有推送通知**，这是有意为之：应用只在打开时同步。它是一个你主动查看的控制台，不是寻呼机。
 
