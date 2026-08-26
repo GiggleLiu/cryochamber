@@ -43,12 +43,13 @@ macOS bundle.
 
 ## Make targets
 
-Run all three from the repository root.
+Run them from the repository root.
 
 | Target | What it does |
 | --- | --- |
 | `make app-dev` | Opens the shell against the Vite dev server (`console` on `:5173`, `strictPort`) with hot reload. The port is strict on purpose: a stale dev server on `:5173` would silently serve a *different* console into the window, so an occupied port fails the run instead. |
 | `make app-macos` | `make console-build`, then `cargo tauri build`. Produces `app/src-tauri/target/release/bundle/macos/Cryochamber.app` and `app/src-tauri/target/release/bundle/dmg/Cryochamber_<version>_aarch64.dmg`. |
+| `make app-android` | `cargo tauri android build --apk --target aarch64`. See [Android release](#android-release) below for the toolchain and signing setup. |
 | `make app-check` | `cargo fmt --check` + `cargo clippy --all-targets -D warnings` + `cargo test`, run inside `app/src-tauri`. The console's own suite is `make console-check`. |
 
 The dmg is **ad-hoc signed** — Tauri's default without a signing identity.

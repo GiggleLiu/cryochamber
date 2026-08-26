@@ -11,6 +11,10 @@ REST API and SSE stream on its own origin. No backend of its own, no database,
 no telemetry. `console/` was imported as a squashed subtree, so `git log
 console/` starts at the import.
 
+The same bundle also runs inside the native shell (multi-hub app mode) behind
+an `isTauri()` gate, with no Tauri npm dependency — see
+[`app/README.md`](../app/README.md).
+
 <p align="center">
   <img src="docs/screenshots/projects.png" alt="Projects list with unread badges" width="260">
   <img src="docs/screenshots/conversation.png" alt="Conversation with chat bubbles and an attached plot" width="260">
@@ -78,13 +82,13 @@ network-first.
 ## Project layout
 
 ```
-src/api/             hub client (typed methods, ApiError), SSE reader, types
-src/store/           app state (Zustand), credential storage, local cache
-src/hooks/           the event loop (one SSE stream, backoff, resync)
+src/api/             hub client (typed methods, ApiError), hub router (one client per saved hub in app mode), SSE reader, types
+src/store/           app state (Zustand), hub accounts, credential storage, local cache
+src/hooks/           the event loop (one SSE stream per hub, backoff, resync)
 src/components/      MessageBody + sanitizer, Composer, Sheet, UpdateBar, icons
-src/views/           Login, Projects, Conversation, Settings, Invite, Controls, New chamber
+src/views/           Login, Projects, Conversation, Settings, Invite, Controls, New chamber, Add chamber (app mode)
 src/views/controls/  the Controls sheet's tabs: todos, plan/notes, sync, settings, log
-src/lib/             markdown+KaTeX renderer, theme, outbox, SW update flow, helpers
+src/lib/             markdown+KaTeX renderer, theme, outbox, SW update flow, Tauri seam (native store, pinned fetch), helpers
 src/styles.css       the design system (tokens first, then components, then dark)
 public/sw.js         service worker: precache list, cache-first assets, update prompt
 e2e/                 Playwright: smoke + layout contract, hub flows, screenshot harness
