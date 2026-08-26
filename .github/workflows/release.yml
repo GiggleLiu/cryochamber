@@ -165,7 +165,7 @@ jobs:
           cache-dependency-path: console/package-lock.json
 
       - name: Install tauri-cli
-        run: npm install -g @tauri-apps/cli@2.11.4
+        run: cargo install tauri-cli --version 2.11.4 --locked
 
       - name: Configure release signing
         env:
@@ -185,7 +185,7 @@ jobs:
         run: |
           export NDK_HOME="$ANDROID_HOME/ndk/29.0.13846066"
           cd app/src-tauri
-          tauri android build --apk --target aarch64
+          cargo tauri android build --apk --target aarch64
 
       - name: Verify and collect APK
         run: |
@@ -222,7 +222,7 @@ jobs:
           cache-dependency-path: console/package-lock.json
 
       - name: Install tauri-cli
-        run: npm install -g @tauri-apps/cli@2.11.4
+        run: cargo install tauri-cli --version 2.11.4 --locked
 
       # Ad-hoc signed (no identity configured): users right-click-open on
       # first launch. Notarization is deliberately deferred — see the spec.
@@ -231,7 +231,7 @@ jobs:
       # once the bundle has been rewritten, so it must be re-signed before
       # any container — zip or dmg — is packaged around it.
       - name: Build app
-        run: cd app/src-tauri && tauri build --bundles app
+        run: cd app/src-tauri && cargo tauri build --bundles app
 
       - name: Ad-hoc sign the app bundle and package both artifacts
         run: |

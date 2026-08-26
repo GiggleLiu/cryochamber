@@ -53,7 +53,7 @@ jobs:
           cache-dependency-path: console/package-lock.json
 
       - name: Install tauri-cli
-        run: npm install -g @tauri-apps/cli@2.11.4
+        run: cargo install tauri-cli --version 2.11.4 --locked
 
       # A throwaway key exercises release signing without exposing repository secrets.
       - name: Configure test signing
@@ -68,7 +68,7 @@ jobs:
         run: |
           export NDK_HOME="$ANDROID_HOME/ndk/29.0.13846066"
           cd app/src-tauri
-          tauri android build --apk --target aarch64
+          cargo tauri android build --apk --target aarch64
 
       - name: Verify APK signature
         run: |
