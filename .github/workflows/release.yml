@@ -128,6 +128,73 @@ jobs:
       - name: Publish crate
         run: cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+  # Build one signed arm64 APK and attach it to the GitHub release.
+  build-android:
+    name: Android APK
+    needs: [verify, create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.13846066'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install tauri-cli
+        run: npm install -g @tauri-apps/cli@2.11.4
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          for value in KEYSTORE_B64 KEY_ALIAS KEYSTORE_PASSWORD; do
+            test -n "${!value}" || { echo "::error::${value} is unset"; exit 1; }
+          done
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'keyAlias=%s\npassword=%s\nstoreFile=%s\n' \
+            "$KEY_ALIAS" "$KEYSTORE_PASSWORD" "$RUNNER_TEMP/release.jks" \
+            > app/src-tauri/gen/android/keystore.properties
+
+      - name: Build signed APK
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/29.0.13846066"
+          cd app/src-tauri
+          tauri android build --apk --target aarch64
+
+      - name: Verify and collect APK
+        run: |
+          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk \
+            -path '*/release/*' -name '*.apk' ! -name '*unsigned*' | head -1)"
+          test -n "$apk" || { echo "::error::no signed release APK found"; exit 1; }
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"
+          cp "$apk" "cryochamber-${GITHUB_REF_NAME}-android-arm64.apk"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: cryochamber-${{ github.ref_name }}-android-arm64.apk
+
   # Build the macOS bundle from the native shell and attach it to the release.
   build-macos:
     name: macOS app

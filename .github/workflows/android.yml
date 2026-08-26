@@ -1,0 +1,68 @@
+name: Android
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'console/**'
+      - '.github/workflows/android.yml'
+      - '.github/workflows/release.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  apk:
+    name: Build signed arm64 APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          cache-bin: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.13846066'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install tauri-cli
+        run: npm install -g @tauri-apps/cli@2.11.4
+
+      # A throwaway key exercises release signing without exposing repository secrets.
+      - name: Configure test signing
+        run: |
+          keytool -genkeypair -noprompt -storetype JKS \
+            -keystore "$RUNNER_TEMP/test.jks" -storepass android-ci -keypass android-ci \
+            -alias ci -keyalg RSA -keysize 2048 -validity 1 -dname 'CN=CI'
+          printf 'keyAlias=ci\npassword=android-ci\nstoreFile=%s\n' \
+            "$RUNNER_TEMP/test.jks" > app/src-tauri/gen/android/keystore.properties
+
+      - name: Build release APK
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/29.0.13846066"
+          cd app/src-tauri
+          tauri android build --apk --target aarch64
+
+      - name: Verify APK signature
+        run: |
+          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk \
+            -path '*/release/*' -name '*.apk' ! -name '*unsigned*' | head -1)"
+          test -n "$apk" || { echo "::error::no signed release APK found"; exit 1; }
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"

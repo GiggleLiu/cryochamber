@@ -16,6 +16,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases):
 
 | File | For |
 |---|---|
+| `cryochamber-vX.Y.Z-android-arm64.apk` | 64-bit ARM Android phones and tablets |
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | macOS on Apple Silicon |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | the same app, zipped, if you would rather not mount a disk image |
 
@@ -24,8 +25,18 @@ original packaging; the `.app.zip` is a fallback whose `.app` is re-sealed with
 a full `codesign --deep -s -` before zipping, for anyone who would rather not
 mount a disk image.
 
-There is no Android, App Store, Windows, or Intel Mac build yet. What is above
+There is no Play Store, App Store, Windows, or Intel Mac build. What is above
 is what exists.
+
+## Android
+
+1. Download `cryochamber-vX.Y.Z-android-arm64.apk` from the release page.
+2. Open it and allow *Install unknown apps* for the browser or file manager when
+   Android asks. Return to the APK and install it.
+3. Enter a hub address and access token, or paste an invite link into *Invite link*.
+
+The APK supports arm64 devices running Android 7 or later. It is signed, but it
+is distributed directly through GitHub rather than Google Play.
 
 ## macOS
 
@@ -121,6 +132,8 @@ build and install it over the old one.
 - **macOS:** replace *Cryochamber* in *Applications*. The hub store lives
   outside the bundle and is untouched. The right-click gesture may be needed
   again for the newly downloaded copy.
+- **Android:** install the newer APK over the old one. The signing key stays the
+  same, so Android treats it as an update and preserves the app's hub store.
 
 The hubs themselves upgrade separately (`cargo install cryochamber`, then
 `cryohub restart`). If a hub is older than the app, *Settings → Hubs* says so

@@ -201,184 +201,57 @@ $ codesign -dv Cryochamber.app 2>&1 | grep -i signature
 Signature=adhoc
 ```
 
-## Android release: first-time setup (maintainer)
+## Android release
 
-The Android project and its CI job should land together after a maintainer with
-the Android toolchain completes these steps. Until then, releases contain only
-the macOS app.
+The generated Gradle project is committed under `app/src-tauri/gen/android`.
+Tagged releases build one signed arm64 APK and attach it to the GitHub release.
+The app allows plain HTTP because adding such a hub requires an explicit warning
+and acknowledgement.
 
-### 1. Prerequisites
+### Signing identity
 
-- Android Studio, or the command-line tools, with **SDK 34+** and **NDK 27+**.
-- **JDK 17** — the version CI uses (`temurin` 17).
-- `ANDROID_HOME` and `NDK_HOME` exported and pointing at them.
-- All four Android Rust targets, even though the release builds only arm64:
-  `tauri-cli` checks for the whole set before it starts.
+The maintainer copy is outside the repository:
 
-```bash
-rustup target add aarch64-linux-android armv7-linux-androideabi \
-  i686-linux-android x86_64-linux-android
-```
+- keystore: `~/.config/cryochamber/android-release.jks`
+- alias: `cryochamber`
+- password: macOS Keychain service
+  `com.cryochamber.console.android-keystore`
+- CI copies: `ANDROID_KEYSTORE_B64`, `ANDROID_KEY_ALIAS`, and
+  `ANDROID_KEYSTORE_PASSWORD` GitHub Secrets
 
-Plus the Tauri CLI from the [Prerequisite](#prerequisite) section above.
+Back up the keystore file somewhere outside this machine. Never replace it:
+Android accepts an APK as an update only when it has the same signer, and
+uninstalling the old app discards its hub store.
 
-### 2. Generate the Android project
+### Local build
 
-```bash
-cd app/src-tauri && cargo tauri android init
-```
-
-This writes `app/src-tauri/gen/android` — a Gradle project that gets
-**committed**. Its `applicationId` is **`com.cryochamber.console`**, taken from
-`tauri.conf.json`'s `identifier`. (An early plan draft said
-`com.cryochamber.app`; that is wrong — the id must match the identifier.)
-
-### 3. Narrow `app/.gitignore`
-
-`app/.gitignore` currently ignores `src-tauri/gen/` wholesale, which would
-swallow the project you just generated. **Replace that one line** with the
-rules below. A `!` negation would not work here: git does not descend into an
-ignored directory, so re-including files under it has no effect — the ignore
-has to be narrowed rather than undone.
-
-```
-src-tauri/target/
-src-tauri/gen/schemas/
-src-tauri/gen/apple/
-src-tauri/gen/android/.gradle/
-src-tauri/gen/android/app/build/
-src-tauri/gen/android/build/
-src-tauri/gen/android/local.properties
-src-tauri/gen/android/keystore.properties
-*.jks
-```
-
-### 4. Allow cleartext traffic in the manifest
-
-In `app/src-tauri/gen/android/app/src/main/AndroidManifest.xml`, add to the
-`<application>` element:
-
-```xml
-android:usesCleartextTraffic="true"
-```
-
-with the reason above it, so nobody later "fixes" it:
-
-```xml
-<!-- Plain-http hubs are a first-class, user-confirmed case (LAN hubs have no
-     TLS). The app's own per-hub trust sheet is the control; the platform
-     default would silently break exactly the hubs this app exists for. -->
-```
-
-### 5. Wire Gradle release signing
-
-`cargo tauri android init` does **not** generate a signing config — add one by
-hand to `app/src-tauri/gen/android/app/build.gradle.kts`. Every part of it is
-guarded on `keystore.properties` existing, so a contributor without the
-keystore still builds debug-signed. The release CI job can use the same config
-when it lands.
-
-At the top of the file:
-
-```kotlin
-import java.io.FileInputStream
-import java.util.Properties
-
-val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = Properties().apply {
-    if (keystorePropertiesFile.exists()) load(FileInputStream(keystorePropertiesFile))
-}
-```
-
-Inside `android { }`:
-
-```kotlin
-    signingConfigs {
-        if (keystorePropertiesFile.exists()) {
-            create("release") {
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["password"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
-                storePassword = keystoreProperties["password"] as String
-            }
-        }
-    }
-```
-
-And inside the existing `buildTypes { getByName("release") { ... } }`:
-
-```kotlin
-            if (keystorePropertiesFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
-            }
-```
-
-### 6. Create the release keystore
-
-Once, locally, never committed:
+A local Android build needs JDK 17, Android SDK 36, NDK
+`29.0.13846066`, the Tauri CLI, and the arm64 Rust target:
 
 ```bash
-keytool -genkey -v -keystore ~/cryochamber-release.jks -keyalg RSA -keysize 2048 \
-  -validity 10000 -alias cryochamber
+rustup target add aarch64-linux-android
+make app-android
 ```
 
-The password must contain **no newline and no backslash**: it travels through a
-Java `.properties` file (where `\` is an escape character) and through CI's
-`printf`, and either one would quietly turn it into a different password.
-
-**Back the file up**, in a password manager alongside the store password and
-the alias. This key signs every release from now on; Android treats a new APK
-as an upgrade only if the signer is identical, so losing the key forces every
-user to uninstall — discarding their hub store and tokens — before they can
-install again.
-
-### 7. Set the GitHub secrets
-
-```bash
-base64 -i ~/cryochamber-release.jks | gh secret set ANDROID_KEYSTORE_B64
-gh secret set ANDROID_KEYSTORE_PASSWORD    # prompts; paste the store password
-gh secret set ANDROID_KEY_ALIAS --body cryochamber
-```
-
-The future Android release job will require all three.
-
-To exercise the signing path locally before trusting CI with it, write
+To exercise release signing locally, create the ignored
 `app/src-tauri/gen/android/keystore.properties`:
 
-```
+```properties
 keyAlias=cryochamber
-password=<store password>
-storeFile=<absolute path to cryochamber-release.jks>
+password=<password from macOS Keychain>
+storeFile=/absolute/path/to/.config/cryochamber/android-release.jks
 ```
 
-then `cd app/src-tauri && cargo tauri android build --apk --target aarch64` and
-confirm `apksigner verify --print-certs <apk>` names the cryochamber
-certificate. Delete `keystore.properties` afterwards and check `git status` is
-clean — both it and `*.jks` are covered by step 3's rules.
+Then run `make app-android` and verify the result with
+`apksigner verify --print-certs <apk>`. Delete
+`keystore.properties` afterward.
 
-### 8. Verify the CSP on a real device
+### First-device check
 
-Two directives in the shell's content-security-policy take effect only on
-Android and have therefore **never executed on a device**. Check them on the
-first Android run, before the first release:
+Before announcing the first APK:
 
-- [ ] Sign in to a hub from the APK.
-- [ ] Open a conversation containing **both** rendered math and an image
-      attachment — the two features that pull in the fonts, styles, and blob
-      URLs the policy governs.
-- [ ] Watch `adb logcat`, or attach `chrome://inspect` to the WebView, and
-      confirm there is **not one** `Refused to …` line. Any such line is a
-      directive that needs widening before the release, not after.
-
-### 9. Rehearse the release before the real one
-
-Do not let the first APK CI ever builds be a real release:
-
-1. Push an `rc` tag on a fork, or temporarily widen `release.yml`'s tag filter
-   on a branch, so the workflow runs end to end.
-2. Let CI produce the APK and attach it.
-3. Sideload it onto a device and run the [Release smoke
-   checklist](#release-smoke-checklist) above against it — the Tauri seam it
-   covers is untested by anything else, and the APK is a build no one has run.
-4. Add the Android release job with the exact `tauri-cli` version used in the
-   rehearsal.
+- Install it on an arm64 device running Android 7 or later.
+- Add one plain-HTTP hub and one HTTPS hub.
+- Open a conversation containing rendered math and an image attachment.
+- Send a message, restart the app, and confirm both hubs remain.
+- Check `adb logcat` or `chrome://inspect` for CSP errors.

@@ -14,6 +14,7 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 
 | 文件 | 适用于 |
 |---|---|
+| `cryochamber-vX.Y.Z-android-arm64.apk` | 64 位 ARM Android 手机与平板 |
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | Apple Silicon 上的 macOS |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | 同一个 App 的 zip 包，如果你不想挂载磁盘映像 |
 
@@ -21,7 +22,15 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 `.app.zip` 是给不愿挂载磁盘映像的人准备的备选，其中的 `.app` 在压缩前经过一次完整的
 `codesign --deep -s -` 重新封签。
 
-目前还没有 Android、App Store、Windows 或 Intel Mac 构建。上面列出的就是全部。
+目前没有 Play Store、App Store、Windows 或 Intel Mac 构建。上面列出的就是全部。
+
+## Android
+
+1. 从 release 页面下载 `cryochamber-vX.Y.Z-android-arm64.apk`。
+2. 打开文件；Android 提示时，允许浏览器或文件管理器*安装未知应用*，然后返回并安装 APK。
+3. 填入 hub 地址和访问 token，或把邀请链接粘贴到 *Invite link*。
+
+该 APK 支持 Android 7 及以上的 arm64 设备。它有正式签名，但通过 GitHub 而不是 Google Play 分发。
 
 ## macOS
 
@@ -97,6 +106,7 @@ Hub 账号保存在 App 自己的私有数据目录里，而不是浏览器存�
 
 - **macOS：** 替换 *应用程序* 里的 *Cryochamber*。hub 存储位于 App 包之外，不受影响。
   新下载的这一份可能需要再做一次右键打开的动作。
+- **Android：** 直接覆盖安装新版 APK。各版本使用同一签名密钥，所以 Android 会保留 App 的 hub 存储。
 
 hub 自身是单独升级的（`cargo install cryochamber`，然后 `cryohub restart`）。
 如果某个 hub 比 App 旧，*Settings → Hubs* 会在该 hub 那一行注明——

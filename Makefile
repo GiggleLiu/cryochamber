@@ -1,6 +1,6 @@
 # Makefile for cryochamber
 
-.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build console-check app-dev app-macos app-check book book-serve book-deploy copilot-review release
+.PHONY: help build test fmt fmt-check clippy check clean example-clean coverage run-plan logo example example-start-all example-cancel example-hub time check-agent check-round-trip check-service check-mock cli console-build console-check app-dev app-macos app-android app-check book book-serve book-deploy copilot-review release
 
 RUNNER ?= codex
 CLAUDE_MODEL ?= opus
@@ -34,6 +34,7 @@ help:
 	@echo "  console-build  - Build the Agent Console (embedded into cryohub on the next cargo build)"
 	@echo "  app-dev      - Run the native shell against the Vite dev server (requires tauri-cli)"
 	@echo "  app-macos    - Build the macOS app bundle + dmg from the production console build"
+	@echo "  app-android  - Build the arm64 Android APK"
 	@echo "  app-check    - Format + lint + test the native shell crate"
 	@echo "  book         - Build mdbook documentation (en + zh)"
 	@echo "  book-serve   - Build and serve the full book (en + zh) at :3000"
@@ -150,6 +151,10 @@ app-dev:
 # Build the macOS app bundle + dmg; Tauri runs its beforeBuildCommand.
 app-macos:
 	cd app/src-tauri && cargo tauri build
+
+# Build the arm64 Android APK; Tauri runs its beforeBuildCommand.
+app-android:
+	cd app/src-tauri && cargo tauri android build --apk --target aarch64
 
 # Format + lint + test the shell crate
 app-check:

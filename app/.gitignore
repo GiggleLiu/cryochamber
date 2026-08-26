@@ -1,2 +1,4 @@
 src-tauri/target/
-src-tauri/gen/
+src-tauri/gen/schemas/
+src-tauri/gen/apple/
+*.jks
