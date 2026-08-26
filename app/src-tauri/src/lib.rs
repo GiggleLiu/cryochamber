@@ -32,19 +32,19 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building cryochamber app")
-        .run(|app, event| {
+        .run(|_app, _event| {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-            if let tauri::RunEvent::Opened { urls } = event {
+            if let tauri::RunEvent::Opened { urls } = _event {
                 let urls = urls
                     .into_iter()
                     .map(|url| url.to_string())
                     .collect::<Vec<_>>();
-                app.state::<OpenedUrls>()
+                _app.state::<OpenedUrls>()
                     .0
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .extend(urls.clone());
-                let _ = app.emit("open-urls", urls);
+                let _ = _app.emit("open-urls", urls);
             }
         });
 }
