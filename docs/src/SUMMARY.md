@@ -2,6 +2,7 @@
 
 [Introduction](./introduction.md)
 
+- [Getting started](./getting-started.md)
 - [How it works](./how-it-works.md)
 - [Agent Console](./agent-console.md)
 - [Installing the app](./install-app.md)

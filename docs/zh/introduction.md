@@ -45,6 +45,7 @@ cryohub start    # 打印本地仪表盘 URL——在浏览器中打开
 
 ## 下一步
 
+- [快速上手](./getting-started.md)——从零到一个运行中的 hub：安装 Pi、建一个照看主机的第一个 chamber、分享给朋友。
 - [工作原理](./how-it-works.md)——五分钟讲解：chamber 文件和会话循环。
 - [Agent Console](./agent-console.md)——网页与手机界面：登录、邀请、公网部署。
 - [CLI 参考](./reference/cli.md)——所有 `cryo`、`cryohub`、`cryo-agent` 和 `cryo-zulip` 命令。
