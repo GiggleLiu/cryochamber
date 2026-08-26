@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { HubClient } from '../api/hubClient'
 import { HubRouter, type ConsoleClient } from '../api/hubRouter'
 import { messageKey, type Chamber, type ChamberMessage, type Credentials } from '../api/types'
-import { splitChamberKey } from '../lib/hubKeys'
+import { chamberKey, splitChamberKey } from '../lib/hubKeys'
 import type { HubAccount, HubsBackend } from './hubs'
 import { saveCredentials, clearCredentials } from './auth'
 import {
@@ -12,6 +12,7 @@ import {
   clearCachedState,
   cacheKey,
   CACHE_PREFIX,
+  type CachedState,
 } from './cache'
 import { accountKey } from '../lib/account'
 import { resetChamberEvents } from './chamberEvents'
@@ -131,6 +132,26 @@ function onlyHubs<T>(map: Record<string, T>, hubIds: ReadonlySet<string>): Recor
   )
 }
 
+/** Cache records are keyed by token, so they survive the access-id migration
+ * from URL-only to URL+token. Re-scope every embedded chamber key to the id the
+ * current account now uses; otherwise the first fresh index cannot replace the
+ * legacy rows and they look like chambers from a hub that no longer exists. */
+function scopeCachedState(hub: HubAccount, cached: CachedState): CachedState {
+  const scoped = (key: string) => chamberKey(hub.id, splitChamberKey(key).chamberId)
+  return {
+    chambers: cached.chambers.map((c) => ({ ...c, id: scoped(c.id), hubId: hub.id })),
+    messagesByChamber: Object.fromEntries(
+      Object.entries(cached.messagesByChamber).map(([key, messages]) => {
+        const id = scoped(key)
+        return [id, messages.map((m) => ({ ...m, chamberId: id }))]
+      }),
+    ),
+    lastReadByChamber: Object.fromEntries(
+      Object.entries(cached.lastReadByChamber).map(([key, mark]) => [scoped(key), mark]),
+    ),
+  }
+}
+
 let nextClientId = 1
 
 /** How app mode builds a client for a hub, kept from `initApp` so adding or
@@ -196,8 +217,9 @@ export interface AppState {
     backend: HubsBackend,
     makeClient: (hub: HubAccount) => HubClient,
   ): void
-  /** Add a hub, or replace the entry with the same id (the same hub, re-added
-   * with a fresh token). Persists the list and rebuilds the router. */
+  /** Add an access link, or refresh the metadata for that exact URL+token.
+   * Different tokens on one hub remain separate because their scopes can expose
+   * different chambers. Persists the list and rebuilds the router. */
   addHub(hub: HubAccount): Promise<void>
   /** Forget a hub: its chambers, conversations, watermarks, unsent messages
    * and local cache go with it. */
@@ -409,8 +431,9 @@ export const useAppStore = create<AppState>()((set, get) => {
       for (const hub of hubs) {
         if (hydrated.has(cacheKey({ token: hub.token }))) continue
         hydrated.add(cacheKey({ token: hub.token }))
-        const cached = loadCachedState({ token: hub.token })
-        if (!cached) continue
+        const loaded = loadCachedState({ token: hub.token })
+        if (!loaded) continue
+        const cached = scopeCachedState(hub, loaded)
         chambers.push(...cached.chambers)
         Object.assign(messagesByChamber, cached.messagesByChamber)
         Object.assign(lastReadByChamber, cached.lastReadByChamber)
@@ -443,11 +466,6 @@ export const useAppStore = create<AppState>()((set, get) => {
       const state = get()
       const known = state.hubs.find((h) => h.id === hub.id)
       const hubs = known ? state.hubs.map((h) => (h.id === hub.id ? hub : h)) : [...state.hubs, hub]
-      // A replaced token's cache record is unreachable from now on — the key
-      // is the token — unless another entry still wears that token.
-      if (known && known.token !== hub.token && !hubs.some((h) => h.token === known.token)) {
-        clearCachedState({ token: known.token })
-      }
       set({
         hubs,
         client: routerOver(hubs),

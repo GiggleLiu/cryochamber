@@ -17,12 +17,13 @@ describe('normalizeHubUrl', () => {
 
 describe('hubIdFor', () => {
   it('is 8 hex chars and stable across equivalent spellings', () => {
-    const a = hubIdFor('http://hub.local:8765')
+    const a = hubIdFor('http://hub.local:8765', 'token-a')
     expect(a).toMatch(/^[0-9a-f]{8}$/)
-    expect(hubIdFor('HTTP://HUB.local:8765/')).toBe(a)
+    expect(hubIdFor('HTTP://HUB.local:8765/', 'token-a')).toBe(a)
   })
-  it('differs for different hubs', () => {
-    expect(hubIdFor('http://a:1')).not.toBe(hubIdFor('http://b:1'))
+  it('differs for different hubs or different access tokens', () => {
+    expect(hubIdFor('http://a:1', 'token-a')).not.toBe(hubIdFor('http://b:1', 'token-a'))
+    expect(hubIdFor('http://a:1', 'token-a')).not.toBe(hubIdFor('http://a:1', 'token-b'))
   })
 })
 
@@ -31,7 +32,7 @@ describe('chamberKey / splitChamberKey', () => {
     expect(chamberKey('', 'proj')).toBe('proj')
   })
   it('prefixes and round-trips, including chamber ids containing separators', () => {
-    const id = hubIdFor('http://hub.local:8765')
+    const id = hubIdFor('http://hub.local:8765', 'token-a')
     const key = chamberKey(id, 'a/b:c')
     expect(splitChamberKey(key)).toEqual({ hubId: id, chamberId: 'a/b:c' })
   })

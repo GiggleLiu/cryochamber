@@ -46,7 +46,7 @@ export function makeHubAccount(input: {
 }): HubAccount {
   const url = normalizeHubUrl(input.url)
   return {
-    id: hubIdFor(url),
+    id: hubIdFor(url, input.token),
     url,
     label: input.label || new URL(url).host,
     token: input.token,

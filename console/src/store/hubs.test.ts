@@ -6,10 +6,20 @@ describe('makeHubAccount', () => {
   it('normalizes the url, mints the id, defaults label and identity', () => {
     const h = makeHubAccount({ url: 'HTTP://Hub.Local:8765/', token: 't0', trust: { kind: 'plain-http' } })
     expect(h.url).toBe('http://hub.local:8765')
-    expect(h.id).toBe(hubIdFor('http://hub.local:8765'))
+    expect(h.id).toBe(hubIdFor('http://hub.local:8765', 't0'))
     expect(h.label).toBe('hub.local:8765')
     expect(h.name).toBe('human')
     expect(h.role).toBe('invite')
+  })
+
+  it('keeps two access links to the same hub distinct', () => {
+    const owner = makeHubAccount({
+      url: 'https://hub.example', token: 'owner-token', trust: { kind: 'https' },
+    })
+    const invite = makeHubAccount({
+      url: 'https://hub.example', token: 'invite-token', trust: { kind: 'https' },
+    })
+    expect(owner.id).not.toBe(invite.id)
   })
 })
 

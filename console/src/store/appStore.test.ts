@@ -521,13 +521,13 @@ describe('app mode (multi-hub)', () => {
     expect(window.location.hash).toBe('#/')
   })
 
-  test('addHub with a known id replaces that hub rather than adding a second row', async () => {
+  test('addHub with the same URL and token refreshes that access rather than adding a row', async () => {
     const { a, b } = twoHubs()
     const backend = enterAppMode(a, b)
     useAppStore.getState().markHubAuthFailed(a.id)
     const fresh = makeHubAccount({
       url: 'http://a.local:1/',
-      token: 'ta2',
+      token: a.token,
       name: 'liu',
       role: 'owner',
       trust: { kind: 'plain-http' },
@@ -538,12 +538,29 @@ describe('app mode (multi-hub)', () => {
 
     const s = useAppStore.getState()
     expect(s.hubs.map((h) => h.id)).toEqual([a.id, b.id])
-    expect(s.hubs[0].token).toBe('ta2')
+    expect(s.hubs[0].token).toBe(a.token)
     expect(s.roleByHub[a.id]).toBe('owner')
     expect(s.selfNameByHub[a.id]).toBe('liu')
     // The token that failed is gone, so the failure note goes with it.
     expect(s.authFailedHubs).toEqual([])
-    expect((await backend.load()).map((h) => h.token)).toEqual(['ta2', 'tb'])
+    expect((await backend.load()).map((h) => h.token)).toEqual([a.token, 'tb'])
+  })
+
+  test('another token on the same hub keeps both chamber scopes', async () => {
+    const first = makeHubAccount({
+      url: 'http://a.local:1', token: 'invite-a', trust: { kind: 'plain-http' },
+    })
+    const second = makeHubAccount({
+      url: 'http://a.local:1', token: 'invite-b', trust: { kind: 'plain-http' },
+    })
+    enterAppMode(first)
+    useAppStore.getState().setChambersForHub(first.id, [hubChamber(first.id, 'x')])
+
+    await useAppStore.getState().addHub(second)
+    useAppStore.getState().setChambersForHub(second.id, [hubChamber(second.id, 'y')])
+
+    expect(useAppStore.getState().hubs.map((h) => h.id)).toEqual([first.id, second.id])
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x', 'y'])
   })
 
   test('addHub appends an unknown hub and markHubAuthFailed notes it once', async () => {
@@ -612,6 +629,29 @@ describe('app mode (multi-hub)', () => {
     expect(after.loadedChambers).toEqual([])
     // And the cache is not an index answer.
     expect(after.chambersLoaded).toBe(false)
+  })
+
+  test('app mode migrates URL-keyed cached rows to the URL+token access id', () => {
+    const { a } = twoHubs()
+    const oldId = 'deadbeef'
+    const oldKey = chamberKey(oldId, 'x')
+    const message = { ...msg(1), chamberId: oldKey }
+    localStorage.setItem(
+      cacheKey({ token: a.token }),
+      JSON.stringify({
+        chambers: [hubChamber(oldId, 'x')],
+        messagesByChamber: { [oldKey]: [message] },
+        lastReadByChamber: { [oldKey]: 'mark' },
+      }),
+    )
+
+    enterAppMode(a)
+
+    const key = chamberKey(a.id, 'x')
+    const state = useAppStore.getState()
+    expect(state.chambers.map((c) => c.id)).toEqual([key])
+    expect(state.messagesByChamber[key]?.[0].chamberId).toBe(key)
+    expect(state.lastReadByChamber).toEqual({ [key]: 'mark' })
   })
 
   test('a hub with no cache contributes nothing and does not break the others', () => {

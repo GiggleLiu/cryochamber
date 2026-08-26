@@ -11,10 +11,11 @@ export function normalizeHubUrl(raw: string): string {
   return `${u.protocol}//${u.host}${path}`
 }
 
-/** 8-hex fingerprint of the normalized URL. FNV over the handful of hubs one
- * user ever adds — collisions are not a real event, and the id leaks nothing. */
-export function hubIdFor(url: string): string {
-  return fnv1a(normalizeHubUrl(url)).toString(16).padStart(8, '0')
+/** 8-hex fingerprint of one saved access: URL plus bearer token. Two invite
+ * links can point at the same hub but expose different chambers, so URL alone
+ * must never make the second silently replace the first. */
+export function hubIdFor(url: string, token: string): string {
+  return fnv1a(`${normalizeHubUrl(url)}\n${token}`).toString(16).padStart(8, '0')
 }
 
 const KEY_RE = /^([0-9a-f]{8}):([\s\S]*)$/
