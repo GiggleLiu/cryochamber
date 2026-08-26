@@ -21,6 +21,7 @@ import { writeViewHash } from '../lib/hashRoute'
  * folds. A name is reusable and a token is not, so the preference is keyed on
  * the token like every other per-account store. */
 const SHOW_COMPLETED_PREFIX = 'agent-console.show-archived.'
+const APP_SHOW_COMPLETED_KEY = 'agent-console.app.show-archived'
 
 /** The fields a status refresh is allowed to carry: liveness only. Name and
  * ordering belong to the index read, not to a status event. */
@@ -302,6 +303,14 @@ function loadShowCompleted(creds: Pick<Credentials, 'token'>): boolean {
   }
 }
 
+function loadAppShowCompleted(): boolean {
+  try {
+    return localStorage.getItem(APP_SHOW_COMPLETED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 export const useAppStore = create<AppState>()((set, get) => {
   /** Mirror the list, messages and watermarks to the per-account cache so the
    * next boot paints instantly and unread counts survive a reload. */
@@ -417,6 +426,7 @@ export const useAppStore = create<AppState>()((set, get) => {
         chambersLoaded: hubs.length === 0,
         authFailedHubs: [],
         view: { name: 'projects' },
+        showCompletedArchived: loadAppShowCompleted(),
       })
     },
 
@@ -482,7 +492,6 @@ export const useAppStore = create<AppState>()((set, get) => {
       // forgotten hub's; without this their records stay at whatever the last
       // flush left, and a boot after that hydrates a stale list.
       persist()
-      if (leavingConversation) writeViewHash({ name: 'projects' }, true)
       await state.hubsBackend?.save(hubs)
     },
 
@@ -507,7 +516,7 @@ export const useAppStore = create<AppState>()((set, get) => {
       ),
 
     navigate: (v, options) => {
-      writeViewHash(v, options?.replace)
+      if (get().mode !== 'app') writeViewHash(v, options?.replace)
       set({ view: v, accessNotice: null })
     },
     setSettingsOpen: (open) => set({ settingsOpen: open }),
@@ -639,7 +648,7 @@ export const useAppStore = create<AppState>()((set, get) => {
           accessNotice: notice ?? state.accessNotice,
         }
       })
-      if (redirected) writeViewHash({ name: 'projects' }, true)
+      if (redirected && get().mode !== 'app') writeViewHash({ name: 'projects' }, true)
       persist()
     },
 
@@ -650,6 +659,12 @@ export const useAppStore = create<AppState>()((set, get) => {
         if (state.creds) {
           try {
             localStorage.setItem(showCompletedKey(state.creds), String(on))
+          } catch {
+            /* storage unavailable: the choice still applies for this session */
+          }
+        } else if (state.mode === 'app') {
+          try {
+            localStorage.setItem(APP_SHOW_COMPLETED_KEY, String(on))
           } catch {
             /* storage unavailable: the choice still applies for this session */
           }

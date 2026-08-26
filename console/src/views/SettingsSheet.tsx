@@ -66,7 +66,6 @@ export function SettingsSheet() {
   const [agentError, setAgentError] = useState<string | null>(null)
   const [addingHub, setAddingHub] = useState(false)
 
-  const hubCount = hubs.length
   // Which hub the owner rows point at *now*, for a request that resolves after
   // the operator has already switched to another one.
   const selectedRef = useRef(ownerHubId)
@@ -94,12 +93,6 @@ export function SettingsSheet() {
       cancelled = true
     }
   }, [ownerHub, isOwner, client])
-
-  // A hub added from inside the sheet has done its job; the form closes and
-  // the new hub is already in the list behind it.
-  useEffect(() => {
-    setAddingHub(false)
-  }, [hubCount])
 
   // App mode's sign-in is its hub list, not a credential.
   if (!creds && !app) return null
@@ -373,7 +366,7 @@ export function SettingsSheet() {
 
       {addingHub && (
         <Sheet title="Add hub" label="Add hub" onClose={() => setAddingHub(false)}>
-          <AddHubView />
+          <AddHubView onAdded={() => setAddingHub(false)} />
         </Sheet>
       )}
     </Sheet>

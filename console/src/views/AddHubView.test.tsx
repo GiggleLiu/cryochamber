@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { AddHubView, REJECTED_TOKEN_ERROR } from './AddHubView'
 import { bootApp, HUB_LOAD_ERROR, setAppRuntime, type AppRuntime } from '../lib/appBoot'
 import { makeTauriRuntime } from '../lib/tauriRuntime'
-import { MemoryHubsBackend } from '../store/hubs'
+import { makeHubAccount, MemoryHubsBackend } from '../store/hubs'
 import { useAppStore, resetAppStore } from '../store/appStore'
 
 /** The shell's `invoke`, faked at the one seam the console has on it. Every
@@ -84,7 +84,8 @@ afterEach(() => vi.unstubAllGlobals())
 test('a hub URL and a token are enough to add a hub', async () => {
   const fetchMock = whoamiMock({ role: 'owner', name: 'Jin', hub_version: '0.4.0' })
   const backend = await boot(fetchMock)
-  render(<AddHubView />)
+  const onAdded = vi.fn()
+  render(<AddHubView onAdded={onAdded} />)
   await userEvent.type(await screen.findByLabelText(/hub address/i), 'https://hub.example')
   await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
   await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
@@ -96,6 +97,7 @@ test('a hub URL and a token are enough to add a hub', async () => {
   expect(hub.name).toBe('Jin')
   expect(hub.role).toBe('owner')
   expect(hub.trust).toEqual({ kind: 'https' })
+  expect(onAdded).toHaveBeenCalledOnce()
   // Persisted, not just in memory: the list is the app's account file.
   expect(await backend.load()).toHaveLength(1)
   expect(fetchMock).toHaveBeenCalledWith(
@@ -192,6 +194,26 @@ test('a rejected token is said in the hub’s own terms and adds nothing', async
 
   expect(await screen.findByRole('alert')).toHaveTextContent('The hub rejected this token')
   expect(useAppStore.getState().hubs).toEqual([])
+})
+
+test('a rejected candidate does not mark the saved hub with that URL offline', async () => {
+  await boot(whoamiMock('', 401))
+  const saved = makeHubAccount({
+    url: 'https://hub.example',
+    token: 'ab'.repeat(16),
+    trust: { kind: 'https' },
+  })
+  await useAppStore.getState().addHub(saved)
+  useAppStore.getState().setConnectionForHub(saved.id, 'live')
+
+  render(<AddHubView />)
+  await userEvent.type(await screen.findByLabelText(/hub address/i), saved.url)
+  await userEvent.type(screen.getByLabelText(/access token/i), TOKEN)
+  await userEvent.click(screen.getByRole('button', { name: /add hub/i }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(REJECTED_TOKEN_ERROR)
+  expect(useAppStore.getState().connectionByHub[saved.id]).toBe('live')
+  expect(useAppStore.getState().authFailedHubs).not.toContain(saved.id)
 })
 
 test('an unreachable hub shows what went wrong and adds nothing', async () => {

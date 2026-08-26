@@ -380,6 +380,15 @@ describe('app mode (multi-hub)', () => {
     expect(s.connectionByHub).toEqual({ [a.id]: 'connecting', [b.id]: 'connecting' })
   })
 
+  test('the app show-completed choice survives another init', () => {
+    const { a } = twoHubs()
+    enterAppMode(a)
+    useAppStore.getState().setShowCompletedArchived(true)
+    resetAppStore()
+    enterAppMode(a)
+    expect(useAppStore.getState().showCompletedArchived).toBe(true)
+  })
+
   test('setChambersForHub merges per hub without clobbering the other hub', () => {
     const { a, b } = twoHubs()
     enterAppMode(a, b)
@@ -502,6 +511,14 @@ describe('app mode (multi-hub)', () => {
     useAppStore.getState().navigate({ name: 'conversation', chamberId: chamberKey(a.id, 'x') })
     await useAppStore.getState().removeHub(a.id)
     expect(useAppStore.getState().view).toEqual({ name: 'projects' })
+  })
+
+  test('app navigation does not create browser history entries', () => {
+    const { a } = twoHubs()
+    window.history.replaceState(null, '', '#/')
+    enterAppMode(a)
+    useAppStore.getState().navigate({ name: 'conversation', chamberId: chamberKey(a.id, 'x') })
+    expect(window.location.hash).toBe('#/')
   })
 
   test('addHub with a known id replaces that hub rather than adding a second row', async () => {

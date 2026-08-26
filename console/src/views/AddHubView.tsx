@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { appRuntime, makeClientFactory, parseInviteLink } from '../lib/appBoot'
+import { HubClient } from '../api/hubClient'
+import { appRuntime, parseInviteLink } from '../lib/appBoot'
 import { makeHubAccount, type HubAccount, type HubTrust } from '../store/hubs'
 import { normalizeHubUrl } from '../lib/hubKeys'
 import { probeHub } from '../lib/tauriRuntime'
@@ -49,10 +50,21 @@ function errorText(err: unknown): string {
   return err instanceof Error && err.message ? err.message : 'Could not reach that hub.'
 }
 
+/** A candidate account is not live state yet, so its failed token probe must
+ * not mark a saved account with the same URL offline. */
+function verificationClient(account: HubAccount): HubClient {
+  const runtime = appRuntime()
+  return new HubClient({
+    token: account.token,
+    baseUrl: account.url,
+    fetch: runtime.transportFor(account),
+  })
+}
+
 /** Adding a hub is the app's whole onboarding: an address, a token, and — for
  * a hub reached over plain HTTP — an explicit acknowledgement that everything
  * between here and it travels in the clear. */
-export function AddHubView() {
+export function AddHubView({ onAdded }: { onAdded?: () => void }) {
   const [link, setLink] = useState('')
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
@@ -149,12 +161,11 @@ export function AddHubView() {
         label: label.trim(),
         trust,
       })
-      // Same factory the router uses, so the probe crosses exactly the
-      // transport this hub's trust decision earned it.
-      const who = await makeClientFactory(appRuntime())(account).whoami()
+      const who = await verificationClient(account).whoami()
       await useAppStore
         .getState()
         .addHub({ ...account, role: who.role, name: who.name ?? account.name })
+      onAdded?.()
     } catch (err) {
       setError(errorText(err))
     } finally {
@@ -174,11 +185,12 @@ export function AddHubView() {
       // through Rust, where the fingerprint the user just confirmed is what
       // decides the handshake. A hub that will not answer — or will not take
       // this token — is not stored, exactly as on the unpinned path.
-      const who = await makeClientFactory(appRuntime())(pin.account).whoami()
+      const who = await verificationClient(pin.account).whoami()
       await useAppStore
         .getState()
         .addHub({ ...pin.account, role: who.role, name: who.name ?? pin.account.name })
       setPin(null)
+      onAdded?.()
     } catch (err) {
       // The form behind is where an error is read, so the sheet gets out of
       // the way rather than holding a message the user cannot act on.
