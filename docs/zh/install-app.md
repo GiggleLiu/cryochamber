@@ -18,9 +18,8 @@ release](https://github.com/GiggleLiu/cryochamber/releases) 上：
 | `cryochamber-vX.Y.Z-macos-arm64.dmg` | Apple Silicon 上的 macOS |
 | `cryochamber-vX.Y.Z-macos-arm64.app.zip` | 同一个 App 的 zip 包，如果你不想挂载磁盘映像 |
 
-在 macOS 上请选 **dmg**——它是主要的构建产物，原样保留 bundler 的打包结果；
-`.app.zip` 是给不愿挂载磁盘映像的人准备的备选，其中的 `.app` 在压缩前经过一次完整的
-`codesign --deep -s -` 重新封签。
+在 macOS 上请选 **dmg**。两个 macOS 文件装的是同一个 `.app`，打包前都经过一次完整的
+`codesign --deep -s -` 重新封签；`.app.zip` 只是给不愿挂载磁盘映像的人准备的。
 
 目前没有 Play Store、App Store、Windows 或 Intel Mac 构建。上面列出的就是全部。
 

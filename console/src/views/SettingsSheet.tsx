@@ -76,8 +76,10 @@ export function SettingsSheet() {
   useEffect(() => {
     if (!ownerHub || !isOwner) return
     // Whatever the last hub answered is not this hub's answer: the field goes
-    // blank until this one speaks, rather than showing another host's runner.
+    // blank until this one speaks, rather than showing another host's runner —
+    // and the last hub's load failure is not this hub's failure either.
     setDefaultAgent('')
+    setAgentError(null)
     let cancelled = false
     void ownerHub.hostConfig().then(
       (config) => {

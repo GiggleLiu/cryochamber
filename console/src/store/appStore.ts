@@ -124,10 +124,10 @@ function withoutHub<T>(map: Record<string, T>, hubId: string): Record<string, T>
   )
 }
 
-/** Keep only the entries whose chamber key belongs to `hubId`. */
-function onlyHub<T>(map: Record<string, T>, hubId: string): Record<string, T> {
+/** Keep only the entries whose chamber key belongs to one of `hubIds`. */
+function onlyHubs<T>(map: Record<string, T>, hubIds: ReadonlySet<string>): Record<string, T> {
   return Object.fromEntries(
-    Object.entries(map).filter(([key]) => splitChamberKey(key).hubId === hubId),
+    Object.entries(map).filter(([key]) => hubIds.has(splitChamberKey(key).hubId)),
   )
 }
 
@@ -320,13 +320,22 @@ export const useAppStore = create<AppState>()((set, get) => {
     // its own token, holding only its own rows. Anything else would leak one
     // hub's chambers into another's cache — and survive that hub being removed.
     if (s.mode === 'app') {
+      // Grouped by token because the record is keyed on it: two entries for
+      // one hub reached two ways (a tunnel and its LAN name) share a record,
+      // and writing it once per hub would keep only the last alias's rows.
+      const idsByToken = new Map<string, Set<string>>()
       for (const hub of s.hubs) {
+        const ids = idsByToken.get(hub.token) ?? new Set<string>()
+        ids.add(hub.id)
+        idsByToken.set(hub.token, ids)
+      }
+      for (const [token, ids] of idsByToken) {
         saveCachedStateDebounced(
-          { token: hub.token },
+          { token },
           {
-            chambers: s.chambers.filter((c) => hubIdOf(c) === hub.id),
-            messagesByChamber: onlyHub(s.messagesByChamber, hub.id),
-            lastReadByChamber: onlyHub(s.lastReadByChamber, hub.id),
+            chambers: s.chambers.filter((c) => ids.has(hubIdOf(c))),
+            messagesByChamber: onlyHubs(s.messagesByChamber, ids),
+            lastReadByChamber: onlyHubs(s.lastReadByChamber, ids),
           },
         )
       }
@@ -432,8 +441,13 @@ export const useAppStore = create<AppState>()((set, get) => {
 
     addHub: async (hub) => {
       const state = get()
-      const known = state.hubs.some((h) => h.id === hub.id)
+      const known = state.hubs.find((h) => h.id === hub.id)
       const hubs = known ? state.hubs.map((h) => (h.id === hub.id ? hub : h)) : [...state.hubs, hub]
+      // A replaced token's cache record is unreachable from now on — the key
+      // is the token — unless another entry still wears that token.
+      if (known && known.token !== hub.token && !hubs.some((h) => h.token === known.token)) {
+        clearCachedState({ token: known.token })
+      }
       set({
         hubs,
         client: routerOver(hubs),
@@ -454,12 +468,13 @@ export const useAppStore = create<AppState>()((set, get) => {
       const state = get()
       const hub = state.hubs.find((h) => h.id === hubId)
       if (!hub) return
+      const hubs = state.hubs.filter((h) => h.id !== hubId)
       // Order matters, as in logout: a pending debounced write would otherwise
       // land after the clear and put the forgotten hub's cache back.
       cancelPendingCachedState()
-      // The cache is keyed on the token, like every other per-account store.
-      clearCachedState({ token: hub.token })
-      const hubs = state.hubs.filter((h) => h.id !== hubId)
+      // The cache is keyed on the token, like every other per-account store —
+      // so an alias of the same hub that stays still owns the shared record.
+      if (!hubs.some((h) => h.token === hub.token)) clearCachedState({ token: hub.token })
       const connectionByHub = { ...state.connectionByHub }
       const roleByHub = { ...state.roleByHub }
       const selfNameByHub = { ...state.selfNameByHub }

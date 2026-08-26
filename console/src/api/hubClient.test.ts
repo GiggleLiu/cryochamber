@@ -376,7 +376,7 @@ describe('baseUrl', () => {
     expect(calls).toEqual(['http://hub.local:8765/api/whoami'])
   })
 
-  it('fetchBlob prefixes hub-relative urls and leaves absolute ones alone', async () => {
+  it('fetchBlob prefixes hub-relative urls, allows own-origin absolute ones, refuses foreign ones', async () => {
     const calls: string[] = []
     const fakeFetch = (async (input: RequestInfo | URL) => {
       calls.push(String(input))
@@ -384,10 +384,13 @@ describe('baseUrl', () => {
     }) as typeof fetch
     const c = new HubClient({ token: 't', baseUrl: 'http://hub.local:8765', fetch: fakeFetch })
     await c.fetchBlob('/api/chambers/a/files/pic.png')
-    await c.fetchBlob('http://elsewhere.example/x')
+    await c.fetchBlob('http://hub.local:8765/api/chambers/a/files/other.png')
+    // A foreign origin never sees the request at all: `send` would attach the
+    // bearer header, and this hub's token must not travel anywhere else.
+    await expect(c.fetchBlob('http://elsewhere.example/x')).rejects.toMatchObject({ status: 0 })
     expect(calls).toEqual([
       'http://hub.local:8765/api/chambers/a/files/pic.png',
-      'http://elsewhere.example/x',
+      'http://hub.local:8765/api/chambers/a/files/other.png',
     ])
   })
 

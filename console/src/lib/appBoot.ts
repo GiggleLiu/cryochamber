@@ -79,6 +79,12 @@ export async function bootApp(rt: AppRuntime): Promise<void> {
       .whoami()
       .then((who) => {
         const store = useAppStore.getState()
+        // The answer is about the hub as booted. If the user removed it or
+        // re-added it with a fresh token while whoami was in flight, writing
+        // it back would resurrect the removed entry — token included — or
+        // clobber the fresh token with this stale one.
+        const current = store.hubs.find((h) => h.id === hub.id)
+        if (!current || current.token !== hub.token) return
         store.setHubIdentity(hub.id, {
           role: who.role,
           name: who.name,
@@ -89,7 +95,7 @@ export async function bootApp(rt: AppRuntime): Promise<void> {
         // which restarts every hub's event loop — a needless cost on a boot
         // where the hub said what the file already holds.
         if (who.role === hub.role && name === hub.name) return
-        void store.addHub({ ...hub, role: who.role, name })
+        store.addHub({ ...hub, role: who.role, name }).catch(() => {})
       })
       // A refused token has already gone through the client's own hook; every
       // other failure leaves the stored identity in place.

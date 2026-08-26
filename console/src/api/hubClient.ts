@@ -254,8 +254,16 @@ export class HubClient {
     return this.request<WhoAmI>('/api/whoami')
   }
 
-  /** Authenticated fetch of a chamber attachment (or any hub file URL). */
+  /** Authenticated fetch of a chamber attachment (or any file URL on this
+   * hub's own origin). A foreign origin is refused outright: `send` attaches
+   * the bearer header, and this hub's token must never travel anywhere else. */
   async fetchBlob(url: string): Promise<Blob> {
+    if (/^https?:\/\//i.test(url)) {
+      const own = new URL(this.base || window.location.origin).origin
+      if (new URL(url).origin !== own) {
+        throw new ApiError(0, 'Refusing to send credentials to a foreign origin')
+      }
+    }
     const res = await this.send(url)
     if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.blob()
