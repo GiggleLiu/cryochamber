@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { HubClient, type TodoItem } from '../../api/hubClient'
+import type { TodoItem } from '../../api/hubClient'
 import { useAppStore } from '../../store/appStore'
 import { subscribeChamberEvents } from '../../store/chamberEvents'
 import { isUnauthorized } from '../../api/types'
@@ -35,18 +35,17 @@ export function TodosTab({ chamberId }: { chamberId: string }) {
   // the status load and the lifecycle buttons, and a todo fetch failing must
   // not overwrite either of them.
   const [error, setError] = useState<string | null>(null)
-  const hub = client instanceof HubClient ? client : null
 
   const load = useCallback(async () => {
-    if (!hub) return
+    if (!client) return
     try {
-      setItems(await hub.chamberTodos(chamberId))
+      setItems(await client.chamberTodos(chamberId))
       setError(null)
     } catch (e) {
       if (isUnauthorized(e)) return
       setError('Could not load todos. Check your connection and try again.')
     }
-  }, [hub, chamberId])
+  }, [client, chamberId])
 
   useEffect(() => {
     void load()

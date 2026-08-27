@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer } from './Composer'
 import { useAppStore, resetAppStore } from '../store/appStore'
+import { draftKey } from '../lib/outbox'
 import { ApiError } from '../api/types'
 import type { HubClient } from '../api/hubClient'
 
@@ -130,6 +131,18 @@ describe('per-chamber drafts', () => {
       ),
     )
     expect(localStorage.getItem(KEY_1)).toBe('work in progress')
+  })
+
+  test('app mode has no session token, so its drafts share one namespace', async () => {
+    // The chamber key already carries the hub, so `app` cannot collide across
+    // hubs the way a bare chamber id would.
+    useAppStore.setState({ mode: 'app', creds: null, client: fakeClient() })
+    render(<Composer chamberId="aaaaaaaa:cham-a" />)
+    await userEvent.type(screen.getByRole('textbox'), 'from the app')
+    await waitFor(() =>
+      expect(localStorage.getItem(draftKey('app', 'aaaaaaaa:cham-a'))).toBe('from the app'),
+    )
+    expect(localStorage.getItem('agent-console.draft..aaaaaaaa:cham-a')).toBeNull()
   })
 })
 

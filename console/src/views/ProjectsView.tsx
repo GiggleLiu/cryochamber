@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import type { Chamber } from '../api/types'
-import { unreadCount, useAppStore, useIsOwner } from '../store/appStore'
+import { hubIdOf, isOwnerFor, unreadCount, useAppStore } from '../store/appStore'
+import { useOwnerHub } from '../hooks/useOwnerHub'
 import { Gear, Inbox, Plus } from '../components/Icon'
 import { initial, listTimeLabel, messageSeconds, previewText, tileColor } from '../lib/format'
+import { splitChamberKey } from '../lib/hubKeys'
 import { NewChamberSheet } from './NewChamberSheet'
 import { StatusDot } from '../components/StatusDot'
 
@@ -13,6 +15,29 @@ export function foldedLabel(completed: number, archived: number): string {
   if (completed > 0) parts.push(`${completed} completed`)
   if (archived > 0) parts.push(`${archived} archived`)
   return parts.join(' · ')
+}
+
+/** One hub can be saved through several scoped links. If their scopes overlap,
+ * show the chamber once; admin access wins because it carries the controls the
+ * joined copy cannot offer. */
+export function dedupeChambers(
+  chambers: Chamber[],
+  hubs: Array<{ id: string; url: string }>,
+  roleByHub: Record<string, 'owner' | 'invite'>,
+): Chamber[] {
+  const byHub = new Map(hubs.map((h) => [h.id, h]))
+  const visible = new Map<string, Chamber>()
+  for (const chamber of chambers) {
+    const { hubId, chamberId } = splitChamberKey(chamber.id)
+    const hub = byHub.get(hubId)
+    const key = hub ? `${hub.url}\n${chamberId}` : chamber.id
+    const previous = visible.get(key)
+    const previousHubId = previous ? splitChamberKey(previous.id).hubId : ''
+    if (!previous || (roleByHub[hubId] === 'owner' && roleByHub[previousHubId] !== 'owner')) {
+      visible.set(key, chamber)
+    }
+  }
+  return [...visible.values()]
 }
 
 function SkeletonList() {
@@ -39,34 +64,66 @@ export function ProjectsView() {
   const messagesByChamber = useAppStore((s) => s.messagesByChamber)
   const lastReadByChamber = useAppStore((s) => s.lastReadByChamber)
   const selfName = useAppStore((s) => s.selfName)
+  const selfNameByHub = useAppStore((s) => s.selfNameByHub)
   const connection = useAppStore((s) => s.connection)
+  const mode = useAppStore((s) => s.mode)
+  const hubs = useAppStore((s) => s.hubs)
+  const connectionByHub = useAppStore((s) => s.connectionByHub)
   const navigate = useAppStore((s) => s.navigate)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
-  const isOwner = useIsOwner()
+  // Per row, never per session: a token can own one hub and be a guest on the
+  // next, so the fold is asked of the hub each chamber lives on. A session-wide
+  // `useIsOwner()` answers false for every app-mode row (no `hubRole`), which
+  // folded nothing while Settings still offered the switch.
+  const hubRole = useAppStore((s) => s.hubRole)
+  const roleByHub = useAppStore((s) => s.roleByHub)
+  const ownerFor = (c: Chamber) => isOwnerFor({ hubRole, roleByHub }, c.id)
+  // Creating a chamber is a hub-level act: owning *any* hub is what puts the +
+  // button there, which is also what gates the fold switch in Settings.
+  const canCreate = useOwnerHub().isOwner
   const [newChamberOpen, setNewChamberOpen] = useState(false)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
   const setShowCompletedArchived = useAppStore((s) => s.setShowCompletedArchived)
   // Every chamber this token can reach. The Completed/Archived fold below is
   // the only filing there is — a second, per-project hide switch used to live
   // in Settings and could leave a guest staring at an empty list.
-  const visible = chambers
+  const visible = mode === 'app' ? dedupeChambers(chambers, hubs, roleByHub) : chambers
   // The folds are an owner's filing system, never a filter on anyone else's
   // list: a guest scoped to a finished chamber still sees it as a plain row,
   // so their whole list can never disappear behind a preference they cannot
   // reach. Archived wins over completed: the operator put it away on purpose,
   // and one chamber must never appear in two groups.
-  const archivedList = isOwner ? visible.filter((c) => c.archived) : []
-  const completedList = isOwner ? visible.filter((c) => !c.archived && c.completed) : []
-  const active = isOwner ? visible.filter((c) => !c.archived && !c.completed) : visible
-  const showGroups = isOwner && showCompletedArchived
+  const owned = visible.filter(ownerFor)
+  const joined = visible.filter((c) => !ownerFor(c))
+  const archivedList = owned.filter((c) => c.archived)
+  const completedList = owned.filter((c) => !c.archived && c.completed)
+  const ownedActive = owned.filter((c) => !c.archived && !c.completed)
+  const active = visible.filter((c) => !ownerFor(c) || (!c.archived && !c.completed))
+  // The lists are already empty for anything this token does not own, so the
+  // switch is the only remaining question.
+  const showGroups = showCompletedArchived
   // Nothing to show yet *and* still connecting means the first register is in
   // flight — show the shape of the list rather than an empty state that would
   // be contradicted a moment later. Once offline, the empty state plus the
   // reconnecting banner is the honest report.
   const loading = chambers.length === 0 && connection === 'connecting'
+  // Which hub a row lives on only means something once the app holds more than
+  // one: a chip that says the same word on every row is noise, and browser mode
+  // never has a second hub to name.
+  const showHubs = mode === 'app' && hubs.length > 1
 
   function card(c: Chamber) {
-    const count = unreadCount({ messagesByChamber, lastReadByChamber, selfName }, c.id)
+    // `hubIdOf`, never `c.hubId`: a row hydrated from the cache carries its hub
+    // in its key alone.
+    const hub = showHubs ? hubs.find((h) => h.id === hubIdOf(c)) : undefined
+    // Only a hub we have actually failed to reach is unreachable. "Connecting"
+    // is a call still in flight, and saying it is down would be a verdict the
+    // app has not got yet.
+    const unreachable = hub ? connectionByHub[hub.id] === 'offline' : false
+    const count = unreadCount(
+      { messagesByChamber, lastReadByChamber, selfName, selfNameByHub },
+      c.id,
+    )
     const last = messagesByChamber[c.id]?.at(-1)
     const preview = last ? previewText(last.body) : ''
     return (
@@ -84,6 +141,14 @@ export function ProjectsView() {
                 sheet. */}
             <StatusDot running={c.running} agentRunning={c.agentRunning} />
             <span className="stream-name">{c.name}</span>
+            {/* Which hub, and — when that hub is down — that everything on this
+                row is the last thing it said rather than the current state. */}
+            {hub && (
+              <span className={`hub-chip${unreachable ? ' is-unreachable' : ''}`}>
+                {hub.label}
+                {unreachable && ' · unreachable'}
+              </span>
+            )}
             {c.hasOpenQuestion && (
               <span
                 className="question-badge"
@@ -114,9 +179,9 @@ export function ProjectsView() {
   return (
     <div className="projects">
       <header className="topbar">
-        <h1>Projects</h1>
+        <h1>Chambers</h1>
         <div className="topbar-actions">
-          {isOwner && (
+          {canCreate && (
             <button
               className="icon-btn"
               aria-label="New chamber"
@@ -134,7 +199,7 @@ export function ProjectsView() {
       <div className="projects-scroll">
         {loading && <SkeletonList />}
 
-        {!loading &&
+        {!loading && mode !== 'app' &&
           active.length === 0 &&
           (!showGroups || completedList.length + archivedList.length === 0) && (
             <div className="empty-state">
@@ -158,27 +223,73 @@ export function ProjectsView() {
             </div>
           )}
 
-        {active.length > 0 && <ul className="stream-list">{active.map(card)}</ul>}
+        {!loading && mode === 'app' && visible.length === 0 && (
+          <div className="empty-state">
+            <Inbox size={40} />
+            <h2>No chambers yet</h2>
+            <p>Add an admin or invite link to see its chambers here.</p>
+          </div>
+        )}
+
+        {!loading && mode === 'app' && visible.length > 0 && (
+          <>
+            <h2 className="stream-category">Owned ({owned.length})</h2>
+            {ownedActive.length > 0 ? (
+              <ul className="stream-list">{ownedActive.map(card)}</ul>
+            ) : (
+              <p className="stream-category-empty">No active owned chambers.</p>
+            )}
+
+            {!showGroups && completedList.length + archivedList.length > 0 && (
+              <button className="stream-reveal" onClick={() => setShowCompletedArchived(true)}>
+                Show {foldedLabel(completedList.length, archivedList.length)}
+              </button>
+            )}
+
+            {showGroups && completedList.length > 0 && (
+              <details className="stream-group">
+                <summary>Completed ({completedList.length})</summary>
+                <ul className="stream-list">{completedList.map(card)}</ul>
+              </details>
+            )}
+
+            {showGroups && archivedList.length > 0 && (
+              <details className="stream-group">
+                <summary>Archived ({archivedList.length})</summary>
+                <ul className="stream-list">{archivedList.map(card)}</ul>
+              </details>
+            )}
+
+            <h2 className="stream-category">Joined ({joined.length})</h2>
+            {joined.length > 0 ? (
+              <ul className="stream-list">{joined.map(card)}</ul>
+            ) : (
+              <p className="stream-category-empty">No joined chambers.</p>
+            )}
+          </>
+        )}
+
+        {mode !== 'app' && active.length > 0 && <ul className="stream-list">{active.map(card)}</ul>}
 
         {/* With the toggle off, completed and archived chambers vanish from the
             list. Saying how many are folded away — and offering the one tap
             that unfolds them — is the difference between a filter and a
             chamber that looks lost. The empty state covers the case where
             there is no active list to sit under. */}
-        {!showGroups && active.length > 0 && completedList.length + archivedList.length > 0 && (
+        {mode !== 'app' && !showGroups && active.length > 0 && completedList.length + archivedList.length > 0 && (
           <button className="stream-reveal" onClick={() => setShowCompletedArchived(true)}>
             Show {foldedLabel(completedList.length, archivedList.length)}
           </button>
         )}
 
-        {showGroups && completedList.length > 0 && (
+        {mode !== 'app' && showGroups && completedList.length > 0 && (
           <details className="stream-group">
             <summary>Completed ({completedList.length})</summary>
             <ul className="stream-list">{completedList.map(card)}</ul>
           </details>
         )}
 
-        {showGroups && archivedList.length > 0 && (
+        {mode !== 'app' && showGroups && archivedList.length > 0 && (
           <details className="stream-group">
             <summary>Archived ({archivedList.length})</summary>
             <ul className="stream-list">{archivedList.map(card)}</ul>

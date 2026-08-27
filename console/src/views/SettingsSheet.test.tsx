@@ -3,8 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { SettingsSheet } from './SettingsSheet'
 import { HubClient } from '../api/hubClient'
 import { ApiError } from '../api/types'
-import { useAppStore, resetAppStore } from '../store/appStore'
+import { useAppStore, resetAppStore, type Connection } from '../store/appStore'
+import { makeHubAccount, MemoryHubsBackend, type HubAccount } from '../store/hubs'
 import type { Chamber, Credentials } from '../api/types'
+import { parseInviteLink } from '../lib/appBoot'
 
 const chamber = (id: string, name = id) => ({
   id,
@@ -141,6 +143,31 @@ describe('owner-only rows', () => {
     expect(useAppStore.getState().showCompletedArchived).toBe(true)
   })
 
+  test('copying an admin link warns first and keeps the token out of the query', async () => {
+    const token = 'ab'.repeat(16)
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    useAppStore.setState({
+      creds: { token, name: 'owner', role: 'owner' },
+      hubRole: 'owner',
+      client: ownerHub(),
+    })
+    render(<SettingsSheet />)
+
+    await userEvent.click(screen.getByRole('button', { name: /copy admin link/i }))
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('administer every chamber'))
+    const link = vi.mocked(writeText).mock.calls[0][0]
+    expect(new URL(link).search).not.toContain(token)
+    expect(parseInviteLink(link)).toEqual({ url: window.location.origin, token })
+    expect(await screen.findByText('Admin link copied.')).toBeInTheDocument()
+    confirm.mockRestore()
+  })
+
   test('the default agent dropdown loads the host setting and saves on change', async () => {
     const client = ownerHub()
     useAppStore.setState({ hubRole: 'owner', client })
@@ -213,6 +240,171 @@ describe('owner-only rows', () => {
     render(<SettingsSheet />)
     expect(screen.queryByRole('checkbox', { name: 'Show completed & archived' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Refresh chambers' })).toBeNull()
+  })
+})
+
+describe('app mode', () => {
+  const alpha = makeHubAccount({
+    url: 'https://a.example',
+    label: 'Alpha hub',
+    token: 'aa'.repeat(16),
+    role: 'owner',
+    trust: { kind: 'https' },
+  })
+  const beta = makeHubAccount({
+    url: 'https://b.example',
+    label: 'Beta hub',
+    token: 'bb'.repeat(16),
+    role: 'owner',
+    trust: { kind: 'https' },
+  })
+
+  /** One HubClient per hub, each answering with its own host config, wired
+   * through `initApp` so the store holds a real router over them. */
+  function enterAppMode(
+    hubs: HubAccount[],
+    extra: {
+      agents?: Record<string, string>
+      versionByHub?: Record<string, string | null>
+      connectionByHub?: Record<string, Connection>
+      authFailedHubs?: string[]
+      roleByHub?: Record<string, 'owner' | 'invite'>
+    } = {},
+  ) {
+    const clients = new Map<string, HubClient>()
+    for (const h of hubs) {
+      const client = new HubClient({ token: h.token, baseUrl: h.url, fetch: vi.fn() })
+      vi.spyOn(client, 'hostConfig').mockResolvedValue({
+        default_agent: extra.agents?.[h.id] ?? 'pi',
+      })
+      vi.spyOn(client, 'updateHostConfig').mockImplementation(async (default_agent) => ({
+        default_agent,
+      }))
+      vi.spyOn(client, 'refreshIndex').mockResolvedValue(undefined)
+      vi.spyOn(client, 'listChambers').mockResolvedValue([chamber('cham-c', 'gamma')])
+      clients.set(h.id, client)
+    }
+    useAppStore.getState().initApp(hubs, new MemoryHubsBackend(), (h) => clients.get(h.id)!)
+    useAppStore.setState({
+      creds: null,
+      settingsOpen: true,
+      versionByHub: extra.versionByHub ?? {},
+      connectionByHub:
+        extra.connectionByHub ?? Object.fromEntries(hubs.map((h) => [h.id, 'live' as Connection])),
+      authFailedHubs: extra.authFailedHubs ?? [],
+      ...(extra.roleByHub ? { roleByHub: extra.roleByHub } : {}),
+    })
+    return clients
+  }
+
+  /** The Hubs row for one hub, found by the only control unique to it. */
+  function hubRow(label: string): HTMLElement {
+    const row = screen.getByRole('button', { name: `Remove ${label}` }).closest('.row')
+    if (!row) throw new Error(`no hub row for ${label}`)
+    return row as HTMLElement
+  }
+
+  test('the hub list names every remembered hub, its address and its access', () => {
+    enterAppMode([alpha, beta], { versionByHub: { [alpha.id]: '1.2.3' } })
+    render(<SettingsSheet />)
+    expect(hubRow('Alpha hub')).toHaveTextContent('https://a.example')
+    expect(hubRow('Alpha hub')).toHaveTextContent('Owner · cryohub v1.2.3')
+    expect(hubRow('Beta hub')).toHaveTextContent('https://b.example')
+  })
+
+  test('a hub that is down, and one whose token was refused, say which', () => {
+    enterAppMode([alpha, beta], {
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'offline' },
+      authFailedHubs: [alpha.id],
+    })
+    render(<SettingsSheet />)
+    expect(screen.getByText('unreachable')).toBeInTheDocument()
+    expect(screen.getByText(/token revoked/)).toBeInTheDocument()
+  })
+
+  test('a hub we have not heard from yet says connecting, not unreachable', () => {
+    enterAppMode([alpha, beta], {
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'connecting' },
+    })
+    render(<SettingsSheet />)
+    expect(hubRow('Beta hub')).toHaveTextContent('connecting…')
+    expect(screen.queryByText('unreachable')).toBeNull()
+  })
+
+  test('a hub older than this console warns that features may be missing', () => {
+    enterAppMode([alpha, beta], {
+      versionByHub: { [alpha.id]: '0.0.1', [beta.id]: '999.0.0' },
+    })
+    render(<SettingsSheet />)
+    expect(screen.getAllByText(/hub is older/)).toHaveLength(1)
+  })
+
+  test('removing a hub asks first, and forgetting it takes its rows with it', async () => {
+    enterAppMode([alpha, beta])
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<SettingsSheet />)
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Beta hub' }))
+    expect(confirm).toHaveBeenCalled()
+    expect(useAppStore.getState().hubs.map((h) => h.id)).toEqual([alpha.id, beta.id])
+
+    confirm.mockReturnValue(true)
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Beta hub' }))
+    await waitFor(() => expect(useAppStore.getState().hubs.map((h) => h.id)).toEqual([alpha.id]))
+    confirm.mockRestore()
+  })
+
+  test('Add chamber opens the access-link form on top of the settings sheet', async () => {
+    enterAppMode([alpha, beta])
+    render(<SettingsSheet />)
+    await userEvent.click(screen.getByRole('button', { name: 'Add chamber' }))
+    expect(await screen.findByRole('heading', { name: 'Add a chamber' })).toBeInTheDocument()
+  })
+
+  test('the owner rows act on the hub the select names', async () => {
+    enterAppMode([alpha, beta], { agents: { [alpha.id]: 'pi', [beta.id]: 'claude' } })
+    render(<SettingsSheet />)
+    const agent = await screen.findByRole('combobox', { name: 'Default agent' })
+    expect(agent).toHaveValue('pi')
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Hub' }), beta.id)
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Default agent' })).toHaveValue('claude'),
+    )
+  })
+
+  test('the selected owner hub is the one copied', async () => {
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    enterAppMode([alpha, beta])
+    render(<SettingsSheet />)
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Hub' }), beta.id)
+    await userEvent.click(screen.getByRole('button', { name: /copy admin link/i }))
+
+    expect(parseInviteLink(vi.mocked(writeText).mock.calls[0][0])).toEqual({
+      url: beta.url,
+      token: beta.token,
+    })
+    confirm.mockRestore()
+  })
+
+  test('one owned hub needs no hub select', () => {
+    enterAppMode([alpha, beta], { roleByHub: { [alpha.id]: 'owner', [beta.id]: 'invite' } })
+    render(<SettingsSheet />)
+    expect(screen.queryByRole('combobox', { name: 'Hub' })).toBeNull()
+    expect(screen.getByText('Chambers')).toBeInTheDocument()
+  })
+
+  test('a token that owns nothing sees no owner section at all', () => {
+    enterAppMode([alpha, beta], {
+      roleByHub: { [alpha.id]: 'invite', [beta.id]: 'invite' },
+    })
+    render(<SettingsSheet />)
+    expect(screen.queryByText('Chambers')).toBeNull()
+    // Hub management is not an owner control: a guest still manages their app.
+    expect(screen.getByText('Chamber access')).toBeInTheDocument()
   })
 })
 

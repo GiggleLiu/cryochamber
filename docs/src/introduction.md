@@ -45,6 +45,7 @@ cryohub start    # prints the local dashboard URL — open it in your browser
 
 ## Next
 
+- [Getting started](./getting-started.md) — from nothing to a running hub: Pi setup, a first chamber that manages the host, and sharing it with a friend.
 - [How it works](./how-it-works.md) — a five-minute walkthrough: the chamber files and the session loop.
 - [Agent Console](./agent-console.md) — the web and phone UI: sign-in, invites, public deployment.
 - [CLI reference](./reference/cli.md) — every `cryo`, `cryohub`, `cryo-agent`, and `cryo-zulip` command.

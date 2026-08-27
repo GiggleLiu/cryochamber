@@ -6,12 +6,18 @@ import { useEventLoop } from './hooks/useEventLoop'
 import { INVALID_INVITE_REASON, MALFORMED_INVITE_REASON, signInWithHubToken } from './lib/hubSignIn'
 import { downloadUpload, filenameFromHref, HUB_FILES_RE } from './lib/download'
 import { isUnauthorized } from './api/types'
+import { HubClient } from './api/hubClient'
+import { isTauri } from './lib/env'
+import { appRuntime, bootApp, parseInviteLink } from './lib/appBoot'
+import { tauriInvoke, tauriListen } from './lib/tauri'
+import { AddHubView } from './views/AddHubView'
 import { LoginView } from './views/LoginView'
 import { ProjectsView } from './views/ProjectsView'
 import { ConversationView } from './views/ConversationView'
 import { SettingsSheet } from './views/SettingsSheet'
 import { UpdateBar } from './components/UpdateBar'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { Sheet } from './components/Sheet'
 import { hashForView, viewFromHash } from './lib/hashRoute'
 
 /** Returned by takeInviteToken for a `#invite=` fragment whose value is not a
@@ -35,6 +41,8 @@ export function takeInviteToken(): string | typeof MALFORMED_INVITE | null {
 export default function App() {
   const creds = useAppStore((s) => s.creds)
   const client = useAppStore((s) => s.client)
+  const mode = useAppStore((s) => s.mode)
+  const hubs = useAppStore((s) => s.hubs)
   const view = useAppStore((s) => s.view)
   const connection = useAppStore((s) => s.connection)
   const settingsOpen = useAppStore((s) => s.settingsOpen)
@@ -44,11 +52,49 @@ export default function App() {
   const accessNotice = useAppStore((s) => s.accessNotice)
   const [inviteToken] = useState<string | typeof MALFORMED_INVITE | null>(takeInviteToken)
   const [downloadNote, setDownloadNote] = useState<string | null>(null)
+  const [openedLink, setOpenedLink] = useState<string | null>(null)
   const [routeRevision, setRouteRevision] = useState(0)
   const explicitConversationRoute = useRef(viewFromHash()?.name === 'conversation')
   const chamberCount = chambers.length
 
+  // The app boots from its own remembered hubs, all of them at once. The three
+  // effects that follow are browser mode's single-hub session — a stored
+  // credential, an invite fragment, one session-wide identity — and none of
+  // them has a meaning when there are N hubs, so the app skips them.
   useEffect(() => {
+    if (!isTauri()) return
+    void bootApp(appRuntime())
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let stop: (() => void) | undefined
+    const accept = (urls: string[]) => {
+      const link = urls.find((url) => parseInviteLink(url))
+      if (link) setOpenedLink(link)
+    }
+    let listening: Promise<() => void>
+    try {
+      listening = tauriListen<string[]>('open-urls', (event) => accept(event.payload))
+    } catch {
+      return
+    }
+    void listening
+      .then((unlisten) => {
+        if (disposed) return unlisten()
+        stop = unlisten
+        void tauriInvoke<string[]>('take_opened_urls').then(accept).catch(() => {})
+      })
+      .catch(() => {})
+    return () => {
+      disposed = true
+      stop?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isTauri()) return
     // Before anything reads storage: the pre-cutover build's id maps and
     // message cache are keyed on numbers this build has no use for, and a
     // stale cache under a live key would be read as this build's own.
@@ -63,6 +109,7 @@ export default function App() {
   // the token in the fragment is exchanged for a session on the spot. Stored
   // credentials win, so an existing session is never silently replaced.
   useEffect(() => {
+    if (isTauri()) return
     if (!inviteToken || useAppStore.getState().creds) return
     if (inviteToken === MALFORMED_INVITE) {
       useAppStore.getState().logout(MALFORMED_INVITE_REASON)
@@ -79,7 +126,10 @@ export default function App() {
   // than waiting for the event loop). Other failures stay silent and
   // owner-only UI simply stays hidden.
   useEffect(() => {
-    if (!client) return
+    // Browser mode's single hub. App mode has no session-wide identity to
+    // refresh: each hub answers its own whoami through `setHubIdentity`, which
+    // `bootApp` owns.
+    if (isTauri() || !(client instanceof HubClient)) return
     client
       .whoami()
       .then((who) => {
@@ -160,7 +210,8 @@ export default function App() {
   // on document, so component handlers (download/lightbox in MessageBody,
   // which call preventDefault) always win first.
   useEffect(() => {
-    if (!creds || !client) return
+    // App mode has no session-wide `creds`; its hubs are the sign-in.
+    if (!client || (mode !== 'app' && !creds)) return
     const origin = window.location.origin
     const onClick = (e: MouseEvent) => {
       if (e.defaultPrevented) return
@@ -171,18 +222,43 @@ export default function App() {
       if (!HUB_FILES_RE.test(href)) return
       e.preventDefault()
       const name = filenameFromHref(href)
-      downloadUpload((u) => client.fetchBlob(u), href).catch((err) => {
+      // The chamber key names the hub the file lives on. Browser mode ignores
+      // it (one hub); in app mode a click outside a conversation cannot name
+      // one, and the router refuses rather than guessing — such links only
+      // ever render inside a conversation.
+      downloadUpload(
+        (u) => client.fetchBlobFor(view.name === 'conversation' ? view.chamberId : '', u),
+        href,
+      ).catch((err) => {
         if (isUnauthorized(err)) return
         setDownloadNote(`Could not download ${name}. Check your connection and try again.`)
       })
     }
     document.addEventListener('click', onClick)
     return () => document.removeEventListener('click', onClick)
-  }, [creds, client])
+  }, [creds, client, mode, view])
 
   useEventLoop()
 
-  if (!creds) return <LoginView />
+  // What "signed out" means differs: browser mode has no token yet, the app
+  // has no hub yet. The app's empty list only means "no hubs" once boot has
+  // read the store — `mode === 'app'`. Before that it is just the store's
+  // initial value, and Add Hub over it flashes onboarding at someone who has
+  // hubs, for the frame it takes the boot to resolve.
+  if (isTauri()) {
+    if (mode !== 'app') return null
+    if (hubs.length === 0) {
+      return (
+        <AddHubView
+          key={openedLink ?? 'empty'}
+          initialLink={openedLink ?? undefined}
+          onAdded={() => setOpenedLink(null)}
+        />
+      )
+    }
+  } else if (!creds) {
+    return <LoginView />
+  }
 
   return (
     <div className="app">
@@ -207,6 +283,15 @@ export default function App() {
           <ProjectsView />
         )}
         {settingsOpen && <SettingsSheet />}
+        {openedLink && (
+          <Sheet title="Add chamber" label="Add chamber" onClose={() => setOpenedLink(null)}>
+            <AddHubView
+              key={openedLink}
+              initialLink={openedLink}
+              onAdded={() => setOpenedLink(null)}
+            />
+          </Sheet>
+        )}
       </ErrorBoundary>
     </div>
   )

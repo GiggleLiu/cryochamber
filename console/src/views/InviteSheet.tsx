@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { HubClient, type Invite } from '../api/hubClient'
+import { HubRouter, type ConsoleClient } from '../api/hubRouter'
 import { ApiError, isUnauthorized } from '../api/types'
-import { useAppStore } from '../store/appStore'
+import { hubIdOf, useAppStore } from '../store/appStore'
+import type { HubAccount } from '../store/hubs'
+import { splitChamberKey } from '../lib/hubKeys'
 import { relativeTimeLabel } from '../lib/format'
 import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
@@ -48,6 +51,37 @@ function mintErrorMessage(e: unknown): string {
 }
 
 /**
+ * Which hub an invite to this chamber is minted on, and the address the link
+ * has to point at.
+ *
+ * Browser mode: the one hub that served this page, and this page's origin —
+ * the two are the same machine by construction. App mode: the hub the chamber
+ * lives on, at the URL the app remembers reaching it by. The app's own origin
+ * is a Tauri shell that no invited phone can open, so it may never be the base.
+ *
+ * An invite is *about* a hub, not about a chamber, so it takes the concrete
+ * `HubClient` rather than going through the router.
+ */
+export function inviteScopeFor(
+  s: { mode: 'browser' | 'app'; client: ConsoleClient | null; hubs: HubAccount[] },
+  chamberKey: string,
+): { hub: HubClient | null; inviteBase: string } {
+  if (s.mode !== 'app') {
+    return {
+      hub: s.client instanceof HubClient ? s.client : null,
+      inviteBase: window.location.origin,
+    }
+  }
+  const { hubId } = splitChamberKey(chamberKey)
+  return {
+    // Null for a hub the router does not hold — the same hub whose URL is
+    // unknown below, so there is never a base without a client to mint with.
+    hub: s.client instanceof HubRouter ? s.client.forHub(hubId) : null,
+    inviteBase: s.hubs.find((h) => h.id === hubId)?.url ?? '',
+  }
+}
+
+/**
  * Sharing, the way a meeting host shares: one button that mints a link for
  * *this* chamber, and a list of who currently holds one.
  *
@@ -55,17 +89,26 @@ function mintErrorMessage(e: unknown): string {
  * gesture that creates it: the console never persists it, so once this sheet
  * closes the only remaining copy is the hub's own token file (0600) — not
  * somewhere an owner should have to go digging to re-send a link.
+ *
+ * `hub` and `inviteBase` come from the caller (`inviteScopeFor`), because
+ * which hub this is and where its links point is a question about the chamber
+ * that was opened, not about the session.
  */
 export function InviteSheet({
   chamberId,
   chamberName,
+  hub,
+  inviteBase,
   onClose,
 }: {
+  /** The console-side chamber key: `{hubId}:{id}` in app mode. */
   chamberId: string
   chamberName: string
+  hub: HubClient | null
+  inviteBase: string
   onClose: () => void
 }) {
-  const client = useAppStore((s) => s.client)
+  const mode = useAppStore((s) => s.mode)
   const chambers = useAppStore((s) => s.chambers)
   // Every active invite, not just this chamber's: the name of one scoped
   // elsewhere is still a name this hub will refuse.
@@ -80,7 +123,11 @@ export function InviteSheet({
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const hub = client instanceof HubClient ? client : null
+  // Chamber ids are the hub's own words: unique per hub, and never carrying the
+  // `{hubId}:` prefix the console keys its rows by. Asked only in app mode —
+  // a browser-mode id beginning `{8 hex}:` would otherwise be truncated.
+  const app = mode === 'app'
+  const scope = app ? splitChamberKey(chamberId) : { hubId: '', chamberId }
 
   /** Every invite still live. Revoked ones are not "people with access", so
    * they are not shown at all — and they free their name on the hub too. */
@@ -106,17 +153,20 @@ export function InviteSheet({
 
   /** The people this sheet is about: active invites whose scope covers this
    * chamber. */
-  const people = active?.filter((i) => i.chambers.includes(chamberId)) ?? null
+  const people = active?.filter((i) => i.chambers.includes(scope.chamberId)) ?? null
   // Minting before the list arrives would pick a `guest-N` blind, and the hub
   // would reject the collision. A list that failed to load is different: the
   // names are simply unknown, and a 400 then says so honestly.
   const listPending = active === null && listError === null
 
   /** Names of the other chambers an invite also reaches. Chambers outside our
-   * own scope are not in the list and are left unnamed. */
+   * own scope are not in the list and are left unnamed. An invite is one hub's,
+   * so only that hub's rows can match — another hub's chamber may answer to the
+   * same raw id and is a different chamber entirely. */
   function alsoNames(invite: Invite): string[] {
     return chambers
-      .filter((c) => c.id !== chamberId && invite.chambers.includes(c.id))
+      .filter((c) => c.id !== chamberId && (!app || hubIdOf(c) === scope.hubId))
+      .filter((c) => invite.chambers.includes(app ? splitChamberKey(c.id).chamberId : c.id))
       .map((c) => c.name)
   }
 
@@ -128,8 +178,8 @@ export function InviteSheet({
     setCopyFailed(false)
     try {
       const name = label.trim() || defaultInviteLabel(active ?? [])
-      const { token } = await hub.createInvite(name, [chamberId])
-      const minted = `${window.location.origin}/#invite=${token}`
+      const { token } = await hub.createInvite(name, [scope.chamberId])
+      const minted = `${inviteBase}/#invite=${token}`
       setLink(minted)
       setQrFailed(false)
       setLabel('')

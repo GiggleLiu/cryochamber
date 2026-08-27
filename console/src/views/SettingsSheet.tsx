@@ -1,16 +1,26 @@
-import { useEffect, useState } from 'react'
-import { HubClient } from '../api/hubClient'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { HubRouter } from '../api/hubRouter'
 import { AgentSelect } from '../components/AgentSelect'
 import { useAppStore } from '../store/appStore'
+import { useOwnerHub } from '../hooks/useOwnerHub'
+import type { HubAccount } from '../store/hubs'
 import { isUnauthorized } from '../api/types'
+import { compareVersions } from '../lib/format'
 import { applyTheme, readTheme, type Theme } from '../lib/theme'
 import { Sheet } from '../components/Sheet'
+import { AddHubView } from './AddHubView'
+import { appAccessLink } from '../lib/appBoot'
 
 const THEMES: Array<{ value: Theme; label: string }> = [
   { value: '', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ]
+
+/** This bundle's own version, baked in at build time from the crate the
+ * console ships inside. Empty when the build could not read it, which every
+ * reader below treats as "unknown" rather than as a version. */
+const CONSOLE_VERSION = import.meta.env.VITE_CONSOLE_VERSION
 
 /** Where this session is signed in. The console is served by the hub it talks
  * to, so the origin is both the truth and what an operator can actually read. */
@@ -26,12 +36,25 @@ export function hubLabel(): string {
  * Owner and guest get the same sheet, in the same shell, in the same order —
  * the guest's simply has no Chambers section, because those controls act on
  * host state only an owner may change.
+ *
+ * App mode adds a Hubs section and turns the owner section per-hub: the app
+ * holds N hubs and can own some of them, so "the hub" is a choice rather than
+ * the page's origin.
  */
 export function SettingsSheet() {
+  // Which hub the owner rows act on, and the choice that steers it — shared
+  // with the New Chamber sheet, which asks the same question of the same hubs.
+  const { app, ownedHubs, ownerHubId, ownerHub, isOwner, chooseHub } = useOwnerHub()
   const creds = useAppStore((s) => s.creds)
   const hubRole = useAppStore((s) => s.hubRole)
   const hubVersion = useAppStore((s) => s.hubVersion)
   const client = useAppStore((s) => s.client)
+  const hubs = useAppStore((s) => s.hubs)
+  const roleByHub = useAppStore((s) => s.roleByHub)
+  const versionByHub = useAppStore((s) => s.versionByHub)
+  const connectionByHub = useAppStore((s) => s.connectionByHub)
+  const authFailedHubs = useAppStore((s) => s.authFailedHubs)
+  const removeHub = useAppStore((s) => s.removeHub)
   const showCompletedArchived = useAppStore((s) => s.showCompletedArchived)
   const setShowCompletedArchived = useAppStore((s) => s.setShowCompletedArchived)
   const setSettingsOpen = useAppStore((s) => s.setSettingsOpen)
@@ -42,52 +65,79 @@ export function SettingsSheet() {
   const [defaultAgent, setDefaultAgent] = useState('')
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
+  const [copyNote, setCopyNote] = useState<string | null>(null)
+  const [addingHub, setAddingHub] = useState(false)
+
+  // Which hub the owner rows point at *now*, for a request that resolves after
+  // the operator has already switched to another one.
+  const selectedRef = useRef(ownerHubId)
+  useLayoutEffect(() => {
+    selectedRef.current = ownerHubId
+  })
 
   useEffect(() => {
-    const hub = client instanceof HubClient && hubRole === 'owner' ? client : null
-    if (!hub) return
+    if (!ownerHub || !isOwner) return
+    // Whatever the last hub answered is not this hub's answer: the field goes
+    // blank until this one speaks, rather than showing another host's runner —
+    // and the last hub's load failure is not this hub's failure either.
+    setDefaultAgent('')
+    setAgentError(null)
     let cancelled = false
-    void hub.hostConfig().then(
+    void ownerHub.hostConfig().then(
       (config) => {
-        if (cancelled || useAppStore.getState().client !== hub) return
+        if (cancelled || useAppStore.getState().client !== client) return
         setDefaultAgent(config.default_agent)
       },
       (error) => {
-        if (cancelled || useAppStore.getState().client !== hub || isUnauthorized(error)) return
+        if (cancelled || useAppStore.getState().client !== client || isUnauthorized(error)) return
         setAgentError('Could not load the host agent setting.')
       },
     )
     return () => {
       cancelled = true
     }
-  }, [client, hubRole])
+  }, [ownerHub, isOwner, client])
 
-  if (!creds) return null
+  // App mode's sign-in is its hub list, not a credential.
+  if (!creds && !app) return null
 
   function chooseTheme(next: Theme) {
     applyTheme(next)
     setTheme(next)
   }
 
+  /** A completion that lands after a logout — or after the hub list changed —
+   * belongs to a session that no longer exists: applying it would install the
+   * previous owner's chamber list under the new account, and a late 401 would
+   * sign the new session out. Both modes ask the same question of the store's
+   * own client, which is the router in app mode and the hub in browser mode;
+   * app mode also drops an answer about a hub the owner rows have left behind.
+   * Browser mode's one hub is `''` on both sides, so it asks only the first. */
+  function stale(hubId: string): boolean {
+    return useAppStore.getState().client !== client || selectedRef.current !== hubId
+  }
+
   async function refreshChambers() {
-    const hub = client instanceof HubClient ? client : null
-    if (!hub || refreshing) return
+    const hubId = ownerHubId
+    if (!ownerHub || refreshing) return
     setRefreshing(true)
     setRefreshError(null)
-    // A completion that lands after a logout — or after another token has
-    // signed in — belongs to a session that no longer exists: applying it
-    // would install the previous owner's chamber list under the new account,
-    // and a late 401 would sign the new session out.
-    const stale = () => useAppStore.getState().client !== hub
     try {
-      await hub.refreshIndex()
+      await ownerHub.refreshIndex()
       // The hub also emits `index`, but re-reading here means the list is
       // already correct when the sheet closes rather than a beat later.
-      const list = await hub.listChambers()
-      if (stale()) return
-      useAppStore.getState().setChambers(list)
+      // In app mode the read goes through the router, which stamps the hub on
+      // every row it returns; browser mode's rows are the hub's own ids.
+      const list =
+        app && client instanceof HubRouter
+          ? await client.listChambersFor(hubId)
+          : await ownerHub.listChambers()
+      if (stale(hubId)) return
+      // Only this hub's rows are replaced — `''` in browser mode, which is the
+      // whole list there.
+      useAppStore.getState().setChambersForHub(hubId, list)
     } catch (e) {
-      if (stale()) return
+      if (stale(hubId)) return
       if (isUnauthorized(e)) return
       setRefreshError('Could not refresh. Check your connection and try again.')
     } finally {
@@ -100,19 +150,19 @@ export function SettingsSheet() {
    * would read as the hub having refused it. A real refusal restores the value
    * the hub still holds, next to the reason it gave. */
   async function chooseDefaultAgent(next: string) {
-    const hub = client instanceof HubClient ? client : null
+    const hub = ownerHub
+    const hubId = ownerHubId
     const previous = defaultAgent
     if (!hub || agentBusy || !next.trim() || next === previous) return
     setDefaultAgent(next)
     setAgentBusy(true)
     setAgentError(null)
-    const stale = () => useAppStore.getState().client !== hub
     try {
       const config = await hub.updateHostConfig(next)
-      if (stale()) return
+      if (stale(hubId)) return
       setDefaultAgent(config.default_agent)
     } catch (error) {
-      if (stale()) return
+      if (stale(hubId)) return
       setDefaultAgent(previous)
       if (isUnauthorized(error)) return
       setAgentError(
@@ -123,25 +173,110 @@ export function SettingsSheet() {
     }
   }
 
+  /** Forgetting a hub throws away conversations, watermarks and unsent
+   * messages that only exist on this device, so it asks first. */
+  function forgetHub(hub: HubAccount) {
+    const ok = window.confirm(
+      `Forget ${hub.label}? Its projects and their conversations leave this device.`,
+    )
+    if (!ok) return
+    void removeHub(hub.id)
+  }
+
+  async function copyAdminLink() {
+    const access = app
+      ? ownedHubs.find((hub) => hub.id === ownerHubId)
+      : creds && hubRole === 'owner'
+        ? { url: window.location.origin, token: creds.token }
+        : null
+    if (!access) return
+    if (!window.confirm('Anyone with this link can administer every chamber on this hub. Copy it?')) {
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(appAccessLink(access.url, access.token))
+      setCopyNote('Admin link copied.')
+    } catch {
+      setCopyNote('Could not copy the admin link.')
+    }
+  }
+
   return (
     <Sheet title="Settings" label="Settings" onClose={() => setSettingsOpen(false)}>
-      <p className="group-label">Account</p>
-      <div className="group">
-        <div className="row">
-          Signed in as
-          <span className="row-value">{creds.name}</span>
-        </div>
-        {/* A hub has no accounts — the token is the whole identity — so the
-            honest thing to show is which kind of token this is. */}
-        <div className="row">
-          Access
-          <span className="row-value">{hubRole === 'owner' ? 'Owner' : 'Guest'}</span>
-        </div>
-        <div className="row">
-          Hub
-          <span className="row-value">{hubLabel()}</span>
-        </div>
-      </div>
+      {creds && (
+        <>
+          <p className="group-label">Account</p>
+          <div className="group">
+            <div className="row">
+              Signed in as
+              <span className="row-value">{creds.name}</span>
+            </div>
+            {/* A hub has no accounts — the token is the whole identity — so the
+                honest thing to show is which kind of token this is. */}
+            <div className="row">
+              Access
+              <span className="row-value">{hubRole === 'owner' ? 'Owner' : 'Guest'}</span>
+            </div>
+            <div className="row">
+              Hub
+              <span className="row-value">{hubLabel()}</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* The app's own sign-in: every hub it remembers, what that hub calls
+          this token, and whether the hub is answering at all. */}
+      {app && (
+        <>
+          <p className="group-label">Chamber access</p>
+          <div className="group">
+            {hubs.map((h) => {
+              const version = versionByHub[h.id]
+              const older =
+                !!version &&
+                CONSOLE_VERSION !== '' &&
+                compareVersions(version, CONSOLE_VERSION) === -1
+              return (
+                <div className="row hub-row" key={h.id}>
+                  <span className="hub-main">
+                    <span className="hub-name">{h.label}</span>
+                    <span className="hub-meta">{h.url}</span>
+                    <span className="hub-meta">
+                      {roleByHub[h.id] === 'owner' ? 'Owner' : 'Guest'}
+                      {version ? ` · cryohub v${version}` : ''}
+                    </span>
+                    {/* Only a hub we failed to reach is down; one we have not
+                        heard from yet is still being asked. */}
+                    {connectionByHub[h.id] === 'offline' && (
+                      <span className="hub-note">unreachable</span>
+                    )}
+                    {connectionByHub[h.id] === 'connecting' && (
+                      <span className="hub-note">connecting…</span>
+                    )}
+                    {authFailedHubs.includes(h.id) && (
+                      <span className="hub-note">sign-in failed — token revoked?</span>
+                    )}
+                    {older && (
+                      <span className="hub-note">hub is older — some features may be missing</span>
+                    )}
+                  </span>
+                  <button
+                    className="row-action row-action-danger"
+                    aria-label={`Remove ${h.label}`}
+                    onClick={() => forgetHub(h)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )
+            })}
+            <button className="row" onClick={() => setAddingHub(true)}>
+              Add chamber
+            </button>
+          </div>
+        </>
+      )}
 
       <p className="group-label">Appearance</p>
       <div className="group">
@@ -163,10 +298,33 @@ export function SettingsSheet() {
         </div>
       </div>
 
-      {hubRole === 'owner' && (
+      {isOwner && (
         <>
           <p className="group-label">Chambers</p>
           <div className="group">
+            {/* These act on one host at a time. With a single owned hub the
+                question has one answer and asking it would be noise. */}
+            {ownedHubs.length > 1 && (
+              <label className="row">
+                Hub
+                <select
+                  className="row-input is-select"
+                  aria-label="Hub"
+                  value={ownerHubId}
+                  onChange={(e) => chooseHub(e.target.value)}
+                >
+                  {ownedHubs.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button className="row" onClick={copyAdminLink}>
+              Copy admin link
+              <span className="row-value">Full access</span>
+            </button>
             <AgentSelect
               label="Default agent"
               value={defaultAgent}
@@ -197,6 +355,11 @@ export function SettingsSheet() {
               {refreshError}
             </p>
           )}
+          {copyNote && (
+            <p className="group-hint" role="status">
+              {copyNote}
+            </p>
+          )}
           {agentError ? (
             <p className="group-hint" role="alert">
               {agentError}
@@ -210,15 +373,33 @@ export function SettingsSheet() {
         </>
       )}
 
-      <div className="group group-spaced">
-        <button className="row row-danger" onClick={() => logout()}>
-          Log out
-        </button>
-      </div>
+      {creds && (
+        <div className="group group-spaced">
+          <button className="row row-danger" onClick={() => logout()}>
+            Log out
+          </button>
+        </div>
+      )}
 
-      {/* The hub's version, not the console's: one hub serves this page, and
-          a stale bundle would report a number nobody can act on. */}
-      <p className="app-version">{hubVersion ? `cryohub v${hubVersion}` : 'cryohub'}</p>
+      {/* Browser mode reports the hub's version, not the console's: one hub
+          serves this page, and a stale bundle would report a number nobody can
+          act on. The app is served by nobody, so it reports itself — each
+          hub's version is on its own row above. */}
+      <p className="app-version">
+        {app
+          ? CONSOLE_VERSION
+            ? `Agent Console v${CONSOLE_VERSION}`
+            : 'Agent Console'
+          : hubVersion
+            ? `cryohub v${hubVersion}`
+            : 'cryohub'}
+      </p>
+
+      {addingHub && (
+        <Sheet title="Add chamber" label="Add chamber" onClose={() => setAddingHub(false)}>
+          <AddHubView onAdded={() => setAddingHub(false)} />
+        </Sheet>
+      )}
     </Sheet>
   )
 }

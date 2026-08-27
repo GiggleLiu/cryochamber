@@ -19,7 +19,9 @@ function hasHardwareKeyboard(): boolean {
 export function Composer({ chamberId }: { chamberId: string }) {
   const client = useAppStore((s) => s.client)
   const creds = useAppStore((s) => s.creds)
-  const account = creds ? accountKey(creds) : ''
+  // App mode has no session-wide token to key on — every hub has its own — but
+  // its chamber keys already carry the hub, so one namespace cannot collide.
+  const account = creds ? accountKey(creds) : 'app'
   // A half-written message is the user's work: it survives leaving the project,
   // closing the tab, and the app reloading, per project.
   const [text, setText] = useState(() => localStorage.getItem(draftKey(account, chamberId)) ?? '')

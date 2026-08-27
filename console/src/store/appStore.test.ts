@@ -5,9 +5,14 @@ import {
   unreadCount,
   useIsOwner,
   showCompletedKey,
+  selfNameFor,
+  isOwnerFor,
 } from './appStore'
 import type { Chamber, ChamberMessage, Credentials } from '../api/types'
 import { cacheKey, loadCachedState, flushCachedState } from './cache'
+import { MemoryHubsBackend, makeHubAccount, type HubAccount } from './hubs'
+import { HubClient } from '../api/hubClient'
+import { chamberKey, legacyHubIdFor } from '../lib/hubKeys'
 
 const creds: Credentials = { token: 'k', name: 'me', role: 'owner' }
 
@@ -332,5 +337,358 @@ describe('updateChamberStatus identity', () => {
       nextWakeDisplay: 'in 2 h',
       running: false,
     })
+  })
+})
+
+describe('app mode (multi-hub)', () => {
+  /** No app-mode test makes a request: the clients exist to be routed, not called. */
+  const okFetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch
+
+  function twoHubs() {
+    const a = makeHubAccount({ url: 'http://a.local:1', token: 'ta', trust: { kind: 'plain-http' } })
+    const b = makeHubAccount({ url: 'http://b.local:2', token: 'tb', trust: { kind: 'plain-http' } })
+    return { a, b }
+  }
+
+  function enterAppMode(...hubs: HubAccount[]): MemoryHubsBackend {
+    const backend = new MemoryHubsBackend()
+    useAppStore
+      .getState()
+      .initApp(
+        hubs,
+        backend,
+        (h) => new HubClient({ token: h.token, baseUrl: h.url, fetch: okFetch }),
+      )
+    return backend
+  }
+
+  const hubChamber = (hubId: string, id: string, name = id): Chamber => ({
+    ...chamber(id, name),
+    id: chamberKey(hubId, id),
+    hubId,
+  })
+
+  test('initApp builds a router over every hub and enters app mode', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    expect(s.mode).toBe('app')
+    expect(s.hubs.map((h) => h.id)).toEqual([a.id, b.id])
+    expect(s.client).not.toBeNull()
+    expect(s.creds).toBeNull()
+    expect(s.roleByHub).toEqual({ [a.id]: a.role, [b.id]: b.role })
+    expect(s.connectionByHub).toEqual({ [a.id]: 'connecting', [b.id]: 'connecting' })
+  })
+
+  test('the app show-completed choice survives another init', () => {
+    const { a } = twoHubs()
+    enterAppMode(a)
+    useAppStore.getState().setShowCompletedArchived(true)
+    resetAppStore()
+    enterAppMode(a)
+    expect(useAppStore.getState().showCompletedArchived).toBe(true)
+  })
+
+  test('setChambersForHub merges per hub without clobbering the other hub', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x', 'y'])
+    // refreshing hub a must not drop hub b's rows
+    s.setChambersForHub(a.id, [])
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['y'])
+  })
+
+  test('a hub index read re-fetches only its own conversations', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setMessages(chamberKey(a.id, 'x'), [])
+    s.setMessages(chamberKey(b.id, 'y'), [])
+    expect(useAppStore.getState().loadedChambers).toHaveLength(2)
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    // b's stream was never interrupted, so its histories are still current.
+    expect(useAppStore.getState().loadedChambers).toEqual([chamberKey(b.id, 'y')])
+  })
+
+  test('aggregate connection: one live hub keeps the app live', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setConnectionForHub(a.id, 'live')
+    s.setConnectionForHub(b.id, 'offline')
+    expect(useAppStore.getState().connection).toBe('live')
+    s.setConnectionForHub(a.id, 'connecting')
+    expect(useAppStore.getState().connection).toBe('connecting')
+    s.setConnectionForHub(a.id, 'offline')
+    expect(useAppStore.getState().connection).toBe('offline')
+  })
+
+  test('setHubIdentity feeds selfNameFor and the per-hub owner check', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    useAppStore.getState().setHubIdentity(a.id, { role: 'owner', name: 'liu', version: '9.9.9' })
+    useAppStore.getState().setHubIdentity(b.id, { role: 'invite', name: 'guest' })
+    const s = useAppStore.getState()
+    expect(selfNameFor(s, chamberKey(a.id, 'x'))).toBe('liu')
+    expect(selfNameFor(s, chamberKey(b.id, 'y'))).toBe('guest')
+    expect(s.versionByHub).toEqual({ [a.id]: '9.9.9' })
+    expect(isOwnerFor(s, chamberKey(a.id, 'x'))).toBe(true)
+    expect(isOwnerFor(s, chamberKey(b.id, 'y'))).toBe(false)
+  })
+
+  test('removeHub prunes that hub completely and persists the shorter list', async () => {
+    const { a, b } = twoHubs()
+    const backend = enterAppMode(a, b)
+    const key = chamberKey(a.id, 'x')
+    const s = useAppStore.getState()
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    s.setConnectionForHub(a.id, 'live')
+    s.applyMessage({ ...msg(1), chamberId: key })
+    s.markRead(key)
+    s.enqueueOutbox(key, 'pending')
+    localStorage.setItem(
+      cacheKey({ token: a.token }),
+      JSON.stringify({ chambers: [], messagesByChamber: {}, lastReadByChamber: {} }),
+    )
+
+    await useAppStore.getState().removeHub(a.id)
+
+    const after = useAppStore.getState()
+    expect(after.hubs.map((h) => h.id)).toEqual([b.id])
+    expect(after.chambers.map((c) => c.id)).toEqual([chamberKey(b.id, 'y')])
+    expect(after.messagesByChamber[key]).toBeUndefined()
+    expect(after.lastReadByChamber[key]).toBeUndefined()
+    expect(after.outboxByChamber[key]).toBeUndefined()
+    expect(after.roleByHub[a.id]).toBeUndefined()
+    expect(after.connectionByHub[a.id]).toBeUndefined()
+    // The hub that was live is gone, so the app is no longer live through it.
+    expect(after.connection).toBe('connecting')
+    expect(loadCachedState({ token: a.token })).toBeNull()
+    expect((await backend.load()).map((h) => h.id)).toEqual([b.id])
+  })
+
+  test('removeHub re-persists the hubs that stay', async () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+
+    // Forgetting a hub cancels every pending cache write, including the ones
+    // that belong to the hubs that stay — their record must be written again.
+    await useAppStore.getState().removeHub(a.id)
+    flushCachedState()
+
+    expect(loadCachedState({ token: b.token })?.chambers.map((c) => c.id)).toEqual([
+      chamberKey(b.id, 'y'),
+    ])
+  })
+
+  test('two hubs sharing one token hydrate that cache once', () => {
+    // Same token, two addresses (a tunnel and the LAN name): one cache record,
+    // and reading it per hub used to push its rows twice.
+    const a = makeHubAccount({ url: 'http://a.local:1', token: 't', trust: { kind: 'plain-http' } })
+    const b = makeHubAccount({ url: 'http://b.local:2', token: 't', trust: { kind: 'plain-http' } })
+    localStorage.setItem(
+      cacheKey({ token: 't' }),
+      JSON.stringify({
+        chambers: [hubChamber(a.id, 'x')],
+        messagesByChamber: {},
+        lastReadByChamber: {},
+      }),
+    )
+    enterAppMode(a, b)
+    expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual([chamberKey(a.id, 'x')])
+  })
+
+  test('removeHub leaves a conversation on that hub for the projects list', async () => {
+    const { a } = twoHubs()
+    enterAppMode(a)
+    useAppStore.getState().navigate({ name: 'conversation', chamberId: chamberKey(a.id, 'x') })
+    await useAppStore.getState().removeHub(a.id)
+    expect(useAppStore.getState().view).toEqual({ name: 'projects' })
+  })
+
+  test('app navigation does not create browser history entries', () => {
+    const { a } = twoHubs()
+    window.history.replaceState(null, '', '#/')
+    enterAppMode(a)
+    useAppStore.getState().navigate({ name: 'conversation', chamberId: chamberKey(a.id, 'x') })
+    expect(window.location.hash).toBe('#/')
+  })
+
+  test('addHub with the same URL and token refreshes that access rather than adding a row', async () => {
+    const { a, b } = twoHubs()
+    const backend = enterAppMode(a, b)
+    useAppStore.getState().markHubAuthFailed(a.id)
+    const fresh = makeHubAccount({
+      url: 'http://a.local:1/',
+      token: a.token,
+      name: 'liu',
+      role: 'owner',
+      trust: { kind: 'plain-http' },
+    })
+    expect(fresh.id).toBe(a.id)
+
+    await useAppStore.getState().addHub(fresh)
+
+    const s = useAppStore.getState()
+    expect(s.hubs.map((h) => h.id)).toEqual([a.id, b.id])
+    expect(s.hubs[0].token).toBe(a.token)
+    expect(s.roleByHub[a.id]).toBe('owner')
+    expect(s.selfNameByHub[a.id]).toBe('liu')
+    // The token that failed is gone, so the failure note goes with it.
+    expect(s.authFailedHubs).toEqual([])
+    expect((await backend.load()).map((h) => h.token)).toEqual([a.token, 'tb'])
+  })
+
+  test('another token on the same hub keeps both chamber scopes', async () => {
+    const first = makeHubAccount({
+      url: 'http://a.local:1', token: 'invite-a', trust: { kind: 'plain-http' },
+    })
+    const second = makeHubAccount({
+      url: 'http://a.local:1', token: 'invite-b', trust: { kind: 'plain-http' },
+    })
+    enterAppMode(first)
+    useAppStore.getState().setChambersForHub(first.id, [hubChamber(first.id, 'x')])
+
+    await useAppStore.getState().addHub(second)
+    useAppStore.getState().setChambersForHub(second.id, [hubChamber(second.id, 'y')])
+
+    expect(useAppStore.getState().hubs.map((h) => h.id)).toEqual([first.id, second.id])
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x', 'y'])
+  })
+
+  test('addHub appends an unknown hub and markHubAuthFailed notes it once', async () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a)
+    await useAppStore.getState().addHub(b)
+    expect(useAppStore.getState().hubs.map((h) => h.id)).toEqual([a.id, b.id])
+    useAppStore.getState().markHubAuthFailed(b.id)
+    useAppStore.getState().markHubAuthFailed(b.id)
+    expect(useAppStore.getState().authFailedHubs).toEqual([b.id])
+  })
+
+  /** A relaunch, the app-mode twin of `reload`: an empty store over every
+   * hub's cache record, which `resetAppStore` wipes for test hygiene. */
+  function relaunch(...hubs: HubAccount[]): void {
+    flushCachedState()
+    const records = hubs.map((h) => {
+      const key = cacheKey({ token: h.token })
+      return [key, localStorage.getItem(key)] as const
+    })
+    resetAppStore()
+    for (const [key, record] of records) if (record !== null) localStorage.setItem(key, record)
+    enterAppMode(...hubs)
+  }
+
+  test('each hub is cached under its own token, holding only its own rows', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    const ka = chamberKey(a.id, 'x')
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    s.applyMessage({ ...msg(1), chamberId: ka })
+    s.markRead(ka)
+    flushCachedState()
+
+    const cachedA = loadCachedState({ token: a.token })!
+    expect(cachedA.chambers.map((c) => c.id)).toEqual([ka])
+    expect(Object.keys(cachedA.messagesByChamber)).toEqual([ka])
+    expect(cachedA.lastReadByChamber[ka]).toBeDefined()
+
+    // Hub b's record must not carry a single one of hub a's rows.
+    const cachedB = loadCachedState({ token: b.token })!
+    expect(cachedB.chambers.map((c) => c.id)).toEqual([chamberKey(b.id, 'y')])
+    expect(cachedB.messagesByChamber).toEqual({})
+    expect(cachedB.lastReadByChamber).toEqual({})
+  })
+
+  test('app mode rehydrates every hub from its own cache on relaunch', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    const s = useAppStore.getState()
+    const ka = chamberKey(a.id, 'x')
+    s.setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    s.setChambersForHub(b.id, [hubChamber(b.id, 'y')])
+    s.applyMessage({ ...msg(1), chamberId: ka })
+    s.markRead(ka)
+
+    relaunch(a, b)
+
+    const after = useAppStore.getState()
+    expect(after.chambers.map((c) => c.name)).toEqual(['x', 'y'])
+    expect(after.messagesByChamber[ka]).toHaveLength(1)
+    expect(after.lastReadByChamber[ka]).toBeDefined()
+    // A cached tail is not a fetched history: every opened conversation still refetches.
+    expect(after.loadedChambers).toEqual([])
+    // And the cache is not an index answer.
+    expect(after.chambersLoaded).toBe(false)
+  })
+
+  test('app mode migrates URL-keyed cached rows to the URL+token access id', () => {
+    const { a } = twoHubs()
+    const oldId = legacyHubIdFor(a.url)
+    const oldKey = chamberKey(oldId, 'x')
+    const message = { ...msg(1), chamberId: oldKey }
+    localStorage.setItem(
+      cacheKey({ token: a.token }),
+      JSON.stringify({
+        chambers: [hubChamber(oldId, 'x')],
+        messagesByChamber: { [oldKey]: [message] },
+        lastReadByChamber: { [oldKey]: 'mark' },
+      }),
+    )
+
+    enterAppMode(a)
+
+    const key = chamberKey(a.id, 'x')
+    const state = useAppStore.getState()
+    expect(state.chambers.map((c) => c.id)).toEqual([key])
+    expect(state.messagesByChamber[key]?.[0].chamberId).toBe(key)
+    expect(state.lastReadByChamber).toEqual({ [key]: 'mark' })
+  })
+
+  test('cache migration preserves current ids for two aliases sharing one token', () => {
+    const first = makeHubAccount({
+      url: 'http://a.local:1', token: 'shared', trust: { kind: 'plain-http' },
+    })
+    const alias = makeHubAccount({
+      url: 'http://alias.local:1', token: 'shared', trust: { kind: 'plain-http' },
+    })
+    const firstChamber = hubChamber(first.id, 'x')
+    const aliasChamber = hubChamber(alias.id, 'y')
+    localStorage.setItem(
+      cacheKey({ token: first.token }),
+      JSON.stringify({
+        chambers: [firstChamber, aliasChamber],
+        messagesByChamber: {},
+        lastReadByChamber: {},
+      }),
+    )
+
+    enterAppMode(first, alias)
+
+    expect(useAppStore.getState().chambers.map((c) => c.id)).toEqual([
+      firstChamber.id,
+      aliasChamber.id,
+    ])
+  })
+
+  test('a hub with no cache contributes nothing and does not break the others', () => {
+    const { a, b } = twoHubs()
+    enterAppMode(a, b)
+    useAppStore.getState().setChambersForHub(a.id, [hubChamber(a.id, 'x')])
+    flushCachedState()
+    localStorage.removeItem(cacheKey({ token: b.token }))
+
+    relaunch(a, b)
+
+    expect(useAppStore.getState().chambers.map((c) => c.name)).toEqual(['x'])
   })
 })

@@ -1,0 +1,51 @@
+# Standalone crate: deliberately NOT a member of the repo-root `cryochamber`
+# package. The empty `[workspace]` table pins this directory as its own
+# workspace root so `cargo build` at the repo root never compiles the shell and
+# `cargo package` never ships it.
+[package]
+name = "cryochamber-app"
+version = "0.2.8"
+description = "Cryochamber Agent Console — native shell"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[lib]
+name = "cryochamber_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-http = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The certificate probe: reqwest speaks TLS through rustls so the handshake can
+# be handed a verifier of our own, and native roots so a hub whose CA the user
+# installed in the OS store is judged the way the rest of the desktop judges it.
+# `stream` is what lets the pinned transport forward an event stream chunk by
+# chunk instead of buffering a connection that never ends.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots",
+  "stream",
+] }
+# Bodies cross the IPC bridge as base64: it speaks JSON, and a hub answers with
+# images as readily as with text.
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+sha2 = "0.10"
+hex = "0.4"
+
+# Tests only. The http capability is written in URLPattern, and the only honest
+# way to assert what it allows is to match with the same engine the plugin
+# matches with — `tauri-plugin-http` 2.5.9 depends on exactly these two, and
+# `regex` is here because the plugin's parse names `regex::Regex` as its
+# pattern engine. Neither is linked into the shipped app.
+[dev-dependencies]
+urlpattern = "0.3"
+regex = "1"

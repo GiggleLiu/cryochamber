@@ -122,6 +122,35 @@ export function relativeTimeLabel(iso: string, now: Date = new Date()): string {
   return listTimeLabel(Math.floor(ms / 1000), now)
 }
 
+/** The numeric fields of a version, or null if any field is not a plain
+ * number — the empty string included, which `Number('')` would call zero. */
+function versionFields(v: string): number[] | null {
+  const fields = v.split('.')
+  return fields.every((f) => /^\d+$/.test(f)) ? fields.map(Number) : null
+}
+
+/**
+ * Order two `x.y.z` versions: -1 if `a` is older, 1 if newer, 0 if the same.
+ *
+ * Fields are compared as numbers — `0.9.0` is older than `0.10.0`, which is
+ * exactly what string comparison gets wrong — and a missing field counts as
+ * zero, so `1.2` and `1.2.0` are the same release. Anything with a field that
+ * is not a plain number (`1.2.3-rc1`, `nightly`, `""`) compares *equal*: the
+ * only caller warns the user about a version gap, and a warning nobody can act
+ * on is worse than silence.
+ */
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  const fa = versionFields(a)
+  const fb = versionFields(b)
+  if (!fa || !fb) return 0
+  for (let i = 0; i < Math.max(fa.length, fb.length); i += 1) {
+    const x = fa[i] ?? 0
+    const y = fb[i] ?? 0
+    if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
+}
+
 /** Seconds since epoch for a hub message timestamp (`%Y-%m-%dT%H:%M:%S`), for
  * the day separators and list labels above, which all count in seconds. An
  * unparseable stamp becomes 0 rather than NaN — a wrong date is recoverable

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { HubClient, type ChamberStatus, type LifecycleAction } from '../api/hubClient'
+import type { ChamberStatus, LifecycleAction } from '../api/hubClient'
 import { useAppStore } from '../store/appStore'
 import { subscribeChamberEvents } from '../store/chamberEvents'
 import { ApiError, isUnauthorized } from '../api/types'
@@ -72,18 +72,19 @@ export function ControlsSheet({
   // every sheet open. `null` — where this starts — is the controls list
   // itself, which is what the sheet is opened for.
   const [section, setSection] = useState<ControlsSection | null>(null)
-  const hub = client instanceof HubClient ? client : null
 
   const load = useCallback(async () => {
-    if (!hub) return
+    if (!client) return
     try {
-      setStatus(await hub.chamberStatus(chamberId))
+      // `chamberId` is the console-side chamber key: browser mode's raw id, or
+      // one naming the hub the router sends this to.
+      setStatus(await client.chamberStatus(chamberId))
       setLoadError(null)
     } catch (e) {
       if (isUnauthorized(e)) return
       setLoadError(`Could not load ${chamberName}. Check your connection and try again.`)
     }
-  }, [hub, chamberId, chamberName])
+  }, [client, chamberId, chamberName])
 
   useEffect(() => {
     void load()
@@ -100,13 +101,13 @@ export function ControlsSheet({
   )
 
   async function act(action: LifecycleAction) {
-    if (!hub || pending) return
+    if (!client || pending) return
     setPending(true)
     setNotice(null)
     setActionError(null)
     setConfirmReset(false)
     try {
-      const result = await hub.lifecycle(chamberId, action)
+      const result = await client.lifecycle(chamberId, action)
       // The refetch comes first and the verdict after it: no optimistic UI, so
       // the pill only moves once `GET /status` says it moved.
       await load()

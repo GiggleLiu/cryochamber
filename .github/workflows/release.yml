@@ -56,6 +56,23 @@ jobs:
             exit 1
           fi
 
+      # The native shell carries its own version, stamped by `make release`.
+      # A tag whose app version drifted would ship an installer that reports
+      # the wrong version, so gate the whole release on it.
+      - name: Check tag matches app version
+        run: |
+          app_version="$(python3 -c "import json;print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")"
+          echo "tauri.conf.json version: ${app_version}"
+          if [ "v${app_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app version v${app_version}"
+            exit 1
+          fi
+          app_crate_version="$(grep '^version' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)"
+          if [ "v${app_crate_version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/src-tauri/Cargo.toml version v${app_crate_version}"
+            exit 1
+          fi
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -80,10 +97,12 @@ jobs:
           prerelease: false
           generate_release_notes: true
 
-  # Publish to crates.io
+  # Publish to crates.io. Gated on the app builds too: a publish is
+  # irrevocable, so a release whose binaries fail to build must stop
+  # before the crate ships.
   publish-crate:
     name: Publish to crates.io
-    needs: verify
+    needs: [verify, build-android, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,3 +129,126 @@ jobs:
       # flag cargo's dirty check aborts the publish on those very files.
       - name: Publish crate
         run: cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Build one signed arm64 APK and attach it to the GitHub release.
+  build-android:
+    name: Android APK
+    needs: [verify, create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.13846066'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version 2.11.4 --locked
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          for value in KEYSTORE_B64 KEY_ALIAS KEYSTORE_PASSWORD; do
+            test -n "${!value}" || { echo "::error::${value} is unset"; exit 1; }
+          done
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'keyAlias=%s\npassword=%s\nstoreFile=%s\n' \
+            "$KEY_ALIAS" "$KEYSTORE_PASSWORD" "$RUNNER_TEMP/release.jks" \
+            > app/src-tauri/gen/android/keystore.properties
+
+      - name: Build signed APK
+        run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/29.0.13846066"
+          cd app/src-tauri
+          cargo tauri android build --apk --target aarch64
+
+      - name: Verify and collect APK
+        run: |
+          apk="$(find app/src-tauri/gen/android/app/build/outputs/apk \
+            -path '*/release/*' -name '*.apk' ! -name '*unsigned*' | head -1)"
+          test -n "$apk" || { echo "::error::no signed release APK found"; exit 1; }
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"
+          cp "$apk" "cryochamber-${GITHUB_REF_NAME}-android-arm64.apk"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: cryochamber-${{ github.ref_name }}-android-arm64.apk
+
+  # Build the macOS bundle from the native shell and attach it to the release.
+  build-macos:
+    name: macOS app
+    needs: [verify, create-release]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version 2.11.4 --locked
+
+      # Ad-hoc signed (no identity configured): users right-click-open on
+      # first launch. Notarization is deliberately deferred — see the spec.
+      # Only the .app bundle is built here: the bundler leaves it carrying the
+      # linker's ad-hoc signature, which Gatekeeper reads as a broken seal
+      # once the bundle has been rewritten, so it must be re-signed before
+      # any container — zip or dmg — is packaged around it.
+      - name: Build app
+        run: cd app/src-tauri && cargo tauri build --bundles app
+
+      - name: Ad-hoc sign the app bundle and package both artifacts
+        run: |
+          app="$(find app/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)"
+          test -n "$app" || { echo "::error::no .app produced"; exit 1; }
+          codesign --force --deep -s - "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --keepParent "$app" "cryochamber-${GITHUB_REF_NAME}-macos-arm64.app.zip"
+          staging="$(mktemp -d)"
+          cp -R "$app" "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname Cryochamber -srcfolder "$staging" -format UDZO \
+            "cryochamber-${GITHUB_REF_NAME}-macos-arm64.dmg"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            cryochamber-${{ github.ref_name }}-macos-arm64.dmg
+            cryochamber-${{ github.ref_name }}-macos-arm64.app.zip

@@ -1,4 +1,5 @@
 import {
+  compareVersions,
   initial,
   listTimeLabel,
   messageSeconds,
@@ -132,5 +133,29 @@ describe('messageSeconds', () => {
   test('an unparseable stamp is 0, never NaN', () => {
     expect(messageSeconds({ timestamp: 'nonsense' })).toBe(0)
     expect(messageSeconds({ timestamp: '' })).toBe(0)
+  })
+})
+
+describe('compareVersions', () => {
+  test('fields compare as numbers, not as text', () => {
+    // The whole reason this is not `<`: "0.9.0" sorts after "0.10.0" as text.
+    expect(compareVersions('0.9.0', '0.10.0')).toBe(-1)
+    expect(compareVersions('0.10.0', '0.9.0')).toBe(1)
+  })
+
+  test('identical versions compare equal', () => {
+    expect(compareVersions('1.2.3', '1.2.3')).toBe(0)
+  })
+
+  test('a missing field counts as zero', () => {
+    expect(compareVersions('1.2', '1.2.0')).toBe(0)
+    expect(compareVersions('1.2', '1.2.1')).toBe(-1)
+  })
+
+  test('anything unparseable compares equal, so nothing is claimed about it', () => {
+    expect(compareVersions('nightly', '1.2.3')).toBe(0)
+    expect(compareVersions('1.2.3-rc1', '1.2.4')).toBe(0)
+    expect(compareVersions('1.2.3', '')).toBe(0)
+    expect(compareVersions('', '')).toBe(0)
   })
 })

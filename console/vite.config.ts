@@ -1,7 +1,26 @@
 /// <reference types="vitest/config" />
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+
+/**
+ * The console's own version, baked into the bundle.
+ *
+ * The console ships inside `cryohub` — `/api/whoami`'s `hub_version` is this
+ * same number by construction — so the crate manifest is the source of truth
+ * rather than a second number in `package.json` that nothing keeps in step.
+ * A build that cannot see it reports `''`, which every reader treats as
+ * "unknown" and says nothing about.
+ */
+function consoleVersion(): string {
+  try {
+    const manifest = readFileSync(new URL('../Cargo.toml', import.meta.url), 'utf8')
+    return /^\s*version\s*=\s*"([^"]+)"/m.exec(manifest)?.[1] ?? ''
+  } catch {
+    return ''
+  }
+}
 
 /**
  * KaTeX's CSS lists every face as woff2 → woff → ttf. Every browser the
@@ -53,8 +72,15 @@ function precacheManifest(): Plugin {
 
 export default defineConfig({
   plugins: [react(), katexWoff2Only(), precacheManifest()],
+  define: { 'import.meta.env.VITE_CONSOLE_VERSION': JSON.stringify(consoleVersion()) },
   // Single source of truth for the version shown in Settings.
   server: {
+    // Pinned, not merely preferred: the native shell's `devUrl` in
+    // `app/src-tauri/tauri.conf.json` hardcodes 5173, so Vite silently sliding
+    // to 5174 when the port is taken would open the app window on a dead URL.
+    // Fail loudly instead.
+    port: 5173,
+    strictPort: true,
     proxy: {
       // A local `cryohub start` listens here. Same-origin in dev, exactly as
       // Caddy makes it in production — and no path rewrite, because the hub

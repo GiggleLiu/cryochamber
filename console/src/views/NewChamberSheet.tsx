@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'react'
-import { HubClient, type NewChamberPayload } from '../api/hubClient'
+import { type NewChamberPayload } from '../api/hubClient'
+import { HubRouter } from '../api/hubRouter'
 import { useAppStore } from '../store/appStore'
+import { useOwnerHub } from '../hooks/useOwnerHub'
+import { chamberKey } from '../lib/hubKeys'
 import { isUnauthorized } from '../api/types'
 import { Sheet } from '../components/Sheet'
 import { AlertCircle } from '../components/Icon'
@@ -39,10 +42,14 @@ export function buildNewChamberPayload(fields: {
 }
 
 /** Create a chamber from the phone. The models.dev catalogue the control panel
- * offered is deliberately out of scope — these are plain text fields. */
+ * offered is deliberately out of scope — these are plain text fields.
+ *
+ * A chamber is created *on a hub*, so app mode asks which one when the app owns
+ * more than one; browser mode has a single hub and no question to ask. */
 export function NewChamberSheet({ onClose }: { onClose: () => void }) {
   const client = useAppStore((s) => s.client)
   const navigate = useAppStore((s) => s.navigate)
+  const { ownedHubs, ownerHubId, ownerHub, chooseHub } = useOwnerHub()
   const [name, setName] = useState('')
   const [provider, setProvider] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -50,7 +57,7 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
   const [providerOpen, setProviderOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const hub = client instanceof HubClient ? client : null
+  const hub = ownerHub
   // Dismissing mid-request would drop the outcome on the floor: a failure's
   // message would land on an unmounted sheet, and a success would still
   // navigate into a chamber the user just walked away from. The sheet stays
@@ -68,19 +75,25 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
     }
     setBusy(true)
     setError(null)
+    // The hub this create is for. The picker is disabled while it is in flight,
+    // so it cannot move under the request.
+    const hubId = ownerHubId
     // A completion after a logout or account switch belongs to a session that
     // no longer exists: neither its result nor its 401 may touch the new one.
-    const stale = () => useAppStore.getState().client !== hub
+    const stale = () => useAppStore.getState().client !== client
     try {
       const { id, start_error: startError } = await hub.createChamber(payload)
       // The index changed, so re-read it rather than waiting for the `index`
       // event the hub also emits — the new chamber has to exist in the store
-      // before we can navigate into it.
-      const list = await hub.listChambers()
+      // before we can navigate into it. In app mode the read goes through the
+      // router, which stamps the hub on every row; browser mode's rows are the
+      // hub's own ids and `hubId` is `''`, which is that whole list.
+      const list =
+        client instanceof HubRouter ? await client.listChambersFor(hubId) : await hub.listChambers()
       if (stale()) return
-      useAppStore.getState().setChambers(list)
+      useAppStore.getState().setChambersForHub(hubId, list)
       onClose()
-      navigate({ name: 'conversation', chamberId: id })
+      navigate({ name: 'conversation', chamberId: chamberKey(hubId, id) })
       if (startError) {
         useAppStore
           .getState()
@@ -105,6 +118,27 @@ export function NewChamberSheet({ onClose }: { onClose: () => void }) {
       )}
 
       <div className="group">
+        {/* Which host the chamber is created on. With a single owned hub the
+            question has one answer and asking it would be noise. Frozen while
+            a create is in flight: the request is already on its way to one. */}
+        {ownedHubs.length > 1 && (
+          <label className="row">
+            Hub
+            <select
+              className="row-input is-select"
+              aria-label="Hub"
+              value={ownerHubId}
+              disabled={busy}
+              onChange={(e) => chooseHub(e.target.value)}
+            >
+              {ownedHubs.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="row">
           Name
           <input

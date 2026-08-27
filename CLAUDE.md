@@ -28,6 +28,10 @@ make console-check  # type-check and unit-test the Agent Console (npm ci, tsc, v
 make coverage       # generate coverage report (auto-installs cargo-llvm-cov)
 make cli            # cargo install --path .
 make console-build  # build the Agent Console (embedded into cryohub on the next cargo build)
+make app-dev        # run the native shell against the Vite dev server (requires tauri-cli)
+make app-macos      # build the macOS app bundle + dmg from the production console build
+make app-android    # build the arm64 Android APK
+make app-check      # fmt-check + clippy + test the native shell crate (app/src-tauri)
 make logo           # compile logo with typst
 make example        # run an example (DIR=examples/chambers/mr-lazy or .../chess-by-mail)
 make example-start-all # start all example chambers (AGENT=pi|opencode|claude)

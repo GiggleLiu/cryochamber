@@ -363,3 +363,45 @@ describe('events()', () => {
     })
   })
 })
+
+describe('baseUrl', () => {
+  it('prefixes every request path', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ role: 'owner' }), { status: 200 })
+    }) as typeof fetch
+    const c = new HubClient({ token: 't', baseUrl: 'http://hub.local:8765', fetch: fakeFetch })
+    await c.whoami()
+    expect(calls).toEqual(['http://hub.local:8765/api/whoami'])
+  })
+
+  it('fetchBlob prefixes hub-relative urls, allows own-origin absolute ones, refuses foreign ones', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return new Response(new Blob(['x']), { status: 200 })
+    }) as typeof fetch
+    const c = new HubClient({ token: 't', baseUrl: 'http://hub.local:8765', fetch: fakeFetch })
+    await c.fetchBlob('/api/chambers/a/files/pic.png')
+    await c.fetchBlob('http://hub.local:8765/api/chambers/a/files/other.png')
+    // A foreign origin never sees the request at all: `send` would attach the
+    // bearer header, and this hub's token must not travel anywhere else.
+    await expect(c.fetchBlob('http://elsewhere.example/x')).rejects.toMatchObject({ status: 0 })
+    expect(calls).toEqual([
+      'http://hub.local:8765/api/chambers/a/files/pic.png',
+      'http://hub.local:8765/api/chambers/a/files/other.png',
+    ])
+  })
+
+  it('defaults to same-origin relative paths (browser mode unchanged)', async () => {
+    const calls: string[] = []
+    const fakeFetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ role: 'owner' }), { status: 200 })
+    }) as typeof fetch
+    const c = new HubClient({ token: 't', fetch: fakeFetch })
+    await c.whoami()
+    expect(calls).toEqual(['/api/whoami'])
+  })
+})

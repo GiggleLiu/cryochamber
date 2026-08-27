@@ -135,8 +135,10 @@ The console is a PWA. Once it is open in a browser:
 - **iOS / Safari:** *Share → Add to Home Screen*.
 - **macOS:** Chrome *Install*, or Safari *File → Add to Dock*.
 
-The installed app is bound to the hub that served it — one hub per install.
-Updates arrive with the hub: after a `cargo install cryochamber` upgrade and
+The installed app is bound to the hub that served it — one hub per install. The
+native app lifts that limit, keeps several access links, and groups their
+chambers under Owned and Joined; see
+[Installing the app](./install-app.md). Updates arrive with the hub: after a `cargo install cryochamber` upgrade and
 `cryohub restart`, the open app shows an *Update available · Reload* bar.
 
 There are **no push notifications** by design: the app syncs while it is open.

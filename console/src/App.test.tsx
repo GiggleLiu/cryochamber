@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import App, { takeInviteToken } from './App'
 import { useAppStore, resetAppStore } from './store/appStore'
 import { saveCredentials } from './store/auth'
+import { appAccessLink, setAppRuntime } from './lib/appBoot'
+import { MemoryHubsBackend } from './store/hubs'
 
 const creds = { token: 'tok', name: 'Alice', role: 'owner' as const }
 
@@ -44,7 +46,7 @@ test('a chamber pruned from under the user is explained on the list', async () =
     ),
   )
   render(<App />)
-  await screen.findByRole('heading', { name: 'Projects' })
+  await screen.findByRole('heading', { name: 'Chambers' })
   act(() => useAppStore.getState().setAccessNotice('You no longer have access to this chamber.'))
   expect(await screen.findByText(/no longer have access/i)).toBeInTheDocument()
 })
@@ -61,7 +63,7 @@ test('simultaneous status banners share one stacking container', async () => {
     ),
   )
   render(<App />)
-  await screen.findByRole('heading', { name: 'Projects' })
+  await screen.findByRole('heading', { name: 'Chambers' })
   act(() => useAppStore.getState().setUpdateAvailable(true))
   const reconnecting = screen.getByText('Reconnecting')
   const update = screen.getByText('Update available')
@@ -108,7 +110,7 @@ describe('chamber-file anchors', () => {
     const cleanup = stubDownload('mock-hub')
     try {
       render(<App />)
-      await screen.findByRole('heading', { name: 'Projects' })
+      await screen.findByRole('heading', { name: 'Chambers' })
       const event = new MouseEvent('click', { bubbles: true, cancelable: true })
       document.querySelector('a[href^="/api/chambers"]')!.dispatchEvent(event)
       expect(event.defaultPrevented).toBe(true)
@@ -131,7 +133,7 @@ describe('chamber-file anchors', () => {
     document.body.appendChild(anchor)
     try {
       render(<App />)
-      await screen.findByRole('heading', { name: 'Projects' })
+      await screen.findByRole('heading', { name: 'Chambers' })
       const event = new MouseEvent('click', { bubbles: true, cancelable: true })
       anchor.dispatchEvent(event)
       expect(event.defaultPrevented).toBe(false)
@@ -156,7 +158,7 @@ describe('invite-link onboarding', () => {
       ),
     )
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Chambers' })).toBeInTheDocument()
     expect(window.location.hash).toBe('')
     const saved = JSON.parse(localStorage.getItem('agent-console.credentials')!)
     expect(saved).toEqual({ token: TOKEN, name: 'Alice', role: 'invite' })
@@ -186,7 +188,7 @@ describe('invite-link onboarding', () => {
     stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
     useAppStore.getState().setCreds(creds)
     render(<App />)
-    await screen.findByRole('heading', { name: 'Projects' })
+    await screen.findByRole('heading', { name: 'Chambers' })
     act(() => useAppStore.getState().navigate({ name: 'conversation', chamberId: 'cham-a' }))
     expect(window.location.hash).toBe('#/chamber/cham-a')
     await screen.findByRole('heading', { name: /alpha/ })
@@ -228,7 +230,7 @@ describe('invite-link onboarding', () => {
     saveCredentials(creds)
     stubHub('owner', [{ id: 'cham-a', name: 'alpha' }])
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Chambers' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#/')
   })
 
@@ -237,7 +239,7 @@ describe('invite-link onboarding', () => {
     saveCredentials({ ...creds, role: 'invite' })
     stubHub('invite', [{ id: 'cham-a', name: 'alpha' }])
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Chambers' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#/')
   })
 
@@ -254,7 +256,7 @@ describe('invite-link onboarding', () => {
     stubHub('invite', [{ id: '%2Ftmp%2Falpha', name: 'alpha' }])
     render(<App />)
     expect(await screen.findByRole('heading', { name: /alpha/ })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Projects' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Chambers' })).toBeNull()
   })
 
   test('a guest scoped to several chambers still gets the list', async () => {
@@ -264,7 +266,7 @@ describe('invite-link onboarding', () => {
       { id: '%2Ftmp%2Fbeta', name: 'beta' },
     ])
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Chambers' })).toBeInTheDocument()
   })
 
   test('an owner with one chamber is left on the list', async () => {
@@ -273,7 +275,7 @@ describe('invite-link onboarding', () => {
     stubHub('owner', [{ id: '%2Ftmp%2Falpha', name: 'alpha' }])
     useAppStore.getState().setCreds({ token: 'ab'.repeat(16), name: 'human', role: 'owner' })
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Chambers' })).toBeInTheDocument()
   })
 
   test('a revoked invite link shows login with a reason', async () => {
@@ -326,7 +328,7 @@ describe('invite-link onboarding', () => {
     document.body.appendChild(anchor)
     try {
       render(<App />)
-      await screen.findByRole('heading', { name: 'Projects' })
+      await screen.findByRole('heading', { name: 'Chambers' })
       anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await waitFor(() => expect(useAppStore.getState().creds).toBeNull())
       expect(await screen.findByText(/no longer valid|sign in again/i)).toBeInTheDocument()
@@ -359,5 +361,50 @@ describe('invite-link onboarding', () => {
       name: 'Owner',
       role: 'owner',
     })
+  })
+})
+
+describe('the app shell', () => {
+  afterEach(() => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
+  })
+
+  test('nothing is drawn until boot has entered app mode', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    setAppRuntime({
+      backend: new MemoryHubsBackend(),
+      transportFor: () => (async () => new Response('[]', { status: 200 })) as typeof fetch,
+    })
+    render(<App />)
+    // An empty hub list is also the store's initial value, so "no hubs yet" is
+    // only true once the stored list has been read — offering Add Hub before
+    // that flashes onboarding at someone who has hubs.
+    expect(useAppStore.getState().mode).toBe('browser')
+    expect(screen.queryByRole('heading', { name: 'Add a chamber' })).toBeNull()
+    expect(await screen.findByRole('heading', { name: 'Add a chamber' })).toBeInTheDocument()
+  })
+
+  test('a link that launched the app fills the add-chamber form', async () => {
+    const token = 'cd'.repeat(16)
+    const link = appAccessLink('https://hub.example/console', token)
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: vi.fn(async () => [link]) },
+      event: { listen: vi.fn(async () => vi.fn()) },
+    }
+    setAppRuntime({
+      backend: new MemoryHubsBackend(),
+      transportFor: () => (async () => new Response('[]', { status: 200 })) as typeof fetch,
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/hub address/i)).toHaveValue(
+        'https://hub.example/console',
+      ),
+    )
+    expect(screen.getByLabelText(/access token/i)).toHaveValue(token)
   })
 })

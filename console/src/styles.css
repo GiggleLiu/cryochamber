@@ -913,6 +913,18 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
   transform: translateY(-50%);
 }
+/* A consent, not a preference: a real checkbox beside its sentence, rather
+   than the settings switch. Lives inside the plain-HTTP warning block. */
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+.check-field input { flex: none; margin: 0; }
+
 .login-hint {
   margin-top: var(--sp-4);
   font-size: var(--fs-sm);
@@ -1149,6 +1161,26 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--ink-3);
 }
 
+/* One remembered hub in Settings: its name over its address, its access and
+   its version, with anything wrong with it underneath. */
+.hub-row { gap: var(--sp-2); }
+.hub-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.hub-name { font-size: var(--fs-md); }
+.hub-meta {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.hub-note {
+  font-size: var(--fs-xs);
+  color: var(--warn);
+}
+
 .invite-copy { margin-bottom: var(--sp-4); }
 
 /* The QR code under a freshly minted invite link: centred, framed in the
@@ -1283,6 +1315,43 @@ input, select, textarea { font: inherit; color: inherit; }
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* ==========================================================================
+   Untrusted-certificate sheet — one fingerprint, read against what the hub's
+   operator says it should be. The hex is the whole point of the screen, so it
+   is set large, monospaced and broken into pairs that can be tracked by eye.
+   ========================================================================== */
+.pin-sheet { padding: 0 var(--sp-4); }
+.pin-host {
+  margin-top: var(--sp-4);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pin-fingerprint {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow-wrap: anywhere;
+}
+.pin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+}
+.btn-quiet {
+  min-height: var(--tap);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.btn-quiet:disabled { opacity: 0.55; cursor: default; }
 
 /* Skeletons mirror the real rows, so the layout does not jump on arrival. */
 .skeleton {
@@ -1691,6 +1760,31 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: var(--fs-2xs);
   color: var(--ink-3);
 }
+/* Which hub a project row lives on. Quieter than the name it sits next to —
+   it answers "where", and the row is about "what". */
+.hub-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The hub is not answering: the row is the last thing it said, so the chip
+   reads as an aside rather than a label. */
+.hub-chip.is-unreachable {
+  background: none;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  font-style: italic;
+}
 .question-badge {
   flex: none;
   min-width: 18px;
@@ -1719,6 +1813,21 @@ input, select, textarea { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .stream-reveal:active { background: var(--surface-press); }
+
+.stream-category {
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.stream-category-empty {
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+  background: var(--surface);
+}
 
 .stream-group { background: var(--surface); border-top: 1px solid var(--line); }
 .stream-group > summary {

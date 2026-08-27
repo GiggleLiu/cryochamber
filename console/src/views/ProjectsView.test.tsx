@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectsView, foldedLabel } from './ProjectsView'
-import { useAppStore, resetAppStore } from '../store/appStore'
+import { useAppStore, resetAppStore, type Connection } from '../store/appStore'
+import { makeHubAccount } from '../store/hubs'
 import type { Chamber, ChamberMessage } from '../api/types'
 
 function chamber(id: string, name = id, extra: Partial<Chamber> = {}): Chamber {
@@ -142,6 +143,32 @@ describe('new chamber', () => {
     render(<ProjectsView />)
     expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
   })
+
+  test('in app mode, owning any hub is enough to reach the sheet', async () => {
+    const hub = makeHubAccount({
+      url: 'https://a.example', label: 'Alpha hub', token: 'ka', role: 'owner',
+      trust: { kind: 'https' },
+    })
+    // App mode has no session-wide role: `hubRole` stays null and the answer
+    // comes from the hubs this token owns.
+    useAppStore.setState({
+      mode: 'app', creds: null, hubs: [hub], roleByHub: { [hub.id]: 'owner' },
+    })
+    render(<ProjectsView />)
+    await userEvent.click(screen.getByRole('button', { name: 'New chamber' }))
+    expect(await screen.findByRole('dialog', { name: 'New chamber' })).toBeInTheDocument()
+  })
+
+  test('in app mode, a guest on every hub still sees no + button', () => {
+    const hub = makeHubAccount({
+      url: 'https://a.example', label: 'Alpha hub', token: 'ka', trust: { kind: 'https' },
+    })
+    useAppStore.setState({
+      mode: 'app', creds: null, hubs: [hub], roleByHub: { [hub.id]: 'invite' },
+    })
+    render(<ProjectsView />)
+    expect(screen.queryByRole('button', { name: 'New chamber' })).toBeNull()
+  })
 })
 
 describe('groups, badge and meta line', () => {
@@ -260,6 +287,147 @@ describe('the folded chambers are always accounted for', () => {
     expect(foldedLabel(2, 0)).toBe('2 completed')
     expect(foldedLabel(0, 3)).toBe('3 archived')
     expect(foldedLabel(2, 3)).toBe('2 completed · 3 archived')
+  })
+})
+
+describe('hub chips in app mode', () => {
+  const alpha = makeHubAccount({
+    url: 'https://a.example',
+    label: 'Alpha hub',
+    token: 'ka',
+    trust: { kind: 'https' },
+  })
+  const beta = makeHubAccount({
+    url: 'https://b.example',
+    label: 'Beta hub',
+    token: 'kb',
+    trust: { kind: 'https' },
+  })
+
+  /** Two hubs, one chamber each, keyed the way the router keys them. */
+  function twoHubs(connectionByHub: Record<string, Connection>) {
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubs: [alpha, beta],
+      connectionByHub,
+      chambers: [
+        chamber(`${alpha.id}:cham-a`, 'alpha', { hubId: alpha.id }),
+        chamber(`${beta.id}:cham-b`, 'beta', { hubId: beta.id }),
+      ],
+    })
+  }
+
+  test('every row says which hub it lives on', () => {
+    twoHubs({ [alpha.id]: 'live', [beta.id]: 'live' })
+    render(<ProjectsView />)
+    expect(screen.getByText('Alpha hub')).toBeInTheDocument()
+    expect(screen.getByText('Beta hub')).toBeInTheDocument()
+    expect(screen.queryByText(/unreachable/)).toBeNull()
+  })
+
+  test('a hub that is not live says so on its own rows only', () => {
+    twoHubs({ [alpha.id]: 'live', [beta.id]: 'offline' })
+    render(<ProjectsView />)
+    expect(screen.getByText('Alpha hub')).toBeInTheDocument()
+    expect(screen.getByText(/Beta hub · unreachable/)).toBeInTheDocument()
+  })
+
+  test('a chip that would always say the same thing is not drawn', () => {
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubs: [alpha],
+      connectionByHub: { [alpha.id]: 'live' },
+      chambers: [chamber(`${alpha.id}:cham-a`, 'alpha', { hubId: alpha.id })],
+    })
+    render(<ProjectsView />)
+    expect(screen.queryByText('Alpha hub')).toBeNull()
+  })
+
+  test('a hub still connecting claims nothing about being down', () => {
+    // "Not live" covers a hub we have simply not heard from yet; calling that
+    // unreachable is a verdict on a call still in flight.
+    twoHubs({ [alpha.id]: 'live', [beta.id]: 'connecting' })
+    render(<ProjectsView />)
+    expect(screen.getByText('Beta hub')).toBeInTheDocument()
+    expect(screen.queryByText(/unreachable/)).toBeNull()
+  })
+
+  test('browser mode has one hub and never chips a row', () => {
+    render(<ProjectsView />)
+    expect(document.querySelector('.hub-chip')).toBeNull()
+  })
+
+  test('the folds follow the role on each row’s own hub', () => {
+    // App mode has no session-wide role, so a session-scoped owner check folds
+    // nothing — and the Settings switch that offers the fold does nothing.
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubRole: null,
+      hubs: [alpha, beta],
+      roleByHub: { [alpha.id]: 'owner', [beta.id]: 'invite' },
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'live' },
+      chambers: [
+        chamber(`${alpha.id}:cham-a`, 'alpha done', { hubId: alpha.id, completed: true }),
+        chamber(`${beta.id}:cham-b`, 'beta done', { hubId: beta.id, completed: true }),
+        chamber(`${beta.id}:cham-c`, 'beta live', { hubId: beta.id }),
+      ],
+      showCompletedArchived: false,
+    })
+    render(<ProjectsView />)
+    expect(screen.getByRole('heading', { name: 'Owned (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Joined (2)' })).toBeInTheDocument()
+    expect(screen.queryByText('alpha done')).toBeNull()
+    expect(screen.getByRole('button', { name: /1 completed/ })).toBeInTheDocument()
+    // A guest's list is never filed for them: the finished chamber on the hub
+    // this token only visits stays a plain row.
+    expect(screen.getByText('beta done')).toBeInTheDocument()
+  })
+
+  test('overlapping admin and invite links show one owned chamber', () => {
+    const admin = makeHubAccount({
+      url: 'https://same.example', token: 'admin', role: 'owner', trust: { kind: 'https' },
+    })
+    const invite = makeHubAccount({
+      url: 'https://same.example', token: 'invite', trust: { kind: 'https' },
+    })
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubs: [invite, admin],
+      roleByHub: { [invite.id]: 'invite', [admin.id]: 'owner' },
+      chambers: [
+        chamber(`${invite.id}:shared`, 'shared', { hubId: invite.id }),
+        chamber(`${admin.id}:shared`, 'shared', { hubId: admin.id }),
+      ],
+    })
+
+    render(<ProjectsView />)
+
+    expect(screen.getAllByText('shared')).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Owned (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Joined (0)' })).toBeInTheDocument()
+  })
+
+  test('the switch unfolds the owned hub’s finished chambers', () => {
+    useAppStore.setState({
+      mode: 'app',
+      creds: null,
+      hubRole: null,
+      hubs: [alpha, beta],
+      roleByHub: { [alpha.id]: 'owner', [beta.id]: 'invite' },
+      connectionByHub: { [alpha.id]: 'live', [beta.id]: 'live' },
+      chambers: [
+        chamber(`${alpha.id}:cham-a`, 'alpha done', { hubId: alpha.id, completed: true }),
+        chamber(`${beta.id}:cham-c`, 'beta live', { hubId: beta.id }),
+      ],
+      showCompletedArchived: true,
+    })
+    render(<ProjectsView />)
+    expect(screen.getByText('alpha done')).toBeInTheDocument()
+    expect(screen.getByText(/Completed \(1\)/)).toBeInTheDocument()
   })
 })
 
