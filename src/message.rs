@@ -35,14 +35,7 @@ pub fn write_message(dir: &Path, box_name: &str, msg: &Message) -> Result<PathBu
     let filename = format!("{ts}_{}_{}.md", base.as_str(), unique_suffix());
     let path = box_dir.join(&filename);
 
-    // Atomic write: write to a staging file, then rename. The staging name is
-    // dot-prefixed and does NOT end in `.md`, so `list_message_files` never
-    // treats a half-written temp as a deliverable message (which a concurrent
-    // `receive` could otherwise claim, breaking the atomic-rename delivery).
-    let tmp_path = box_dir.join(format!(".{filename}.tmp"));
-    let content = message_to_markdown(msg);
-    std::fs::write(&tmp_path, &content)?;
-    std::fs::rename(&tmp_path, &path)?;
+    crate::persistence::write_durable(&path, message_to_markdown(msg))?;
 
     Ok(path)
 }
@@ -125,12 +118,12 @@ pub fn read_outbox_archive(dir: &Path) -> Result<Vec<(String, Message)>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MessageFile {
-    filename: String,
-    path: PathBuf,
+pub(crate) struct MessageFile {
+    pub(crate) filename: String,
+    pub(crate) path: PathBuf,
 }
 
-fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
+pub(crate) fn list_message_files(message_dir: &Path) -> Result<Vec<MessageFile>> {
     if !message_dir.exists() {
         return Ok(Vec::new());
     }
@@ -227,9 +220,14 @@ fn move_messages(
         let src = source_dir.join(filename);
         let dst = destination_dir.join(filename);
         if src.exists() {
+            std::fs::File::open(&src)?.sync_all()?;
             std::fs::rename(&src, &dst)
                 .with_context(|| format!("Failed to {action} {filename}"))?;
         }
+    }
+    std::fs::File::open(destination_dir)?.sync_all()?;
+    if source_dir.exists() {
+        std::fs::File::open(source_dir)?.sync_all()?;
     }
     Ok(())
 }

@@ -76,17 +76,13 @@ pub fn read_current_session(log_path: &Path) -> Result<Option<String>> {
     }
 
     let contents = fs::read_to_string(log_path)?;
-    if contents.trim().is_empty() {
-        return Ok(None);
-    }
+    Ok(current_session(&contents).map(str::to_owned))
+}
 
-    match line_anchored_indices(&contents, SESSION_START)
+pub(crate) fn current_session(contents: &str) -> Option<&str> {
+    line_anchored_indices(contents, SESSION_START)
         .last()
-        .copied()
-    {
-        Some(start) => Ok(Some(contents[start..].to_string())),
-        None => Ok(None),
-    }
+        .map(|&start| &contents[start..])
 }
 
 /// Read the last `n` sessions from `cryo.log` as a single string, preserving
@@ -98,15 +94,19 @@ pub fn read_recent_sessions(log_path: &Path, n: usize) -> Result<Option<String>>
         return Ok(None);
     }
     let contents = fs::read_to_string(log_path)?;
-    if contents.trim().is_empty() {
-        return Ok(None);
+    Ok(recent_sessions(&contents, n).map(str::to_owned))
+}
+
+pub(crate) fn recent_sessions(contents: &str, n: usize) -> Option<&str> {
+    if n == 0 {
+        return None;
     }
-    let indices: Vec<usize> = line_anchored_indices(&contents, SESSION_START);
+    let indices: Vec<usize> = line_anchored_indices(contents, SESSION_START);
     if indices.is_empty() {
-        return Ok(None);
+        return None;
     }
     let start = indices[indices.len().saturating_sub(n)];
-    Ok(Some(contents[start..].to_string()))
+    Some(&contents[start..])
 }
 
 pub fn session_count(log_path: &Path) -> Result<u32> {
@@ -144,10 +144,12 @@ pub fn parse_latest_session_wake(log_path: &Path) -> Result<Option<String>> {
 /// Matches lines like `[HH:MM:SS] hibernate: plan complete, exit=0, summary="..."`.
 /// Returns `None` if the latest session did not end with plan completion.
 pub fn parse_latest_session_plan_complete(log_path: &Path) -> Result<Option<String>> {
-    let session = match read_current_session(log_path)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
+    Ok(read_current_session(log_path)?
+        .as_deref()
+        .and_then(session_plan_complete))
+}
+
+pub(crate) fn session_plan_complete(session: &str) -> Option<String> {
     for line in session.lines() {
         if !line.contains("hibernate: plan complete") {
             continue;
@@ -157,19 +159,21 @@ pub fn parse_latest_session_plan_complete(log_path: &Path) -> Result<Option<Stri
             .and_then(|pos| line.get(pos + "summary=\"".len()..))
             .and_then(|rest| rest.rfind('"').map(|end| rest[..end].to_string()))
             .unwrap_or_default();
-        return Ok(Some(summary));
+        return Some(summary);
     }
-    Ok(None)
+    None
 }
 
 /// Extract the hibernate summary from the current session, if any.
 /// Matches both scheduled and plan-complete hibernate lines with
 /// `summary="..."`.
 pub fn parse_latest_session_summary(log_path: &Path) -> Result<Option<String>> {
-    let session = match read_current_session(log_path)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
+    Ok(read_current_session(log_path)?
+        .as_deref()
+        .and_then(session_summary))
+}
+
+pub(crate) fn session_summary(session: &str) -> Option<String> {
     for line in session.lines().rev() {
         if !line.contains("hibernate:") {
             continue;
@@ -179,24 +183,26 @@ pub fn parse_latest_session_summary(log_path: &Path) -> Result<Option<String>> {
             .and_then(|pos| line.get(pos + "summary=\"".len()..))
             .and_then(|rest| rest.rfind('"').map(|end| rest[..end].to_string()));
         if summary.is_some() {
-            return Ok(summary);
+            return summary;
         }
     }
-    Ok(None)
+    None
 }
 
 /// Extract the task line from the current session in cryo.log.
 pub fn parse_latest_session_task(log_path: &Path) -> Result<Option<String>> {
-    let session = match read_current_session(log_path)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
+    Ok(read_current_session(log_path)?
+        .as_deref()
+        .and_then(session_task))
+}
+
+pub(crate) fn session_task(session: &str) -> Option<String> {
     for line in session.lines() {
         if let Some(task) = line.strip_prefix("task: ") {
-            return Ok(Some(task.to_string()));
+            return Some(task.to_string());
         }
     }
-    Ok(None)
+    None
 }
 
 /// Outcome of a completed session.
@@ -268,15 +274,18 @@ struct DailyDigestAccumulator {
 /// Summarize recent session activity by the local date recorded in `cryo.log`.
 /// Results are newest day first. Missing or empty logs return an empty list.
 pub fn daily_digests(log_path: &Path, max_days: usize) -> Result<Vec<DailyDigest>> {
-    if max_days == 0 {
-        return Ok(Vec::new());
-    }
+    let contents = fs::read_to_string(log_path).or_else(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            Ok(String::new())
+        } else {
+            Err(e)
+        }
+    })?;
+    Ok(digests_from_text(&contents, max_days))
+}
 
-    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
-    let sessions = parse_sessions_since(log_path, epoch)?;
+pub(crate) fn digests_from_text(contents: &str, max_days: usize) -> Vec<DailyDigest> {
+    let sessions = sessions_since(contents, NaiveDateTime::default());
     let mut by_date: BTreeMap<String, DailyDigestAccumulator> = BTreeMap::new();
 
     for session in sessions {
@@ -292,7 +301,7 @@ pub fn daily_digests(log_path: &Path, max_days: usize) -> Result<Vec<DailyDigest
         entry.latest_session = entry.latest_session.max(session.session_number);
     }
 
-    Ok(by_date
+    by_date
         .into_iter()
         .rev()
         .take(max_days)
@@ -302,7 +311,7 @@ pub fn daily_digests(log_path: &Path, max_days: usize) -> Result<Vec<DailyDigest
             failed_sessions: acc.failed_sessions,
             latest_session: acc.latest_session,
         })
-        .collect())
+        .collect()
 }
 
 /// Parse all sessions from `cryo.log` whose timestamp is >= `since`.
@@ -313,10 +322,14 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
     }
 
     let contents = fs::read_to_string(log_path)?;
+    Ok(sessions_since(&contents, since))
+}
+
+pub(crate) fn sessions_since(contents: &str, since: NaiveDateTime) -> Vec<SessionSummary> {
     let mut summaries = Vec::new();
 
     // Split into session blocks by finding line-anchored SESSION_START markers.
-    let starts: Vec<usize> = line_anchored_indices(&contents, SESSION_START);
+    let starts: Vec<usize> = line_anchored_indices(contents, SESSION_START);
 
     for (idx, &start) in starts.iter().enumerate() {
         let end = if idx + 1 < starts.len() {
@@ -344,7 +357,8 @@ pub fn parse_sessions_since(log_path: &Path, since: NaiveDateTime) -> Result<Vec
         });
     }
 
-    Ok(summaries)
+    summaries.sort_by_key(|session| session.timestamp);
+    summaries
 }
 
 /// Parse a session header line into (session_number, timestamp).

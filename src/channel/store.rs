@@ -8,6 +8,8 @@ use crate::message::{self, Message};
 
 /// Local filesystem-backed message store. Reads from `messages/inbox/` and
 /// writes to `messages/outbox/`.
+type PageRow = (String, String, Message);
+
 pub struct MessageStore {
     dir: PathBuf,
 }
@@ -91,5 +93,61 @@ impl MessageChannel for MessageStore {
         };
         self.send_out(&msg)?;
         Ok(())
+    }
+}
+
+impl MessageStore {
+    /// Page by immutable mailbox filename, whose prefix is the persisted send
+    /// timestamp. Archive moves preserve the cursor. Bodies outside this window
+    /// are never opened; legacy nonstandard names retain lexical ordering.
+    pub(crate) fn page(
+        &self,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<PageRow>, Option<String>)> {
+        let mut files = std::collections::BTreeMap::new();
+        for source in ["inbox", "inbox/archive", "outbox", "outbox/archive"] {
+            let top = source.split('/').next().unwrap();
+            for file in message::list_message_files(&self.dir.join("messages").join(source))? {
+                let cursor = format!("{}|{top}", file.filename);
+                if before.is_none_or(|before| cursor.as_str() < before) {
+                    files.insert(cursor, (source.to_string(), file));
+                }
+            }
+        }
+        let mut page = Vec::new();
+        let mut next = None;
+        let mut files = files.into_iter().rev().peekable();
+        while let Some((cursor, (source, file))) = files.next() {
+            // A watcher/bridge may archive between listing and opening.
+            let parsed = message::parse_message_file(&file.path).or_else(|error| {
+                if source.ends_with("/archive") {
+                    return Err(error);
+                }
+                message::parse_message_file(
+                    &self
+                        .dir
+                        .join("messages")
+                        .join(&source)
+                        .join("archive")
+                        .join(&file.filename),
+                )
+            });
+            match parsed {
+                Ok(msg) => page.push((source, file.filename, msg)),
+                Err(error) => {
+                    eprintln!("Skipping message while paging: {error}");
+                    continue;
+                }
+            }
+            if page.len() == limit {
+                if files.peek().is_some() {
+                    next = Some(cursor);
+                }
+                break;
+            }
+        }
+        page.reverse();
+        Ok((page, next))
     }
 }

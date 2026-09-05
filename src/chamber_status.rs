@@ -275,9 +275,9 @@ pub fn status(dir: &Path) -> ChamberStatus {
     let config_agent = cfg.agent.clone();
 
     let log_file = crate::log::log_path(dir);
-    let completion_summary = crate::log::parse_latest_session_plan_complete(&log_file)
-        .ok()
-        .flatten();
+    let log_text = std::fs::read_to_string(&log_file).unwrap_or_default();
+    let current = crate::log::current_session(&log_text).unwrap_or_default();
+    let completion_summary = crate::log::session_plan_complete(current);
     let completed = completion_summary.is_some();
 
     let plan_content = std::fs::read_to_string(dir.join("plan.md")).unwrap_or_default();
@@ -294,11 +294,10 @@ pub fn status(dir: &Path) -> ChamberStatus {
         session,
         agent,
         config_agent,
-        log_tail: crate::log::read_recent_sessions(&log_file, 5)
-            .ok()
-            .flatten()
-            .unwrap_or_default(),
-        daily_digests: crate::log::daily_digests(&log_file, 3).unwrap_or_default(),
+        log_tail: crate::log::recent_sessions(&log_text, 5)
+            .unwrap_or_default()
+            .to_owned(),
+        daily_digests: crate::log::digests_from_text(&log_text, 3),
         next_wake: next_wake(dir),
         notes_content,
         notes_html,
@@ -307,12 +306,8 @@ pub fn status(dir: &Path) -> ChamberStatus {
         config_content,
         has_config,
         settings_rows,
-        task: crate::log::parse_latest_session_task(&log_file)
-            .ok()
-            .flatten(),
-        session_summary: crate::log::parse_latest_session_summary(&log_file)
-            .ok()
-            .flatten(),
+        task: crate::log::session_task(current),
+        session_summary: crate::log::session_summary(current),
         completed,
         completion_summary,
     }
@@ -328,6 +323,34 @@ pub fn messages(dir: &Path) -> Vec<ChamberMessage> {
     collect_messages(&store, &sessions, "outbox/archive", "outbox", &mut all);
     all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
     all
+}
+
+#[derive(Serialize)]
+pub struct MessagePage {
+    pub messages: Vec<ChamberMessage>,
+    pub next: Option<String>,
+}
+
+pub fn message_page(dir: &Path, before: Option<&str>, limit: usize) -> anyhow::Result<MessagePage> {
+    anyhow::ensure!(
+        (1..=100).contains(&limit),
+        "limit must be between 1 and 100"
+    );
+    let (rows, next) = MessageStore::new(dir.to_path_buf()).page(before, limit)?;
+    let sessions = message_sessions(dir);
+    let messages = rows
+        .into_iter()
+        .map(|(source, filename, msg)| {
+            message_model(
+                &filename,
+                &msg,
+                source.split('/').next().unwrap(),
+                &source,
+                &sessions,
+            )
+        })
+        .collect();
+    Ok(MessagePage { messages, next })
 }
 
 /// Stable id of a mailbox message: its *top-level* mailbox (`inbox` or
@@ -368,7 +391,8 @@ pub fn overview(dir: &Path) -> ChamberOverview {
         .ok()
         .flatten();
     let next_wake = next_wake(dir);
-    let log_file = crate::log::log_path(dir);
+    let log_text = std::fs::read_to_string(crate::log::log_path(dir)).unwrap_or_default();
+    let current = crate::log::current_session(&log_text).unwrap_or_default();
 
     let (running, agent_running) = runtime_flags(state.as_ref());
 
@@ -380,14 +404,9 @@ pub fn overview(dir: &Path) -> ChamberOverview {
         wake_imminent: wake_imminent(next_wake.as_deref()),
         next_wake,
         has_open_question: has_open_question_for(&store),
-        task: crate::log::parse_latest_session_task(&log_file)
-            .ok()
-            .flatten(),
+        task: crate::log::session_task(current),
         last_message_preview: last_message_preview(dir),
-        completed: crate::log::parse_latest_session_plan_complete(&log_file)
-            .ok()
-            .flatten()
-            .is_some(),
+        completed: crate::log::session_plan_complete(current).is_some(),
         sync: crate::sync_control::summarize_all(dir)
             .into_iter()
             .map(|summary| ChamberSyncBadge {
@@ -499,15 +518,9 @@ fn session_for_message(
     sessions: &[crate::log::SessionSummary],
     msg_ts: chrono::NaiveDateTime,
 ) -> Option<u32> {
-    let mut current = None;
-    for session in sessions {
-        if session.timestamp <= msg_ts {
-            current = Some(session.session_number);
-        } else {
-            break;
-        }
-    }
-    current
+    let end = sessions.partition_point(|session| session.timestamp <= msg_ts);
+    end.checked_sub(1)
+        .map(|index| sessions[index].session_number)
 }
 
 fn collect_messages(

@@ -62,15 +62,41 @@ pub async fn get_status(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(status_json(&path)))
+    tokio::task::spawn_blocking(move || Json(status_json(&path)))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Deserialize)]
+pub struct MessageQuery {
+    limit: Option<usize>,
+    before: Option<String>,
 }
 
 pub async fn get_messages(
     State(app): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    axum::extract::Query(query): axum::extract::Query<MessageQuery>,
 ) -> Result<Json<Value>, StatusCode> {
     let (path, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(messages_json(&path)))
+    if query.limit.is_some_and(|n| !(1..=100).contains(&n))
+        || query.before.as_ref().is_some_and(|value| value.len() > 512)
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    tokio::task::spawn_blocking(move || {
+        if let Some(limit) = query.limit {
+            let page = crate::chamber_status::message_page(&path, query.before.as_deref(), limit)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            serde_json::to_value(page)
+                .map(Json)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        } else {
+            Ok(Json(messages_json(&path)))
+        }
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 pub async fn get_todos(

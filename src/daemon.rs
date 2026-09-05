@@ -1010,6 +1010,8 @@ impl Daemon {
             );
         }
 
+        inbox::recover(&self.dir)?;
+
         // Load project config from cryo.toml (fall back to defaults for legacy projects)
         let mut config =
             crate::config::load_config(&crate::config::config_path(&self.dir))?.unwrap_or_default();

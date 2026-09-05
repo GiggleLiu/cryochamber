@@ -32,6 +32,7 @@ cat <<'EOF' | cryo-agent send --question --stdin
 Question with literal `backticks`, $variables, "quotes", and newlines?
 EOF
 ```
+- After a daemon interruption, read its notice before acting. Claimed messages are never replayed automatically; wait for an explicit new instruction before repeating external work.
 - To answer inbox mail: `cryo-agent receive` first (the daemon archives the batch immediately), then `cryo-agent send "response"`. The next successful `send` after `receive` is the reply for that batch by definition; if you exit without sending one, the daemon writes a fallback reply.
 - To keep a conversation going: you never wait — you finish and ask to sleep. When the chamber has a reply window, `hibernate` blocks; if the operator writes inside the window it comes back *refused* with a mail notice, and you simply `receive`, `send` your answer, and `hibernate` again. Each round re-arms the window, so a fast back-and-forth stays in this one session and this one context, with no waiting call to manage.
 - For full conversation history (e.g. picking up after a long gap, deciding tone, or recalling what the human said weeks ago), use `cryo-agent dialog [--last N | --all]` — one call returns sent + received messages interleaved, and it archives any pending inbox batch as a side effect (so it satisfies the same reply obligation `receive` would).

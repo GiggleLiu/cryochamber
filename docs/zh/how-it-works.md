@@ -73,3 +73,12 @@ cryo-agent hibernate                     <- daemon sleeps until that wake
 
 - [CLI 参考](./reference/cli.md)——所有 `cryo`、`cryohub`、`cryo-agent` 和 `cryo-zulip` 命令。
 - [配置](./reference/configuration.md)——所有 `cryo.toml` 和 `cryohub.toml` 字段。
+
+## 会话意外中断
+
+Daemon 在归档已领取的消息前，会持久化回复义务。进程被强制结束后，下次启动
+会检查是否已有回复；若没有，就发送中断通知。外部操作可能已部分完成，请先检查
+历史记录，再决定是否重发指令。已领取消息仍在归档中，不会自动重放；未读取的消息
+仍留在收件箱。恢复日志损坏时，启动会报错，不会悄悄丢弃记录。
+
+备份和升级步骤见[运行维护](./operations.md)。

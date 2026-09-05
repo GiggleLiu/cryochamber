@@ -8,3 +8,5 @@
 - [Installing the app](./install-app.md)
 - [CLI reference](./reference/cli.md)
 - [Configuration](./reference/configuration.md)
+
+- [Operations and releases](./operations.md)

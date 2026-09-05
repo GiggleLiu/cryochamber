@@ -593,3 +593,57 @@ fn overview_exposes_has_open_question() {
     let ov = overview(dir.path());
     assert!(ov.has_open_question);
 }
+
+#[test]
+fn message_pages_bound_body_reads_and_keep_cursor_across_archive_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MessageStore::new(dir.path().into());
+    store.ensure_dirs().unwrap();
+    for i in 0..105 {
+        let msg = test_message("human", &format!("message {i}"), "2026-09-05T12:00:00");
+        std::fs::write(
+            dir.path().join(format!("messages/inbox/{i:04}.md")),
+            crate::message::message_to_markdown(&msg),
+        )
+        .unwrap();
+    }
+    // Outside the latest page: invalid bytes must not affect that page.
+    std::fs::write(dir.path().join("messages/inbox/0000.md"), [0xff]).unwrap();
+    let first = message_page(dir.path(), None, 100).unwrap();
+    assert_eq!(first.messages.len(), 100);
+    assert_eq!(first.messages[0].body, "message 5");
+    assert_eq!(first.messages[99].body, "message 104");
+    store
+        .archive_inbox(&store.list_inbox_filenames().unwrap())
+        .unwrap();
+    let second = message_page(dir.path(), first.next.as_deref(), 100).unwrap();
+    assert_eq!(second.messages.len(), 4);
+    assert_eq!(second.messages[0].body, "message 1");
+    assert!(second.next.is_none());
+    assert!(first
+        .messages
+        .iter()
+        .all(|m| !second.messages.iter().any(|old| old.id == m.id)));
+    assert!(message_page(dir.path(), None, 0).is_err());
+    assert!(message_page(dir.path(), None, 101).is_err());
+}
+
+#[test]
+fn session_lookup_handles_clock_rollback_and_equal_timestamps() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cryo.log"), "--- CRYO SESSION 1 | 2026-09-05T12:00:00 ---\n--- CRYO END ---\n--- CRYO SESSION 2 | 2026-09-05T11:00:00 ---\n--- CRYO END ---\n--- CRYO SESSION 3 | 2026-09-05T12:00:00 ---\n--- CRYO END ---\n").unwrap();
+    let sessions = message_sessions(dir.path());
+    let at = |ts| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S").unwrap();
+    assert_eq!(
+        session_for_message(&sessions, at("2026-09-05T10:00:00")),
+        None
+    );
+    assert_eq!(
+        session_for_message(&sessions, at("2026-09-05T11:30:00")),
+        Some(2)
+    );
+    assert_eq!(
+        session_for_message(&sessions, at("2026-09-05T12:00:00")),
+        Some(3)
+    );
+}

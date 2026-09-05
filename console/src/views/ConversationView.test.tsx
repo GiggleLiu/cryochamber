@@ -881,7 +881,7 @@ describe('app mode', () => {
           { status: 200 },
         )
       }
-      if (target.endsWith('/messages')) {
+      if (new URL(target).pathname.endsWith('/messages')) {
         return new Response(
           JSON.stringify([
             {
@@ -913,7 +913,7 @@ describe('app mode', () => {
     await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
     const img = container.querySelector('img')!
     await waitFor(() => expect(img.getAttribute('src')).toBe('blob:mock-1'))
-    expect(calls).toContain('http://a.local:1/api/chambers/cham-a/messages')
+    expect(calls).toContain('http://a.local:1/api/chambers/cham-a/messages?limit=100')
     expect(calls).toContain(
       'http://a.local:1/api/chambers/cham-a/file?path=artwork%2Fplot.png',
     )
@@ -944,4 +944,36 @@ describe('app mode', () => {
     )
     expect(calls).toContain('http://a.local:1/api/chambers/cham-a/files/plot.png')
   })
+})
+
+
+test('loads older pages on demand without duplicating live messages', async () => {
+  const getMessagePage = vi.fn(async (_id: string, before?: string) => before
+    ? { messages: [makeMsg(1), makeMsg(2)], next: null }
+    : { messages: [makeMsg(3)], next: 'cursor-3' })
+  useAppStore.setState({ client: fakeClient({ getMessagePage }) })
+  render(<ConversationView chamberId="cham-a" />)
+  await screen.findByText('msg-3')
+  expect(screen.queryByText('msg-1')).toBeNull()
+  act(() => useAppStore.getState().applyMessage(makeMsg(4)))
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier messages' }))
+  await screen.findByText('msg-1')
+  expect(getMessagePage).toHaveBeenCalledWith('cham-a', 'cursor-3')
+  expect(screen.getAllByText('msg-3')).toHaveLength(1)
+  expect(screen.getByText('msg-4')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Earlier messages' })).toBeNull()
+})
+
+test('returning from a pending chamber fetch preserves access to earlier pages', async () => {
+  const getMessagePage = vi.fn((id: string) => id === 'cham-b'
+    ? new Promise<{ messages: ChamberMessage[]; next: string | null }>(() => {})
+    : Promise.resolve({ messages: [makeMsg(3)], next: 'cursor-3' }))
+  useAppStore.setState({ client: fakeClient({ getMessagePage }), chambers: [chamber(), chamber({ id: 'cham-b', name: 'beta' })] })
+  const { rerender } = render(<ConversationView chamberId="cham-a" />)
+  await screen.findByRole('button', { name: 'Earlier messages' })
+  rerender(<ConversationView chamberId="cham-b" />)
+  await waitFor(() => expect(getMessagePage).toHaveBeenCalledWith('cham-b'))
+  rerender(<ConversationView chamberId="cham-a" />)
+  await screen.findByRole('button', { name: 'Earlier messages' })
+  expect(getMessagePage.mock.calls.filter(([id]) => id === 'cham-a')).toHaveLength(2)
 })

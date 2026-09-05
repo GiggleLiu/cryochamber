@@ -6,6 +6,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    replace(path, contents.as_ref(), false)
+}
+
+pub(crate) fn write_durable(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    replace(path, contents.as_ref(), true)
+}
+
+fn replace(path: &Path, contents: &[u8], durable: bool) -> std::io::Result<()> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let seq = SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -21,8 +29,15 @@ pub(crate) fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::
         .mode(0o600)
         .open(&tmp)?;
     let result = (|| {
-        file.write_all(contents.as_ref())?;
-        std::fs::rename(&tmp, path)
+        file.write_all(contents)?;
+        if durable {
+            file.sync_all()?;
+        }
+        std::fs::rename(&tmp, path)?;
+        if durable {
+            std::fs::File::open(path.parent().unwrap_or(Path::new(".")))?.sync_all()?;
+        }
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);

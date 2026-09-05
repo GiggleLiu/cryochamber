@@ -136,8 +136,8 @@ export async function mockHub(page: Page, opts: MockOptions = {}): Promise<void>
   // Playwright matches routes last-registered-first, so the catch-all has to be
   // registered BEFORE the chamber it is a fallback for — otherwise it shadows
   // cham-a's thread and every conversation renders empty.
-  await page.route('**/api/chambers/*/messages', (r) => r.fulfill({ json: [] }))
-  await page.route('**/api/chambers/cham-a/messages', async (r) => {
+  await page.route('**/api/chambers/*/messages*', (r) => r.fulfill({ json: [] }))
+  await page.route('**/api/chambers/cham-a/messages*', async (r) => {
     if (opts.hangHistory) return
     if (opts.failHistory) {
       await r.fulfill({ status: 500, json: { detail: 'Server error' } })
