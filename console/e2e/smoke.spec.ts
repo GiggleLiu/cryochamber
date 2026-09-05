@@ -59,15 +59,18 @@ test.describe('phone layout contract', () => {
 
     // Wide code lines and a four-column table must scroll inside their own
     // container, never widen the page.
+    const scrollers = page.locator('.message-body pre, .message-body table')
+    await expect(scrollers).toHaveCount(2)
     const overflow = await page.evaluate(() => {
       const doc = document.documentElement
       return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth }
     })
     expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
 
-    for (const scroller of await page.locator('.message-body pre, .message-body table').all()) {
-      const box = await scroller.boundingBox()
-      expect(box!.width).toBeLessThanOrEqual(390)
+    for (const scroller of await scrollers.all()) {
+      // Markdown decoration can replace these nodes during measurement.
+      await expect.poll(async () => (await scroller.boundingBox())?.width)
+        .toBeLessThanOrEqual(390)
     }
 
     // Bar actions and composer controls carry a 44px touch target.
