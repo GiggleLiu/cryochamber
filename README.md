@@ -70,9 +70,9 @@ there is nothing else to install.
 
 The Agent Console is what cryohub serves, and it is also an installable phone
 app (Android + iOS) for reading and steering your chambers from anywhere over
-the same authenticated `/api`. Each chamber has a main stream with inline
-threads; a friend gets in through an invite link scoped to the one chamber you
-minted it from.
+the same authenticated `/api`. Each chamber has a main stream with focused
+thread views; a friend gets in through an invite link scoped to the one chamber
+you minted it from.
 There is also a native **Cryochamber app** (Apple Silicon macOS + Android APK)
 that holds several access links at once — see
 [Installing the app](https://giggleliu.github.io/cryochamber/install-app.html).

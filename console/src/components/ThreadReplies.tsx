@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { isUnauthorized, messageKey, type ChamberMessage } from '../api/types'
 import { sortByKey } from '../api/hubClient'
@@ -6,9 +6,10 @@ import { Composer } from './Composer'
 import { MessageBody } from './MessageBody'
 import { retryOutboxItem } from '../lib/outbox'
 import { exactTimestamp } from '../lib/format'
+import { Sheet } from './Sheet'
 
-export function ThreadReplies({ chamberId, hubChamberId, root, revision, onRead }: {
-  chamberId: string; hubChamberId: string; root: ChamberMessage; revision: string; onRead: (latest: string) => void
+export function ThreadReplies({ chamberId, hubChamberId, root, revision, onRead, onClose }: {
+  chamberId: string; hubChamberId: string; root: ChamberMessage; revision: string; onRead: (latest: string) => void; onClose: () => void
 }) {
   const client = useAppStore(s => s.client)
   const live = useAppStore(s => s.messagesByChamber[chamberId])
@@ -20,6 +21,7 @@ export function ThreadReplies({ chamberId, hubChamberId, root, revision, onRead 
   const [retry, setRetry] = useState(0)
   const [sharing, setSharing] = useState<string | null>(null)
   const [shared, setShared] = useState<string[]>([])
+  const endRef = useRef<HTMLDivElement>(null)
   const fetchBlob = useMemo(() => client ? (url: string) => client.fetchBlobFor(chamberId, url) : undefined, [client, chamberId])
   useEffect(() => {
     let active = true
@@ -35,6 +37,10 @@ export function ThreadReplies({ chamberId, hubChamberId, root, revision, onRead 
   }, [history, live, root.id])
   const latest = replies.length ? messageKey(replies[replies.length - 1]) : ''
   useEffect(() => { if (loaded && latest) onRead(latest) }, [loaded, latest, onRead])
+  const pending = (outbox ?? []).filter(o => o.threadId === root.id && !replies.some(m => m.id === o.serverId))
+  useEffect(() => {
+    if (pending.length) endRef.current?.scrollIntoView({ block: 'end' })
+  }, [pending.length])
 
   async function share(id: string) {
     if (!client?.shareMessage) return
@@ -45,22 +51,31 @@ export function ThreadReplies({ chamberId, hubChamberId, root, revision, onRead 
     finally { setSharing(null) }
   }
 
-  return <section className="thread-replies" aria-label="Thread replies">
-    {error && <p role="alert">{error} <button onClick={() => setRetry(n => n + 1)}>Retry</button></p>}
-    {shareError && <p role="alert">{shareError}</p>}
-    {!loaded && !error && <p role="status">Loading replies…</p>}
-    {replies.map(m => <article className="thread-reply" key={m.id}>
-      <div className="reply-heading"><strong>{m.sender}</strong><time>{exactTimestamp(m)}</time></div>
-      <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
-      <button type="button" className="message-action" disabled={sharing === m.id || shared.includes(m.id)} onClick={() => void share(m.id)}>
-        {shared.includes(m.id) ? 'Shared to stream' : sharing === m.id ? 'Sharing…' : 'Share to stream'}
-      </button>
-    </article>)}
-    {(outbox ?? []).filter(o => o.threadId === root.id && !replies.some(m => m.id === o.serverId)).map(o => <article key={o.clientId} className="thread-reply pending-reply">
-      <MessageBody source={o.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
-      {o.state === 'failed' ? <button className="send-failed" onClick={() => retryOutboxItem(o)}>Failed — tap to retry{o.error ? ` · ${o.error}` : ''}</button>
-        : <span role="status">{o.state === 'sending' ? 'Sending…' : 'Sent'}</span>}
-    </article>)}
-    <Composer chamberId={chamberId} threadId={root.id} />
-  </section>
+  return <Sheet title="Thread" label="Thread" backLabel="Back to stream" onClose={onClose}
+    footer={<Composer chamberId={chamberId} threadId={root.id} />}>
+    <div className="thread-content">
+      <article className="thread-parent" aria-label="Original message">
+        <div className="reply-heading"><strong>{root.sender}</strong><time>{exactTimestamp(root)}</time></div>
+        <MessageBody source={root.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
+      </article>
+      <section className="thread-replies" aria-label="Thread replies">
+        {error && <p role="alert">{error} <button onClick={() => setRetry(n => n + 1)}>Retry</button></p>}
+        {shareError && <p role="alert">{shareError}</p>}
+        {!loaded && !error && <p role="status">Loading replies…</p>}
+        {replies.map(m => <article className="thread-reply" key={m.id}>
+          <div className="reply-heading"><strong>{m.sender}</strong><time>{exactTimestamp(m)}</time></div>
+          <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
+          <button type="button" className="message-action" disabled={sharing === m.id || shared.includes(m.id)} onClick={() => void share(m.id)}>
+            {shared.includes(m.id) ? 'Shared to stream' : sharing === m.id ? 'Sharing…' : 'Share to stream'}
+          </button>
+        </article>)}
+        {pending.map(o => <article key={o.clientId} className="thread-reply pending-reply">
+          <MessageBody source={o.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
+          {o.state === 'failed' ? <button className="send-failed" onClick={() => retryOutboxItem(o)}>Failed — tap to retry{o.error ? ` · ${o.error}` : ''}</button>
+            : <span role="status">{o.state === 'sending' ? 'Sending…' : 'Sent'}</span>}
+        </article>)}
+        <div ref={endRef} />
+      </section>
+    </div>
+  </Sheet>
 }

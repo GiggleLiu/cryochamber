@@ -217,7 +217,7 @@ input, select, textarea { font: inherit; color: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.topbar .bar-start { grid-column: 1; justify-self: start; }
+.topbar .bar-start { grid-column: 1; grid-row: 1; justify-self: start; }
 .topbar .bar-end { grid-column: 3; justify-self: end; }
 
 /* Status notices float under the bar so they never reflow the current view. */
@@ -1864,13 +1864,13 @@ input, select, textarea { font: inherit; color: inherit; }
 .message-action:disabled { color: var(--ink-3); }
 .shared-origin { display: block; }
 .thread-toggle { align-self: flex-start; }
-.thread-replies { align-self: stretch; width: 100%; min-width: 0; margin-top: 8px; padding: 8px 0 0 16px; border-left: 2px solid var(--line-strong); }
+.thread-content { max-width: var(--col-max); margin-inline: auto; padding-inline: var(--sp-4); }
+.thread-parent { padding-bottom: var(--sp-4); border-bottom: 1px solid var(--line-strong); }
+.thread-replies { min-width: 0; }
 .thread-reply { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .reply-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: var(--fs-sm); margin-bottom: 8px; }
 .reply-heading time { color: var(--ink-3); font-size: var(--fs-2xs); }
 .pending-reply { opacity: 0.7; }
-.thread-composer { position: static; border: 0; padding: 12px 0; background: transparent; }
-.thread-composer .composer { width: 100%; margin: 0; }
 .thread-activity { max-width: var(--col-max); margin: 12px auto; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-sm); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: var(--fs-xs); }
 .thread-activity button { min-height: 44px; text-align: left; color: var(--link); overflow-wrap: anywhere; }
 .staged-files { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; margin: 0 auto; width: min(var(--col-max), calc(100% - 2 * var(--gutter))); list-style: none; }
@@ -1887,8 +1887,8 @@ input, select, textarea { font: inherit; color: inherit; }
 .attachment-card .message-action { align-self: flex-start; margin-left: -10px; }
 .file-preview-frame { border: 0; width: 100%; height: 75dvh; }
 .file-preview-text { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--fs-sm)/1.6 var(--font-mono); }
-@media (max-width: 600px) { .thread-replies { padding-left: 10px; } .staged-file { width: 100%; } }
+@media (max-width: 600px) { .staged-file { width: 100%; } }
 .msg-other .message-body table,
-.msg-other .message-body .katex-display,
-.thread-replies .message-body table,
-.thread-replies .message-body .katex-display { --scroll-bg: var(--canvas); }
+.msg-other .message-body .katex-display { --scroll-bg: var(--canvas); }
+.thread-content .message-body table,
+.thread-content .message-body .katex-display { --scroll-bg: var(--surface-2); }

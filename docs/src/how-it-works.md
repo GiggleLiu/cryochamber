@@ -72,7 +72,7 @@ It lands in `messages/inbox/` and, with the default `watch_dirs`, wakes the agen
 immediately. The agent's replies appear in `messages/outbox/` and in the
 dashboard's message history.
 
-The dashboard also supports inline threads. One `cryo-agent receive` or
+The dashboard opens each thread in a focused view. One `cryo-agent receive` or
 `cryo-agent dialog` call claims one conversation: either the first pending
 thread or the pending messages in the unthreaded main stream. Once claimed,
 that conversation must receive a reply before the agent can claim another one.

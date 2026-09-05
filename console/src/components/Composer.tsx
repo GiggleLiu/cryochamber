@@ -116,7 +116,7 @@ function DraftComposer({ chamberId, threadId, storageKey }: { chamberId: string;
     previews.current.clear()
   }
 
-  return <div className={`composer-dock${isDrop ? ' is-drop' : ''}${threadId ? ' thread-composer' : ''}`}
+  return <div className={`composer-dock${isDrop ? ' is-drop' : ''}`}
     onDragOver={e => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); setIsDrop(true) } }}
     onDragLeave={e => { if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) setIsDrop(false) }}
     onDrop={e => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); setIsDrop(false); addFiles(Array.from(e.dataTransfer.files)) } }}>

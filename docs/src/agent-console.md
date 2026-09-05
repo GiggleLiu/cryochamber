@@ -2,8 +2,8 @@
 
 The **Agent Console** is the web surface `cryohub` serves — a phone-first,
 installable app for reading and steering every chamber the hub knows about.
-Each chamber has a main stream for reports and instructions, with inline threads
-for focused follow-ups and the chamber's controls a tap away.
+Each chamber has a main stream for reports and instructions. Focused thread
+views handle follow-ups, and the chamber's controls are a tap away.
 
 It is **embedded in the `cryohub` binary**. There is nothing to install: start
 the hub and open the URL it prints.
@@ -76,6 +76,13 @@ Reply in a thread when a report needs a focused follow-up. The agent receives
 the thread root and its reply history with each new follow-up, and its response
 returns to that thread automatically. Other threads and main-stream messages
 wait until the current conversation has received a reply.
+
+Click **Reply in thread**, a reply count, or a new-thread-activity link to open
+the full-screen thread view. The original message stays at the top, replies
+appear below it, and the same message box is docked at the bottom. Use **Back
+to stream** or press Escape to return. The main-stream draft and uploads remain
+available while the thread is open. Each thread also retains its own text draft
+and completed uploads.
 
 Use **Share to stream** on a thread reply when the result should also appear in
 the chamber's main stream. Sharing creates a display copy in the outbox. It

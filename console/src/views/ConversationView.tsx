@@ -1,5 +1,5 @@
 import { ThreadReplies } from '../components/ThreadReplies'
-import type { ThreadSummary } from '../api/types'
+import type { ChamberMessage, ThreadSummary } from '../api/types'
 import { accountKey } from '../lib/account'
 import {
   Fragment,
@@ -134,14 +134,15 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const [threadState, setThreadState] = useState<{ chamberId: string; summaries: ThreadSummary[]; available: boolean }>({ chamberId, summaries: [], available: false })
   const [threadError, setThreadError] = useState('')
   const [threadRetry, setThreadRetry] = useState(0)
-  const [openThread, setOpenThread] = useState<string | null>(null)
+  const [threadView, setThreadView] = useState<{ chamberId: string; root: ChamberMessage } | null>(null)
+  const openThread = threadView?.chamberId === chamberId ? threadView.root : null
   const [readRevision, setReadRevision] = useState(0)
   const creds = useAppStore(s => s.creds)
   const threadReadPrefix = `agent-console.thread-read.${creds ? accountKey(creds) : 'app'}.${chamberId}.`
   const summaries = threadState.chamberId === chamberId ? threadState.summaries : []
   const threadsAvailable = threadState.chamberId === chamberId && threadState.available
   useEffect(() => {
-    setOpenThread(null)
+    setThreadView(null)
     setThreadError('')
   }, [chamberId])
   useEffect(() => {
@@ -168,15 +169,21 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const unreadThreads = useMemo(() => summaries.filter(s => s.latest > (localStorage.getItem(threadReadPrefix + s.root.id) ?? '')), [summaries, threadReadPrefix, readRevision])
   const markThreadRead = useCallback((latest: string) => {
     if (!openThread) return
-    const key = threadReadPrefix + openThread
+    const key = threadReadPrefix + openThread.id
     if (latest > (localStorage.getItem(key) ?? '')) { localStorage.setItem(key, latest); setReadRevision(n => n + 1) }
   }, [openThread, threadReadPrefix])
   function revealThread(id: string) {
-    const index = streamMessages.findIndex(m => m.id === id)
-    if (index >= 0) setVisibleCount(n => Math.max(n, streamMessages.length - index))
-    setOpenThread(id)
-    pinnedRef.current = false
-    setTimeout(() => document.getElementById(`thread-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0)
+    const root = streamMessages.find(m => m.id === id)
+    if (root) setThreadView({ chamberId, root })
+  }
+  function closeThread() {
+    setThreadView(null)
+    requestAnimationFrame(() => {
+      // Reading can remove the unread-activity button that opened this thread.
+      if (document.activeElement === document.body) {
+        scrollRef.current?.closest('.conversation')?.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus({ preventScroll: true })
+      }
+    })
   }
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -478,11 +485,10 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                     {m.sharedFrom && <button className="message-action shared-origin" onClick={() => revealThread(m.sharedFrom!)}>Shared from thread ↗</button>}
                     <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
                   </div>
-                  {threadsAvailable && !m.sharedFrom && <button type="button" className="message-action thread-toggle" aria-expanded={openThread === m.id}
-                    onClick={() => setOpenThread(openThread === m.id ? null : m.id)}>
-                    {openThread === m.id ? 'Close thread' : summaries.some(s => s.root.id === m.id) ? `${summaries.find(s => s.root.id === m.id)!.count} replies${unreadThreads.some(s => s.root.id === m.id) ? ' · new' : ''}` : 'Reply in thread'}
+                  {threadsAvailable && !m.sharedFrom && <button type="button" className="message-action thread-toggle" aria-haspopup="dialog"
+                    onClick={() => revealThread(m.id)}>
+                    {summaries.some(s => s.root.id === m.id) ? `${summaries.find(s => s.root.id === m.id)!.count} replies${unreadThreads.some(s => s.root.id === m.id) ? ' · new' : ''}` : 'Reply in thread'}
                   </button>}
-                  {openThread === m.id && <ThreadReplies key={`${chamberId}:${m.id}`} chamberId={chamberId} hubChamberId={hubChamberId} root={m} revision={`${summaries.find(s => s.root.id === m.id)?.count ?? 0}:${summaries.find(s => s.root.id === m.id)?.latest ?? ''}`} onRead={markThreadRead} />}
                 </div>
               </div>
             </Fragment>
@@ -546,6 +552,10 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
       ) : null}
 
       <Composer chamberId={chamberId} />
+
+      {openThread && <ThreadReplies key={`${chamberId}:${openThread.id}`} chamberId={chamberId} hubChamberId={hubChamberId} root={openThread}
+        revision={`${summaries.find(s => s.root.id === openThread.id)?.count ?? 0}:${summaries.find(s => s.root.id === openThread.id)?.latest ?? ''}`}
+        onRead={markThreadRead} onClose={closeThread} />}
 
       {sheet === 'invite' && (
         <InviteSheet

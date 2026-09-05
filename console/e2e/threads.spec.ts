@@ -73,7 +73,7 @@ async function mockThreads(page: Page, sent: unknown[], messages: unknown[] = [R
   await page.getByRole('button', { name: /qec-decoders/ }).click()
 }
 
-test('an unread old thread opens inline with math and shares only on request', async ({ page }) => {
+test('an unread old thread opens with math and shares only on request', async ({ page }) => {
   const sent: unknown[] = []
   await mockThreads(page, sent, [...recentMessages(), REPLY, SHARED_COPY])
 
@@ -82,10 +82,10 @@ test('an unread old thread opens inline with math and shares only on request', a
   await expect(activity).toContainText('· 1')
   await activity.getByRole('button').click()
 
-  const root = page.locator('#thread-root-old')
-  await expect(root).toBeVisible()
-  await expect(root.locator(':scope > .msg-col > .bubble .katex')).toHaveCount(2)
-  const replies = root.getByRole('region', { name: 'Thread replies' })
+  const thread = page.getByRole('dialog', { name: 'Thread' })
+  const root = thread.getByRole('article', { name: 'Original message' })
+  await expect(root.locator('.katex')).toHaveCount(2)
+  const replies = thread.getByRole('region', { name: 'Thread replies' })
   await expect(replies.getByText('Reply equation', { exact: false })).toBeVisible()
   await expect(replies.locator('.katex')).toHaveCount(2)
   const streamCopies = page.locator('.msg-row > .msg-col > .bubble .message-body').filter({ hasText: 'Reply equation' })
@@ -97,12 +97,13 @@ test('an unread old thread opens inline with math and shares only on request', a
   await expect.poll(() => sent).toEqual([{ body: '', share_message_id: REPLY.id }])
   await expect(replies.getByRole('button', { name: 'Shared to stream' })).toBeDisabled()
 
-  await root.getByRole('button', { name: 'Close thread' }).click()
+  await thread.getByRole('button', { name: 'Back to stream' }).click()
+  await expect(thread).toHaveCount(0)
   const shared = page.locator('#thread-shared-copy')
   await expect(shared.getByRole('button', { name: 'Shared from thread ↗' })).toBeVisible()
   await expect(shared.locator('.thread-toggle')).toHaveCount(0)
   await shared.getByRole('button', { name: 'Shared from thread ↗' }).click()
-  await expect(root.getByRole('region', { name: 'Thread replies' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Thread' }).getByRole('article', { name: 'Original message' })).toBeVisible()
 })
 
 test('an open thread refetches when its summary revision changes', async ({ page }) => {
@@ -144,7 +145,7 @@ test('an open thread refetches when its summary revision changes', async ({ page
   await signIn(page)
   await page.getByRole('button', { name: /qec-decoders/ }).click()
   await page.getByRole('button', { name: /1 replies/ }).click()
-  const replies = page.getByRole('region', { name: 'Thread replies' })
+  const replies = page.getByRole('dialog', { name: 'Thread' }).getByRole('region', { name: 'Thread replies' })
   await expect(replies.getByText('Reply equation', { exact: false })).toBeVisible()
   await expect(replies.getByText(MISSED_REPLY.body)).toHaveCount(0)
   const initialFetches = threadFetches
@@ -155,6 +156,70 @@ test('an open thread refetches when its summary revision changes', async ({ page
   await expect(replies.getByText(MISSED_REPLY.body)).toBeVisible()
   expect(threadFetches).toBeGreaterThan(initialFetches)
   await expect(page.locator('.msg-row > .msg-col > .bubble').filter({ hasText: MISSED_REPLY.body })).toHaveCount(0)
+})
+
+test('stream and thread drafts stay isolated across Back to stream', async ({ page }) => {
+  await mockThreads(page, [])
+  await page.route('**/api/chambers/cham-a/uploads', route => route.fulfill({
+    json: { name: 'stream.txt', markdown: '[stream.txt](/api/chambers/cham-a/files/stream.txt)' },
+  }))
+  const stream = page.getByRole('textbox', { name: 'Message' })
+  await stream.fill('stream draft')
+  const mainComposer = page.locator('.conversation > .composer-dock')
+  await mainComposer.locator('input[type="file"]').setInputFiles({
+    name: 'stream.txt', mimeType: 'text/plain', buffer: Buffer.from('stream'),
+  })
+  await expect(mainComposer.getByRole('list', { name: 'Attachments' })).toContainText('stream.txt')
+  const opener = page.getByRole('button', { name: /1 replies/ })
+  await opener.click()
+
+  const thread = page.getByRole('dialog', { name: 'Thread' })
+  await expect(thread.getByRole('textbox')).toHaveCount(1)
+  await expect(mainComposer.getByRole('list', { name: 'Attachments' })).toContainText('stream.txt')
+  await expect(thread.getByRole('list', { name: 'Attachments' })).toHaveCount(0)
+  const reply = thread.getByRole('textbox', { name: 'Thread reply' })
+  await expect(reply).toHaveValue('')
+  const overflow = (textbox: typeof reply) => textbox.evaluate(element => element.scrollHeight - element.clientHeight)
+  await expect.poll(() => overflow(reply)).toBeLessThanOrEqual(0)
+  await reply.fill('thread draft\nsecond line\nthird line')
+  await thread.getByRole('button', { name: 'Back to stream' }).click()
+
+  await expect(page.getByRole('textbox')).toHaveCount(1)
+  await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue('stream draft')
+  await expect(mainComposer.getByRole('list', { name: 'Attachments' })).toContainText('stream.txt')
+  await opener.click()
+  const reopened = page.getByRole('dialog', { name: 'Thread' })
+  await expect(reopened.getByRole('textbox')).toHaveCount(1)
+  const restoredReply = reopened.getByRole('textbox', { name: 'Thread reply' })
+  await expect(restoredReply).toHaveValue('thread draft\nsecond line\nthird line')
+  await expect.poll(() => overflow(restoredReply)).toBeLessThanOrEqual(0)
+})
+
+test('a sent phone reply scrolls above the dock even with a long parent', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const sent: unknown[] = []
+  const longRoot = {
+    ...ROOT,
+    body: Array.from({ length: 30 }, (_, i) => `Long parent paragraph ${i + 1}.`).join('\n\n'),
+  }
+  await mockThreads(page, sent, [longRoot])
+  await page.getByRole('button', { name: /1 replies/ }).click()
+
+  const thread = page.getByRole('dialog', { name: 'Thread' })
+  await thread.getByRole('textbox', { name: 'Thread reply' }).fill('phone reply')
+  await thread.getByRole('button', { name: 'Send reply' }).click()
+  const pending = thread.locator('.pending-reply')
+  await expect(pending).toContainText('phone reply')
+  const dock = thread.locator('.composer-dock')
+  await expect.poll(async () => {
+    const [pendingBox, dockBox] = await Promise.all([pending.boundingBox(), dock.boundingBox()])
+    return !!pendingBox && !!dockBox && pendingBox.y >= 0 && pendingBox.y + pendingBox.height <= dockBox.y + 1
+  }).toBe(true)
+  await expect.poll(async () => {
+    const box = await dock.boundingBox()
+    return box ? Math.abs(box.y + box.height - 844) : Infinity
+  }).toBeLessThanOrEqual(1)
+  await expect.poll(() => sent).toEqual([{ body: 'phone reply', thread_id: ROOT.id }])
 })
 
 test('thread attachments stage from paste and picker, preview, remove, and send without text', async ({ page }) => {
@@ -170,8 +235,8 @@ test('thread attachments stage from paste and picker, preview, remove, and send 
   })
 
   await page.getByRole('button', { name: /1 replies/ }).click()
-  const replies = page.getByRole('region', { name: 'Thread replies' })
-  const composer = replies.locator('.composer-dock')
+  const thread = page.getByRole('dialog', { name: 'Thread' })
+  const composer = thread.locator('.composer-dock')
   const box = composer.getByRole('textbox', { name: 'Thread reply' })
   await box.evaluate((element) => {
     const transfer = new DataTransfer()
@@ -209,7 +274,7 @@ test('a failed thread attachment can be retried and sent', async ({ page }) => {
   })
 
   await page.getByRole('button', { name: /1 replies/ }).click()
-  const composer = page.getByRole('region', { name: 'Thread replies' }).locator('.composer-dock')
+  const composer = page.getByRole('dialog', { name: 'Thread' }).locator('.composer-dock')
   await composer.locator('input[type="file"]').setInputFiles({
     name: 'retry.txt', mimeType: 'text/plain', buffer: Buffer.from('retry'),
   })
@@ -228,7 +293,6 @@ test('a failed thread attachment can be retried and sent', async ({ page }) => {
 test('a CSV preview escapes file content and restores focus after Escape', async ({ page }) => {
   const fileMessage = {
     ...ROOT,
-    id: 'file-message',
     body: '[results.csv](</api/chambers/cham-a/files/results.csv> "attachment:35")',
   }
   await mockThreads(page, [], [fileMessage])
@@ -237,7 +301,10 @@ test('a CSV preview escapes file content and restores focus after Escape', async
     body: 'name,value\n<script>alert("unsafe")</script>,7',
   }))
 
-  const preview = page.getByRole('button', { name: 'Preview results.csv' })
+  const opener = page.getByRole('button', { name: /1 replies/ })
+  await opener.click()
+  const thread = page.getByRole('dialog', { name: 'Thread' })
+  const preview = thread.getByRole('button', { name: 'Preview results.csv' })
   await preview.click()
   const dialog = page.getByRole('dialog', { name: 'Preview results.csv' })
   await expect(dialog).toBeVisible()
@@ -246,7 +313,11 @@ test('a CSV preview escapes file content and restores focus after Escape', async
 
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Preview results.csv' })).toBeFocused()
+  await expect(thread).toBeVisible()
+  await expect(thread.getByRole('button', { name: 'Preview results.csv' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(thread).toHaveCount(0)
+  await expect(opener).toBeFocused()
 })
 
 test('unsafe or unsupported PDFs fall back to download without creating a frame', async ({ page }) => {
