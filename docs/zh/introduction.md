@@ -34,7 +34,7 @@ cryohub start    # 打印本地仪表盘 URL——在浏览器中打开
 
 ![Agent Console 显示 chamber 的对话，包含智能体报告、表格和图像](images/agent-console.png)
 
-[Cryohub](./reference/cli.md#hub-cryohub) 提供 **[Agent Console](./agent-console.md)**：每个 chamber 一条平铺的对话，chamber 状态、TODO、笔记、日志尾部与生命周期控制都在一步之遥，手机和桌面浏览器都能用。它内嵌在 `cryohub` 二进制中——无需安装。可以通过邀请链接把单个 chamber 分享给他人，或用 [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip) 把它桥接到 Zulip。
+[Cryohub](./reference/cli.md#hub-cryohub) 提供 **[Agent Console](./agent-console.md)**：每个 chamber 都有主消息流和内联话题，并提供状态、TODO、笔记、日志尾部与生命周期控制，手机和桌面浏览器都能用。它内嵌在 `cryohub` 二进制中——无需安装。可以通过邀请链接把单个 chamber 分享给他人，或用 [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip) 把它桥接到 Zulip。
 
 ## Chamber 的保证
 

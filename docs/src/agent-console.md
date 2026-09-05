@@ -2,8 +2,8 @@
 
 The **Agent Console** is the web surface `cryohub` serves — a phone-first,
 installable app for reading and steering every chamber the hub knows about.
-One chamber is one flat conversation: the agent's reports and questions on one
-side, your replies on the other, with the chamber's controls a tap away.
+Each chamber has a main stream for reports and instructions, with inline threads
+for focused follow-ups and the chamber's controls a tap away.
 
 It is **embedded in the `cryohub` binary**. There is nothing to install: start
 the hub and open the URL it prints.
@@ -65,6 +65,36 @@ if needed. The hub verifies that the command's executable is available before
 it creates anything. If scaffolding succeeds but the daemon cannot launch, the
 new chamber remains available and the Console shows the start error so it can
 be fixed and launched from Chamber controls.
+
+## Messages, threads, and sharing
+
+Message bodies support Markdown, including tables and fenced code blocks, plus
+inline LaTeX between single dollar signs and display LaTeX between double
+dollar signs. The Console renders and sanitizes this content in the browser.
+
+Reply in a thread when a report needs a focused follow-up. The agent receives
+the thread root and its reply history with each new follow-up, and its response
+returns to that thread automatically. Other threads and main-stream messages
+wait until the current conversation has received a reply.
+
+Use **Share to stream** on a thread reply when the result should also appear in
+the chamber's main stream. Sharing creates a display copy in the outbox. It
+does not send a new instruction to the agent or wake it.
+
+## Attaching files
+
+Use the paperclip, drop files onto the composer, or paste files from the
+clipboard. You can stage up to 10 files per message, each no larger than 25 MB.
+Image previews, upload progress, removal, and retry controls appear before you
+send. A message may contain only attachments; text is optional.
+
+Sent files appear as download cards. Text files can be previewed inline; PDFs
+use the browser's built-in viewer, with a download fallback when unavailable.
+
+Uploaded files that are ready stay attached when a saved draft reloads. Files
+still queued or uploading live only in the browser tab because the browser does
+not persist their bytes. If the page reloads before an upload finishes, attach
+those files again.
 
 ## Inviting someone to a chamber
 
@@ -183,8 +213,10 @@ login screen. Everything under `/api` is behind the token.
 
 In public mode every credential — guests and the owner alike — is throttled on
 sends and uploads to a burst of 5 and 10 per minute; past that the hub answers
-`429` with a `Retry-After` header. Every accepted send wakes an agent, so the
-limit is what keeps an invite link from running up the owner's bill.
+`429` with a `Retry-After` header. Inbox sends can wake an agent and uploads use
+the owner's disk, so the limit keeps an invite link from running up the owner's
+bill or filling the chamber with files. Sharing to the stream does not wake the
+agent.
 
 ## Serving a build from somewhere else (`console_dir`)
 
@@ -210,6 +242,7 @@ outside the console directory. `/api` is untouched.
 ## What is stored on the device
 
 The access token, the name the hub knows you by, a per-chamber read watermark,
-drafts, and a small cache of recent messages — all in `localStorage` for the
-hub's origin. Logging out clears them. Message bodies are rendered client-side
-and sanitized before they reach the DOM.
+text drafts, ready attachment references, and a small cache of recent messages
+are stored in `localStorage` for the hub's origin. Queued and in-progress file
+bytes are not stored. Logging out clears the stored data. Message bodies are
+rendered client-side and sanitized before they reach the DOM.

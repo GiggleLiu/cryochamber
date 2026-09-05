@@ -42,6 +42,8 @@ export interface ChamberMessage {
   /** `%Y-%m-%dT%H:%M:%S`, local time as the hub formats it. */
   timestamp: string
   session: number | null
+  threadId?: string
+  sharedFrom?: string
   isQuestion: boolean
 }
 
@@ -74,3 +76,5 @@ export class ApiError extends Error {
 export function isUnauthorized(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401
 }
+
+export interface ThreadSummary { root: ChamberMessage; count: number; latest: string }

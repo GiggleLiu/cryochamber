@@ -1,3 +1,5 @@
+import { FilePreview } from './FilePreview'
+import { fileSize } from '../lib/attachments'
 import { useEffect, useRef, useState } from 'react'
 import { sanitizeHtml } from './sanitize'
 import {
@@ -75,6 +77,7 @@ export function MessageBody({
   // One inline alert slot for anything the body itself could not do: an
   // attachment that would not load, a clipboard that refused.
   const [notice, setNotice] = useState<string | null>(null)
+  const [filePreview, setFilePreview] = useState<{ href: string; name: string } | null>(null)
   // Re-render once the lazily-imported renderer lands.
   const [, setMarkdownLoaded] = useState(markdownModule !== null)
 
@@ -128,11 +131,44 @@ export function MessageBody({
         wrap.className = 'code-block'
         pre.parentNode?.insertBefore(wrap, pre)
         wrap.appendChild(pre)
+        const language = pre.querySelector('code')?.className.match(/(?:^|\s)language-([\w+-]+)/)?.[1]
+        if (language) {
+          const label = document.createElement('span')
+          label.className = 'code-language'
+          label.textContent = language.slice(0, 32)
+          wrap.prepend(label)
+        }
         const btn = document.createElement('button')
         btn.className = 'code-copy'
         btn.type = 'button'
         btn.textContent = 'Copy'
         wrap.appendChild(btn)
+      }
+      // File cards keep the original anchor as the authenticated download action.
+      for (const link of Array.from(root.querySelectorAll<HTMLAnchorElement>('a'))) {
+        const href = link.getAttribute('href') ?? ''
+        if (!HUB_FILES_RE.test(href) || link.querySelector('img') || link.dataset.fileWired || IMAGE_EXT_RE.test(href)) continue
+        link.dataset.fileWired = '1'
+        const name = link.textContent || filenameFromHref(href)
+        const wrap = document.createElement('span')
+        wrap.className = 'attachment-card'
+        link.parentNode?.insertBefore(wrap, link)
+        wrap.appendChild(link)
+        link.classList.add('attachment-name')
+        const bytes = /^attachment:(\d+)$/.exec(link.getAttribute('title') ?? '')?.[1]
+        const detail = document.createElement('small')
+        detail.textContent = [name.split('.').pop()?.toUpperCase(), bytes ? fileSize(Number(bytes)) : '', 'Download'].filter(Boolean).join(' · ')
+        wrap.appendChild(detail)
+        if (fetchBlob && /\.(pdf|txt|md|csv|json|log|py|rs|ts|tsx|js|css|toml|yaml|yml)$/i.test(name)) {
+          const preview = document.createElement('button')
+          preview.type = 'button'
+          preview.className = 'message-action'
+          preview.textContent = 'Preview'
+          preview.setAttribute('aria-label', `Preview ${name}`)
+          preview.dataset.filePreview = href
+          preview.dataset.fileName = name
+          wrap.appendChild(preview)
+        }
       }
       // Authenticated images. Only this half needs the fetcher, so the
       // observer itself must not be gated on it.
@@ -266,6 +302,17 @@ export function MessageBody({
     }
   }
 
+  function closeFilePreview() {
+    const href = filePreview?.href
+    setFilePreview(null)
+    // Rendering the message replaces its decorated buttons. Restore focus to
+    // the current opener after that render, rather than the detached old node.
+    requestAnimationFrame(() => {
+      const buttons = ref.current?.querySelectorAll<HTMLButtonElement>('button[data-file-preview]')
+      Array.from(buttons ?? []).find(button => button.dataset.filePreview === href)?.focus()
+    })
+  }
+
   /** The clipboard can refuse (permission, insecure context) or not exist at
    * all, so "Copied" is only honest once the write has actually resolved. */
   async function copyToClipboard(text: string): Promise<boolean> {
@@ -285,6 +332,12 @@ export function MessageBody({
     const target = e.target as Element
     // First branch: the copy button lives inside <pre>, sometimes inside an
     // anchor's ancestry, so it has to win before the attachment handlers.
+    const preview = target.closest<HTMLElement>('button[data-file-preview]')
+    if (preview && root?.contains(preview)) {
+      e.preventDefault()
+      setFilePreview({ href: preview.dataset.filePreview!, name: preview.dataset.fileName! })
+      return
+    }
     const copyBtn = target.closest('button.code-copy')
     if (copyBtn && root?.contains(copyBtn)) {
       e.preventDefault()
@@ -356,6 +409,7 @@ export function MessageBody({
         onClick={onClick}
         dangerouslySetInnerHTML={{ __html: sanitized }}
       />
+      {filePreview && fetchBlob && <FilePreview {...filePreview} fetchBlob={fetchBlob} onClose={closeFilePreview} />}
       {notice && (
         <p className="body-alert" role="alert">
           {notice}

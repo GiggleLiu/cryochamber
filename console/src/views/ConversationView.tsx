@@ -1,3 +1,6 @@
+import { ThreadReplies } from '../components/ThreadReplies'
+import type { ThreadSummary } from '../api/types'
+import { accountKey } from '../lib/account'
 import {
   Fragment,
   useCallback,
@@ -128,8 +131,53 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   // marker is cleared so gaps over cached messages get re-fetched.
   const historyLoaded = loadedChambers.includes(chamberId)
   const messageCount = messages?.length ?? 0
-  const firstVisible = Math.max(0, messageCount - visibleCount)
-  const visibleMessages = messages?.slice(firstVisible)
+  const [threadState, setThreadState] = useState<{ chamberId: string; summaries: ThreadSummary[]; available: boolean }>({ chamberId, summaries: [], available: false })
+  const [threadError, setThreadError] = useState('')
+  const [threadRetry, setThreadRetry] = useState(0)
+  const [openThread, setOpenThread] = useState<string | null>(null)
+  const [readRevision, setReadRevision] = useState(0)
+  const creds = useAppStore(s => s.creds)
+  const threadReadPrefix = `agent-console.thread-read.${creds ? accountKey(creds) : 'app'}.${chamberId}.`
+  const summaries = threadState.chamberId === chamberId ? threadState.summaries : []
+  const threadsAvailable = threadState.chamberId === chamberId && threadState.available
+  useEffect(() => {
+    setOpenThread(null)
+    setThreadError('')
+  }, [chamberId])
+  useEffect(() => {
+    if (!client?.getThreads) return
+    let active = true
+    const timer = setTimeout(() => {
+      void client.getThreads!(chamberId).then(summaries => {
+        if (active) { setThreadState({ chamberId, summaries, available: true }); setThreadError('') }
+      }, (e: unknown) => {
+        if (active && !isUnauthorized(e) && !(e instanceof ApiError && e.status === 404)) setThreadError('Could not refresh thread activity.')
+      })
+    }, 200)
+    return () => { active = false; clearTimeout(timer) }
+  }, [client, chamberId, messages, threadRetry, historyLoaded])
+  const streamMessages = useMemo(() => {
+    const rows = new Map((messages ?? []).filter(m => !m.threadId).map(m => [m.id, m]))
+    for (const summary of threadState.chamberId === chamberId ? threadState.summaries : []) {
+      if (!rows.has(summary.root.id)) rows.set(summary.root.id, summary.root)
+    }
+    return sortByKey([...rows.values()])
+  }, [messages, threadState, chamberId])
+  const firstVisible = Math.max(0, streamMessages.length - visibleCount)
+  const visibleMessages = streamMessages.slice(firstVisible)
+  const unreadThreads = useMemo(() => summaries.filter(s => s.latest > (localStorage.getItem(threadReadPrefix + s.root.id) ?? '')), [summaries, threadReadPrefix, readRevision])
+  const markThreadRead = useCallback((latest: string) => {
+    if (!openThread) return
+    const key = threadReadPrefix + openThread
+    if (latest > (localStorage.getItem(key) ?? '')) { localStorage.setItem(key, latest); setReadRevision(n => n + 1) }
+  }, [openThread, threadReadPrefix])
+  function revealThread(id: string) {
+    const index = streamMessages.findIndex(m => m.id === id)
+    if (index >= 0) setVisibleCount(n => Math.max(n, streamMessages.length - index))
+    setOpenThread(id)
+    pinnedRef.current = false
+    setTimeout(() => document.getElementById(`thread-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0)
+  }
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const el = scrollRef.current
@@ -160,7 +208,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     const el = scrollRef.current
     if (firstVisible > 0) {
       if (el) prependHeightRef.current = el.scrollHeight
-      setVisibleCount((count) => Math.min(messageCount, count + PAGE))
+      setVisibleCount((count) => Math.min(streamMessages.length, count + PAGE))
       return
     }
     if (!client?.getMessagePage || !nextPage || loadingEarlier) return
@@ -379,7 +427,12 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
           </button>
         )}
 
-        {visibleMessages?.map((m, i) => {
+        {threadError && <p className="alert" role="alert">{threadError} <button onClick={() => setThreadRetry(n => n + 1)}>Retry</button></p>}
+        {unreadThreads.length > 0 && <nav className="thread-activity" aria-label="New thread replies">
+          <span>New replies</span>
+          {unreadThreads.map(s => <button key={s.root.id} onClick={() => revealThread(s.root.id)}>{s.root.subject || s.root.body.slice(0, 60)} · {s.count}</button>)}
+        </nav>}
+        {visibleMessages.map((m, i) => {
           const prev = visibleMessages[i - 1]
           const seconds = messageSeconds(m)
           const gap = !prev || seconds - messageSeconds(prev) >= GAP_SECONDS
@@ -396,6 +449,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                 </div>
               )}
               <div
+                id={`thread-${m.id}`}
                 className={
                   `msg-row ${isSelf ? 'msg-self' : 'msg-other'}` +
                   (grouped ? ' msg-grouped' : '') +
@@ -421,8 +475,14 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
                         {copiedMessageId === m.id ? 'Copied' : 'Copy'}
                       </button>
                     )}
+                    {m.sharedFrom && <button className="message-action shared-origin" onClick={() => revealThread(m.sharedFrom!)}>Shared from thread ↗</button>}
                     <MessageBody source={m.body} fetchBlob={fetchBlob} chamberId={hubChamberId} />
                   </div>
+                  {threadsAvailable && !m.sharedFrom && <button type="button" className="message-action thread-toggle" aria-expanded={openThread === m.id}
+                    onClick={() => setOpenThread(openThread === m.id ? null : m.id)}>
+                    {openThread === m.id ? 'Close thread' : summaries.some(s => s.root.id === m.id) ? `${summaries.find(s => s.root.id === m.id)!.count} replies${unreadThreads.some(s => s.root.id === m.id) ? ' · new' : ''}` : 'Reply in thread'}
+                  </button>}
+                  {openThread === m.id && <ThreadReplies key={`${chamberId}:${m.id}`} chamberId={chamberId} hubChamberId={hubChamberId} root={m} revision={`${summaries.find(s => s.root.id === m.id)?.count ?? 0}:${summaries.find(s => s.root.id === m.id)?.latest ?? ''}`} onRead={markThreadRead} />}
                 </div>
               </div>
             </Fragment>
@@ -431,7 +491,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
 
         {/* Unconfirmed sends live after the thread: the user sees their message
             land immediately, and a failure stays theirs to retry. */}
-        {(outbox ?? []).map((o) => (
+        {(outbox ?? []).filter(o => !o.threadId).map((o) => (
           <div className="msg-row msg-self msg-pending" key={o.clientId}>
             <div className="msg-col">
               <div className="bubble">

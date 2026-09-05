@@ -60,11 +60,11 @@
 <tr><td><code>cryo-agent todo list</code></td><td>列出所有 TODO 项。</td></tr>
 <tr><td><code>cryo-agent todo done &lt;id&gt;</code></td><td>将某个 TODO 项标记为完成。</td></tr>
 <tr><td><code>cryo-agent todo remove &lt;id&gt;</code></td><td>移除某个 TODO 项。</td></tr>
-<tr class="group"><td rowspan="5">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。</td></tr>
+<tr class="group"><td rowspan="5">消息</td><td><code>cryo-agent send "message"</code></td><td>向发件箱写入一条给人类的消息。领取话题后，守护进程会自动把消息发回同一话题。</td></tr>
 <tr><td><code>cryo-agent send --stdin</code></td><td>从 stdin 原样读取发件箱消息正文，包括末尾换行；适用于多行或对 shell 敏感的文字。</td></tr>
 <tr><td><code>cryo-agent send --question "msg"</code></td><td>将该消息标记为等待人类回复的问题。</td></tr>
-<tr><td><code>cryo-agent receive</code></td><td>领取（claim）当前来自人类的收件箱批次。</td></tr>
-<tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>渲染对话记录（默认：最近 20 条消息）。<code>--last N</code> 显示最近 N 条，<code>--all</code> 显示所有已归档消息，<code>--since &lt;iso&gt;</code> 显示某个 ISO 8601 时刻之后的消息；三者互斥。副作用是会归档任何待处理的收件箱批次，与 <code>receive</code> 一样履行回复义务。</td></tr>
+<tr><td><code>cryo-agent receive</code></td><td>领取一段待处理的人类对话：第一条待处理话题，或主消息流中未加入话题的消息。领取话题时会同时得到根消息和回复历史。Hub 附件链接会转换为本地 <code>messages/attachments/...</code> 路径。回复后才能领取另一段对话。</td></tr>
+<tr><td><code>cryo-agent dialog [--last N | --all | --since &lt;iso&gt;]</code></td><td>渲染对话记录（默认：最近 20 条消息）。<code>--last N</code> 显示最近 N 条，<code>--all</code> 显示所有已归档消息，<code>--since &lt;iso&gt;</code> 显示某个 ISO 8601 时刻之后的消息；三者互斥。副作用是最多领取并归档一段待处理对话。新领取话题时，即使指定了范围限制，也会包含根消息和完整历史；之后的读取只显示当前话题，并正常应用指定范围。Hub 附件链接会转换为本地 <code>messages/attachments/...</code> 路径。</td></tr>
 <tr class="group"><td rowspan="3">时间</td><td><code>cryo-agent time</code></td><td>以 ISO 8601 格式打印当前本地时间。</td></tr>
 <tr><td><code>cryo-agent time "+30 minutes"</code></td><td>计算相对偏移。单位：<code>minutes</code>、<code>hours</code>、<code>days</code>、<code>weeks</code>。</td></tr>
 <tr><td><code>cryo-agent time "2026-04-25T10:00"</code></td><td>校验并规范化 ISO 8601 时间戳。</td></tr>

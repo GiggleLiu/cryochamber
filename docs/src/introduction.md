@@ -34,7 +34,7 @@ cryohub start    # prints the local dashboard URL — open it in your browser
 
 ![The Agent Console showing a chamber's conversation, with an agent report, a table and a plot](images/agent-console.png)
 
-[Cryohub](./reference/cli.md#hub-cryohub) serves the **[Agent Console](./agent-console.md)**: one flat conversation per chamber, with the chamber's status, TODOs, notes, log tail and lifecycle controls a tap away, on a phone or a desktop browser. It is embedded in the `cryohub` binary — nothing to install. Share a single chamber with someone through an invite link, or bridge it to Zulip with [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip).
+[Cryohub](./reference/cli.md#hub-cryohub) serves the **[Agent Console](./agent-console.md)**: a main stream with inline threads for each chamber, plus status, TODOs, notes, log tail, and lifecycle controls on a phone or desktop browser. It is embedded in the `cryohub` binary — nothing to install. Share a single chamber with someone through an invite link, or bridge it to Zulip with [`cryo-zulip`](./reference/cli.md#zulip-sync-cryo-zulip).
 
 ## What a chamber guarantees
 

@@ -541,6 +541,15 @@ pub(super) fn handle_dialog_request(
         }
     };
 
+    // A newly claimed follow-up needs its parent even when --last would omit it.
+    let filter = if claimed
+        .iter()
+        .any(|(_, msg)| msg.metadata.contains_key("thread_id"))
+    {
+        crate::socket::DialogFilter::All
+    } else {
+        filter
+    };
     let resolved_filter = match resolve_dialog_filter(filter) {
         Ok(filter) => filter,
         Err(message) => {

@@ -128,30 +128,23 @@ fn attachments_bytes(dir: &Path) -> u64 {
 
 /// Write `bytes` to `<chamber>/messages/attachments/<stored>`.
 ///
-/// `create_new` never follows a symlink and never truncates an existing entry,
-/// so a predictable name planted in advance cannot be written through. A
-/// collision is not an error: the name carries the content hash, so what is
-/// already there is what is being uploaded — but it still has to be a regular
-/// file inside the directory before its link is handed back.
+/// Atomic replacement keeps interrupted writes invisible and repairs a
+/// truncated file when the same content-addressed upload is retried. Existing
+/// entries still have to be regular contained files before replacement.
 fn store_attachment(chamber: &Path, stored: &str, bytes: &[u8]) -> Result<(), StatusCode> {
-    use std::io::Write;
-
     let dir = attachments_dir(chamber);
     std::fs::create_dir_all(&dir).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let root = contained_attachments_dir(chamber).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(root.join(stored))
-    {
-        Ok(mut file) => file
-            .write_all(bytes)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => contained_file(&root, stored)
-            .map(|_| ())
-            .ok_or(StatusCode::INTERNAL_SERVER_ERROR),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    let path = root.join(stored);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            contained_file(&root, stored).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+        Ok(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
+    crate::persistence::write_durable(&path, bytes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn sha12(bytes: &[u8]) -> String {
@@ -169,6 +162,31 @@ fn sha12(bytes: &[u8]) -> String {
         h2 = h2.wrapping_mul(0x100000001b3);
     }
     format!("{h1:08x}{h2:08x}")[..12].to_string()
+}
+
+/// Leave room for `persistence::write_durable`'s hidden temporary suffix under
+/// the common 255-byte filesystem component limit.
+const MAX_STORED_NAME_BYTES: usize = 180;
+
+fn stored_attachment_name(original: &str, bytes: &[u8]) -> String {
+    let prefix = format!("{}_", sha12(bytes));
+    let safe = safe_name(original);
+    let available = MAX_STORED_NAME_BYTES - prefix.len();
+    if safe.len() <= available {
+        return format!("{prefix}{safe}");
+    }
+    let shortened = safe
+        .rsplit_once('.')
+        .filter(|(stem, extension)| {
+            !stem.is_empty() && !extension.is_empty() && extension.len() + 1 < available
+        })
+        .map_or_else(
+            || safe[..available].to_string(),
+            |(stem, extension)| {
+                format!("{}.{}", &stem[..available - extension.len() - 1], extension)
+            },
+        );
+    format!("{prefix}{shortened}")
 }
 
 /// `POST /api/chambers/{id}/uploads` — multipart field `file`.
@@ -226,7 +244,7 @@ pub(crate) async fn post_upload(
         if bytes.len() > MAX_ATTACHMENT_BYTES {
             return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response().into());
         }
-        let stored = format!("{}_{}", sha12(&bytes), safe_name(&original));
+        let stored = stored_attachment_name(&original, &bytes);
         let write_chamber = chamber.clone();
         let write_stored = stored.clone();
         tokio::task::spawn_blocking(move || {

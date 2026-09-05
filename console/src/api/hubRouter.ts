@@ -4,12 +4,15 @@ import { HubClient } from './hubClient'
 import type {
   ChamberStatus, ChamberAgentUpdate, TodoItem, LifecycleAction, ActionResult,
 } from './hubClient'
-import type { Chamber, ChamberMessage } from './types'
+import type { Chamber, ChamberMessage, ThreadSummary } from './types'
 
 export interface ConsoleClient {
   getMessagePage?(chamberKey: string, before?: string): Promise<{ messages: ChamberMessage[]; next: string | null }>
   getMessages(chamberKey: string): Promise<ChamberMessage[]>
-  sendMessage(chamberKey: string, body: string): Promise<{ id: string }>
+  getThreads?(chamberKey: string): Promise<ThreadSummary[]>
+  getThread?(chamberKey: string, root: string): Promise<ChamberMessage[]>
+  shareMessage?(chamberKey: string, id: string): Promise<void>
+  sendMessage(chamberKey: string, body: string, threadId?: string): Promise<{ id: string }>
   uploadFile(file: File, chamberKey: string): Promise<string>
   chamberStatus(chamberKey: string): Promise<ChamberStatus>
   setChamberAgent(chamberKey: string, agent: string): Promise<ChamberAgentUpdate>
@@ -83,9 +86,24 @@ export class HubRouter implements ConsoleClient {
     return { ...page, messages: page.messages.map((m) => ({ ...m, chamberId: chamberKey(hubId, chamberId) })) }
   }
 
-  async sendMessage(key: string, body: string): Promise<{ id: string }> {
+  async sendMessage(key: string, body: string, threadId?: string): Promise<{ id: string }> {
     const { client, chamberId } = this.resolve(key)
-    return client.sendMessage(chamberId, body)
+    return threadId ? client.sendMessage(chamberId, body, threadId) : client.sendMessage(chamberId, body)
+  }
+
+  async getThreads(key: string): Promise<ThreadSummary[]> {
+    const { client, chamberId } = this.resolve(key)
+    return (await client.getThreads(chamberId)).map(s => ({ ...s, root: { ...s.root, chamberId: key } }))
+  }
+
+  async getThread(key: string, root: string): Promise<ChamberMessage[]> {
+    const { client, chamberId } = this.resolve(key)
+    return (await client.getThread(chamberId, root)).map(m => ({ ...m, chamberId: key }))
+  }
+
+  async shareMessage(key: string, id: string): Promise<void> {
+    const { client, chamberId } = this.resolve(key)
+    await client.shareMessage(chamberId, id)
   }
 
   async uploadFile(file: File, key: string): Promise<string> {

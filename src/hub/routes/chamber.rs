@@ -112,9 +112,12 @@ pub struct SendRequest {
     body: String,
     from: Option<String>,
     subject: Option<String>,
+    thread_id: Option<String>,
+    share_message_id: Option<String>,
 }
 
-/// Send a message into a chamber's inbox.
+/// Send a message into a chamber's inbox, or copy a thread reply to outbox
+/// when explicitly shared to the stream. Sharing creates no new inbox work.
 ///
 /// In public mode the sender identity is the server's to decide, never the
 /// browser's: an invite is attributed to its own name, and the owner to the
@@ -152,26 +155,80 @@ pub async fn post_send(
         None => req.from.unwrap_or_else(|| "human".into()),
     };
     let store = MessageStore::new(path.clone());
+    if req.thread_id.is_some() && req.share_message_id.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Choose a reply or a share"})),
+        )
+            .into_response();
+    }
+    let mut metadata = std::collections::BTreeMap::new();
+    let mut body = req.body;
+    let shared = req.share_message_id.is_some();
+    if let Some(id) = req.share_message_id {
+        let Ok(original) = store.get(&id) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let Some(root) = original.metadata.get("thread_id") else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Only thread replies can be shared to the stream"})),
+            )
+                .into_response();
+        };
+        body = original.body;
+        metadata.insert("shared_from".into(), root.clone());
+    } else if let Some(root) = req.thread_id {
+        let Ok(parent) = store.get(&root) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        if parent.metadata.contains_key("thread_id") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Reply to the thread root"})),
+            )
+                .into_response();
+        }
+        let root = parent.metadata.get("shared_from").cloned().unwrap_or(root);
+        if store.get(&root).is_err() {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        metadata.insert("thread_id".into(), root);
+    }
+    if body.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Add text or an attachment"})),
+        )
+            .into_response();
+    }
     let msg = crate::message::Message {
         from,
         subject: req.subject.unwrap_or_default(),
-        body: req.body,
+        body,
         timestamp: chrono::Local::now().naive_local(),
-        metadata: Default::default(),
+        metadata,
         is_question: false,
     };
-    match store.send_in(&msg) {
+    let mailbox = if shared { "outbox" } else { "inbox" };
+    match if shared {
+        store.send_out(&msg)
+    } else {
+        store.send_in(&msg)
+    } {
         Ok(written) => {
-            let id = crate::chamber_status::message_id_for_path("inbox", &written);
+            let id = crate::chamber_status::message_id_for_path(mailbox, &written);
             let _ = app.tx.send(SseEvent::NewMessage {
                 id: id.clone(),
                 chamber_id: entry.id,
-                direction: "inbox".into(),
+                direction: mailbox.into(),
                 from: msg.from.clone(),
                 subject: msg.subject.clone(),
                 body: msg.body.clone(),
                 timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 is_question: msg.is_question,
+                thread_id: msg.metadata.get("thread_id").cloned(),
+                shared_from: msg.metadata.get("shared_from").cloned(),
             });
             (StatusCode::OK, Json(json!({"ok": true, "id": id}))).into_response()
         }
@@ -424,3 +481,60 @@ where
 #[cfg(test)]
 #[path = "../../unit_tests/hub/routes/chamber.rs"]
 mod tests;
+
+#[derive(Deserialize)]
+pub struct ThreadQuery {
+    root: Option<String>,
+}
+
+pub async fn get_threads(
+    State(app): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    axum::extract::Query(query): axum::extract::Query<ThreadQuery>,
+) -> Result<Json<Value>, StatusCode> {
+    let (path, _) = app.resolve(&id).ok_or(StatusCode::NOT_FOUND)?;
+    tokio::task::spawn_blocking(move || {
+        // ponytail: derive summaries from mailbox files; index them if large histories need it.
+        let all = crate::chamber_status::messages(&path);
+        if let Some(root) = query.root {
+            if !all.iter().any(|m| m.id == root && m.thread_id.is_none()) {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            let messages = all
+                .iter()
+                .filter(|message| message.id == root || message.thread_id.as_ref() == Some(&root))
+                .collect::<Vec<_>>();
+            return Ok(Json(json!(messages)));
+        }
+        let mut groups: std::collections::BTreeMap<
+            String,
+            Vec<&crate::chamber_status::ChamberMessage>,
+        > = Default::default();
+        for message in &all {
+            if let Some(root) = &message.thread_id {
+                groups.entry(root.clone()).or_default().push(message);
+            }
+        }
+        let roots: std::collections::BTreeMap<_, _> = all
+            .iter()
+            .map(|message| (message.id.as_str(), message))
+            .collect();
+        let summaries = groups
+            .into_iter()
+            .filter_map(|(id, replies)| {
+                let root = roots.get(id.as_str())?;
+                let latest = replies
+                    .last()
+                    .map(|message| format!("{} {}", message.timestamp, message.id));
+                Some(json!({
+                    "root": root,
+                    "count": replies.len(),
+                    "latest": latest,
+                }))
+            })
+            .collect::<Vec<_>>();
+        Ok(Json(json!(summaries)))
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}

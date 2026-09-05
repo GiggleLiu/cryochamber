@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { Composer } from './Composer'
 import { useAppStore, resetAppStore } from '../store/appStore'
 import { draftKey } from '../lib/outbox'
+import { attachmentMarkdown } from '../lib/attachments'
 import { ApiError } from '../api/types'
 import type { HubClient } from '../api/hubClient'
 
@@ -150,98 +151,77 @@ describe('file upload', () => {
   const attach = (): HTMLInputElement =>
     screen.getByLabelText('Attach file', { selector: 'input' }) as HTMLInputElement
 
-  test('successful upload inserts the markdown link at the caret', async () => {
-    const client = fakeClient({
-      uploadFile: vi.fn(async () => '/user_uploads/2/ab/report.pdf'),
-    })
-    useAppStore.setState({ client })
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'see ')
-    await userEvent.upload(attach(), new File(['pdf'], 'report.pdf', { type: 'application/pdf' }))
-    await waitFor(() =>
-      expect(box).toHaveValue('see [report.pdf](/user_uploads/2/ab/report.pdf)'),
-    )
-    expect(client.uploadFile).toHaveBeenCalledTimes(1)
-  })
-
-  test('picking two files uploads them sequentially and inserts both links in order', async () => {
+  test('picked files upload in order and stay out of the textarea', async () => {
     const order: string[] = []
     const client = fakeClient({
       uploadFile: vi.fn(async (file: File) => {
         order.push(file.name)
-        return `/files/${file.name}`
+        return `/api/chambers/cham-a/files/${file.name}`
       }),
     })
     useAppStore.setState({ client })
     render(<Composer chamberId="cham-a" />)
+    const box = screen.getByRole('textbox')
     const first = new File(['a'], 'a.txt', { type: 'text/plain' })
     const second = new File(['b'], 'b.pdf', { type: 'application/pdf' })
     await userEvent.upload(attach(), [first, second])
-    await waitFor(() =>
-      expect(screen.getByRole('textbox')).toHaveValue(
-        '[a.txt](/files/a.txt) [b.pdf](/files/b.pdf)',
-      ),
-    )
+    await waitFor(() => expect(client.uploadFile).toHaveBeenCalledTimes(2))
+    expect(box).toHaveValue('')
+    const attachments = screen.getByRole('list', { name: 'Attachments' })
+    expect(attachments).toHaveTextContent('a.txt')
+    expect(attachments).toHaveTextContent('b.pdf')
     expect(order).toEqual(['a.txt', 'b.pdf'])
     expect(client.uploadFile).toHaveBeenNthCalledWith(1, first, 'cham-a')
     expect(client.uploadFile).toHaveBeenNthCalledWith(2, second, 'cham-a')
   })
 
-  test('dropping files on the dock uses the same sequential upload path', async () => {
+  test('drop and paste use the staged upload path', async () => {
     const client = fakeClient({
-      uploadFile: vi.fn(async (file: File) => `/files/${file.name}`),
+      uploadFile: vi.fn(async (file: File) => `/api/chambers/cham-a/files/${file.name}`),
     })
     useAppStore.setState({ client })
     const { container } = render(<Composer chamberId="cham-a" />)
     const dock = container.querySelector('.composer-dock')!
-    const first = new File(['a'], 'a.txt', { type: 'text/plain' })
-    const second = new File(['b'], 'b.pdf', { type: 'application/pdf' })
-    const dataTransfer = { files: [first, second], types: ['Files'] }
+    const dropped = new File(['a'], 'drop.txt', { type: 'text/plain' })
+    const pasted = new File(['b'], 'paste.pdf', { type: 'application/pdf' })
+    const dataTransfer = { files: [dropped], types: ['Files'] }
     fireEvent.dragOver(dock, { dataTransfer })
     expect(dock).toHaveClass('is-drop')
     fireEvent.drop(dock, { dataTransfer })
-    await waitFor(() =>
-      expect(screen.getByRole('textbox')).toHaveValue(
-        '[a.txt](/files/a.txt) [b.pdf](/files/b.pdf)',
-      ),
-    )
+    fireEvent.paste(screen.getByRole('textbox'), { clipboardData: { files: [pasted] } })
+    await waitFor(() => expect(client.uploadFile).toHaveBeenCalledTimes(2))
     expect(dock).not.toHaveClass('is-drop')
-    expect(client.uploadFile).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('list', { name: 'Attachments' })).toHaveTextContent('drop.txt')
+    expect(screen.getByRole('list', { name: 'Attachments' })).toHaveTextContent('paste.pdf')
+    expect(screen.getByRole('textbox')).toHaveValue('')
   })
 
-  test('an uploaded image is inserted as an embed so it previews inline', async () => {
+  test('an image has a local preview which is revoked when removed', async () => {
+    const createObjectURL = vi.fn(() => 'blob:preview')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
     const client = fakeClient({
       uploadFile: vi.fn(async () => '/api/chambers/cham-a/files/ab_photo.png'),
     })
     useAppStore.setState({ client })
     render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.upload(attach(), new File(['png'], 'photo.png', { type: 'image/png' }))
-    await waitFor(() =>
-      expect(box).toHaveValue('![photo.png](/api/chambers/cham-a/files/ab_photo.png)'),
-    )
+    const file = new File(['png'], 'photo.png', { type: 'image/png' })
+    await userEvent.upload(attach(), file)
+    expect(await screen.findByRole('img', { name: 'photo.png' })).toHaveAttribute('src', 'blob:preview')
+    expect(createObjectURL).toHaveBeenCalledWith(file)
+    await userEvent.click(screen.getByRole('button', { name: 'Remove photo.png' }))
+    expect(screen.queryByRole('img', { name: 'photo.png' })).toBeNull()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+    vi.unstubAllGlobals()
   })
 
-  test('failed upload shows the server message and leaves text unchanged', async () => {
+  test('one upload may fail, later files continue, and retry repairs only the failed file', async () => {
     const client = fakeClient({
-      uploadFile: vi.fn().mockRejectedValue(new ApiError(400, 'File too large')),
-    })
-    useAppStore.setState({ client })
-    render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    await userEvent.type(box, 'keep this')
-    await userEvent.upload(attach(), new File(['x'], 'big.pdf', { type: 'application/pdf' }))
-    expect(await screen.findByText(/Could not upload big\.pdf\. File too large/)).toBeInTheDocument()
-    expect(box).toHaveValue('keep this')
-  })
-
-  test('a failed file aborts the remaining uploads', async () => {
-    const client = fakeClient({
-      uploadFile: vi
-        .fn()
-        .mockResolvedValueOnce('/files/a.txt')
-        .mockRejectedValueOnce(new Error('disk full')),
+      uploadFile: vi.fn()
+        .mockResolvedValueOnce('/api/chambers/cham-a/files/a.txt')
+        .mockRejectedValueOnce(new ApiError(400, 'disk full'))
+        .mockResolvedValueOnce('/api/chambers/cham-a/files/c.txt')
+        .mockResolvedValueOnce('/api/chambers/cham-a/files/b.txt'),
     })
     useAppStore.setState({ client })
     render(<Composer chamberId="cham-a" />)
@@ -250,14 +230,17 @@ describe('file upload', () => {
       new File(['b'], 'b.txt'),
       new File(['c'], 'c.txt'),
     ])
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Could not upload b.txt. disk full',
-    )
-    expect(client.uploadFile).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('textbox')).toHaveValue('[a.txt](/files/a.txt)')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not upload b.txt. disk full')
+    await waitFor(() => expect(client.uploadFile).toHaveBeenCalledTimes(3))
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry b.txt' }))
+    await waitFor(() => expect(client.uploadFile).toHaveBeenCalledTimes(4))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled())
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  test('send is disabled while uploading and re-enabled after', async () => {
+  test('click and Enter cannot send while an upload is pending', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
     let resolveUpload!: (uri: string) => void
     const client = fakeClient({
       uploadFile: vi.fn(() => new Promise<string>((r) => { resolveUpload = r })),
@@ -271,28 +254,37 @@ describe('file upload', () => {
     await userEvent.upload(attach(), new File(['x'], 'a.txt', { type: 'text/plain' }))
     expect(sendBtn).toBeDisabled()
     expect(screen.getByRole('status')).toHaveTextContent(/uploading a\.txt/i)
-    resolveUpload('/user_uploads/1/aa/a.txt')
+    await userEvent.click(sendBtn)
+    await userEvent.type(box, '{Enter}')
+    expect(client.sendMessage).not.toHaveBeenCalled()
+    expect(box).toHaveValue('hello')
+    resolveUpload('/api/chambers/cham-a/files/a.txt')
     await waitFor(() => expect(sendBtn).toBeEnabled())
     expect(screen.queryByRole('status')).toBeNull()
-    expect(box).toHaveValue('hello [a.txt](/user_uploads/1/aa/a.txt)')
+    vi.unstubAllGlobals()
   })
 
-  test('re-picking the same file works (input is reset)', async () => {
-    const client = fakeClient({ uploadFile: vi.fn(async () => '/user_uploads/1/aa/a.txt') })
+  test('a ready attachment can send without text', async () => {
+    const client = fakeClient({ uploadFile: vi.fn(async () => '/api/chambers/cham-a/files/a.txt') })
     useAppStore.setState({ client })
     render(<Composer chamberId="cham-a" />)
-    const box = screen.getByRole('textbox')
-    const input = attach()
-    const f = new File(['x'], 'a.txt', { type: 'text/plain' })
-    await userEvent.upload(input, f)
-    await waitFor(() => expect(box).toHaveValue('[a.txt](/user_uploads/1/aa/a.txt)'))
-    await userEvent.upload(input, f)
+    await userEvent.upload(attach(), new File(['x'], 'a.txt', { type: 'text/plain' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() =>
-      expect(box).toHaveValue(
-        '[a.txt](/user_uploads/1/aa/a.txt) [a.txt](/user_uploads/1/aa/a.txt)',
+      expect(client.sendMessage).toHaveBeenCalledWith(
+        'cham-a',
+        '[a.txt](</api/chambers/cham-a/files/a.txt> "attachment:1")',
       ),
     )
+    expect(screen.queryByRole('list', { name: 'Attachments' })).toBeNull()
   })
+})
+
+test('attachment markdown escapes labels and unsafe target characters', () => {
+  expect(attachmentMarkdown('a[b]\\c\n.png', '/files/a b>".png', 42)).toBe(
+    '![a\\[b\\]\\\\c .png](</files/a%20b%3E%22.png> "attachment:42")',
+  )
 })
 
 describe('Enter to send', () => {
@@ -346,7 +338,7 @@ describe('Enter to send', () => {
   })
 })
 
-test('text typed while an upload is pending survives link insertion', async () => {
+test('text typed while an upload is pending stays unchanged', async () => {
   let resolveUpload!: (uri: string) => void
   const client = {
     uploadFile: vi.fn(() => new Promise<string>((r) => { resolveUpload = r })),
@@ -361,23 +353,51 @@ test('text typed while an upload is pending survives link insertion', async () =
   // keep typing while the upload is in flight
   await userEvent.type(box, 'second ')
   resolveUpload('/api/chambers/cham-a/files/aa_notes.txt')
-  await waitFor(() =>
-    expect(box).toHaveValue(
-      'first second [notes.txt](/api/chambers/cham-a/files/aa_notes.txt)',
-    ),
-  )
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled())
+  expect(box).toHaveValue('first second ')
 })
 
-test('a draft is kept per chamber, keyed by the hub id', async () => {
-  useAppStore.setState({ client: fakeClient() })
+test('ready attachments survive a remount and send with the restored text', async () => {
+  const client = fakeClient({ uploadFile: vi.fn(async () => '/api/chambers/cham-a/files/a.txt') })
+  useAppStore.setState({ client })
   const { unmount } = render(<Composer chamberId="cham-a" />)
-  await userEvent.type(screen.getByRole('textbox'), 'half a sentence')
-  await waitFor(() =>
-    expect(Object.keys(localStorage).some((k) => k.endsWith('.cham-a'))).toBe(true),
+  await userEvent.type(screen.getByRole('textbox'), 'context')
+  await userEvent.upload(
+    screen.getByLabelText('Attach file', { selector: 'input' }) as HTMLInputElement,
+    new File(['x'], 'a.txt', { type: 'text/plain' }),
   )
+  await waitFor(() => expect(localStorage.getItem(
+    'agent-console.draft.hub|ee0c38ea156277d1.cham-a.files',
+  )).toContain('/api/chambers/cham-a/files/a.txt'))
   unmount()
-  render(<Composer chamberId="cham-b" />)
-  expect(screen.getByRole('textbox')).toHaveValue('')
+  render(<Composer chamberId="cham-a" />)
+  expect(screen.getByRole('textbox')).toHaveValue('context')
+  expect(screen.getByRole('list', { name: 'Attachments' })).toHaveTextContent('a.txt')
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith(
+    'cham-a',
+    'context\n\n[a.txt](</api/chambers/cham-a/files/a.txt> "attachment:1")',
+  ))
+})
+
+test('thread drafts and outbox sends keep their thread id', async () => {
+  const client = fakeClient()
+  useAppStore.setState({ client })
+  const { unmount } = render(<Composer chamberId="cham-a" threadId="outbox/7.md" />)
+  await userEvent.type(screen.getByRole('textbox', { name: 'Thread reply' }), 'reply later')
+  await waitFor(() => expect(localStorage.getItem(
+    'agent-console.draft.hub|ee0c38ea156277d1.cham-a.thread.outbox/7.md',
+  )).toBe('reply later'))
+  unmount()
+  render(<Composer chamberId="cham-a" threadId="outbox/7.md" />)
+  expect(screen.getByRole('textbox', { name: 'Thread reply' })).toHaveValue('reply later')
+  await userEvent.click(screen.getByRole('button', { name: 'Send reply' }))
+  await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith(
+    'cham-a', 'reply later', 'outbox/7.md',
+  ))
+  expect(useAppStore.getState().outboxByChamber['cham-a']).toMatchObject([
+    { body: 'reply later', threadId: 'outbox/7.md' },
+  ])
 })
 
 test('upload posts to this chamber so hub uploads reach the right mailbox', async () => {

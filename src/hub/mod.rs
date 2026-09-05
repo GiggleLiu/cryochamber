@@ -87,6 +87,10 @@ pub fn build_router_with_config(
             get(crate::hub::routes::chamber::get_status),
         )
         .route(
+            "/api/chambers/{id}/threads",
+            get(crate::hub::routes::chamber::get_threads),
+        )
+        .route(
             "/api/chambers/{id}/messages",
             get(crate::hub::routes::chamber::get_messages),
         )

@@ -170,7 +170,9 @@ pub fn classify(method: &Method, path: &str) -> Access {
         // (log tail, plan, notes, settings, session summaries) and `todos` are
         // the chamber's working state and stay with the owner; the console
         // never asks for them on a guest's behalf.
-        ("GET", ["api", "chambers", id, "messages"]) => Access::Chamber((*id).to_string()),
+        ("GET", ["api", "chambers", id, "messages" | "threads"]) => {
+            Access::Chamber((*id).to_string())
+        }
         ("POST", ["api", "chambers", id, "send" | "uploads"]) => Access::Chamber((*id).to_string()),
         ("GET", ["api", "chambers", id, "files", _name]) => Access::Chamber((*id).to_string()),
         // Chamber-local artifacts (articles/, .knowledge/) — the same guest

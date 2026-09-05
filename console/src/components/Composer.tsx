@@ -2,222 +2,144 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { draftKey, sendViaOutbox } from '../lib/outbox'
 import { accountKey } from '../lib/account'
-import { isUnauthorized } from '../api/types'
 import { IMAGE_EXT_RE } from '../lib/images'
-import { AlertCircle, ArrowUp, Paperclip } from './Icon'
+import { ArrowUp, Paperclip } from './Icon'
+import { attachmentMarkdown, fileSize } from '../lib/attachments'
 
-/**
- * True when the device most likely has a hardware keyboard, where Enter is
- * expected to send and Shift+Enter to insert a newline. On a touch keyboard
- * Enter must stay a newline — there is no modifier to fall back on.
- */
-function hasHardwareKeyboard(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
-  return window.matchMedia('(hover: hover) and (pointer: fine)').matches
+interface StagedFile {
+  id: string
+  name: string
+  size: number
+  file?: File
+  preview?: string
+  url?: string
+  error?: string
+  state: 'queued' | 'uploading' | 'ready' | 'failed'
 }
 
-export function Composer({ chamberId }: { chamberId: string }) {
-  const client = useAppStore((s) => s.client)
-  const creds = useAppStore((s) => s.creds)
-  // App mode has no session-wide token to key on — every hub has its own — but
-  // its chamber keys already carry the hub, so one namespace cannot collide.
+function hasHardwareKeyboard(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
+}
+
+/** The key remounts drafts and upload state when switching conversations. */
+export function Composer({ chamberId, threadId }: { chamberId: string; threadId?: string }) {
+  const creds = useAppStore(s => s.creds)
   const account = creds ? accountKey(creds) : 'app'
-  // A half-written message is the user's work: it survives leaving the project,
-  // closing the tab, and the app reloading, per project.
-  const [text, setText] = useState(() => localStorage.getItem(draftKey(account, chamberId)) ?? '')
-  const [uploading, setUploading] = useState(false)
-  const [uploadName, setUploadName] = useState('')
-  const [uploadIndex, setUploadIndex] = useState(0)
-  const [uploadTotal, setUploadTotal] = useState(0)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [isDrop, setIsDrop] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const pendingCaret = useRef<number | null>(null)
-  const uploadingRef = useRef(false)
+  const key = draftKey(account, threadId ? `${chamberId}.thread.${threadId}` : chamberId)
+  return <DraftComposer key={key} chamberId={chamberId} threadId={threadId} storageKey={key} />
+}
 
-  // After a programmatic insert (upload link), place the caret at the end
-  // of the inserted text so further typing appends naturally.
-  useEffect(() => {
-    const ta = textareaRef.current
-    if (ta && pendingCaret.current !== null) {
-      ta.setSelectionRange(pendingCaret.current, pendingCaret.current)
-      pendingCaret.current = null
-    }
+function DraftComposer({ chamberId, threadId, storageKey }: { chamberId: string; threadId?: string; storageKey: string }) {
+  const client = useAppStore(s => s.client)
+  const [text, setText] = useState(() => localStorage.getItem(storageKey) ?? '')
+  const [files, setFiles] = useState<StagedFile[]>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(`${storageKey}.files`) ?? '[]')
+      return Array.isArray(saved) ? saved.filter((f): f is StagedFile =>
+        f && typeof f.id === 'string' && typeof f.name === 'string' && typeof f.size === 'number'
+        && typeof f.url === 'string' && f.url.startsWith('/api/chambers/') && f.state === 'ready') : []
+    } catch { return [] }
   })
+  const [notice, setNotice] = useState('')
+  const [isDrop, setIsDrop] = useState(false)
+  const ta = useRef<HTMLTextAreaElement>(null)
+  const input = useRef<HTMLInputElement>(null)
+  const alive = useRef(true)
+  const busy = useRef(false)
+  const previews = useRef(new Set<string>())
+  const pending = files.some(f => f.state !== 'ready')
 
   useEffect(() => {
-    const key = draftKey(account, chamberId)
-    if (text) localStorage.setItem(key, text)
-    else localStorage.removeItem(key)
-  }, [text, account, chamberId])
-
-  // Grow the field with its content, up to the max-height the stylesheet sets
-  // (~5 lines), after which it scrolls.
+    alive.current = true
+    const urls = previews.current
+    return () => { alive.current = false; urls.forEach(url => URL.revokeObjectURL(url)) }
+  }, [])
   useEffect(() => {
-    const ta = textareaRef.current
-    if (!ta) return
-    ta.style.height = 'auto'
-    ta.style.height = `${ta.scrollHeight}px`
+    if (text) localStorage.setItem(storageKey, text)
+    else localStorage.removeItem(storageKey)
+  }, [text, storageKey])
+  useEffect(() => {
+    const ready = files.filter(f => f.state === 'ready').map(({ id, name, size, url, state }) => ({ id, name, size, url, state }))
+    if (ready.length) localStorage.setItem(`${storageKey}.files`, JSON.stringify(ready))
+    else localStorage.removeItem(`${storageKey}.files`)
+  }, [files, storageKey])
+  useEffect(() => {
+    if (!ta.current) return
+    ta.current.style.height = 'auto'
+    ta.current.style.height = `${ta.current.scrollHeight}px`
   }, [text])
 
-  /** Insert `[name](uri)` at the caret, space-separated from surrounding text —
-   * or `![name](uri)` for a picture, so the recipient sees it inline instead of
-   * a filename they have to click.
-   * Reads the CURRENT value via functional setState — the upload that calls
-   * this resolves asynchronously, and text typed while it was pending must
-   * survive. */
-  function insertLink(name: string, uri: string) {
-    const ta = textareaRef.current
-    setText((current) => {
-      const caret = pendingCaret.current ??
-        (ta ? Math.min(ta.selectionStart, current.length) : current.length)
-      const before = current.slice(0, caret)
-      const after = current.slice(caret)
-      const link = `${IMAGE_EXT_RE.test(name) ? '!' : ''}[${name}](${uri})`
-      const full =
-        (before.length > 0 && !/\s$/.test(before) ? ' ' : '') +
-        link +
-        (after.length > 0 && !/^\s/.test(after) ? ' ' : '')
-      pendingCaret.current = caret + full.length
-      return before + full + after
+  // One upload at a time uses the existing authenticated transport on web and native.
+  useEffect(() => {
+    const next = files.find(f => f.state === 'queued')
+    if (!next?.file || !client || busy.current) return
+    busy.current = true
+    setFiles(current => current.map(f => f.id === next.id ? { ...f, state: 'uploading' } : f))
+    void client.uploadFile(next.file, chamberId).then(url => {
+      if (alive.current) setFiles(current => current.map(f => f.id === next.id ? { ...f, url, file: undefined, state: 'ready' } : f))
+    }, (error: unknown) => {
+      if (alive.current) setFiles(current => current.map(f => f.id === next.id ? {
+        ...f, state: 'failed', error: error instanceof Error ? error.message : 'Upload failed',
+      } : f))
+    }).finally(() => {
+      busy.current = false
+      if (alive.current) setFiles(current => [...current])
     })
-  }
+  }, [files, client, chamberId])
 
-  async function uploadFiles(files: File[]) {
-    if (files.length === 0 || !client || uploadingRef.current) return
-    uploadingRef.current = true
-    setUploading(true)
-    setUploadTotal(files.length)
-    setUploadError(null)
-    try {
-      for (let i = 0; i < files.length; i += 1) {
-        const file = files[i]
-        setUploadName(file.name)
-        setUploadIndex(i + 1)
-        try {
-          const uri = await client.uploadFile(file, chamberId)
-          insertLink(file.name, uri)
-        } catch (err) {
-          if (isUnauthorized(err)) return
-          const detail = err instanceof Error ? err.message : String(err)
-          setUploadError(`Could not upload ${file.name}. ${detail}`)
-          return
-        }
-      }
-    } finally {
-      uploadingRef.current = false
-      setUploading(false)
-      setUploadName('')
-      setUploadIndex(0)
-      setUploadTotal(0)
+  function addFiles(incoming: File[]) {
+    setNotice('')
+    const added: StagedFile[] = []
+    for (const file of incoming) {
+      if (file.size > 25 * 1024 * 1024) { setNotice(`${file.name} exceeds the 25 MB file limit.`); continue }
+      if (files.length + added.length >= 10) { setNotice('Attach up to 10 files per message.'); break }
+      const preview = IMAGE_EXT_RE.test(file.name) && !/\.svg$/i.test(file.name) && typeof URL.createObjectURL === 'function'
+        ? URL.createObjectURL(file) : undefined
+      if (preview) previews.current.add(preview)
+      added.push({ id: crypto.randomUUID(), name: file.name, size: file.size, file, preview, state: 'queued' })
     }
+    setFiles(current => [...current, ...added])
   }
 
-  function onFilePick(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? [])
-    // Reset immediately so the same files can be re-picked.
-    e.target.value = ''
-    void uploadFiles(files)
+  function remove(file: StagedFile) {
+    setFiles(current => current.filter(f => f.id !== file.id))
+    if (file.preview) { URL.revokeObjectURL(file.preview); previews.current.delete(file.preview) }
   }
 
-  function hasDraggedFiles(e: React.DragEvent): boolean {
-    return Array.from(e.dataTransfer.types).includes('Files')
-  }
-
-  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
-    if (!hasDraggedFiles(e)) return
-    e.preventDefault()
-    setIsDrop(true)
-  }
-
-  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
-    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return
-    setIsDrop(false)
-  }
-
-  function onDrop(e: React.DragEvent<HTMLDivElement>) {
-    if (!hasDraggedFiles(e)) return
-    e.preventDefault()
-    setIsDrop(false)
-    void uploadFiles(Array.from(e.dataTransfer.files))
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    // During IME composition Enter commits the candidate — never intercept it.
-    if (e.nativeEvent.isComposing) return
-    // Enter sends on a hardware keyboard; Shift+Enter always inserts a newline.
-    if (e.key === 'Enter' && !e.shiftKey && hasHardwareKeyboard()) {
-      e.preventDefault()
-      send()
-    }
-  }
-
-  /** Optimistic: the message becomes a pending bubble in the thread and the
-   * composer empties immediately, so the next thought can be typed while the
-   * last one is still in flight. Retry lives on the bubble, not here. */
   function send() {
-    if (!client || !text.trim()) return
-    const content = text
+    if (!client || pending || (!text.trim() && !files.length)) return
+    const body = [text.trim(), ...files.map(f => attachmentMarkdown(f.name, f.url!, f.size))].filter(Boolean).join('\n\n')
+    sendViaOutbox(chamberId, body, threadId)
     setText('')
-    sendViaOutbox(chamberId, content)
+    setFiles([])
+    previews.current.forEach(url => URL.revokeObjectURL(url))
+    previews.current.clear()
   }
 
-  return (
-    <div
-      className={`composer-dock${isDrop ? ' is-drop' : ''}`}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
-      {uploadError && (
-        <p className="composer-alert" role="alert">
-          <AlertCircle size={15} />
-          {uploadError}
-        </p>
-      )}
-      {uploading && (
-        <p className="upload-status" role="status">
-          Uploading {uploadName} ({uploadIndex} of {uploadTotal})…
-        </p>
-      )}
-      <div className="composer">
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Attach file"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-        >
-          <Paperclip size={21} />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          aria-label="Attach file"
-          hidden
-          multiple
-          onChange={onFilePick}
-        />
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={text}
-          aria-label="Message"
-          placeholder="Message the agent…"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-        />
-        <button
-          type="button"
-          className="send-btn"
-          aria-label="Send"
-          onClick={send}
-          disabled={uploading || !text.trim()}
-        >
-          <ArrowUp size={21} />
-        </button>
-      </div>
+  return <div className={`composer-dock${isDrop ? ' is-drop' : ''}${threadId ? ' thread-composer' : ''}`}
+    onDragOver={e => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); setIsDrop(true) } }}
+    onDragLeave={e => { if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) setIsDrop(false) }}
+    onDrop={e => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); setIsDrop(false); addFiles(Array.from(e.dataTransfer.files)) } }}>
+    {notice && <p role="alert" className="composer-alert">{notice}</p>}
+    {files.length > 0 && <ul className="staged-files" aria-label="Attachments">
+      {files.map(file => <li key={file.id} className="staged-file">
+        {file.preview ? <img src={file.preview} alt={file.name} /> : <Paperclip size={22} />}
+        <div className="staged-file-info"><strong>{file.name}</strong><small>{fileSize(file.size)}</small>
+          {(file.state === 'queued' || file.state === 'uploading') && <span role="status">Uploading {file.name}… <progress aria-label={`Uploading ${file.name}`} /></span>}
+          {file.state === 'failed' && <><span role="alert">Could not upload {file.name}. {file.error}</span>
+            <button type="button" onClick={() => setFiles(current => current.map(f => f.id === file.id ? { ...f, state: 'queued', error: undefined } : f))}>Retry {file.name}</button></>}
+        </div>
+        <button type="button" className="attachment-remove" aria-label={`Remove ${file.name}`} onClick={() => remove(file)}>×</button>
+      </li>)}
+    </ul>}
+    <div className="composer">
+      <button type="button" className="icon-btn" aria-label="Attach file" onClick={() => input.current?.click()}><Paperclip size={21} /></button>
+      <input ref={input} type="file" aria-label="Attach file" hidden multiple onChange={e => { addFiles(Array.from(e.target.files ?? [])); e.target.value = '' }} />
+      <textarea ref={ta} rows={1} value={text} aria-label={threadId ? 'Thread reply' : 'Message'} placeholder={threadId ? 'Reply in thread…' : 'Message the agent…'}
+        onChange={e => setText(e.target.value)}
+        onPaste={e => { const pasted = Array.from(e.clipboardData.files); if (pasted.length) { e.preventDefault(); addFiles(pasted) } }}
+        onKeyDown={e => { if (!e.nativeEvent.isComposing && e.key === 'Enter' && !e.shiftKey && hasHardwareKeyboard()) { e.preventDefault(); send() } }} />
+      <button type="button" className="send-btn" aria-label={threadId ? 'Send reply' : 'Send'} onClick={send} disabled={pending || (!text.trim() && !files.length)}><ArrowUp size={21} /></button>
     </div>
-  )
+  </div>
 }

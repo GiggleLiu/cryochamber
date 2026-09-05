@@ -233,6 +233,8 @@ pub struct ChamberMessage {
     pub timestamp: String,
     pub session: Option<u32>,
     pub is_question: bool,
+    pub thread_id: Option<String>,
+    pub shared_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -560,6 +562,8 @@ fn message_model(
         timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
         session: session_for_message(sessions, msg.timestamp),
         is_question: msg.is_question,
+        thread_id: msg.metadata.get("thread_id").cloned(),
+        shared_from: msg.metadata.get("shared_from").cloned(),
     }
 }
 
