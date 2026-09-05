@@ -33,9 +33,46 @@ export class TauriHubsBackend implements HubsBackend {
     return this.store
   }
 
+  private async tokens(): Promise<Record<string, string>> {
+    const raw = await tauriInvoke<string | null>('load_credentials')
+    if (raw == null) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || Object.values(parsed).some((token) => typeof token !== 'string')) {
+      throw new Error('Invalid native credential record')
+    }
+    return parsed as Record<string, string>
+  }
+
+  private async writeTokens(tokens: Record<string, string>): Promise<void> {
+    const value = JSON.stringify(tokens)
+    await tauriInvoke('save_credentials', { value })
+    if (await tauriInvoke('load_credentials') !== value) {
+      throw new Error('Native credential verification failed; previous hub settings were preserved')
+    }
+  }
+
   async load(): Promise<HubAccount[]> {
     const store = await this.handle()
-    return parseHubAccounts(await store.get<unknown>(HUBS_KEY))
+    const raw = await store.get<unknown>(HUBS_KEY)
+    if (!Array.isArray(raw)) return []
+    const tokens = await this.tokens()
+    const restored = raw.map((item: unknown) => {
+      if (!item || typeof item !== 'object') return item
+      const row = item as Record<string, unknown>
+      if (typeof row.token === 'string') return row
+      if (typeof row.id !== 'string') return row
+      if (!tokens[row.id]) {
+        throw new Error('A saved hub token is unavailable in device storage. Restore credential access before continuing.')
+      }
+      return { ...row, token: tokens[row.id] }
+    })
+    const hubs = parseHubAccounts(restored)
+    // Verify the protected copy before removing any legacy plaintext token.
+    if (raw.some((row) => row && typeof row === 'object' && typeof row.token === 'string')) {
+      await this.save(hubs)
+    }
+    return hubs
   }
 
   save(hubs: HubAccount[]): Promise<void> {
@@ -45,8 +82,14 @@ export class TauriHubsBackend implements HubsBackend {
     // the caller that owns it, through the promise this call returns.
     const next = this.queue.then(async () => {
       const store = await this.handle()
-      await store.set(HUBS_KEY, hubs)
+      const previous = await this.tokens()
+      const current = Object.fromEntries(hubs.map((hub) => [hub.id, hub.token]))
+      // Retain old tokens until the metadata commit succeeds, so a failed
+      // removal/save cannot strand the previous on-disk hub list.
+      await this.writeTokens({ ...previous, ...current })
+      await store.set(HUBS_KEY, hubs.map(({ token: _token, ...metadata }) => metadata))
       await store.save()
+      await this.writeTokens(current)
     })
     this.queue = next.catch(() => {})
     return next

@@ -22,6 +22,11 @@ function hub(url: string, trust: HubAccount['trust']): HubAccount {
 /** A fake store plugin: records every call so a test can assert both what was
  * written and in which order it reached the store. */
 function fakeStore(initial?: unknown) {
+  let credentials: string | null = null
+  const invoke = vi.fn(async (cmd: string, args?: { value: string }) => {
+    if (cmd === "load_credentials") return credentials
+    if (cmd === "save_credentials") { credentials = args!.value; return }
+  })
   const calls: string[] = []
   const values = new Map<string, unknown>()
   if (initial !== undefined) values.set('hubs', initial)
@@ -44,11 +49,11 @@ function fakeStore(initial?: unknown) {
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).__TAURI__ = {
-    core: { invoke: vi.fn() },
+    core: { invoke },
     http: { fetch: vi.fn(async () => new Response('{}')) },
     store: { load },
   }
-  return { calls, values, store, load }
+  return { calls, values, store, load, invoke, credentials: () => credentials }
 }
 
 describe('TauriHubsBackend', () => {
@@ -61,6 +66,36 @@ describe('TauriHubsBackend', () => {
     expect(f.store.get).toHaveBeenCalledWith('hubs')
     expect(hubs).toHaveLength(1)
     expect(hubs[0].url).toBe('https://a.example')
+  })
+
+  it('migrates legacy tokens only after a verified protected write', async () => {
+    const account = hub('https://a.example', { kind: 'https' })
+    const f = fakeStore([account])
+    const backend = new TauriHubsBackend()
+    const loaded = await backend.load()
+    expect(loaded[0].token).toBe('deadbeef')
+    expect(JSON.stringify(f.values.get('hubs'))).not.toContain('deadbeef')
+    expect(f.credentials()).toContain('deadbeef')
+    await expect(backend.load()).resolves.toEqual(loaded)
+  })
+
+  it('preserves plaintext migration input when protected storage fails', async () => {
+    const account = hub('https://a.example', { kind: 'https' })
+    const f = fakeStore([account])
+    f.invoke.mockRejectedValueOnce(new Error('Keychain locked'))
+    await expect(new TauriHubsBackend().load()).rejects.toThrow('Keychain locked')
+    expect(f.values.get('hubs')).toEqual([account])
+    expect(f.store.set).not.toHaveBeenCalled()
+  })
+
+  it('does not delete old credentials if the metadata save fails', async () => {
+    const f = fakeStore()
+    const backend = new TauriHubsBackend()
+    const account = hub('https://a.example', { kind: 'https' })
+    await backend.save([account])
+    f.store.save.mockRejectedValueOnce(new Error('disk full'))
+    await expect(backend.save([])).rejects.toThrow('disk full')
+    expect(f.credentials()).toContain('deadbeef')
   })
 
   it('returns an empty list when nothing is stored yet', async () => {
@@ -78,7 +113,8 @@ describe('TauriHubsBackend', () => {
     const backend = new TauriHubsBackend()
     const account = hub('https://a.example', { kind: 'https' })
     await backend.save([account])
-    expect(f.store.set).toHaveBeenCalledWith('hubs', [account])
+    const { token: _token, ...metadata } = account
+    expect(f.store.set).toHaveBeenCalledWith('hubs', [metadata])
     expect(f.store.save).toHaveBeenCalledOnce()
     expect(f.calls).toEqual(['load:hubs.json', 'set:hubs', 'save'])
     await expect(backend.load()).resolves.toHaveLength(1)
