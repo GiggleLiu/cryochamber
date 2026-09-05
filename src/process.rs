@@ -4,6 +4,9 @@ use std::path::Path;
 
 /// Send a signal to a process. Returns true if delivered, false on failure.
 pub fn send_signal(pid: u32, signal: i32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     let ret = unsafe { libc::kill(pid as i32, signal) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
@@ -20,6 +23,10 @@ pub fn send_signal(pid: u32, signal: i32) -> bool {
 /// reaches an agent's whole subprocess tree rather than just the direct child.
 /// Returns true if delivered, false on failure.
 pub fn send_signal_group(pgid: u32, signal: i32) -> bool {
+    // -1 broadcasts to every permitted process; zero targets our own group.
+    if pgid <= 1 || pgid > i32::MAX as u32 {
+        return false;
+    }
     let ret = unsafe { libc::kill(-(pgid as i32), signal) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
@@ -34,17 +41,28 @@ pub(crate) fn pid_probe_indicates_alive(ret: i32, errno: i32) -> bool {
     ret == 0 || errno == libc::EPERM
 }
 
+pub(crate) fn is_pid_alive(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    let ret = unsafe { libc::kill(pid as i32, 0) };
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    pid_probe_indicates_alive(ret, errno)
+}
+
 /// Send SIGTERM to a process, wait for it to exit, escalate to SIGKILL if needed.
 pub fn terminate_pid(pid: u32) -> Result<()> {
+    anyhow::ensure!(
+        pid > 0 && pid <= i32::MAX as u32,
+        "Invalid process ID: {pid}"
+    );
     println!("Sending SIGTERM to process {pid}...");
     send_signal(pid, libc::SIGTERM);
 
     // Poll for up to 5 seconds
     for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        let ret = unsafe { libc::kill(pid as i32, 0) };
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if !pid_probe_indicates_alive(ret, errno) {
+        if !is_pid_alive(pid) {
             return Ok(()); // process is gone
         }
     }

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sheet } from './Sheet'
 
@@ -23,6 +23,23 @@ test('the close button calls onClose', async () => {
   )
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('native cancel only asks the current owner to close and preserves a guarded sheet', () => {
+  const onClose = vi.fn()
+  const onOuterClose = vi.fn()
+  render(
+    <Sheet title="Settings" label="Settings" onClose={onOuterClose}>
+      <Sheet title="Edit" label="Edit" onClose={onClose}><input /></Sheet>
+    </Sheet>,
+  )
+  const dialog = screen.getByRole('dialog', { name: 'Edit' })
+  const cancel = new Event('cancel', { cancelable: true })
+  fireEvent(dialog, cancel)
+  expect(cancel.defaultPrevented).toBe(true)
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(onOuterClose).not.toHaveBeenCalled()
+  expect(dialog).toHaveAttribute('open')
 })
 
 test('Escape closes the sheet, and focus starts inside it', async () => {

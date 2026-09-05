@@ -137,9 +137,7 @@ pub fn save_config(config: &HubConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, toml::to_string_pretty(config)?)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::persistence::write_atomic(&path, toml::to_string_pretty(config)?)?;
     Ok(())
 }
 

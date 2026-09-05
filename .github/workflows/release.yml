@@ -36,6 +36,9 @@ jobs:
       - name: Build the Agent Console
         run: cd console && npm ci && npm run build
 
+      - name: Test the Agent Console
+        run: cd console && npm test && npx playwright install --with-deps chromium && npm run e2e
+
       - name: Console build present
         run: test -f console/dist/index.html
 

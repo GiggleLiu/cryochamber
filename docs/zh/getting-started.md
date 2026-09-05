@@ -8,8 +8,12 @@
 
 ## 1. 启动 hub
 
+本页介绍当前 main 的功能，控制台和认证功能晚于 v0.2.8。下次发布前，
+请安装 Rust 和 Node.js 22，并在仓库源码目录运行：
+
 ```bash
-cargo install cryochamber
+make console-build
+cargo install --path . --locked
 cryohub start
 ```
 

@@ -10,6 +10,7 @@ pub mod hub;
 pub mod lifecycle;
 pub mod log;
 pub mod message;
+mod persistence;
 pub mod process;
 pub mod protocol;
 pub mod registry;

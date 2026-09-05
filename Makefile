@@ -68,13 +68,17 @@ clippy:
 	cargo clippy --all-targets -- -D warnings
 
 # Quick check before commit
-check: fmt-check clippy test console-check
+check: fmt-check clippy test console-check bridge-check
 	@echo "All checks passed!"
 
 # Type-check and unit-test the Agent Console. Uses `npm ci` so the lockfile is
 # never rewritten by a local run.
 console-check:
 	cd console && npm ci && npx tsc --noEmit && npx vitest run
+
+.PHONY: bridge-check
+bridge-check:
+	cd .claude/skills/chat-bridge/scripts && python3 -m unittest discover -s tests
 
 # Generate coverage report (requires: cargo install cargo-llvm-cov)
 coverage:

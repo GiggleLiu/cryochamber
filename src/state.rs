@@ -39,17 +39,7 @@ pub fn state_path(dir: &Path) -> PathBuf {
 
 pub fn save_state(path: &Path, state: &CryoState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("state");
-    let tmp = path.with_file_name(format!(".{file_name}.tmp-{}-{nanos}", std::process::id()));
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, path)?;
+    crate::persistence::write_atomic(path, json)?;
     Ok(())
 }
 
@@ -75,13 +65,7 @@ pub fn new_instance_id() -> String {
 }
 
 pub fn is_locked(state: &CryoState) -> bool {
-    if let Some(pid) = state.pid {
-        let ret = unsafe { libc::kill(pid as i32, 0) };
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        crate::process::pid_probe_indicates_alive(ret, errno)
-    } else {
-        false
-    }
+    state.pid.is_some_and(crate::process::is_pid_alive)
 }
 
 #[cfg(test)]

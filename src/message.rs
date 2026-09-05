@@ -63,7 +63,10 @@ impl MessageFilenameBase {
 
 fn message_filename_base(msg: &Message) -> MessageFilenameBase {
     let slug = slugify(&msg.subject);
-    if slug.is_empty() {
+    // Leave room for the timestamp, unique suffix and staging extension on
+    // filesystems with a 255-byte filename limit. Preserve the full subject
+    // in frontmatter, including multibyte text.
+    if slug.is_empty() || slug.len() > 128 {
         MessageFilenameBase::Hash(message_hash(msg))
     } else {
         MessageFilenameBase::Slug(slug)

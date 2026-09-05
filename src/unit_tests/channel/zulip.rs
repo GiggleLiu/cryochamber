@@ -283,6 +283,11 @@ fn download_upload_rejects_unsafe_paths() {
         "/user_uploads/./x/f.png",
         "/user_uploads/1/x/f.png?evil=1",
         "/user_uploads/1/x/f.png#frag",
+        "/user_uploads/%2e%2e/api/v1/users/me",
+        "/user_uploads/.%2E/api/v1/users/me",
+        "/user_uploads/a%2f..%2f..%2fapi/v1/users/me",
+        "/user_uploads/..\\api/v1/users/me",
+        "/user_uploads/a%0ab.png",
     ] {
         let err = client.download_upload(path).unwrap_err();
         assert!(
@@ -334,6 +339,11 @@ fn resolve_local_attachment_never_exposes_credentials_or_escapes_chamber() {
 
     // The bot's API key must never be uploadable.
     assert!(resolve_local_attachment(dir.path(), ".cryo/zuliprc").is_none());
+    std::fs::write(dir.path().join("cryo.toml"), "provider secret").unwrap();
+    assert!(resolve_local_attachment(dir.path(), "cryo.toml").is_none());
+    std::os::unix::fs::symlink(dir.path().join("cryo.toml"), dir.path().join("config.txt"))
+        .unwrap();
+    assert!(resolve_local_attachment(dir.path(), "config.txt").is_none());
     // Traversal out of the chamber is refused.
     assert!(resolve_local_attachment(&chamber, "../outside.txt").is_none());
 }

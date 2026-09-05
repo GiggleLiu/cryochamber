@@ -1,5 +1,10 @@
 import '@testing-library/jest-dom/vitest'
 
+// JSDOM has no native dialog implementation. Real focus containment is
+// checked in e2e/smoke.spec.ts; unit tests only need its open/close state.
+HTMLDialogElement.prototype.showModal = function () { this.open = true }
+HTMLDialogElement.prototype.close = function () { this.open = false }
+
 // MessageBody imports the markdown renderer lazily. Loading it here keeps its
 // first (heavy) transform out of an individual test's timeout budget.
 await import('../lib/markdown')

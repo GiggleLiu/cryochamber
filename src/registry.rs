@@ -210,7 +210,7 @@ pub fn list() -> Result<Vec<DaemonEntry>> {
         }
 
         if let Some(pid) = entry.pid {
-            if !is_pid_alive(pid) {
+            if !crate::process::is_pid_alive(pid) {
                 entry.pid = None;
                 entry.socket_path = None;
             }
@@ -262,12 +262,6 @@ pub fn list() -> Result<Vec<DaemonEntry>> {
     }
 
     Ok(out)
-}
-
-fn is_pid_alive(pid: u32) -> bool {
-    let ret = unsafe { libc::kill(pid as i32, 0) };
-    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-    crate::process::pid_probe_indicates_alive(ret, errno)
 }
 
 #[cfg(test)]

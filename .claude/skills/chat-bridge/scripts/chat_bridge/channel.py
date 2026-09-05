@@ -183,6 +183,6 @@ def resolve_local_link(chamber: Path, target: str) -> Path | None:
         relative = candidate.relative_to(chamber)
     except ValueError:
         return None
-    if relative.parts and relative.parts[0] == ".cryo":
+    if ".cryo" in relative.parts or candidate.name == "cryo.toml":
         return None
     return candidate if candidate.is_file() else None
