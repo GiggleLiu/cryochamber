@@ -98,7 +98,11 @@ fn render_message(message: &Message) -> String {
         "[{}] from: {}\n{}\n\n",
         message.timestamp.format("%Y-%m-%d %H:%M"),
         message.from,
-        message.body.trim_end()
+        message
+            .metadata
+            .get("thread_id")
+            .map(|id| format!("[Thread: {id}]\n{}", message.body.trim_end()))
+            .unwrap_or_else(|| message.body.trim_end().to_string())
     )
 }
 

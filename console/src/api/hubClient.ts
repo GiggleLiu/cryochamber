@@ -1,6 +1,6 @@
 import { ApiError, isUnauthorized, messageKey } from './types'
 import { readSse } from './sse'
-import type { Chamber, ChamberMessage } from './types'
+import type { Chamber, ChamberMessage, ThreadSummary } from './types'
 
 /** Raw hub index row → `Chamber`. Absent liveness flags stay absent because
  * the hub has not said the chamber is stopped. A stopped chamber's schedule
@@ -37,6 +37,8 @@ export function toChamberMessage(
     timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : '',
     session: typeof raw.session === 'number' ? raw.session : null,
     isQuestion: raw.is_question === true,
+    ...(typeof raw.thread_id === 'string' ? { threadId: raw.thread_id } : {}),
+    ...(typeof raw.shared_from === 'string' ? { sharedFrom: raw.shared_from } : {}),
   }
 }
 
@@ -332,16 +334,32 @@ export class HubClient {
 
   /** The hub stamps the sender and answers with the mailbox id it minted;
    * that id is what the outbox waits for. */
-  async sendMessage(chamberId: string, body: string): Promise<{ id: string }> {
+  async sendMessage(chamberId: string, body: string, threadId?: string): Promise<{ id: string }> {
     const res = await this.request<{ id?: string }>(
       `/api/chambers/${encodeURIComponent(chamberId)}/send`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, ...(threadId ? { thread_id: threadId } : {}) }),
       },
     )
     return { id: typeof res.id === 'string' ? res.id : '' }
+  }
+
+  async getThreads(chamberId: string): Promise<ThreadSummary[]> {
+    const raw = await this.request<{ root: Record<string, unknown>; count: number; latest: string }[]>(`/api/chambers/${encodeURIComponent(chamberId)}/threads`)
+    return raw.map(s => ({ ...s, root: toChamberMessage(s.root, chamberId) }))
+  }
+
+  async getThread(chamberId: string, root: string): Promise<ChamberMessage[]> {
+    const raw = await this.request<Record<string, unknown>[]>(`/api/chambers/${encodeURIComponent(chamberId)}/threads?root=${encodeURIComponent(root)}`)
+    return sortByKey(raw.map(m => toChamberMessage(m, chamberId)))
+  }
+
+  async shareMessage(chamberId: string, id: string): Promise<void> {
+    await this.request(`/api/chambers/${encodeURIComponent(chamberId)}/send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: '', share_message_id: id }),
+    })
   }
 
   async uploadFile(file: File, chamberId: string): Promise<string> {

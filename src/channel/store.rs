@@ -62,6 +62,80 @@ impl MessageStore {
         message::archive_outbox_messages(&self.dir, filenames)
     }
 
+    /// Resolve an archive-stable mailbox id without allowing path traversal.
+    pub fn get(&self, id: &str) -> Result<Message> {
+        let (mailbox, name) = id
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("Invalid message id"))?;
+        anyhow::ensure!(
+            matches!(mailbox, "inbox" | "outbox")
+                && !name.starts_with('.')
+                && !name.contains(['/', '\\'])
+                && name.ends_with(".md"),
+            "Invalid message id"
+        );
+        for folder in [mailbox.to_string(), format!("{mailbox}/archive")] {
+            let path = self.dir.join("messages").join(folder).join(name);
+            if path.exists() {
+                let root = self.dir.join("messages").canonicalize()?;
+                anyhow::ensure!(
+                    path.canonicalize()?.starts_with(root),
+                    "Message escapes mailbox"
+                );
+                return message::parse_message_file(&path);
+            }
+        }
+        anyhow::bail!("Message not found")
+    }
+
+    /// Historical context must never expose inbox work that has not been claimed.
+    pub fn history_named(&self) -> Result<Vec<(String, Message)>> {
+        let mut all = Vec::new();
+        for (mailbox, rows) in [
+            ("inbox", self.read_inbox_archive_named()?),
+            ("outbox", self.read_outbox_named()?),
+            ("outbox", self.read_outbox_archive_named()?),
+        ] {
+            all.extend(
+                rows.into_iter()
+                    .map(|(name, msg)| (format!("{mailbox}/{name}"), msg)),
+            );
+        }
+        all.sort_by(|a, b| a.1.timestamp.cmp(&b.1.timestamp).then(a.0.cmp(&b.0)));
+        Ok(all)
+    }
+
+    /// Render stored links as chamber-local paths for an agent reading files.
+    pub fn agent_body(&self, body: &str) -> String {
+        let id = crate::hub::discovery::encode_id(&self.dir);
+        body.replace(
+            &format!("/api/chambers/{id}/files/"),
+            "messages/attachments/",
+        )
+    }
+
+    pub fn thread_context(&self, root: &str, claimed: &[String]) -> Result<String> {
+        let parent = self.get(root)?;
+        let mut text = format!(
+            "Thread: {root}\nParent from {}:\n{}\n",
+            parent.from,
+            self.agent_body(&parent.body)
+        );
+        // ponytail: scan on explicit thread reads; add an index if large histories make this slow.
+        for (id, msg) in self.history_named()? {
+            if id
+                .strip_prefix("inbox/")
+                .is_some_and(|name| claimed.iter().any(|f| f == name))
+            {
+                continue;
+            }
+            if msg.metadata.get("thread_id").map(String::as_str) == Some(root) {
+                text.push_str(&format!("\n{}: {}\n", msg.from, self.agent_body(&msg.body)));
+            }
+        }
+        Ok(text)
+    }
+
     pub fn send_in(&self, msg: &Message) -> Result<PathBuf> {
         self.write_message("inbox", msg)
     }

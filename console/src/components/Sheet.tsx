@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
-import { Close } from './Icon'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { ChevronLeft, Close } from './Icon'
 
 /**
  * The full-screen sheet every secondary surface uses: Settings, Invite,
@@ -12,12 +12,16 @@ export function Sheet({
   label,
   onClose,
   children,
+  footer,
+  backLabel,
 }: {
   title: ReactNode
   /** Accessible name of the dialog itself, e.g. "Chamber controls". */
   label: string
   onClose: () => void
   children: ReactNode
+  footer?: ReactNode
+  backLabel?: string
 }) {
   const rootRef = useRef<HTMLDialogElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -34,7 +38,8 @@ export function Sheet({
   // Escape dismisses. Without both, the attribute only hides the page from
   // assistive tech while keyboard users are still stranded behind it. Both
   // are on-open concerns, so this runs once per mount.
-  useEffect(() => {
+  // Open before child passive effects measure controls such as the composer.
+  useLayoutEffect(() => {
     const restoreTo = document.activeElement
     const dialog = rootRef.current
     // Native modality keeps Tab and pointer input out of underlying sheets.
@@ -77,14 +82,15 @@ export function Sheet({
         <button
           ref={closeRef}
           type="button"
-          className="icon-btn bar-end"
-          aria-label="Close"
+          className={`icon-btn ${backLabel ? 'bar-start' : 'bar-end'}`}
+          aria-label={backLabel ?? 'Close'}
           onClick={onClose}
         >
-          <Close />
+          {backLabel ? <ChevronLeft /> : <Close />}
         </button>
       </header>
       <div className="sheet-scroll">{children}</div>
+      {footer}
     </dialog>
   )
 }

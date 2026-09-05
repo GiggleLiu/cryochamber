@@ -67,7 +67,21 @@ One wake, one agent run, one return to sleep — that is a **session**:
 
 ## Talking to the agent
 
-Send a message from the terminal (`cryo send "..."`) or the Cryohub dashboard. It lands in `messages/inbox/` and — with the default `watch_dirs` — wakes the agent immediately. The agent's replies appear in `messages/outbox/` and in the dashboard's message history.
+Send a message from the terminal (`cryo send "..."`) or the Cryohub dashboard.
+It lands in `messages/inbox/` and, with the default `watch_dirs`, wakes the agent
+immediately. The agent's replies appear in `messages/outbox/` and in the
+dashboard's message history.
+
+The dashboard opens each thread in a focused view. One `cryo-agent receive` or
+`cryo-agent dialog` call claims one conversation: either the first pending
+thread or the pending messages in the unthreaded main stream. Once claimed,
+that conversation must receive a reply before the agent can claim another one.
+For a thread follow-up, the agent receives the root and earlier replies as
+context, and its next send returns to the same thread automatically.
+
+Sharing a thread reply to the main stream creates an outbox display copy. It
+does not add anything to the local inbox, so it neither wakes the agent nor
+creates work for it.
 
 ## Next
 
@@ -76,7 +90,7 @@ Send a message from the terminal (`cryo send "..."`) or the Cryohub dashboard. I
 
 ## Interrupted conversations
 
-Before the daemon archives a received batch, it saves a durable reply obligation.
+Before the daemon archives a claimed conversation, it saves a durable reply obligation.
 After a hard daemon stop, the next start writes an interruption notice if no reply
 was saved. The message may have caused partial external work. Review the history
 and resend only if you still want that work performed. Claimed messages stay

@@ -55,15 +55,33 @@ impl ReplyAuthor {
 
 pub(super) struct FsSessionEffects<'a> {
     dir: &'a Path,
+    thread: Option<String>,
 }
 
 impl<'a> FsSessionEffects<'a> {
     pub(super) fn new(dir: &'a Path) -> Self {
-        Self { dir }
+        Self { dir, thread: None }
     }
 
     fn message_store(&self) -> crate::channel::store::MessageStore {
         crate::channel::store::MessageStore::new(self.dir.to_path_buf())
+    }
+
+    fn dialog_rows(
+        &self,
+        mailbox: &str,
+        mut rows: Vec<(String, crate::message::Message)>,
+    ) -> Vec<(String, crate::message::Message)> {
+        if let Some(thread) = &self.thread {
+            rows.retain(|(name, msg)| {
+                msg.metadata.get("thread_id") == Some(thread)
+                    || format!("{mailbox}/{name}") == *thread
+            });
+        }
+        for (_, msg) in &mut rows {
+            msg.body = self.message_store().agent_body(&msg.body);
+        }
+        rows
     }
 
     fn todo_file(&self) -> crate::todo::TodoFile {
@@ -73,19 +91,23 @@ impl<'a> FsSessionEffects<'a> {
 
 impl SessionEffects for FsSessionEffects<'_> {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
-        super::inbox::claim(self.dir)
+        let messages = super::inbox::claim(self.dir)?;
+        if let Some((_, msg)) = messages.first() {
+            self.thread = msg.metadata.get("thread_id").cloned();
+        }
+        Ok(messages)
     }
 
     fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
-        self.message_store().read_inbox_archive_named()
+        Ok(self.dialog_rows("inbox", self.message_store().read_inbox_archive_named()?))
     }
 
     fn read_outbox(&self) -> Result<Vec<(String, crate::message::Message)>> {
-        self.message_store().read_outbox_named()
+        Ok(self.dialog_rows("outbox", self.message_store().read_outbox_named()?))
     }
 
     fn read_outbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
-        self.message_store().read_outbox_archive_named()
+        Ok(self.dialog_rows("outbox", self.message_store().read_outbox_archive_named()?))
     }
 
     fn write_reply(
@@ -100,7 +122,11 @@ impl SessionEffects for FsSessionEffects<'_> {
             subject: author.subject().to_string(),
             body: text.to_string(),
             timestamp,
-            metadata: std::collections::BTreeMap::new(),
+            metadata: self
+                .thread
+                .iter()
+                .map(|id| ("thread_id".into(), id.clone()))
+                .collect(),
             is_question,
         };
         super::inbox::send(self.dir, msg)

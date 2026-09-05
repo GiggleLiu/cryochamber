@@ -17,14 +17,14 @@ export const ECHO_TIMEOUT_MS = 10_000
  * non-auth failure marks it retryable (tap to retry, never automatically: see
  * the OutboxItem docs); a 401 has already signed the app out inside the
  * client, which clears the outbox along with everything else. */
-function attempt(chamberId: string, body: string, clientId: number): void {
+function attempt(chamberId: string, body: string, clientId: number, threadId?: string): void {
   const store = useAppStore.getState()
   const client = store.client
   if (!client) {
     store.failOutbox(chamberId, clientId)
     return
   }
-  void client.sendMessage(chamberId, body).then(
+  void (threadId ? client.sendMessage(chamberId, body, threadId) : client.sendMessage(chamberId, body)).then(
     ({ id }) => {
       useAppStore.getState().markOutboxSent(chamberId, clientId, id)
       setTimeout(() => useAppStore.getState().resolveOutbox(chamberId, clientId), ECHO_TIMEOUT_MS)
@@ -41,13 +41,13 @@ function attempt(chamberId: string, body: string, clientId: number): void {
 
 /** Queue a message and start sending it. The caller can clear its input at
  * once: from here on the pending bubble owns the text. */
-export function sendViaOutbox(chamberId: string, body: string): void {
-  const clientId = useAppStore.getState().enqueueOutbox(chamberId, body)
-  attempt(chamberId, body, clientId)
+export function sendViaOutbox(chamberId: string, body: string, threadId?: string): void {
+  const clientId = useAppStore.getState().enqueueOutbox(chamberId, body, threadId)
+  attempt(chamberId, body, clientId, threadId)
 }
 
 /** Re-send a failed item in place, keeping its position in the thread. */
 export function retryOutboxItem(item: OutboxItem): void {
   useAppStore.getState().retryOutbox(item.chamberId, item.clientId)
-  attempt(item.chamberId, item.body, item.clientId)
+  attempt(item.chamberId, item.body, item.clientId, item.threadId)
 }

@@ -50,6 +50,7 @@ export interface OutboxItem {
   clientId: number
   chamberId: string
   body: string
+  threadId?: string
   state: 'sending' | 'sent' | 'failed'
   serverId: string | null
   /** Why the last attempt failed, in the hub's own words — `null` when it
@@ -255,7 +256,7 @@ export interface AppState {
   setHubRole(role: HubRole | null): void
   setHubVersion(v: string | null): void
   /** Queue a send and return its client id; the caller drives the request. */
-  enqueueOutbox(chamberId: string, body: string): number
+  enqueueOutbox(chamberId: string, body: string, threadId?: string): number
   /** The hub took it and named it; the bubble now waits for that id. */
   markOutboxSent(chamberId: string, clientId: number, serverId: string): void
   /** `error` is the hub's own sentence when it gave one, so the failed bubble
@@ -727,7 +728,7 @@ export const useAppStore = create<AppState>()((set, get) => {
     setHubRole: (role) => set({ hubRole: role }),
     setHubVersion: (v) => set({ hubVersion: v }),
 
-    enqueueOutbox: (chamberId, body) => {
+    enqueueOutbox: (chamberId, body, threadId) => {
       const clientId = nextClientId
       nextClientId += 1
       set((state) => ({
@@ -735,7 +736,7 @@ export const useAppStore = create<AppState>()((set, get) => {
           ...state.outboxByChamber,
           [chamberId]: [
             ...(state.outboxByChamber[chamberId] ?? []),
-            { clientId, chamberId, body, state: 'sending' as const, serverId: null, error: null },
+            { clientId, chamberId, body, ...(threadId ? { threadId } : {}), state: 'sending' as const, serverId: null, error: null },
           ],
         },
       }))

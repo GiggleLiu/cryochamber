@@ -273,6 +273,8 @@ fn new_message(chamber_id: &str, body: &str) -> SseEvent {
         body: body.into(),
         timestamp: "t".into(),
         is_question: false,
+        thread_id: None,
+        shared_from: None,
     }
 }
 
@@ -300,9 +302,9 @@ async fn drain(stream: &mut axum::body::BodyDataStream, frames: usize, ms: u64) 
 async fn matrix_chamber_routes() {
     let m = setup();
 
-    // Only `messages` is chamber-scoped: `status`/`todos` are working state
-    // and belong to the owner-only matrix below.
-    for verb in ["messages"] {
+    // Conversation history is chamber-scoped; `status`/`todos` are working
+    // state and belong to the owner-only matrix below.
+    for verb in ["messages", "threads"] {
         let alpha = format!("/api/chambers/{}/{verb}", m.alpha);
         let beta = format!("/api/chambers/{}/{verb}", m.beta);
 

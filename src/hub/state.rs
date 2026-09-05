@@ -23,6 +23,8 @@ pub enum SseEvent {
         body: String,
         timestamp: String,
         is_question: bool,
+        thread_id: Option<String>,
+        shared_from: Option<String>,
     },
     StatusChange {
         chamber_id: String,

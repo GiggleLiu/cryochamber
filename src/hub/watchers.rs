@@ -179,6 +179,8 @@ fn spawn_watcher(
                         body: msg.body,
                         timestamp: msg.timestamp.format("%Y-%m-%dT%H:%M:%S").to_string(),
                         is_question: msg.is_question,
+                        thread_id: msg.metadata.get("thread_id").cloned(),
+                        shared_from: msg.metadata.get("shared_from").cloned(),
                     });
                 }
             }

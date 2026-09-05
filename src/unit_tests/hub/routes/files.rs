@@ -115,6 +115,46 @@ async fn upload_then_download_roundtrip() {
 }
 
 #[tokio::test]
+async fn upload_with_a_255_byte_filename_keeps_its_extension() {
+    let (_tmp, router, id) = setup();
+    let original = format!("{}.pdf", "a".repeat(251));
+    assert_eq!(original.len(), 255);
+    let (status, body) = upload(
+        &router,
+        &id,
+        multipart_body(BOUNDARY, &original, b"long name contents"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stored = stored_name(&body);
+    assert!(stored.len() <= MAX_STORED_NAME_BYTES);
+    assert!(stored.ends_with(".pdf"));
+    assert_eq!(safe_name(&stored), stored);
+
+    let response = get(&router, &format!("/api/chambers/{id}/files/{stored}")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(bytes.as_ref(), b"long name contents");
+}
+
+#[tokio::test]
+async fn retry_repairs_an_existing_truncated_attachment() {
+    let (tmp, router, id) = setup();
+    let body = multipart_body(BOUNDARY, "report.pdf", b"complete contents");
+    let (status, response) = upload(&router, &id, body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let stored = stored_name(&response);
+    let path = tmp.path().join("alpha/messages/attachments").join(&stored);
+    std::fs::write(&path, b"truncated").unwrap();
+
+    let (status, _) = upload(&router, &id, body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(std::fs::read(path).unwrap(), b"complete contents");
+}
+
+#[tokio::test]
 async fn traversal_names_404_without_fs_access() {
     let (tmp, router, id) = setup();
     // Upload once so `<chamber>/messages/attachments/` actually exists —

@@ -95,7 +95,7 @@ impl StreamScope {
 /// exists only to re-run the authorization check on an otherwise idle stream,
 /// or the receiver's report that it fell behind and events were evicted.
 enum Tick {
-    Event(SseEvent),
+    Event(Box<SseEvent>),
     Reauth,
     /// The broadcast buffer overflowed for this connection. Whatever was
     /// evicted is gone; the client is told to refetch rather than left
@@ -127,7 +127,7 @@ pub async fn get_events(
     };
     let rx = app.tx.subscribe();
     let events = BroadcastStream::new(rx).map(|result| match result {
-        Ok(event) => Tick::Event(event),
+        Ok(event) => Tick::Event(Box::new(event)),
         Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => Tick::Resync,
     });
     let mut interval = tokio::time::interval(REAUTH_INTERVAL);
@@ -145,7 +145,7 @@ pub async fn get_events(
         .take_while(move |_| scope_for_end.still_authorized())
         .filter_map(move |tick| {
             let event = match tick {
-                Tick::Event(event) => event,
+                Tick::Event(event) => *event,
                 Tick::Reauth => return None,
                 Tick::Resync => {
                     return Some(Ok(Event::default().event("resync").data("{}")));
@@ -164,6 +164,8 @@ pub async fn get_events(
                     body,
                     timestamp,
                     is_question,
+                    thread_id,
+                    shared_from,
                 } => Event::default()
                     .event("message")
                     .json_data(json!({
@@ -175,6 +177,8 @@ pub async fn get_events(
                         "body": body,
                         "timestamp": timestamp,
                         "is_question": is_question,
+                        "thread_id": thread_id,
+                        "shared_from": shared_from,
                     }))
                     .unwrap(),
                 SseEvent::StatusChange { chamber_id } => Event::default()

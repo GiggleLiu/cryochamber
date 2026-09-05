@@ -16,6 +16,8 @@ fn new_message(chamber_id: &str, body: &str) -> SseEvent {
         body: body.into(),
         timestamp: "t".into(),
         is_question: false,
+        thread_id: None,
+        shared_from: None,
     }
 }
 
