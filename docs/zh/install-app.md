@@ -9,8 +9,10 @@ hub 这边什么都不变。hub 提供的网页控制台还在原处——用浏
 `http://127.0.0.1:8765`，或者把它*添加到主屏幕*当作 PWA 使用，得到的是绑定到那**一个** hub
 的同一套界面。当你的 hub 数量不再是「一个」时，App 才是那个选项。
 
-构建产物附在每次 [GitHub
-release](https://github.com/GiggleLiu/cryochamber/releases) 上：
+v0.2.8 发布时尚未包含原生 App，没有安装包。在后续
+[GitHub release](https://github.com/GiggleLiu/cryochamber/releases) 提供安装包前，
+请按[源码构建说明](https://github.com/GiggleLiu/cryochamber/blob/main/app/README.md)构建。
+发布工作流生成的文件名如下：
 
 | 文件 | 适用于 |
 |---|---|

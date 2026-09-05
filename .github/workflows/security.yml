@@ -1,0 +1,36 @@
+name: Dependency security
+
+on:
+  workflow_call:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install advisory scanner
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit both Rust lockfiles
+        run: |
+          cargo audit --file Cargo.lock --deny unsound --deny yanked
+          # Tauri's GTK3 backend requires GLib 0.18. No Linux native installer
+          # ships. Owner: maintainer; expiry also enforced below. See operations.md.
+          python3 -c 'from datetime import date; assert date.today() < date(2026, 12, 1), "Reassess GLib advisory exception before releasing"'
+          cargo audit --file app/src-tauri/Cargo.lock --deny unsound --deny yanked --ignore RUSTSEC-2024-0429
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: console/.nvmrc
+      - name: Audit Console dependencies
+        run: cd console && npm audit --audit-level=moderate

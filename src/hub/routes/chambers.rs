@@ -55,8 +55,9 @@ pub async fn get_chambers(
 ) -> Json<Value> {
     // Snapshot the index under a short-lived reader, then run blocking
     // per-chamber I/O (state/todos/inbox reads + libc::kill probes) off the
-    // async worker. Only reacquire the writer to swap the populated snapshot
-    // back in. This avoids holding the std RwLock writer across filesystem
+    // async worker. Keep this response out of the discovery index: a concurrent
+    // refresh may have added, removed or archived a chamber.
+    // This avoids holding the std RwLock writer across filesystem
     // walks, which would otherwise stall every concurrent route that calls
     // `app.resolve(..)` (they all go through `chambers.read()`).
     let app_task = app.clone();
@@ -67,12 +68,7 @@ pub async fn get_chambers(
             .map(|g| g.clone())
             .unwrap_or_default();
         crate::hub::discovery::populate_runtime(&mut snapshot);
-        let value = serde_json::to_value(snapshot.values().collect::<Vec<_>>())
-            .unwrap_or(Value::Array(vec![]));
-        if let Ok(mut idx) = app_task.chambers.write() {
-            *idx = snapshot;
-        }
-        value
+        serde_json::to_value(snapshot.values().collect::<Vec<_>>()).unwrap_or(Value::Array(vec![]))
     })
     .await
     .unwrap_or(Value::Array(vec![]));

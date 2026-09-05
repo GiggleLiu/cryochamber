@@ -8,3 +8,5 @@
 - [安装 App](./install-app.md)
 - [CLI 参考](./reference/cli.md)
 - [配置](./reference/configuration.md)
+
+- [运行维护与发布](./operations.md)

@@ -953,6 +953,14 @@ input, select, textarea { font: inherit; color: inherit; }
    "a list of settings", which is exactly what this is).
    ========================================================================== */
 .sheet {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  color: inherit;
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -961,6 +969,7 @@ input, select, textarea { font: inherit; color: inherit; }
   background: var(--surface-2);
   animation: sheet-in var(--dur-2) var(--ease);
 }
+.sheet:not([open]) { display: none; }
 .sheet-scroll {
   flex: 1;
   overflow-y: auto;

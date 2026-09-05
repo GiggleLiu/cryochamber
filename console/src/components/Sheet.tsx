@@ -19,7 +19,7 @@ export function Sheet({
   onClose: () => void
   children: ReactNode
 }) {
-  const rootRef = useRef<HTMLDivElement>(null)
+  const rootRef = useRef<HTMLDialogElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   // The Escape handler must call whatever onClose the parent passed *last*,
   // while the effect below runs only once. Every caller passes an inline
@@ -36,6 +36,9 @@ export function Sheet({
   // are on-open concerns, so this runs once per mount.
   useEffect(() => {
     const restoreTo = document.activeElement
+    const dialog = rootRef.current
+    // Native modality keeps Tab and pointer input out of underlying sheets.
+    dialog?.showModal()
     closeRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -44,18 +47,31 @@ export function Sheet({
       // or one Escape would close the whole stack.
       const open = document.querySelectorAll('.sheet[role="dialog"]')
       if (open[open.length - 1] !== rootRef.current) return
+      e.preventDefault()
       onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('keydown', onKey)
+      dialog?.close()
       // Where the focus came from is where it belongs when this closes —
       // otherwise a keyboard user lands back at the top of the document.
       if (restoreTo instanceof HTMLElement && document.contains(restoreTo)) restoreTo.focus()
     }
   }, [])
   return (
-    <div className="sheet" ref={rootRef} role="dialog" aria-label={label} aria-modal="true">
+    <dialog
+      className="sheet"
+      ref={rootRef}
+      role="dialog"
+      aria-label={label}
+      aria-modal="true"
+      onCancel={e => {
+        e.preventDefault()
+        e.stopPropagation()
+        onCloseRef.current()
+      }}
+    >
       <header className="topbar">
         <h2>{title}</h2>
         <button
@@ -69,6 +85,6 @@ export function Sheet({
         </button>
       </header>
       <div className="sheet-scroll">{children}</div>
-    </div>
+    </dialog>
   )
 }

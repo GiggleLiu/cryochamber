@@ -19,12 +19,13 @@ cargo clippy --all-targets -- -D warnings  # lint (warnings are errors)
 ## Make Targets
 
 ```bash
-make check          # fmt-check + clippy + test + console-check in sequence
+make check          # fmt-check + clippy + test + console-check + bridge-check
 make build          # cargo build
 make test           # cargo test
 make fmt            # cargo fmt
 make clippy         # cargo clippy (warnings are errors)
 make console-check  # type-check and unit-test the Agent Console (npm ci, tsc, vitest)
+make bridge-check   # Python chat-bridge tests, no external accounts required
 make coverage       # generate coverage report (auto-installs cargo-llvm-cov)
 make cli            # cargo install --path .
 make console-build  # build the Agent Console (embedded into cryohub on the next cargo build)
@@ -86,7 +87,7 @@ switch runner via `AGENT_TYPE=claude make run-plan`. Output goes to `run-plan-ou
 | `process` | Process management utilities: `send_signal`, `terminate_pid`, `spawn_daemon`. |
 | `session` | Legacy utility module (`should_copy_plan`). Currently unused — plan.md must exist in the working directory. |
 | `daemon` | Persistent event loop: socket server for agent IPC, watches `messages/inbox/` via `notify`, enforces session timeout, `EventLogger` for structured logs, consumes past-due TODOs before each session, re-injects them with a `(attempt k)` suffix and `2^k`-minute delay (capped at 1 day) on crash, detects delayed wakes (e.g. after machine suspend), and coordinates the active-session inbox claim/send/fallback lifecycle. It notices when inbox messages exist but never previews bodies in the wake prompt. |
-| `message` | File-based inbox/outbox message system. Agent-side `cryo-agent receive` goes through daemon IPC and archives the current inbox batch into `messages/inbox/archive/` immediately via `MessageStore`. Any “awaiting reply” state for that batch lives only in the daemon's current session. Operator `cryo receive` is separate: it reads messages from `messages/outbox/`. |
+| `message` | File-based inbox/outbox message system. Agent-side `cryo-agent receive` goes through daemon IPC and archives the current inbox batch into `messages/inbox/archive/` immediately via `MessageStore`. The current session tracks the batch; a durable obligation backs restart notification. Operator `cryo receive` is separate: it reads messages from `messages/outbox/`. |
 | `channel` | Channel abstraction. Submodules: `store` (local inbox/outbox), `zulip` (Zulip REST API). Attachments cross the boundary symmetrically. On pull, `localize_upload_links` downloads `/user_uploads/` files (authenticated, 25 MB cap) into `messages/attachments/` and rewrites inbox links to those local paths, so vision agents can read uploaded images. On push, `externalize_local_links` uploads chamber-local files an agent linked to and rewrites the link to the returned `/user_uploads/` path. Both directions are best-effort: a failure leaves the link untouched and never fails the sync cycle. |
 | `registry` | User chamber registry for Cryohub discovery. Uses `$XDG_STATE_HOME/cryo/chambers/` (fallback `~/.cryo/chambers/`), keeps stopped chambers, clears stale PIDs, and prunes entries whose chamber disappeared. |
 | `service` | OS service management: install/uninstall launchd (macOS) or systemd (Linux) user services. Used by `cryo start` and `cryo-zulip sync` for reboot-persistent daemons. `CRYO_NO_SERVICE=1` disables (falls back to direct spawn). |
@@ -119,15 +120,12 @@ and needs an explicit justification.
    the sender with no reply is not. If a session ends with a received
    batch still unanswered, the daemon writes the fallback reply from
    `daemon_unanswered_reply_text` for that batch
-   (`finalize_human_replies`). This guarantee is bounded by daemon
-   liveness: the reply obligation lives in the daemon's in-memory
-   session state (`SessionInboxState`), so it holds across agent
-   crashes, timeouts, and graceful shutdown, but a hard kill of the
-   *daemon process* (SIGKILL / OOM / power loss) after `cryo-agent
-   receive` archived a batch and before the reply is written strands
-   that batch — the sender must resend. This is an accepted limitation:
-   making the obligation durable would require a file-backed pending
-   flow, which the inbox contract deliberately avoids. The hibernate
+   (`finalize_human_replies`). Filesystem effects persist a reply obligation in
+   `.cryo/reply-obligation.json` before archiving. After a hard daemon stop,
+   startup finishes any partial archive and writes an interruption notice if
+   no durable reply receipt exists in outbox or its archive. The sender decides
+   whether to resend; external work is never automatically replayed. Corrupt
+   journals fail startup without discarding evidence. The hibernate
    quietness gate enforces the front half of this: a session cannot end
    in a clean hibernate while unread mail exists, so mail present at
    hibernate time is answered by the live agent when the agent behaves —
@@ -172,7 +170,7 @@ and needs an explicit justification.
 - **Preflight validation**: `cryo start`, Hub lifecycle starts, Console settings updates, and an explicit `cryohub start --default-agent` check that the agent command exists on PATH before spawning or saving. The Console's create-and-start route performs this check before scaffolding so a missing executable cannot leave a partial chamber. Every hub-side check goes through the single `hub::lifecycle::validate_agent_command`, which searches the PATH a session actually gets — the `cryo` binary's directory prepended, as `agent.rs` does it — so a runner installed next to `cryo` is never refused at save time and then accepted at start time. An unresolvable `cryo` narrows that search back to the plain PATH rather than failing the command: the lifecycle action that needs the binary reports its absence in its own words.
 - **Chamber resolution via `CRYO_CHAMBER_DIR`**: all binaries resolve the chamber from `CRYO_CHAMBER_DIR` when set, else cwd (`work_dir()` in `src/lib.rs`). The daemon injects the variable into every spawned agent session, so `cryo-agent` reaches the right chamber no matter what cwd the agent's shell tool uses (a wrong cwd used to route IPC to another chamber's socket). `cryo-agent` additionally preflights `ensure_chamber_dir` for every command except the local-only `time`, so a non-chamber directory fails with the real reason instead of a "Daemon instance mismatch" red herring.
 - **Crash handling via retry and TODO re-injection**: Retryable agent-runner exits before any outbound message or inbox claim get an in-daemon retry loop: up to 10 retries after the first attempt, with exponentially increasing gaps. If the final attempt still fails, or if the agent exits without calling `cryo-agent hibernate` after consuming work, the daemon records the crash and re-injects any TODOs it claimed for that wake with a `(attempt k)` suffix and an exponential delay (`2^k` min, capped at 1 day). TODO rescheduling lives in `todo.json`, surviving daemon restarts and visible to both agent and operator. EventLogger is always finalized for each attempt.
-- **Attachments are a channel concern, not an agent concern**: the agent only ever deals in chamber-local file paths — it reads pulled attachments from `messages/attachments/` and links to local files when sending. Uploading, downloading, and per-server markdown quirks live in the sync binary. Notably `externalize_local_links` rewrites upload links to **absolute** URLs and strips the `!` from `![alt](...)`; both are required for an inline preview (verified on Zulip 11.4): the preview pass only matches absolute upload URLs, and CommonMark image syntax renders literally before server 12.0 (feature level 437). Do not push channel-specific syntax into `cryo-agent send` or the protocol; do not let the sync upload anything outside the chamber or under `.cryo/` (it holds the bot API key).
+- **Attachments are a channel concern, not an agent concern**: the agent only ever deals in chamber-local file paths — it reads pulled attachments from `messages/attachments/` and links to local files when sending. Uploading, downloading, and per-server markdown quirks live in the sync binary. Notably `externalize_local_links` rewrites upload links to **absolute** URLs and strips the `!` from `![alt](...)`; both are required for an inline preview (verified on Zulip 11.4): the preview pass only matches absolute upload URLs, and CommonMark image syntax renders literally before server 12.0 (feature level 437). Do not push channel-specific syntax into `cryo-agent send` or the protocol; do not let either sync implementation upload anything outside the chamber, under `.cryo/`, or named `cryo.toml` (these hold bot or provider API keys).
 - **Inbox contract**: There is no `cryo-agent reply`. Wake prompts do not include inbox contents; the daemon only checks whether inbox files exist so it can surface a notice in the session prompt. During an agent session, `cryo-agent receive` asks the daemon to read and archive the current inbox batch immediately; it is not an operator-facing command. The next successful `cryo-agent send` is the reply by definition for that received batch. If the agent exits or crashes before such a `send`, the daemon writes the fallback message for that batch. Inbox messages are never retried; only TODOs have retry semantics. If the human still wants action, they resend.
 - **Default agent and host override**: Pi is the built-in default. `HubConfig.default_agent` in host-level `cryohub.toml` is the scaffold default for both plain `cryo init` and the Console's New Chamber flow. Owners can update it through `/api/config`, the Console Settings sheet, or `cryohub start --default-agent`; `cryo init --agent` is the explicit per-scaffold override, and every created chamber still records its selected command in `cryo.toml` so later host changes never rewrite existing chambers. A chamber's own runner is changed through owner-only `POST /api/chambers/{id}/agent` (the Console's chamber Settings sheet), which writes `agent` into that chamber's `cryo.toml` and reports `restart_required` — the daemon reads `cryo.toml` once at start, so a live chamber keeps its runner until restarted, and the hub never restarts a session to apply a setting. Both Console settings surfaces validate that the parsed command's executable exists on the Hub host before saving, through the same `hub::lifecycle::validate_agent_command` a lifecycle start uses. The Console's dropdown list (`console/src/api/agents.ts`) mirrors the runners `resolve_agent` knows, minus `mock`, and always keeps the saved value as an option so a hand-written command is never silently rewritten.
 - **Agent notes via `NOTES.md`**: The agent's persistent memory across sessions is a plain markdown file (`NOTES.md`) the agent reads and writes directly — no IPC roundtrip. Seeded by `cryo init`, surfaced in the hub's Notes drawer tab, and updated by the agent on its own. The removed `cryo-agent note` subcommand and `Request::Note` IPC variant are historical.
@@ -205,9 +203,9 @@ and needs an explicit justification.
 
 - **API to manipulate local message files**: `src/channel/store.rs::MessageStore`.
   - `MessageStore` is the local mailbox API for directory setup, inbox/outbox reads, and archiving. The intended human-message lifecycle is simple: `read_and_archive_inbox` -> next agent `send` or daemon fallback in the same session.
-  - Agent-side `cryo-agent receive` sends `socket::Request::Receive` through `daemon_client::send_checked_request`; during an active session, the daemon then reads and archives the inbox batch through `MessageStore` and records the reply obligation in session memory.
+  - Agent-side `cryo-agent receive` sends `socket::Request::Receive` through `daemon_client::send_checked_request`; during an active session, the daemon then reads and archives the inbox batch through `MessageStore` and records the reply obligation in session memory and a durable journal.
   - `cryo-agent send` must **not** write outbox files directly; it sends `socket::Request::Send` through `daemon_client::send_checked_request` so the daemon can both write the outbox message and resolve any claimed inbox batch correctly.
-  - Do not design new file-backed pending/recovery flows for inbox messages; archive-on-receive plus daemon fallback is the contract.
+  - Archive-on-receive remains terminal. `daemon::inbox` journals only the reply obligation for restart notification; never restore claimed messages to pending or replay their external work.
   - Daemon, operator CLI, sync daemons, hub routes, and status/read-model code should all use `MessageStore` for local mailbox file access.
   - Low-level markdown parsing / rendering / archiving primitives still live in `src/message.rs`; `MessageStore` composes them instead of reimplementing them.
 

@@ -3,7 +3,7 @@
 A [Tauri v2](https://tauri.app) window that loads the **unchanged** Agent
 Console bundle (`console/dist`) and gives it three things a browser cannot:
 
-- **Native hub persistence.** Hub accounts — URL, bearer token, label, trust
+- **Native hub persistence.** Hub accounts — URL, label, trust
   record — live in a JSON file in the app's private data directory
   (`tauri-plugin-store`), not in `localStorage`. They survive a WebView data
   eviction; a browser profile wipe does not cost the user their tokens.
@@ -26,9 +26,13 @@ byte-for-byte the bundle `cryohub` already serves.
 | Hub store (macOS) | `~/Library/Application Support/com.cryochamber.console/hubs.json` |
 | Crate | `app/src-tauri` — a **standalone** crate, deliberately not a member of the root `cryochamber` package (`cargo build` at the repo root never compiles it, and `cargo package` never ships it) |
 
-The store file holds bearer tokens in cleartext, protected by the OS file
-permissions on the app's data directory. Treat it the way you treat
-`~/.config/cryo/cryohub-tokens.json`.
+The JSON store holds hub metadata without bearer tokens. macOS stores tokens in
+Keychain; Android encrypts them with AES-GCM using an Android Keystore key.
+Existing plaintext accounts migrate only after the protected write is verified.
+If migration fails, the old record remains available for retry. Android app backup
+is disabled because the device key cannot be restored onto another device.
+A missing or locked credential store reports an error; it never falls back to
+plaintext. Reconnect hubs on a replacement device using newly issued tokens.
 
 ## Prerequisite
 
@@ -52,9 +56,10 @@ Run them from the repository root.
 | `make app-android` | `cargo tauri android build --apk --target aarch64`. See [Android release](#android-release) below for the toolchain and signing setup. |
 | `make app-check` | `cargo fmt --check` + `cargo clippy --all-targets -D warnings` + `cargo test`, run inside `app/src-tauri`. The console's own suite is `make console-check`. |
 
-The dmg is **ad-hoc signed** — Tauri's default without a signing identity.
-Notarization is deferred (see the spec's §6), so first launch needs the
-right-click gesture in item 5 below.
+Local builds without a signing identity remain ad-hoc signed. Customer releases
+require Developer ID signing and notarization. The release workflow refuses to
+publish when signing setup or notarization verification fails. See
+[release operations](../docs/src/operations.md#release-checks) for required secrets.
 
 ## Release smoke checklist
 
@@ -195,7 +200,7 @@ com.apple.quarantine "0081;00000000;Safari;" /path/to/Cryochamber.app`.
       developer cannot be verified" / "damaged").
 - [ ] **Right-click (or Control-click) the app → Open → Open** launches it, and
       subsequent launches work normally by double-click.
-- [ ] The release notes say this, and say that notarization is deferred.
+- [ ] Customer release builds pass `spctl --assess --type execute` and `xcrun stapler validate`. Ad-hoc development builds must not be labeled customer releases.
 
 The signature state to expect:
 
@@ -258,3 +263,11 @@ Before announcing the first APK:
 - Open a conversation containing rendered math and an image attachment.
 - Send a message, restart the app, and confirm both hubs remain.
 - Check `adb logcat` or `chrome://inspect` for CSP errors.
+
+### Credential migration checks
+
+- [ ] Start with a legacy `hubs.json` containing a test token. Open the packaged app and confirm the hub still connects.
+- [ ] Inspect `hubs.json`: no token remains. Quit and relaunch; the same hub connects using protected storage.
+- [ ] Lock or deny access to Keychain before migration. Confirm an actionable error and an intact legacy record, then unlock and retry.
+- [ ] Remove a hub, restart the app, and confirm both the account and its token are removed.
+- [ ] On Android, check cold restart after background termination and reject tampered encrypted preferences. Never substitute a plaintext fallback.

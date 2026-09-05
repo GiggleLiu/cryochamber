@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react'
 import { ACCESS_REVOKED_NOTICE, selfNameFor, useAppStore, useIsOwner } from '../store/appStore'
+import { sortByKey } from '../api/hubClient'
 import { ApiError, isUnauthorized } from '../api/types'
 import { splitChamberKey } from '../lib/hubKeys'
 import { MessageBody } from '../components/MessageBody'
@@ -110,6 +111,11 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [canCopy] = useState(hasFinePointer)
   const [visibleCount, setVisibleCount] = useState(PAGE)
+  const [nextPage, setNextPage] = useState<string | null>(null)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const pageLoaded = useRef<string | null>(null)
+  const activeChamber = useRef(chamberId)
+  activeChamber.current = chamberId
   const scrollRef = useRef<HTMLDivElement>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prependHeightRef = useRef<number | null>(null)
@@ -150,10 +156,35 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
     if (pinned) setHasNew(false)
   }
 
-  function revealEarlier() {
+  async function revealEarlier() {
     const el = scrollRef.current
-    if (el) prependHeightRef.current = el.scrollHeight
-    setVisibleCount((count) => Math.min(messageCount, count + PAGE))
+    if (firstVisible > 0) {
+      if (el) prependHeightRef.current = el.scrollHeight
+      setVisibleCount((count) => Math.min(messageCount, count + PAGE))
+      return
+    }
+    if (!client?.getMessagePage || !nextPage || loadingEarlier) return
+    setLoadingEarlier(true)
+    setLoadError(null)
+    try {
+      const page = await client.getMessagePage(chamberId, nextPage)
+      if (activeChamber.current !== chamberId) return
+      pinnedRef.current = false
+      if (el) prependHeightRef.current = el.scrollHeight
+      const current = useAppStore.getState().messagesByChamber[chamberId] ?? []
+      useAppStore.getState().setMessages(chamberId, sortByKey([...page.messages, ...current]))
+      setVisibleCount((count) => count + page.messages.length)
+      setNextPage(page.next)
+    } catch (error) {
+      if (activeChamber.current !== chamberId) return
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+        useAppStore.getState().pruneChamber(chamberId, ACCESS_REVOKED_NOTICE)
+      } else if (!isUnauthorized(error)) {
+        setLoadError('Could not load earlier messages. Check your connection and try again.')
+      }
+    } finally {
+      if (activeChamber.current === chamberId) setLoadingEarlier(false)
+    }
   }
 
   useLayoutEffect(() => {
@@ -167,6 +198,9 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   useEffect(() => {
     prependHeightRef.current = null
     setVisibleCount(PAGE)
+    setNextPage(null)
+    pageLoaded.current = null
+    setLoadingEarlier(false)
   }, [chamberId])
 
   async function copyMessage(id: string, body: string) {
@@ -224,12 +258,21 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
   }, [messageCount, scrollToLatest])
 
   useEffect(() => {
-    if (!client || !chamber || historyLoaded) return
+    if (!client || !chamber || (historyLoaded && !client.getMessagePage)) return
+    if (historyLoaded && pageLoaded.current === chamberId) return
+    let cancelled = false
     setLoadError(null)
-    client
-      .getMessages(chamberId)
-      .then((msgs) => useAppStore.getState().setMessages(chamberId, msgs))
+    const fetchPage = client.getMessagePage
+      ? client.getMessagePage(chamberId)
+      : client.getMessages(chamberId).then((messages) => ({ messages, next: null }))
+    fetchPage.then((page) => {
+      if (cancelled) return
+      pageLoaded.current = chamberId
+      useAppStore.getState().setMessages(chamberId, page.messages)
+      setNextPage(page.next)
+    })
       .catch((e) => {
+        if (cancelled) return
         if (isUnauthorized(e)) return
         if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
           // Scope was revoked while we were looking at it: leave quietly — and
@@ -246,6 +289,7 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
             : 'Check your connection and try again.',
         )
       })
+    return () => { cancelled = true }
   }, [client, chamber, historyLoaded, chamberId, retryToken])
 
   // Reading a conversation is what marks it read: the watermark moves to the
@@ -329,9 +373,9 @@ export function ConversationView({ chamberId }: { chamberId: string }) {
           </div>
         )}
 
-        {firstVisible > 0 && (
-          <button type="button" className="stream-reveal" onClick={revealEarlier}>
-            Earlier messages ({firstVisible})
+        {(firstVisible > 0 || nextPage !== null) && (
+          <button type="button" className="stream-reveal" onClick={revealEarlier} disabled={loadingEarlier}>
+            {loadingEarlier ? 'Loading earlier messages…' : firstVisible > 0 ? `Earlier messages (${firstVisible})` : 'Earlier messages'}
           </button>
         )}
 

@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn long_subjects_round_trip_without_exceeding_filename_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    for subject in ["a".repeat(300), "会议".repeat(100)] {
+        let msg = test_message("human", &subject, "Body", "2026-03-01T12:00:00");
+        let path = write_message(dir.path(), "inbox", &msg).unwrap();
+        assert!(path.file_name().unwrap().len() < 255);
+        let parsed = parse_message(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(parsed.subject, subject);
+    }
+    assert_eq!(read_inbox(dir.path()).unwrap().len(), 2);
+}
+
+#[test]
 fn split_message_markdown_returns_frontmatter_and_trimmed_body() {
     let sections = split_message_markdown(
         "\n---\nfrom: human\nsubject: Test\n---\n\nBody line 1\nBody line 2\n",

@@ -1,3 +1,4 @@
+mod credentials;
 mod pinned;
 mod probe;
 
@@ -17,6 +18,7 @@ fn take_opened_urls(urls: tauri::State<'_, OpenedUrls>) -> Vec<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(credentials::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         // The live event streams, so a cancel from the console can find the
@@ -25,6 +27,8 @@ pub fn run() {
         .manage(OpenedUrls::default())
         .invoke_handler(tauri::generate_handler![
             take_opened_urls,
+            credentials::load_credentials,
+            credentials::save_credentials,
             probe::probe_hub,
             pinned::pinned_fetch,
             pinned::pinned_sse,

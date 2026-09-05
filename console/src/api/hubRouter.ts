@@ -7,6 +7,7 @@ import type {
 import type { Chamber, ChamberMessage } from './types'
 
 export interface ConsoleClient {
+  getMessagePage?(chamberKey: string, before?: string): Promise<{ messages: ChamberMessage[]; next: string | null }>
   getMessages(chamberKey: string): Promise<ChamberMessage[]>
   sendMessage(chamberKey: string, body: string): Promise<{ id: string }>
   uploadFile(file: File, chamberKey: string): Promise<string>
@@ -74,6 +75,12 @@ export class HubRouter implements ConsoleClient {
     const { client, chamberId, hubId } = this.resolve(key)
     const msgs = await client.getMessages(chamberId)
     return msgs.map((m) => ({ ...m, chamberId: chamberKey(hubId, chamberId) }))
+  }
+
+  async getMessagePage(key: string, before?: string) {
+    const { client, chamberId, hubId } = this.resolve(key)
+    const page = await client.getMessagePage(chamberId, before)
+    return { ...page, messages: page.messages.map((m) => ({ ...m, chamberId: chamberKey(hubId, chamberId) })) }
   }
 
   async sendMessage(key: string, body: string): Promise<{ id: string }> {

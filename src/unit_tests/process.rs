@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn invalid_process_ids_never_reach_signal_syscalls() {
+    for pid in [0, i32::MAX as u32 + 1, u32::MAX] {
+        // Probe only: this regression check is safe even before the fix.
+        assert!(!send_signal(pid, 0));
+        assert!(!send_signal_group(pid, 0));
+        assert!(!is_pid_alive(pid));
+        assert!(terminate_pid(pid).is_err());
+    }
+    assert!(!send_signal_group(1, 0));
+    assert!(is_pid_alive(std::process::id()));
+}
+
+#[test]
 fn pid_probe_indicates_alive_for_live_process() {
     assert!(pid_probe_indicates_alive(0, 0));
 }

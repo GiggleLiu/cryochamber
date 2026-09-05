@@ -215,11 +215,12 @@ async fn create_and_start_chamber_via_api_creates_background_daemon() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED);
+    let status = resp.status();
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(status, StatusCode::CREATED, "create failed: {value}");
     assert_eq!(
         value["started"], true,
         "create-and-start should succeed: {value:?}"

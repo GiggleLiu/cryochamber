@@ -10,8 +10,13 @@ the hub, set up the Pi agent, connect, create the first chamber, share it.
 
 ## 1. Start the hub
 
+This guide describes current main, which includes Console and authentication
+changes newer than v0.2.8. Until the next release, run these commands from a
+repository checkout with Rust and Node.js 22 installed:
+
 ```bash
-cargo install cryochamber
+make console-build
+cargo install --path . --locked
 cryohub start
 ```
 

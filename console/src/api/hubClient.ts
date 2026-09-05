@@ -307,6 +307,20 @@ export class HubClient {
     return sortByKey((Array.isArray(raw) ? raw : []).map((m) => toChamberMessage(m, chamberId)))
   }
 
+  async getMessagePage(chamberId: string, before?: string): Promise<{ messages: ChamberMessage[]; next: string | null }> {
+    const query = new URLSearchParams({ limit: '100' })
+    if (before) query.set('before', before)
+    const raw = await this.request<{ messages: Record<string, unknown>[]; next: string | null } | Record<string, unknown>[]>(
+      `/api/chambers/${encodeURIComponent(chamberId)}/messages?${query}`,
+    )
+    // Older hubs ignore query parameters and return the full array.
+    const rows = Array.isArray(raw) ? raw : raw.messages
+    return {
+      messages: sortByKey(rows.map((m) => toChamberMessage(m, chamberId))),
+      next: Array.isArray(raw) ? null : raw.next,
+    }
+  }
+
   /** SSE `message` payload → store message; null when it names no chamber.
    * The store keys by chamber id, so a payload without one has nowhere to go. */
   toEventMessage(payload: unknown): ChamberMessage | null {

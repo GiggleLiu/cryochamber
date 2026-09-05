@@ -73,7 +73,7 @@ impl<'a> FsSessionEffects<'a> {
 
 impl SessionEffects for FsSessionEffects<'_> {
     fn claim_inbox_batch(&mut self) -> Result<Vec<(String, crate::message::Message)>> {
-        self.message_store().read_and_archive_inbox()
+        super::inbox::claim(self.dir)
     }
 
     fn read_inbox_archive(&self) -> Result<Vec<(String, crate::message::Message)>> {
@@ -103,8 +103,7 @@ impl SessionEffects for FsSessionEffects<'_> {
             metadata: std::collections::BTreeMap::new(),
             is_question,
         };
-        self.message_store().send_out(&msg)?;
-        Ok(())
+        super::inbox::send(self.dir, msg)
     }
 
     fn todo_add(&mut self, text: &str, at: &str) -> Result<u32> {

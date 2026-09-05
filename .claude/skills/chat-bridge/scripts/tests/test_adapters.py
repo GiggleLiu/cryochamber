@@ -24,6 +24,10 @@ class LocalLinkTests(unittest.TestCase):
             secret.write_text("secret")
             self.assertEqual(resolve_local_link(chamber, "report.txt"), public.resolve())
             self.assertIsNone(resolve_local_link(chamber, ".cryo/zuliprc"))
+            (chamber / "cryo.toml").write_text("provider secret")
+            (chamber / "config.txt").symlink_to(chamber / "cryo.toml")
+            self.assertIsNone(resolve_local_link(chamber, "cryo.toml"))
+            self.assertIsNone(resolve_local_link(chamber, "config.txt"))
             self.assertIsNone(resolve_local_link(chamber, "../outside.txt"))
             self.assertIsNone(resolve_local_link(chamber, "https://example.com/a"))
 

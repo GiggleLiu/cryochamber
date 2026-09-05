@@ -4,6 +4,29 @@ import { mockHub, signIn } from './fixtures'
 /** Mirrors `--col-max` in styles.css: the widest a reading column ever gets. */
 const COL_MAX = 800
 
+test('sheets contain keyboard focus and Escape restores the opener', async ({ page }) => {
+  await mockHub(page)
+  await signIn(page)
+  const opener = page.getByRole('button', { name: 'Settings', exact: true })
+  await opener.click()
+  const sheet = page.getByRole('dialog', { name: 'Settings', exact: true })
+  await expect(sheet).toBeVisible()
+  // Even a programmatic attempt to focus the background is refused.
+  await opener.evaluate(el => el.focus())
+  await expect(sheet.getByRole('button', { name: 'Close' })).toBeFocused()
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press(i < 10 ? 'Tab' : 'Shift+Tab')
+    // Chromium may put focus in browser chrome at the end of a tab cycle,
+    // represented by body. It must never focus a background page control.
+    expect(await sheet.evaluate(el =>
+      el.contains(document.activeElement) || document.activeElement === document.body,
+    )).toBe(true)
+  }
+  await page.keyboard.press('Escape')
+  await expect(sheet).toHaveCount(0)
+  await expect(opener).toBeFocused()
+})
+
 test('token login → projects → conversation → send', async ({ page }) => {
   const sent: unknown[] = []
   await mockHub(page, { chambers: [{ id: 'cham-a', name: 'qec-decoders' }] })
@@ -36,15 +59,18 @@ test.describe('phone layout contract', () => {
 
     // Wide code lines and a four-column table must scroll inside their own
     // container, never widen the page.
+    const scrollers = page.locator('.message-body pre, .message-body table')
+    await expect(scrollers).toHaveCount(2)
     const overflow = await page.evaluate(() => {
       const doc = document.documentElement
       return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth }
     })
     expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
 
-    for (const scroller of await page.locator('.message-body pre, .message-body table').all()) {
-      const box = await scroller.boundingBox()
-      expect(box!.width).toBeLessThanOrEqual(390)
+    for (const scroller of await scrollers.all()) {
+      // Markdown decoration can replace these nodes during measurement.
+      await expect.poll(async () => (await scroller.boundingBox())?.width)
+        .toBeLessThanOrEqual(390)
     }
 
     // Bar actions and composer controls carry a 44px touch target.

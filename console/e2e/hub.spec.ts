@@ -88,8 +88,8 @@ async function mockHub(page: Page, opts: HubOptions = {}): Promise<HubMock> {
     return r.fulfill({ json: bearer.includes(OWNER_TOKEN) ? CHAMBERS : [CHAMBERS[0]] })
   })
 
-  await page.route('**/api/chambers/cham-a/messages', (r) => r.fulfill({ json: [MESSAGE] }))
-  await page.route('**/api/chambers/cham-b/messages', (r) => r.fulfill({ json: [] }))
+  await page.route('**/api/chambers/cham-a/messages*', (r) => r.fulfill({ json: [MESSAGE] }))
+  await page.route('**/api/chambers/cham-b/messages*', (r) => r.fulfill({ json: [] }))
 
   // Released when the client sends, so the SSE event below is genuinely a live
   // delivery into an open conversation rather than seeded history.

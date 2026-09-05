@@ -12,6 +12,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  components:
+    uses: ./.github/workflows/ci.yml
+
+  dependencies:
+    uses: ./.github/workflows/security.yml
+
   # Gate the release: tag/version consistency + format + lint + tests.
   # Both create-release and publish-crate depend on this passing.
   verify:
@@ -35,6 +41,9 @@ jobs:
 
       - name: Build the Agent Console
         run: cd console && npm ci && npm run build
+
+      - name: Test the Agent Console
+        run: cd console && npm test && npx playwright install --with-deps chromium && npm run e2e
 
       - name: Console build present
         run: test -f console/dist/index.html
@@ -85,7 +94,7 @@ jobs:
   # Create GitHub release
   create-release:
     name: Create Release
-    needs: verify
+    needs: [verify, components, dependencies]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,7 +102,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          draft: false
+          draft: true
           prerelease: false
           generate_release_notes: true
 
@@ -198,6 +207,7 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v1
         with:
+          draft: true
           files: cryochamber-${{ github.ref_name }}-android-arm64.apk
 
   # Build the macOS bundle from the native shell and attach it to the release.
@@ -224,21 +234,32 @@ jobs:
       - name: Install tauri-cli
         run: cargo install tauri-cli --version 2.11.4 --locked
 
-      # Ad-hoc signed (no identity configured): users right-click-open on
-      # first launch. Notarization is deliberately deferred — see the spec.
-      # Only the .app bundle is built here: the bundler leaves it carrying the
-      # linker's ad-hoc signature, which Gatekeeper reads as a broken seal
-      # once the bundle has been rewritten, so it must be re-signed before
-      # any container — zip or dmg — is packaged around it.
-      - name: Build app
-        run: cd app/src-tauri && cargo tauri build --bundles app
+      - name: Build signed and notarized app
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          for value in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_CONTENT; do
+            test -n "${!value}" || { echo "::error::${value} is required for customer releases"; exit 1; }
+          done
+          umask 077
+          export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$APPLE_API_KEY_PATH"
+          trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
+          cd app/src-tauri
+          cargo tauri build --bundles app
 
-      - name: Ad-hoc sign the app bundle and package both artifacts
+      - name: Verify notarization and package artifacts
         run: |
           app="$(find app/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)"
           test -n "$app" || { echo "::error::no .app produced"; exit 1; }
-          codesign --force --deep -s - "$app"
           codesign --verify --deep --strict "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose "$app"
           ditto -c -k --keepParent "$app" "cryochamber-${GITHUB_REF_NAME}-macos-arm64.app.zip"
           staging="$(mktemp -d)"
           cp -R "$app" "$staging/"
@@ -249,6 +270,17 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v1
         with:
+          draft: true
           files: |
             cryochamber-${{ github.ref_name }}-macos-arm64.dmg
             cryochamber-${{ github.ref_name }}-macos-arm64.app.zip
+
+  publish-release:
+    name: Publish complete release
+    needs: [publish-crate, build-android, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

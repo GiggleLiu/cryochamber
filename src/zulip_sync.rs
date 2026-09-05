@@ -54,7 +54,7 @@ pub fn remember_seen_message_id(previous: Option<u64>, seen: Option<u64>) -> Opt
 
 pub fn save_sync_state(path: &Path, state: &ZulipSyncState) -> Result<()> {
     let json = serde_json::to_string_pretty(state)?;
-    std::fs::write(path, json)?;
+    crate::persistence::write_atomic(path, json)?;
     Ok(())
 }
 
@@ -77,17 +77,7 @@ pub fn read_sync_pid(dir: &Path) -> Option<u32> {
 }
 
 pub fn is_sync_running(dir: &Path) -> bool {
-    match read_sync_pid(dir) {
-        Some(pid) => {
-            let ret = unsafe { libc::kill(pid as i32, 0) };
-            if ret == 0 {
-                return true;
-            }
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            errno == libc::EPERM
-        }
-        None => false,
-    }
+    read_sync_pid(dir).is_some_and(crate::process::is_pid_alive)
 }
 
 pub fn summarize(dir: &Path) -> Option<crate::sync_common::SyncSummary> {

@@ -46,6 +46,9 @@ hex = "0.4"
 # matches with — `tauri-plugin-http` 2.5.9 depends on exactly these two, and
 # `regex` is here because the plugin's parse names `regex::Regex` as its
 # pattern engine. Neither is linked into the shipped app.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
 [dev-dependencies]
 urlpattern = "0.3"
 regex = "1"

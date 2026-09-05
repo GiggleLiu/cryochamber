@@ -272,10 +272,11 @@ impl ZulipClient {
         // This request carries the bot's Basic auth, so a crafted link must
         // not be able to steer it outside /user_uploads/ (dot segments) or
         // smuggle query/fragment parts onto another endpoint.
+        let decoded = urlencoding::decode(server_path).context("unsafe user_uploads path")?;
         anyhow::ensure!(
-            server_path.split('/').all(|seg| seg != ".." && seg != ".")
-                && !server_path.contains('?')
-                && !server_path.contains('#'),
+            decoded.split('/').all(|seg| seg != ".." && seg != ".")
+                && !decoded.contains(['?', '#', '\\'])
+                && !decoded.chars().any(char::is_control),
             "unsafe user_uploads path: {server_path}"
         );
         let url = format!("{}{}", self.creds.site.trim_end_matches('/'), server_path);
@@ -759,6 +760,7 @@ pub fn parse_upload_response(json: &serde_json::Value) -> Result<String> {
 /// Refuses anything that is not a plain relative path to an existing regular
 /// file inside the chamber. In particular `.cryo/` is never uploadable — it
 /// holds `zuliprc`, i.e. the bot's API key, which must never leave the machine.
+/// `cryo.toml` is also excluded because it can contain provider API keys.
 /// Symlinks are resolved before the containment and `.cryo` checks, so neither
 /// can be used to escape.
 ///
@@ -782,6 +784,9 @@ pub fn resolve_local_attachment(dir: &Path, target: &str) -> Option<PathBuf> {
     let root = dir.canonicalize().ok()?;
     let resolved = candidate.canonicalize().ok()?;
     if !resolved.starts_with(&root) {
+        return None;
+    }
+    if resolved.file_name().is_some_and(|name| name == "cryo.toml") {
         return None;
     }
     if resolved

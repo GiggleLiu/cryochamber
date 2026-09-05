@@ -3,25 +3,37 @@ name: Android
 on:
   push:
     branches: [main]
-    paths:
-      - 'app/**'
-      - 'console/**'
-      - '.github/workflows/android.yml'
-      - '.github/workflows/release.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'app/**'
-      - 'console/**'
-      - '.github/workflows/android.yml'
-      - '.github/workflows/release.yml'
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Android change scope
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: scope
+        # PR checkout is the test merge: its first parent is the base branch.
+        # Keep the workflow unconditional so the required APK check also
+        # reports a successful skip when Android is unaffected.
+        run: |
+          if git diff --quiet HEAD^ HEAD -- app console .github/workflows/android.yml .github/workflows/release.yml; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          fi
+
   apk:
     name: Build signed arm64 APK
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -19,16 +19,32 @@ The goal is to automate long-running activities that are too irregular for cron.
 
 Install Cryochamber:
 
+The Agent Console and native app on current main are newer than release
+v0.2.8. To use them before the next release, build from this checkout with
+Node.js 22 and Rust installed:
+
+```bash
+make console-build
+cargo install --path . --locked
+```
+
+For the published CLI release:
+
 > **Platform support:** macOS and Linux only. Windows is not supported — the daemon relies on Unix domain sockets, POSIX signals, and launchd/systemd services (see issue #27).
 
 ```bash
 cargo install cryochamber
 ```
 
-Create and start a chamber:
+Install and authenticate an agent runner before starting a chamber. Pi is the
+built-in default on current main. See [runner setup](docs/src/getting-started.md#2-set-up-the-pi-agent).
+The runner must be on `PATH` and able to run without interactive login.
+
+Create a chamber, edit its plan, then start it:
 ```bash
 mkdir my-chamber && cd my-chamber
-cryo init          # scaffold plan.md and cryo.toml — edit plan.md to describe the goal
+cryo init
+# Edit plan.md to describe the goal before starting the agent.
 cryo start
 ```
 
@@ -81,6 +97,13 @@ developer notes live in [`console/README.md`](console/README.md).
 - **Crash recovery and reboot persistence**: `cryo start` installs a launchd/systemd service by default, so scheduled sessions survive machine reboots; failed TODO sessions are rescheduled as visible retry attempts with backoff.
 - **Configurable agents**: Pi is the default; choose a host-wide default in the Agent Console and override it per chamber with `cryo.toml` or `cryo init --agent`.
 - **Local and remote monitoring**: use the Cryohub dashboard to monitor chamber status, logs, messages, TODOs, notes, and lifecycle controls in a local browser UI, or talk to a chamber from anywhere via Zulip with `cryo-zulip`. See the [CLI reference](https://giggleliu.github.io/cryochamber/reference/cli.html).
+
+## Development
+
+For source changes, run `make check` for Rust, Console, and chat-bridge checks,
+then `cd console && npm run e2e` for browser tests. Browser tests require
+`npx playwright install chromium` once. Native shell checks use `make app-check`
+and the platform dependencies described in [app/README.md](app/README.md).
 
 ## License
 

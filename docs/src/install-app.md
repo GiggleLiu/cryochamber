@@ -11,8 +11,10 @@ was — open `http://127.0.0.1:8765` in a browser, or *Add to Home Screen* it as
 a PWA, and you get the same surface bound to that one hub. The app is the
 option for when *one* is no longer the number of hubs you have.
 
-Builds are attached to each [GitHub
-release](https://github.com/GiggleLiu/cryochamber/releases):
+Release v0.2.8 predates the native app and has no installers. Until a newer
+[GitHub release](https://github.com/GiggleLiu/cryochamber/releases) includes them,
+follow the [source build instructions](https://github.com/GiggleLiu/cryochamber/blob/main/app/README.md).
+The release workflow produces these filenames:
 
 | File | For |
 |---|---|

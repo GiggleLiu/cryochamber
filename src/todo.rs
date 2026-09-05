@@ -381,11 +381,8 @@ fn load_items(path: &Path) -> Result<Vec<TodoItem>> {
 
 fn save_items(path: &Path, items: &[TodoItem]) -> Result<()> {
     let content = serde_json::to_string(items)?;
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp = dir.join(".todo.json.tmp");
-    std::fs::write(&tmp, &content).with_context(|| format!("Failed to write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("Failed to rename to {}", path.display()))?;
+    crate::persistence::write_atomic(path, content)
+        .with_context(|| format!("Failed to write {}", path.display()))?;
     Ok(())
 }
 

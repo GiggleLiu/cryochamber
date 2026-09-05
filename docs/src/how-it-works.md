@@ -73,3 +73,14 @@ Send a message from the terminal (`cryo send "..."`) or the Cryohub dashboard. I
 
 - [CLI reference](./reference/cli.md) — every `cryo`, `cryohub`, `cryo-agent`, and `cryo-zulip` command.
 - [Configuration](./reference/configuration.md) — every `cryo.toml` and `cryohub.toml` field.
+
+## Interrupted conversations
+
+Before the daemon archives a received batch, it saves a durable reply obligation.
+After a hard daemon stop, the next start writes an interruption notice if no reply
+was saved. The message may have caused partial external work. Review the history
+and resend only if you still want that work performed. Claimed messages stay
+archived and are never replayed automatically. An unread batch remains pending.
+A corrupt recovery journal stops startup with an error instead of discarding it.
+
+See [backup and restore](./operations.md) for recovery and upgrade procedures.
