@@ -24,7 +24,7 @@ pub fn init() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 pub async fn load_credentials(_app: tauri::AppHandle) -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
-        return tauri::async_runtime::spawn_blocking(|| {
+        tauri::async_runtime::spawn_blocking(|| {
             match security_framework::passwords::get_generic_password(
                 "com.cryochamber.console",
                 "hub-tokens",
@@ -37,7 +37,7 @@ pub async fn load_credentials(_app: tauri::AppHandle) -> Result<Option<String>, 
             }
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
     }
     #[cfg(target_os = "android")]
     {
@@ -45,12 +45,11 @@ pub async fn load_credentials(_app: tauri::AppHandle) -> Result<Option<String>, 
         struct Response {
             value: Option<String>,
         }
-        return _app
-            .state::<Credentials>()
+        _app.state::<Credentials>()
             .0
             .run_mobile_plugin::<Response>("load", ())
             .map(|response| response.value)
-            .map_err(|e| e.to_string());
+            .map_err(|e| e.to_string())
     }
     #[cfg(not(any(target_os = "macos", target_os = "android")))]
     Err("Native token storage is supported on macOS and Android. Use the browser Console on this platform.".into())
@@ -63,7 +62,7 @@ pub async fn save_credentials(_app: tauri::AppHandle, value: String) -> Result<(
     }
     #[cfg(target_os = "macos")]
     {
-        return tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             security_framework::passwords::set_generic_password(
                 "com.cryochamber.console",
                 "hub-tokens",
@@ -72,16 +71,15 @@ pub async fn save_credentials(_app: tauri::AppHandle, value: String) -> Result<(
             .map_err(|error| format!("Cannot save hub tokens in Keychain: {error}"))
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
     }
     #[cfg(target_os = "android")]
     {
-        return _app
-            .state::<Credentials>()
+        _app.state::<Credentials>()
             .0
             .run_mobile_plugin::<serde_json::Value>("save", serde_json::json!({ "value": value }))
             .map(|_| ())
-            .map_err(|e| e.to_string());
+            .map_err(|e| e.to_string())
     }
     #[cfg(not(any(target_os = "macos", target_os = "android")))]
     Err("Native token storage is supported on macOS and Android. Use the browser Console on this platform.".into())
