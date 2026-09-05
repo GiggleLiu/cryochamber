@@ -724,8 +724,10 @@ input, select, textarea { font: inherit; color: inherit; }
   --scroll-bg: var(--surface);
   display: block;
   margin: 0.6em 0;
-  padding-bottom: 2px;
+  /* Tall glyphs can extend beyond KaTeX's line box. */
+  padding-block: 0.5em;
   overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior-x: contain;
   text-align: center;
 }

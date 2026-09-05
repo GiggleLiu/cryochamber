@@ -66,7 +66,7 @@ function DraftComposer({ chamberId, threadId, storageKey }: { chamberId: string;
   useEffect(() => {
     if (!ta.current) return
     ta.current.style.height = 'auto'
-    ta.current.style.height = `${ta.current.scrollHeight}px`
+    ta.current.style.height = `${ta.current.scrollHeight + ta.current.offsetHeight - ta.current.clientHeight}px`
   }, [text])
 
   // One upload at a time uses the existing authenticated transport on web and native.

@@ -288,3 +288,82 @@ test('unsafe or unsupported PDFs fall back to download without creating a frame'
   await expect(validDialog.getByRole('button', { name: 'Download valid.pdf' })).toBeVisible()
   await expect(validDialog.locator('iframe')).toHaveCount(0)
 })
+
+test('the composer grows without a scrollbar until its height cap', async ({ page }) => {
+  await mockHub(page, { chambers: [{ id: 'cham-a', name: 'qec-decoders' }] })
+  await signIn(page)
+  await page.getByRole('button', { name: /qec-decoders/ }).click()
+  const box = page.getByRole('textbox', { name: 'Message' })
+  await page.evaluate(() => document.fonts.ready)
+  const size = () => box.evaluate(element => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))
+
+  await expect.poll(async () => { const box = await size(); return box.scrollHeight - box.clientHeight }).toBeLessThanOrEqual(0)
+  await box.fill('short draft')
+  await expect.poll(async () => { const box = await size(); return box.scrollHeight - box.clientHeight }).toBeLessThanOrEqual(0)
+  await box.fill('one\ntwo\nthree')
+  await expect.poll(async () => { const box = await size(); return box.scrollHeight - box.clientHeight }).toBeLessThanOrEqual(0)
+
+  await page.getByRole('button', { name: 'Back' }).click()
+  await page.getByRole('button', { name: /qec-decoders/ }).click()
+  const restored = page.getByRole('textbox', { name: 'Message' })
+  await expect(restored).toHaveValue('one\ntwo\nthree')
+  await expect.poll(() => restored.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(0)
+
+  await restored.fill(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n'))
+  await expect.poll(() => restored.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0)
+})
+
+test('display math contains tall glyphs and scrolls only when it is wide', async ({ page }) => {
+  const messages = [
+    { ...ROOT, id: 'math-ordinary', body: 'Ordinary\n\n$$x^2 + y^2 = z^2$$' },
+    { ...ROOT, id: 'math-tall', body: 'Tall\n\n$$\\frac{\\displaystyle \\int_0^\\infty e^{-x^2} \\, dx}{\\displaystyle \\sum_{n=1}^\\infty n^{-2}}$$' },
+    { ...ROOT, id: 'math-wide', body: `Wide\n\n$$${Array.from({ length: 30 }, (_, i) => `x_{${i + 1}}`).join(' + ')}$$` },
+  ]
+  await mockHub(page, { chambers: [{ id: 'cham-a', name: 'qec-decoders' }] })
+  await page.route('**/api/chambers/cham-a/messages*', route => route.fulfill({
+    json: { messages, next: null },
+  }))
+  await page.route('**/api/chambers/cham-a/threads*', route => route.fulfill({ json: [] }))
+  await signIn(page)
+  await page.getByRole('button', { name: /qec-decoders/ }).click()
+
+  async function geometry(id: string) {
+    const display = page.locator(`#thread-${id} .katex-display`)
+    await expect(display).toBeVisible()
+    await page.evaluate(() => document.fonts.ready)
+    await expect.poll(() => display.evaluate(element => getComputedStyle(element).overflowY)).toBe('hidden')
+    return display.evaluate(element => {
+      const outer = element.getBoundingClientRect()
+      const glyphs = Array.from(element.querySelectorAll('.mord'))
+        .map(glyph => glyph.getBoundingClientRect())
+        .filter(box => box.width > 0 && box.height > 0)
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        overflowX: getComputedStyle(element).overflowX,
+        overflowY: getComputedStyle(element).overflowY,
+        glyphTop: Math.min(...glyphs.map(box => box.top)),
+        glyphBottom: Math.max(...glyphs.map(box => box.bottom)),
+        top: outer.top,
+        bottom: outer.bottom,
+      }
+    })
+  }
+
+  for (const id of ['math-ordinary', 'math-tall']) {
+    const box = await geometry(id)
+    expect(box.overflowY).toBe('hidden')
+    expect(box.scrollHeight - box.clientHeight).toBeLessThanOrEqual(1)
+    expect(box.glyphTop).toBeGreaterThanOrEqual(box.top - 1)
+    expect(box.glyphBottom).toBeLessThanOrEqual(box.bottom + 1)
+  }
+  const wide = await geometry('math-wide')
+  expect(wide.overflowX).toBe('auto')
+  expect(wide.overflowY).toBe('hidden')
+  expect(wide.scrollWidth).toBeGreaterThan(wide.clientWidth)
+})
